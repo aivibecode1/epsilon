@@ -286,14 +286,13 @@ instead of newlining, and the sessions sidebar being a keyboard trap. What remai
 
 ## Verification (what is actually true)
 
-**Latest green battery: [`gate-port-r90-2026-10-08.txt`](../audit/evidence/gate-port-r90-2026-10-08.txt),
+**Latest green battery: [`gate-port-r91-2026-10-08.txt`](../audit/evidence/gate-port-r91-2026-10-08.txt),
 2026-10-08 — the tree this file describes, and it is the one HEAD holds.** Thirteen legs, all
-`[exit=0]`, `GATE PASS`. **2,257 passed / 0 failed / 13 ignored across 78 binaries**, summed from
-that one log's `test result:` lines — one more than `gate-port-r89`: the rewritten
-`todo_results_render_as_a_checklist_card_body` (the other two new tests replaced assertions inside
-tests that already existed, so the net is one). `CARGO_PROFILE_TEST_DEBUG=1` set preemptively
-(LNK1104 pattern); no fault. (`cargo fmt --check` ran before launching.) The first `port-r55`
-attempt failed its test leg on an integration test driving `/timeline` as refused; preserved as
+`[exit=0]`, `GATE PASS`. **2,259 passed / 0 failed / 13 ignored across 78 binaries**, summed from
+that one log's `test result:` lines — two more than `gate-port-r90`: the two picker tests.
+`CARGO_PROFILE_TEST_DEBUG=1` set preemptively (LNK1104 pattern); no fault.
+(`cargo fmt --check` ran before launching.) The first `port-r55` attempt failed its test leg
+on an integration test driving `/timeline` as refused; preserved as
 [`gate-port-r55-attempt1-FAILED-2026-10-07.txt`](../audit/evidence/gate-port-r55-attempt1-FAILED-2026-10-07.txt).
 
 > **Two writers, one repository, again — and this time the battery had to cover both.** While
