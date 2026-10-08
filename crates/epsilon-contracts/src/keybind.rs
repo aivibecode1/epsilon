@@ -369,6 +369,10 @@ pub const TERMINAL: &[(&str, &[&str])] = &[
     // app.message.dequeue: alt+q on Windows, alt+up elsewhere — both free
     // here, so both work everywhere).
     ("app.message.dequeue", &["alt+q", "alt+up"]),
+    // Queue a follow-up for after the turn (P-030, pi's app.message.followUp).
+    // Pi binds ctrl+q on Windows too; here that chord smells like quit, so
+    // alt+enter stands alone — same id, narrower default, rebindable.
+    ("app.message.followUp", &["alt+enter"]),
     ("app.live.refresh", &["ctrl+g"]),
     ("tui.editor.undo", &["ctrl+z"]),
     ("tui.editor.redo", &["ctrl+."]),

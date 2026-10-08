@@ -1469,7 +1469,13 @@ pub(crate) fn handle_key(app: &mut App, agent: &Arc<Agent>, key: KeyEvent) -> bo
             if app.slash_open {
                 app.apply_slash_selection();
             }
-            app.submit_editor(agent)
+            app.submit_editor(agent, false)
+        }
+        _ if app.keybindings.matches("app.message.followUp", &key) => {
+            // Alt+Enter (P-030): a follow-up that waits for the turn; when
+            // idle it is plain Enter (the flag only diverts the running case,
+            // inside `submit_editor`, so every gate still runs first).
+            app.submit_editor(agent, true)
         }
         _ if app.keybindings.matches("app.model.select", &key) => {
             // Layout-independent picker access (slash may need AltGr on some layouts).

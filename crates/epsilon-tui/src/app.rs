@@ -817,7 +817,12 @@ impl App {
         epsilon_contracts::prompt_template::expand_prompt_template(text, &self.prompt_templates)
     }
 
-    fn submit_editor(&mut self, agent: &Arc<Agent>) -> bool {
+    /// Submit the composer. `follow_up` is Alt+Enter (P-030): when a turn
+    /// is running the text queues for after it instead of steering into it;
+    /// when idle it is plain Enter. Every gate above (trust, import, preset,
+    /// templates, commands, shell) runs first either way — a follow-up is a
+    /// submit that waits, not a way around review.
+    fn submit_editor(&mut self, agent: &Arc<Agent>, follow_up: bool) -> bool {
         let raw = std::mem::take(&mut self.input);
         self.cursor_chars = 0;
         self.end_yank();
@@ -985,7 +990,10 @@ impl App {
             return false;
         }
         let msg = self.submit_text(text);
-        if self.ui.running() {
+        if follow_up && self.ui.running() {
+            agent.follow_up(msg);
+            self.notice("follow-up queued (runs when this turn ends)");
+        } else if self.ui.running() {
             agent.steer(msg);
             self.notice("steering queued (delivered after current turn)");
         } else {

@@ -6404,7 +6404,7 @@ fn import_asks_before_swapping_and_only_yes_swaps() {
 
     // Anything but yes/no repeats the question and keeps it open.
     app.input = "maybe later".to_string();
-    app.submit_editor(&agent);
+    app.submit_editor(&agent, false);
     assert!(
         app.pending_import.is_some(),
         "a non-answer must not resolve the gate"
@@ -6412,7 +6412,7 @@ fn import_asks_before_swapping_and_only_yes_swaps() {
 
     // No cancels.
     app.input = "no".to_string();
-    app.submit_editor(&agent);
+    app.submit_editor(&agent, false);
     assert!(app.pending_import.is_none(), "no must close the question");
     assert!(
         app.ui
@@ -6453,7 +6453,7 @@ fn import_yes_swaps_the_store() {
             .expect("/import parses"),
     );
     app.input = "yes".to_string();
-    app.submit_editor(&agent);
+    app.submit_editor(&agent, false);
     assert!(
         app.pending_import.is_none(),
         "yes must resolve the question"
@@ -6680,7 +6680,7 @@ fn preset_full_access_asks_and_only_yes_switches() {
     assert_eq!(agent.current_preset(), "auto", "asking switches nothing");
 
     app.input = "no".to_string();
-    app.submit_editor(&agent);
+    app.submit_editor(&agent, false);
     assert!(app.pending_preset.is_none(), "no must close the question");
     assert_eq!(agent.current_preset(), "auto", "no switches nothing");
 
@@ -6689,7 +6689,7 @@ fn preset_full_access_asks_and_only_yes_switches() {
         crate::picker::parse_command("/preset danger-full-access").expect("/preset parses"),
     );
     app.input = "yes".to_string();
-    app.submit_editor(&agent);
+    app.submit_editor(&agent, false);
     assert_eq!(agent.current_preset(), "danger-full-access");
 }
 
@@ -7106,5 +7106,37 @@ fn ctrl_n_inside_the_browser_starts_a_session() {
         after.len(),
         before.len() + 1,
         "and a session file appears: {after:?}"
+    );
+}
+
+/// Alt+Enter queues a follow-up for after the turn (P-030).
+///
+/// Mirrors the steering test: staged running, real key path, both halves —
+/// the notice the reader sees and the queue the agent reads. A follow-up is
+/// not steering (`steer_queue_len` stays 0) and not a spawn (nothing runs).
+#[tokio::test]
+async fn alt_enter_while_streaming_queues_a_follow_up() {
+    let (mut app, agent, (_frx, mut nrx)) = test_app();
+    app.ui.set_running_for_test(true);
+    app.input = "and then the sequel".to_string();
+    app.cursor_chars = app.input.chars().count();
+    handle_key(&mut app, &agent, key_mod(KeyModifiers::ALT, KeyCode::Enter));
+    let said = tokio::time::timeout(std::time::Duration::from_secs(5), nrx.recv())
+        .await
+        .expect("the notice arrives")
+        .expect("the channel stays open");
+    assert!(
+        said.contains("follow-up queued"),
+        "the reader must be told it waits: {said:?}"
+    );
+    assert_eq!(
+        agent.followup_queue_len(),
+        1,
+        "and it must land in the follow-up queue"
+    );
+    assert_eq!(
+        agent.steer_queue_len(),
+        0,
+        "not in the steering queue: a follow-up waits, it does not steer"
     );
 }
