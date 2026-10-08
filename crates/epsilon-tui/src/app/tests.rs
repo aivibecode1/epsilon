@@ -6788,3 +6788,56 @@ fn card_bodies_nest_under_a_continuation_gutter() {
         "the body nests under a continuation gutter:\n{frame}"
     );
 }
+
+/// The live tail separates from the previous block while streaming.
+///
+/// Committed lines separate in `push_line`; the tail is not a line, so it
+/// glued to whatever preceded it until commit. Same rule, at draw time.
+#[test]
+fn streaming_text_is_separated_from_the_previous_block() {
+    use epsilon_contracts::agent_event::AgentEvent;
+    use epsilon_contracts::message::{AssistantMessage, Message, StopReason, Usage};
+    let (mut app, _agent, _rx) = test_app();
+    app.ui.push_local_input("run it");
+    app.ui.apply(&AgentEvent::MessageEnd {
+        message: Box::new(Message::Assistant(AssistantMessage {
+            id: "m1".into(),
+            timestamp_ms: 0,
+            provider: "faux".into(),
+            model_id: "faux-1".into(),
+            content: vec![epsilon_contracts::content::ContentBlock::ToolCall {
+                id: "c1".into(),
+                name: "bash".into(),
+                arguments: serde_json::json!({ "command": "echo hi" }),
+            }],
+            stop_reason: StopReason::ToolUse,
+            error_message: None,
+            usage: Usage::default(),
+        })),
+    });
+    app.ui.apply(&AgentEvent::MessageUpdate {
+        message: Box::new(Message::Assistant(AssistantMessage {
+            id: "m2".into(),
+            timestamp_ms: 0,
+            provider: "faux".into(),
+            model_id: "faux-1".into(),
+            content: vec![epsilon_contracts::content::ContentBlock::Text {
+                text: "working on it".into(),
+            }],
+            stop_reason: StopReason::EndTurn,
+            error_message: None,
+            usage: Usage::default(),
+        })),
+    });
+
+    let frame = render_rows(&mut app, 80, 24).join("\n");
+    let rows: Vec<&str> = frame.lines().collect();
+    let tail = rows
+        .iter()
+        .position(|r| r.contains("working on it"))
+        .expect("the live tail is on screen");
+    assert!(
+        rows[tail - 1].trim().is_empty(),
+        "a blank row separates the tail from the card:\n{frame}"
+    );
+}

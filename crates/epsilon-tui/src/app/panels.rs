@@ -401,6 +401,19 @@ pub(super) fn draw_transcript(
     let skip = geometry.skip;
     let visible = geometry.visible;
     let mut rows = app.render_cache.visible_rows_with_kinds(skip, visible);
+    // The live tail is not a transcript line, so `push_line`'s separation
+    // rule never sees it — without this it glues to the previous block
+    // while streaming and only separates when committed. Same rule, at draw
+    // time: blank before live text when the last visible row isn't blank.
+    // Inside `tail_rows` (not the cache), so scroll math below counts it
+    // like any other tail row.
+    if !tail_rows.is_empty()
+        && rows
+            .last()
+            .is_some_and(|(kind, _)| *kind != crate::state::LineKind::Blank)
+    {
+        tail_rows.insert(0, (crate::state::LineKind::Blank, Line::from(Vec::new())));
+    }
     let remaining = visible.saturating_sub(rows.len());
     rows.extend(
         tail_rows
