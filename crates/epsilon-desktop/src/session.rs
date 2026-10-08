@@ -911,6 +911,7 @@ impl IdeSession {
                 project: &launch.project,
                 project_trusted: launch.project_trusted,
                 plan_mode: launch.plan_mode,
+                preset: launch.preset,
                 notices: &mut notices,
             })
             .await?;

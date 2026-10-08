@@ -4600,6 +4600,8 @@ pub struct RunParams<'a> {
     pub project_trusted: bool,
     /// Prepend the plan-mode ruleset: mutating capabilities are denied outright.
     pub plan_mode: bool,
+    /// Named permission posture (ADR-032), layered over the defaults.
+    pub preset: epsilon_safety::Preset,
     /// Where composition's own startup diagnostics go, in the order it emits them.
     ///
     /// # Why this exists, plainly
@@ -4683,6 +4685,7 @@ pub async fn build_runtime_and_gate_runner(
         project,
         project_trusted,
         plan_mode,
+        preset,
         notices,
     } = params;
     // M79/M215: the product path opts into language-server diagnostics, and since M215 the
@@ -4760,16 +4763,21 @@ pub async fn build_runtime_and_gate_runner(
     // deny still wins immediately — ADR-006 stacking semantics). `--plan` prepends the
     // plan-mode layer: mutating capabilities are DENIED outright and monotonic-deny
     // makes that boundary hold regardless of project rules or approvals.
+    // `--preset` (ADR-032) layers its ruleset over the defaults: a bundle of
+    // allows, never a pardon — project and user denies still win.
     let base_engine = if plan_mode {
         let mut layers = vec![epsilon_safety::plan_ruleset()];
+        layers.push(epsilon_safety::preset_ruleset(preset, workspace));
         if !project.rules.is_empty() {
             layers.push(project_rules_layer(&project.rules));
         }
         epsilon_safety::PermissionEngine::layered(layers)
-    } else if project.rules.is_empty() {
-        epsilon_safety::PermissionEngine::with_defaults()
     } else {
-        epsilon_safety::PermissionEngine::layered(vec![project_rules_layer(&project.rules)])
+        let mut layers = vec![epsilon_safety::preset_ruleset(preset, workspace)];
+        if !project.rules.is_empty() {
+            layers.push(project_rules_layer(&project.rules));
+        }
+        epsilon_safety::PermissionEngine::layered(layers)
     };
     let gate = Arc::new(RulesetGate::layered(base_engine, approvals));
     // `Agent::new` already returns an `Arc`, which is why the extension hooks below can be
@@ -5084,6 +5092,7 @@ mod composition_notice_tests {
             project: &project,
             project_trusted: true,
             plan_mode: false,
+            preset: epsilon_safety::Preset::Auto,
             notices: sink,
         })
         .await
@@ -5598,6 +5607,9 @@ pub struct LaunchRequest {
     pub lsp: Lsp,
     /// `--plan`: deny the mutating capabilities outright.
     pub plan_mode: bool,
+    /// `--preset`: named permission posture (ADR-032). Layered over the
+    /// defaults; project and user denies still win (monotonic deny).
+    pub preset: epsilon_safety::Preset,
     /// How side-effecting commands are confined.
     pub confinement: epsilon_tools::Confinement,
     /// Which prior session to continue.
@@ -5616,6 +5628,7 @@ impl LaunchRequest {
             stream_pace_ms: 0,
             lsp: Lsp::Off,
             plan_mode: false,
+            preset: epsilon_safety::Preset::Auto,
             confinement: epsilon_tools::Confinement::Auto,
             resume: Resume::No,
         }
@@ -5657,6 +5670,8 @@ pub struct Launch {
     pub trust_review_pending: bool,
     /// `--plan`.
     pub plan_mode: bool,
+    /// `--preset` (ADR-032).
+    pub preset: epsilon_safety::Preset,
     /// Which prior session to continue.
     pub resume: Resume,
     /// Ordered, user-facing startup lines: what happened and what it cost.
@@ -6014,6 +6029,7 @@ pub fn resolve_launch(req: &LaunchRequest) -> Result<Launch, String> {
         project_trusted: trusted_now,
         trust_review_pending,
         plan_mode: req.plan_mode,
+        preset: req.preset,
         resume: req.resume.clone(),
         notices,
     })
@@ -6106,8 +6122,20 @@ mod launch_tests {
         let req = LaunchRequest::for_workspace(ws.path());
         assert_eq!(req.provider, ProviderChoice::Auto);
         assert!(!req.plan_mode);
+        assert_eq!(req.preset, epsilon_safety::Preset::Auto);
         assert_eq!(req.stream_pace_ms, 0);
         assert!(matches!(req.resume, Resume::No));
         assert!(req.fallbacks.is_empty());
+    }
+
+    /// `--preset` survives resolution: the posture the reader asked for is
+    /// the posture the front end receives (ADR-032 phase 1).
+    #[test]
+    fn preset_carries_through_resolution() {
+        let ws = workspace();
+        let mut req = LaunchRequest::for_workspace(ws.path());
+        req.preset = epsilon_safety::Preset::ReadOnly;
+        let launch = resolve_launch(&req).expect("a faux launch always resolves");
+        assert_eq!(launch.preset, epsilon_safety::Preset::ReadOnly);
     }
 }

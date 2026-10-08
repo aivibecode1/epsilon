@@ -102,6 +102,9 @@ FLAGS
                           off        no confinement at all — trusted automation only
   --plan                read-only run: write/edit denied, and bash/shell denied
                         outright (so git commit/push cannot run either)
+  --preset NAME         permission posture (ADR-032): auto (today's behavior,
+                        default) | workspace-write | read-only |
+                        danger-full-access
   --light               draw the TUI for a light terminal background. There is no
                         reliable way to detect one (COLORTERM describes colour
                         depth, OSC 11 needs a round-trip the terminal may not
@@ -195,6 +198,10 @@ struct Args {
     /// read-only shell boundary, so shell is refused rather than classified);
     /// everything else normal.
     plan_mode: bool,
+    /// `--preset`: named permission posture (ADR-032) — one of
+    /// auto|workspace-write|read-only|danger-full-access. Auto is today's
+    /// behavior under a name.
+    preset: epsilon_safety::Preset,
     /// `--yes`: headless runs auto-APPROVE gated asks instead of the safe default
     /// (auto-deny). Explicit opt-in for trusted automation.
     auto_approve: bool,
@@ -332,6 +339,7 @@ fn parse_args() -> Args {
             fallbacks: Vec::new(),
             resume: Resume::default(),
             plan_mode: false,
+            preset: epsilon_safety::Preset::Auto,
             auto_approve: false,
             light: false,
         };
@@ -346,6 +354,9 @@ fn parse_args() -> Args {
     let mut lsp = epsilon_cli::runtime::Lsp::Auto;
     // --plan: read-only research run (opencode plan-agent parity).
     let mut plan_mode = false;
+    // --preset: named permission posture (ADR-032). Auto names today's
+    // behavior and is the default because it changes nothing.
+    let mut preset = epsilon_safety::Preset::Auto;
     // --yes: unattended runs approve gated asks (explicit opt-in; default is deny).
     let mut auto_approve = false;
     // --light: draw for a light terminal background (D8).
@@ -433,6 +444,13 @@ fn parse_args() -> Args {
                         "unknown --sandbox mode: {other} (want auto|read-only|off)"
                     )),
                 };
+            }
+            "--preset" => {
+                i += 1;
+                let name = raw.get(i).cloned().unwrap_or_else(|| {
+                    die("--preset requires auto|workspace-write|read-only|danger-full-access")
+                });
+                preset = epsilon_safety::Preset::parse(&name).unwrap_or_else(|e| die(&e));
             }
             "--provider" => {
                 i += 1;
@@ -547,6 +565,7 @@ fn parse_args() -> Args {
         fallbacks,
         resume,
         plan_mode,
+        preset,
         auto_approve,
         light,
     }
@@ -1172,6 +1191,7 @@ async fn dispatch(args: Args) -> i32 {
         stream_pace_ms: args.stream_pace_ms,
         lsp: args.lsp,
         plan_mode: args.plan_mode,
+        preset: args.preset,
         confinement: args.confinement.clone(),
         resume: args.resume.clone(),
     }) {
@@ -1195,6 +1215,7 @@ async fn dispatch(args: Args) -> i32 {
         project: launch.project.clone(),
         project_trusted: launch.project_trusted,
         plan_mode: launch.plan_mode,
+        preset: launch.preset,
         offline: launch.offline,
         startup_notices: launch.notices.clone(),
         trust_review_pending: launch.trust_review_pending,
@@ -1259,6 +1280,7 @@ async fn rpc_mode(shared: &SharedRun) -> i32 {
         project: &shared.project,
         project_trusted: shared.project_trusted,
         plan_mode: shared.plan_mode,
+        preset: shared.preset,
         notices: &mut notices,
     })
     .await
@@ -1403,6 +1425,7 @@ struct SharedRun {
     /// into the trusted root variants so project code never loads untrusted.
     project_trusted: bool,
     plan_mode: bool,
+    preset: epsilon_safety::Preset,
     /// Project-config notices + trust banner (M22 / DIRECTION-01).
     startup_notices: Vec<String>,
     /// Typed trust-review trigger for the TUI gate (audit: no string sniffing).
@@ -1447,6 +1470,7 @@ async fn print_mode(shared: &SharedRun, yes: bool, task: String) -> i32 {
         project: &shared.project,
         project_trusted: shared.project_trusted,
         plan_mode: shared.plan_mode,
+        preset: shared.preset,
         notices: &mut notices,
     })
     .await
@@ -1635,6 +1659,7 @@ async fn tui_mode(
         project: &shared.project,
         project_trusted: shared.project_trusted,
         plan_mode: shared.plan_mode,
+        preset: shared.preset,
         notices: &mut notices,
     })
     .await;
@@ -1700,6 +1725,7 @@ async fn serve_mode(shared: &SharedRun, initial_task: Option<String>, port: u16)
         project: &shared.project,
         project_trusted: shared.project_trusted,
         plan_mode: shared.plan_mode,
+        preset: shared.preset,
         notices: &mut notices,
     })
     .await
@@ -2022,6 +2048,7 @@ action = "allow"
             project: &project,
             project_trusted: true,
             plan_mode: true,
+            preset: epsilon_safety::Preset::Auto,
             // This test is about the plan-mode layer, not about the startup diagnostics;
             // the sink is threaded through because composition has nowhere else to put them.
             notices: &mut Vec::new(),

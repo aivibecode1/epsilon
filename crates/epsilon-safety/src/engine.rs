@@ -154,6 +154,119 @@ pub fn plan_ruleset() -> Ruleset {
     }
 }
 
+/// A named permission posture (ADR-032): a bundle of allows, never a pardon.
+///
+/// Project and user deny rules layer above every preset and win — deny is
+/// monotonic, so `FullAccess` means "allow what nothing forbids", never
+/// "forbid nothing". Parsed from the `--preset` flag and (later) the front-end
+/// pickers, which is why the names are kebab-case words, not enum-case.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum Preset {
+    /// Today's posture under a name: the defaults plus project rules, asking
+    /// where they ask. The default because it changes nothing.
+    #[default]
+    Auto,
+    /// Reads and writes under the workspace; asks outside it (via the
+    /// `external_dir` downgrade the tools already apply), and asks shell and
+    /// secrets like the defaults. Pinned explicitly rather than inherited, so
+    /// a future defaults-tightening does not silently move it.
+    WorkspaceWrite,
+    /// Deny every side-effecting capability; allow reads. Unknown future
+    /// tools fall through to `Ask` (the engine default), never to allow.
+    ReadOnly,
+    /// Allow everything nothing forbids. Choosing it is the
+    /// privilege-raising act, so the front ends gate it behind the risk
+    /// confirmation — the engine itself just allows.
+    FullAccess,
+}
+
+impl Preset {
+    /// Parse a `--preset` value. Unknown names are an error naming the four,
+    /// never a silent fallback (a fallback would run a different policy than
+    /// the one the reader asked for).
+    pub fn parse(name: &str) -> Result<Self, String> {
+        match name.trim().to_ascii_lowercase().as_str() {
+            "auto" => Ok(Preset::Auto),
+            "workspace-write" => Ok(Preset::WorkspaceWrite),
+            "read-only" => Ok(Preset::ReadOnly),
+            "danger-full-access" => Ok(Preset::FullAccess),
+            other => Err(format!(
+                "unknown preset '{other}' — one of: auto, workspace-write, read-only, danger-full-access"
+            )),
+        }
+    }
+
+    /// The kebab-case name (flag values, notices, session records).
+    pub fn name(self) -> &'static str {
+        match self {
+            Preset::Auto => "auto",
+            Preset::WorkspaceWrite => "workspace-write",
+            Preset::ReadOnly => "read-only",
+            Preset::FullAccess => "danger-full-access",
+        }
+    }
+
+    /// Whether switching *to* this preset raises privilege and must confirm
+    /// (D-080: only the raising direction gates; switching down submits
+    /// immediately).
+    pub fn raises_privilege(self) -> bool {
+        matches!(self, Preset::FullAccess)
+    }
+}
+
+impl std::fmt::Display for Preset {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.name())
+    }
+}
+
+/// The ruleset a preset contributes, layered over the defaults (later wins;
+/// any deny still wins immediately — ADR-006 stacking).
+///
+/// `workspace` scopes the workspace-write allows; the other presets do not
+/// read it. Kept as one function rather than four so the preset table has
+/// exactly one row per name.
+pub fn preset_ruleset(preset: Preset, workspace: &std::path::Path) -> Ruleset {
+    let ws = workspace.to_string_lossy().replace('\\', "/");
+    let under_ws = format!("{ws}/*");
+    match preset {
+        Preset::Auto => Ruleset {
+            // Today's posture under a name: no extra rules. Named for
+            // diagnostics (a layer called "preset:auto" reads better than a
+            // layer called "defaults" when the reader chose it deliberately).
+            name: "preset:auto".into(),
+            rules: vec![],
+        },
+        Preset::WorkspaceWrite => Ruleset {
+            // Explicit, not inherited: these allows survive a future
+            // defaults-tightening, which is the point of choosing this
+            // preset deliberately rather than running unmarked defaults.
+            name: "preset:workspace-write".into(),
+            rules: vec![
+                Rule::new("read", "*", Action::Allow),
+                Rule::new("grep", "*", Action::Allow),
+                Rule::new("glob", "*", Action::Allow),
+                Rule::new("ls", "*", Action::Allow),
+                Rule::new("write", &under_ws, Action::Allow),
+                Rule::new("edit", &under_ws, Action::Allow),
+            ],
+        },
+        Preset::ReadOnly => Ruleset {
+            name: "preset:read-only".into(),
+            rules: vec![
+                Rule::new("write", "*", Action::Deny),
+                Rule::new("edit", "*", Action::Deny),
+                Rule::new("bash", "*", Action::Deny),
+                Rule::new("shell", "*", Action::Deny),
+            ],
+        },
+        Preset::FullAccess => Ruleset {
+            name: "preset:danger-full-access".into(),
+            rules: vec![Rule::new("*", "*", Action::Allow)],
+        },
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -235,5 +348,106 @@ mod tests {
         // Even apparently read-only commands are refused: there is no portable
         // read-only shell boundary inferred from command strings.
         assert_eq!(engine.evaluate("bash", "cargo test"), Action::Deny);
+    }
+
+    /// Preset names parse round-trip and reject unknowns by naming the four.
+    ///
+    /// A silent fallback would run a different policy than the one asked for.
+    #[test]
+    fn preset_names_parse_and_reject() {
+        for (text, want) in [
+            ("auto", Preset::Auto),
+            ("workspace-write", Preset::WorkspaceWrite),
+            ("read-only", Preset::ReadOnly),
+            ("danger-full-access", Preset::FullAccess),
+            ("  Auto  ", Preset::Auto),
+        ] {
+            let got = Preset::parse(text).expect("a known preset parses");
+            assert_eq!(got, want, "{text}");
+            assert_eq!(got.name(), got.to_string());
+        }
+        let err = Preset::parse("yolo").expect_err("unknown must fail");
+        assert!(
+            err.contains("auto") && err.contains("read-only"),
+            "the error must name the choices: {err}"
+        );
+        assert_eq!(Preset::default(), Preset::Auto);
+        assert!(Preset::FullAccess.raises_privilege());
+        assert!(!Preset::WorkspaceWrite.raises_privilege());
+        assert!(!Preset::ReadOnly.raises_privilege());
+        assert!(!Preset::Auto.raises_privilege());
+    }
+
+    /// `read-only` denies mutation and exec, allows reads, and leaves the
+    /// unknown to `Ask` — never to allow.
+    #[test]
+    fn read_only_denies_mutation_and_exec() {
+        let ws = std::path::Path::new("/ws");
+        let engine = PermissionEngine::layered(vec![preset_ruleset(Preset::ReadOnly, ws)]);
+        assert_eq!(engine.evaluate("write", "/ws/a.txt"), Action::Deny);
+        assert_eq!(engine.evaluate("edit", "/ws/a.txt"), Action::Deny);
+        assert_eq!(engine.evaluate("bash", "echo hi"), Action::Deny);
+        assert_eq!(engine.evaluate("shell", "echo hi"), Action::Deny);
+        assert_eq!(engine.evaluate("read", "/ws/a.txt"), Action::Allow);
+        assert_eq!(
+            engine.evaluate("mystery_tool", "*"),
+            Action::Ask,
+            "a future tool must ask, never inherit allow"
+        );
+    }
+
+    /// `workspace-write` pins its allows explicitly under the workspace.
+    #[test]
+    fn workspace_write_allows_under_the_workspace() {
+        let ws = std::path::Path::new("/ws");
+        let engine = PermissionEngine::layered(vec![preset_ruleset(Preset::WorkspaceWrite, ws)]);
+        assert_eq!(engine.evaluate("write", "/ws/a.txt"), Action::Allow);
+        assert_eq!(engine.evaluate("edit", "/ws/sub/b.txt"), Action::Allow);
+        assert_eq!(engine.evaluate("read", "/ws/a.txt"), Action::Allow);
+        assert_eq!(
+            engine.evaluate("bash", "echo hi"),
+            Action::Ask,
+            "shell keeps the default ask posture"
+        );
+        // Outside-workspace containment is the tools' `external_dir`
+        // downgrade, not this layer: the preset pins what it promises
+        // (under-workspace allows) and inherits the rest from the defaults.
+        assert_eq!(
+            engine.evaluate("write", "/elsewhere/a.txt"),
+            Action::Allow,
+            "engine-level: defaults allow; tools downgrade outside to external_dir/Ask"
+        );
+    }
+
+    /// `danger-full-access` allows what nothing forbids — and a project deny
+    /// still forbids it. Monotonic deny is the point of the engine.
+    #[test]
+    fn full_access_allows_but_project_deny_still_wins() {
+        let ws = std::path::Path::new("/ws");
+        let engine = PermissionEngine::layered(vec![preset_ruleset(Preset::FullAccess, ws)]);
+        assert_eq!(engine.evaluate("bash", "rm -rf /"), Action::Allow);
+        assert_eq!(engine.evaluate("read", ".env"), Action::Allow);
+        let guarded = PermissionEngine::layered(vec![
+            preset_ruleset(Preset::FullAccess, ws),
+            Ruleset {
+                name: "project".into(),
+                rules: vec![Rule::new("bash", "*", Action::Deny)],
+            },
+        ]);
+        assert_eq!(
+            guarded.evaluate("bash", "rm -rf /"),
+            Action::Deny,
+            "a preset is a bundle of allows, never a pardon"
+        );
+    }
+
+    /// `auto` adds no rules: today's posture under a name.
+    #[test]
+    fn auto_is_todays_posture() {
+        let ws = std::path::Path::new("/ws");
+        let engine = PermissionEngine::layered(vec![preset_ruleset(Preset::Auto, ws)]);
+        assert_eq!(engine.evaluate("read", "src/main.rs"), Action::Allow);
+        assert_eq!(engine.evaluate("bash", "git"), Action::Ask);
+        assert_eq!(engine.evaluate("write", "/ws/a.txt"), Action::Allow);
     }
 }

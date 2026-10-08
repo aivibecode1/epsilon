@@ -14,7 +14,7 @@ pub mod sandbox;
 mod wildcards;
 
 pub use channel_ui::{ChannelApprovalUi, PendingAsk};
-pub use engine::{Action, PermissionEngine, Rule, Ruleset, plan_ruleset};
+pub use engine::{Action, PermissionEngine, Preset, Rule, Ruleset, plan_ruleset, preset_ruleset};
 pub use env::{is_secret_env_name, scrub_secret_env, secret_env_names};
 pub use escalation::{
     EscalationError, EscalationRequest, SandboxMode, denial_marker, escalation_hint,
