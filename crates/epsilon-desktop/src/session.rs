@@ -119,6 +119,10 @@ pub enum RowKind {
         /// otherwise pin its whole output in a row nobody can scroll (the terminal keeps 40
         /// lines for the same reason, `CARD_STREAM_TAIL_LINES`).
         output: String,
+        /// The call's arguments, kept so the row title is tool-owned: the
+        /// same `call_head` the terminal draws, so both front ends name a
+        /// call the same way (C-120, two views into one agent).
+        args: serde_json::Value,
     },
     /// A permission ask. Present until it is answered.
     Approval {
@@ -254,18 +258,28 @@ impl Transcript {
                         match block {
                             ContentBlock::Thinking { text, .. } => thinking.push_str(text),
                             ContentBlock::Text { text } => answer.push_str(text),
-                            ContentBlock::ToolCall { id, name, .. } => {
+                            ContentBlock::ToolCall {
+                                id,
+                                name,
+                                arguments,
+                            } => {
                                 // The result row carries the outcome; this one only has to
                                 // say the call happened, or the transcript shows a tool
                                 // answering a question nobody recorded asking.
+                                // Tool-owned title via the shared `call_head`
+                                // (C-120): both front ends name the call alike.
+                                // Capped like the old JSON formatter was: a
+                                // one-line row must say when it was cut.
+                                let head = epsilon_tui::renderers::call_head(name, arguments, "…");
                                 t.push(
                                     RowKind::Tool {
                                         id: id.to_string(),
                                         name: name.clone(),
                                         failed: None,
                                         output: String::new(),
+                                        args: arguments.clone(),
                                     },
-                                    String::new(),
+                                    cap_title(head),
                                 );
                             }
                             _ => {}
@@ -524,10 +538,12 @@ impl Transcript {
                         name: tool_name.clone(),
                         failed: None,
                         output: String::new(),
+                        args: args.clone(),
                     },
                     // The arguments, not the result: what the agent is *about to do* is
-                    // the thing a reader needs while it is doing it.
-                    text: one_line(args),
+                    // the thing a reader needs while it is doing it — titled per
+                    // tool via the shared `call_head` (C-120), not raw JSON.
+                    text: cap_title(epsilon_tui::renderers::call_head(tool_name, args, "…")),
                 };
                 self.push_row(row);
             }
@@ -739,6 +755,22 @@ fn message_text(message: &Message) -> Option<String> {
 }
 
 /// The reasoning text of an assistant message, if it has any.
+/// A tool title on one row, cut with a marker when it does not fit.
+///
+/// The shared `call_head` does not cap (the terminal wraps); a window row
+/// is one line, so an unmarked cut here would read as the whole call. Same
+/// 160-cell budget and marker the old JSON formatter used, so the
+/// truncation pin keeps holding without knowing the format changed.
+fn cap_title(title: String) -> String {
+    if title.chars().count() <= 160 {
+        title
+    } else {
+        // Cut on a character boundary and say that it was cut.
+        let head: String = title.chars().take(157).collect();
+        format!("{head}… (truncated)")
+    }
+}
+
 fn message_thinking(message: &Message) -> Option<String> {
     let Message::Assistant(a) = message else {
         return None;
@@ -753,20 +785,6 @@ fn message_thinking(message: &Message) -> Option<String> {
         .collect::<Vec<_>>()
         .concat();
     (!joined.is_empty()).then_some(joined)
-}
-
-/// A tool's arguments on one line, so a row is one row.
-fn one_line(v: &serde_json::Value) -> String {
-    let joined = v.to_string().replace(['\n', '\r'], " ");
-    if joined.chars().count() <= 160 {
-        joined
-    } else {
-        // Cut on a character boundary and say that it was cut. A truncated JSON fragment
-        // with no marker reads as the whole call, which is how a reader ends up believing
-        // something the agent never asked for.
-        let head: String = joined.chars().take(157).collect();
-        format!("{head}… (truncated)")
-    }
 }
 
 // ==========================================================================================
@@ -1337,11 +1355,12 @@ mod tests {
                 name: "bash".into(),
                 failed: None,
                 output: String::new(),
+                args: serde_json::json!({"command": "cargo test"}),
             }
         );
-        assert!(
-            running.text.contains("cargo test"),
-            "the arguments are what a reader needs while it runs: {:?}",
+        assert_eq!(
+            running.text, "$ cargo test",
+            "the title is tool-owned (shared call_head), not raw JSON: {:?}",
             running.text
         );
 
@@ -1358,6 +1377,7 @@ mod tests {
                 name: "bash".into(),
                 failed: Some(true),
                 output: String::new(),
+                args: serde_json::json!({"command": "cargo test"}),
             }
         );
     }
@@ -1415,6 +1435,7 @@ mod tests {
                 name,
                 failed,
                 output,
+                ..
             } => (id, name, *failed, output),
             other => panic!("a tool row, got {other:?}"),
         };
@@ -1424,6 +1445,7 @@ mod tests {
                 name,
                 failed,
                 output,
+                ..
             } => (id, name, *failed, output),
             other => panic!("a tool row, got {other:?}"),
         };

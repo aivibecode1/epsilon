@@ -114,13 +114,13 @@ measurements taken here at all.
 |---|---|---|---|---|---|
 | Electron shell (`apps/desktop/**`) | 70 | 0 | 10 | 44 | 16 |
 | Approvals and permission presets | 14 | 4 | 8 | 2 | 0 |
-| Transcript, streaming and tool cards | 82 | 2 | 18 | 56 | 6 |
+| Transcript, streaming and tool cards | 82 | 3 | 17 | 56 | 6 |
 | Keyboard, settings, themes, locale, account, models, plugins | 68 | 4 | 9 | 50 | 5 |
 | Palette, quick open, composer, connection, design system | 54 | 2 | 14 | 33 | 5 |
 | Layout, sidebars, files tree, terminal, browser, preview, sessions | 65 | 2 | 21 | 37 | 5 |
 | Approvals, questions, schedule, jobs, goal, plan, subagents, models | 50 | 3 | 11 | 36 | 0 |
 | Un-numbered reference rows | 30 | 1 | 3 | 21 | 5 |
-| **Total** | **433** | **18** | **94** | **279** | **42** |
+| **Total** | **433** | **19** | **93** | **279** | **42** |
 
 ---
 
@@ -256,7 +256,7 @@ answers to the same question, and where this window has an answer the row says s
 | C-117 | Copying a message swaps the copy icon for a check for one second. | `ui-chat/src/client/chat/MessageIconActions.tsx:62-76` | missing | — | No copy control on a transcript row. |
 | C-118 | The branch (fork) control stays **focusable but unavailable** on messages that cannot fork. | `ui-chat/src/client/chat/MessageIconActions.tsx:94-109` | missing | — | No fork control; `/fork` is a head the window refuses by name (`commands.rs:449-451`). |
 | C-119 | Message timestamps are date-aware: `HH:mm` today, a month/day template earlier this year, a full date in other years. | `ui-chat/src/client/chat/message-chrome.ts:86-99` | missing | — | Transcript rows carry no timestamp. The window does show relative ages for **sessions** (`app.rs:3668-3676`), which is a different list. |
-| C-120 | An unregistered tool name renders a generic row titled `Tool call · <tool name>`; a known name gets a tool-owned title. | `ui-tool/src/client/tool/models/tool-call-model.ts:315`, `:44-71` | partial | `crates/epsilon-desktop/src/session.rs:96-120`, `crates/epsilon-desktop/src/app.rs:4974-4977` | A tool row always names its tool on screen and in its accessible name. There is no registry of tool-owned titles, so every tool gets the same generic presentation; only the name differs. Covered by `a_tool_row_names_its_tool_and_marks_it_with_a_drawable_glyph`. |
+| C-120 | An unregistered tool name renders a generic row titled `Tool call · <tool name>`; a known name gets a tool-owned title. | `ui-tool/src/client/tool/models/tool-call-model.ts:315`, `:44-71` | done | `crates/epsilon-desktop/src/session.rs` — rows keep the call args and title through the terminal's shared `call_head` (`bash $ …`, `read` path, `grep /…/`), so both front ends name a call alike; the dead `one_line` JSON formatter is deleted | `a_tool_call_shows_what_it_is_doing_and_how_it_ended` (exact `$ cargo test` title; bare-name control) + `a_tool_row_names_its_tool_and_marks_it_with_a_drawable_glyph` |
 | C-121 | A tool row shows a **preparing** state that cannot be expanded, and `error`/`stopped` rows drop both the summary suffix and the diff totals. | `ui-tool/src/client/tool/components/ToolRow.tsx:170`, `:186-188` | partial | `crates/epsilon-desktop/src/session.rs:108`, `crates/epsilon-desktop/src/app.rs:4947-4951` | The row kind carries a tri-state outcome — `None` running, `Some(false)` ok, `Some(true)` failed — and each draws a distinct marker and colour from it, with the outcome in words in the accessible name. There is no expanding at all, so the drop-the-summary rule has nothing to drop. |
 | C-122 | Write and edit rows show a decoded input size as **`NKB`** beside the path once any content field arrives. | `ui-tool/src/client/tool/toolviews/file-mutation-row.tsx:13-27` | missing | — | No size figure on a tool row. |
 | C-123 | A `read` row's path is an openable link that lands on the **1-based `offset` line** the call named, and the read card folds to 8 lines. | `ui-tool/src/client/tool/models/read-card-model.ts:17`, `:85-89` | partial | `crates/epsilon-desktop/src/app.rs:4039`, in-crate test `the_editor_starts_at_the_first_line_of_the_file` (`app.rs:6147`) | A path opens in the read-only editor, and re-opening a file already open moves it to the front of the tab strip rather than adding a second tab. The editor deliberately starts at line 1 — the offset landing and the 8-line fold are not implemented, and the first is a named decision rather than an oversight. **This row carried a path to a file that does not exist (`src/tests/window.rs`); the writing pass flagged it and the integrator corrected it against source, twice — once in M313 for the path and again in M315 for the line, after `app.rs` moved.** |
@@ -785,7 +785,7 @@ of the document**, so it lists ids rather than paraphrasing cells — the cell i
 |---|---|
 | Electron shell | D-001, D-021, D-030, D-031, D-045, D-058, D-061, D-062, D-064, D-066 |
 | Approvals and presets | D-073, D-074, D-075, D-076, D-080, D-081, D-082, D-083 |
-| Transcript and tool cards | C-107, C-109, C-120, C-121, C-123, C-126, C-132, C-135, C-141, C-143, C-145, C-147, C-157, C-160, C-162, C-163, C-168, C-169 |
+| Transcript and tool cards | C-107, C-109, C-121, C-123, C-126, C-132, C-135, C-141, C-143, C-145, C-147, C-157, C-160, C-162, C-163, C-168, C-169 |
 | Keyboard and settings | S-109, S-113, S-115, S-117, S-119, S-125, S-126, S-159, S-164 |
 | Palette and composer | P-102, P-106, P-108, P-117, P-121, P-122, P-126, P-128, P-132, P-136, P-140, P-146, P-148, P-150 |
 | Layout and panes | L-101, L-102, L-103, L-105, L-108, L-113, L-128, L-129, L-130, L-131, L-132, L-143, L-146, L-151, L-152, L-155, L-158, L-159, L-160, L-161, L-164 |
