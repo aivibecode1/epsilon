@@ -2380,6 +2380,9 @@ pub struct IdeApp {
     /// tree are already the reader's two ways back, and a second "close" control would be
     /// chrome answering a question they had not asked.
     review: Option<crate::diff::Change>,
+    /// A folded diff review is expanded. Reset whenever the review opens or
+    /// closes (C-135): a new change opens folded, always.
+    review_expanded: bool,
     /// Where each tab was drawn last frame, so a click can be applied **before** the strip
     /// is drawn again.
     ///
@@ -2985,6 +2988,7 @@ impl IdeApp {
             tree_query: String::new(),
             open: None,
             review: None,
+            review_expanded: false,
             tab_rects: Vec::new(),
             palette: None,
             goal_round_tx,
@@ -3088,6 +3092,7 @@ impl IdeApp {
             tree_query: String::new(),
             open: None,
             review: None,
+            review_expanded: false,
             tab_rects: Vec::new(),
             palette: None,
             goal_round_tx,
@@ -6051,7 +6056,15 @@ impl IdeApp {
             egui::pos2(rect.right(), rect.bottom()),
         );
         if let Some(change) = self.review.clone() {
-            crate::workspace::draw_diff(ui, &theme, body, &change, Some(summary), scale);
+            crate::workspace::draw_diff(
+                ui,
+                &theme,
+                body,
+                &change,
+                Some(summary),
+                scale,
+                &mut self.review_expanded,
+            );
             // A diff is not a file, and a reader who could not tell them apart would read a
             // review as the document. `Change::summary` is the same one-line string the
             // transcript's "changed" row carries, so the two panes cannot disagree.
@@ -6486,6 +6499,7 @@ impl IdeApp {
         // own click. The tree and the tab strip are therefore the way back from a diff,
         // which is why this pane needs no separate close control.
         self.review = None;
+        self.review_expanded = false;
         match crate::workspace::OpenFile::read(&self.opts.workspace, path) {
             Ok(file) => {
                 self.open = Some(file);
@@ -7031,6 +7045,7 @@ impl IdeApp {
                     .cloned()
             {
                 self.review = Some(change);
+                self.review_expanded = false;
             }
             // **The transcript's accessible name — the first thing a screen reader asks for
             // and, until now, the one thing it could not get.**
@@ -17446,6 +17461,60 @@ mod tests {
             entries[pos].label.contains("(default)"),
             "and read as one in words: {:?}",
             entries[pos].label
+        );
+    }
+
+    /// A long diff review folds at nine rows with a way to unfold (C-135).
+    ///
+    /// Twelve lines open as nine plus `Show 3 more lines`; the tenth line
+    /// is not on screen. Clicking the more-row expands to all twelve.
+    /// RED first: the full twelve with no fold.
+    #[test]
+    fn a_long_diff_review_folds_at_nine_with_a_way_to_unfold() {
+        let (dir, _keep) = scratch_workspace("review-fold");
+        let mut h = Harness::new(dir);
+        let lines: Vec<crate::diff::DiffLine> = (0..12)
+            .map(|i| {
+                if i % 3 == 2 {
+                    crate::diff::DiffLine::Removed(format!("old line {i}"))
+                } else {
+                    crate::diff::DiffLine::Context(format!("line {i}"))
+                }
+            })
+            .collect();
+        h.app.review = Some(crate::diff::Change {
+            path: "src/long.rs".into(),
+            lines,
+            created: false,
+            coarse: false,
+        });
+
+        let folded = h.paint();
+        let editor: Vec<&str> = folded.region("editor");
+        assert!(
+            editor.iter().any(|t| t.contains("Show 3 more lines")),
+            "the fold must name what it hides: {editor:?}"
+        );
+        assert!(
+            !editor.iter().any(|t| t.contains("line 9")),
+            "the tenth line must not be on screen: {editor:?}"
+        );
+
+        // The more-row is drawn after the nine lines, so its rect is the
+        // last editor rect on screen (the heading pushes text, not a rect).
+        let more = folded
+            .row_rects
+            .iter()
+            .filter(|(region, _)| region == "editor")
+            .map(|(_, r)| r.center())
+            .next_back()
+            .expect("the more-row must be clickable");
+        h.click(more);
+        let unfolded = h.paint();
+        let editor: Vec<&str> = unfolded.region("editor");
+        assert!(
+            editor.iter().any(|t| t.contains("line 11")),
+            "clicking unfolds the rest: {editor:?}"
         );
     }
 }

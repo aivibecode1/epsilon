@@ -476,6 +476,7 @@ pub fn draw_diff(
     change: &crate::diff::Change,
     mut summary: Option<&mut crate::app::FrameSummary>,
     scale: f32,
+    expanded: &mut bool,
 ) {
     let painter = ui.painter().with_clip_rect(rect);
     painter.rect_filled(rect, 4.0, theme.background);
@@ -535,13 +536,35 @@ pub fn draw_diff(
     // height has to be the height the text actually occupies.
     let line_h = 16.0 * scale;
     let gutter = 52.0 * scale;
-    let rows = change.lines.len();
+    // C-135: nine rows, then a fold. Longer diffs open folded with a real
+    // button (keyboard-focusable, named for the reader); the heading already
+    // carries +added/−removed, so nothing is lost by folding.
+    const FOLD_AT: usize = 9;
+    let folded = !*expanded && change.lines.len() > FOLD_AT;
+    let rows = if folded {
+        FOLD_AT + 1
+    } else {
+        change.lines.len()
+    };
     ui.scope_builder(egui::UiBuilder::new().max_rect(body), |ui| {
         let out = egui::ScrollArea::vertical()
             .id_salt("epsilon-diff-body")
             .auto_shrink([false, false])
             .show_rows(ui, line_h, rows, |ui, range| {
                 for i in range {
+                    if folded && i == FOLD_AT {
+                        let hidden = change.lines.len() - FOLD_AT;
+                        let label = format!("Show {hidden} more lines");
+                        let response = ui.button(label.clone());
+                        if response.clicked() {
+                            *expanded = true;
+                        }
+                        if let Some(s) = summary.as_deref_mut() {
+                            s.rows.push(("editor".into(), label));
+                            s.row_rects.push(("editor".into(), response.rect));
+                        }
+                        continue;
+                    }
                     let line = &change.lines[i];
                     // **Allocate the row, or every context line lands on the same y (M312).**
                     // The same defect the editor had, found by rendering this pane and looking at

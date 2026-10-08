@@ -114,13 +114,13 @@ measurements taken here at all.
 |---|---|---|---|---|---|
 | Electron shell (`apps/desktop/**`) | 70 | 0 | 10 | 44 | 16 |
 | Approvals and permission presets | 14 | 4 | 8 | 2 | 0 |
-| Transcript, streaming and tool cards | 82 | 3 | 17 | 56 | 6 |
+| Transcript, streaming and tool cards | 82 | 4 | 16 | 56 | 6 |
 | Keyboard, settings, themes, locale, account, models, plugins | 68 | 4 | 9 | 50 | 5 |
 | Palette, quick open, composer, connection, design system | 54 | 2 | 14 | 33 | 5 |
 | Layout, sidebars, files tree, terminal, browser, preview, sessions | 65 | 2 | 21 | 37 | 5 |
 | Approvals, questions, schedule, jobs, goal, plan, subagents, models | 50 | 3 | 11 | 36 | 0 |
 | Un-numbered reference rows | 30 | 1 | 3 | 21 | 5 |
-| **Total** | **433** | **19** | **93** | **279** | **42** |
+| **Total** | **433** | **20** | **92** | **279** | **42** |
 
 ---
 
@@ -271,7 +271,7 @@ answers to the same question, and where this window has an answer the row says s
 | C-132 | A subagent delegation is titled by its own wire name and grouped as **one `subagents` call**. | `ui-tool/src/client/tool/models/tool-call-model.ts:103` | partial | `crates/epsilon-desktop/src/app.rs:3417-3473` | Subagents are real and visible, but in a sidebar pane rather than a transcript group: the **Subagents** view reads `Agent::task_snapshots()` live rather than keeping a copy, names itself with a count, and says "no agent attached" when there is none. Covered by `an_empty_subagent_pane_says_what_is_missing` and `the_activity_bar_switches_the_sidebar_and_the_change_is_on_screen`. |
 | C-133 | A `todo_write` row summarises "done of total · active" with a **`+N`** count. | `ui-tool/src/client/tool/toolviews/todo-row.tsx:30-50` | missing | — | Task state is shown in the Subagents pane and in the status bar (`app.rs:4103`), not on a `todo_write` transcript row. |
 | C-134 | An `ask_user_question` row carries a **separate answer-panel button** beside its summary. | `ui-tool/src/client/tool/components/QuestionToolRow.tsx:39-43` | missing | — | No question card; see I-110 to I-119. |
-| C-135 | A write/edit diff card shows **9 rows** before folding, with `+added`/`-removed` totals in the tool header. | `ui-tool/src/client/tool/models/diff-card-model.ts:7` | partial | `crates/epsilon-desktop/src/diff.rs:110-125`, `crates/epsilon-desktop/src/app.rs:5057-5077` | A changed file gets a transcript row naming the path and both counts (`diff.rs:110-125`), the row is a real click target that opens the change for review in the editor pane, and it is named and roled as a link (`app.rs:5057-5077`). There is no 9-row fold. Covered by `a_change_is_reviewed_with_its_path_and_counts`, `clicking_a_changed_row_opens_the_change_for_review` and `a_change_under_review_draws_its_lines_on_separate_lines`. |
+| C-135 | A write/edit diff card shows **9 rows** before folding, with `+added`/`-removed` totals in the tool header. | `ui-tool/src/client/tool/models/diff-card-model.ts:7` | done | `crates/epsilon-desktop/src/workspace.rs` — reviews over nine lines open folded with a real `Show N more lines` button (keyboard-focusable, named); `review_expanded` resets on open/close so every change opens folded. Totals were already in the heading | `a_long_diff_review_folds_at_nine_with_a_way_to_unfold` (nine + more, tenth hidden, click unfolds; never-fold control) |
 | C-136 | Dropping or picking images is refused **as a whole batch** with a toast when it would exceed a projected limit. | `ui-conversation/src/client/skeleton/InputBar.tsx:211-233` | missing | — | The composer accepts no attachments at all. |
 | C-137 | A **subagent-facing composer accepts no files at all**. | `ui-conversation/src/client/skeleton/InputBar.tsx:212` | missing | — | As C-136. |
 | C-138 | Chat and Trajectory share **one session-authorized image URL cache**. | `ui-conversation/src/client/conversation/historical-images.ts:16-27` | missing | — | As C-136. |
@@ -785,7 +785,7 @@ of the document**, so it lists ids rather than paraphrasing cells — the cell i
 |---|---|
 | Electron shell | D-001, D-021, D-030, D-031, D-045, D-058, D-061, D-062, D-064, D-066 |
 | Approvals and presets | D-073, D-074, D-075, D-076, D-080, D-081, D-082, D-083 |
-| Transcript and tool cards | C-107, C-109, C-121, C-123, C-126, C-132, C-135, C-141, C-143, C-145, C-147, C-157, C-160, C-162, C-163, C-168, C-169 |
+| Transcript and tool cards | C-107, C-109, C-121, C-123, C-126, C-132, C-141, C-143, C-145, C-147, C-157, C-160, C-162, C-163, C-168, C-169 |
 | Keyboard and settings | S-109, S-113, S-115, S-117, S-119, S-125, S-126, S-159, S-164 |
 | Palette and composer | P-102, P-106, P-108, P-117, P-121, P-122, P-126, P-128, P-132, P-136, P-140, P-146, P-148, P-150 |
 | Layout and panes | L-101, L-102, L-103, L-105, L-108, L-113, L-128, L-129, L-130, L-131, L-132, L-143, L-146, L-151, L-152, L-155, L-158, L-159, L-160, L-161, L-164 |
