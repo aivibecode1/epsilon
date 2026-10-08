@@ -117,6 +117,7 @@ Rule: a working, verified product beats breadth. Anything cut goes in the
 | (10-08) | 82. **Full-port round 67 — preset engine lands (ADR-032 phase 1)** | `Preset` + `preset_ruleset` in `epsilon-safety` (deny-monotonic: full-access allows what nothing forbids, project deny still wins); `--preset` flag through `LaunchRequest`/`Launch`/`RunParams` into the gate layers (all four front-end modes + desktop). Six tests (five ruleset behaviors, one resolution carry) with mutation controls. Rows stay missing until the surfaces (phases 2–3). Battery `port-r67` (2,223), green first time. |
 | (10-08) | 83. **Full-port round 68 — `/preset` in both front ends (ADR-032 phases 2–3)** | New head (38): bare lists with current marked, names switch at once, `danger-full-access` holds a typed-`yes` gate in both composers (ADR amended: gates satisfy the contract, dialog optional). Mid-session switching rides a defaulted `set_preset` seam with the preset as a separate layer (base untouched, memory cleared, current tracked). Thirteen tests (5 ruleset + gate + wiring + 3 TUI + 3 window) with mutation/arm controls. D-080–D-082 partial, DSH 17 / 95. Window 37 of 38. Battery `port-r68d` (2,230), green on the fourth attempt (clippy borrow, guard list, AV machine fault — all three failures preserved). |
 | (10-08) | 84. **Full-port round 70 — transcript blocks read as blocks (P-136)** | First presentation slice: `push_line` inserts a `Blank` separator (always before tool cards, on kind change otherwise; never first, never twice). Looked at the dumped frame, not only asserted. One test with a rule-removal control; two goldens updated to the new shape. P-136 done (Pi 50 / 117). Battery `port-r70b` (2,231), green on the second attempt (LNK1104 machine fault first, preserved). |
+| (10-08) | 85. **Full-port round 71 — card bodies nest under a continuation gutter** | Second presentation slice: per-row kinds (`RenderedLine.kinds`) so a card's title keeps the line gutter and body rows draw `│`/`|` (no width change, no boxes — the gutter paradigm holds). Title keeps the state band; bodies drop it (overturns the both-rows-banded pin, with reason: the continuation now joins what the band joined). Looked at the frame. One test with control; three goldens updated. No matrix row (original design). Battery `port-r71b` (2,232), green on the second attempt (clippy `repeat_n` + LNK1104, preserved). |
 
 > **A machine fault worth naming, because it nearly made me "fix" working code.** Restoring a
 > file from a `Copy-Item` backup preserved its **old timestamp**, so `cargo` decided nothing had
@@ -264,13 +265,13 @@ instead of newlining, and the sessions sidebar being a keyboard trap. What remai
 
 ## Verification (what is actually true)
 
-**Latest green battery: [`gate-port-r70b-2026-10-08.txt`](../audit/evidence/gate-port-r70b-2026-10-08.txt),
+**Latest green battery: [`gate-port-r71b-2026-10-08.txt`](../audit/evidence/gate-port-r71b-2026-10-08.txt),
 2026-10-08 — the tree this file describes.** Thirteen legs, all `[exit=0]`, `GATE PASS`.
-**2,231 passed / 0 failed / 13 ignored across 78 binaries**, summed from that one log's
-`test result:` lines — one more than `gate-port-r68d`: the block-separation test.
-The first attempt failed on an LNK1104 link fault (machine fault, Avira-class);
+**2,232 passed / 0 failed / 13 ignored across 78 binaries**, summed from that one log's
+`test result:` lines — one more than `gate-port-r70b`: the body-gutter test.
+The first attempt failed on clippy (`repeat().take()`) plus an LNK1104 link fault;
 preserved as
-[`gate-port-r70-attempt1-FAILED-2026-10-08.txt`](../audit/evidence/gate-port-r70-attempt1-FAILED-2026-10-08.txt),
+[`gate-port-r71-attempt1-FAILED-2026-10-08.txt`](../audit/evidence/gate-port-r71-attempt1-FAILED-2026-10-08.txt),
 rebuilt with `CARGO_PROFILE_TEST_DEBUG=1` per `AGENTS.md`.
 (`cargo fmt --check` ran before launching.) The first `port-r55` attempt failed its test leg
 on an integration test driving `/timeline` as refused; preserved as

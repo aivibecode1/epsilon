@@ -121,6 +121,14 @@ pub fn row_style(theme: &Theme, kind: LineKind) -> (String, Style, Style, Style)
             Style::default(),
             Style::default(),
         ),
+        // A card's body nests under its title: the continuation rule, not
+        // the result's tick. No band (the title carries the card's state).
+        LineKind::CardBody => (
+            glyphs.vertical.to_string(),
+            theme.dim(),
+            theme.dim(),
+            Style::default(),
+        ),
     }
 }
 
@@ -286,6 +294,8 @@ mod tests {
             LineKind::ToolResultOk,
             LineKind::ToolResultErr,
             LineKind::System,
+            LineKind::Blank,
+            LineKind::CardBody,
         ] {
             let (glyph, _, _, _) = row_style(&theme, kind);
             gutters.push((kind, glyph));
@@ -302,6 +312,11 @@ mod tests {
         assert_eq!(gutters[4].1, "+"); // ok
         assert_eq!(gutters[5].1, "x"); // error
         assert_eq!(gutters[6].1, "*"); // system notice
+        assert_eq!(gutters[7].1, ""); // blank separator: no gutter mark
+        assert_eq!(gutters[8].1, "|"); // card body: the continuation rule
+        // The pair the presentation pass is about: a title and its output
+        // must never share a gutter again.
+        assert_ne!(gutters[3].1, gutters[8].1);
         assert_ne!(gutters[3].1, gutters[6].1);
         // The pair this whole change is about, called out by name so a failure
         // here says which two roles collapsed rather than just "some pair did".
@@ -377,6 +392,7 @@ mod tests {
                 LineKind::ToolResultOk,
                 LineKind::ToolResultErr,
                 LineKind::System,
+                LineKind::CardBody,
             ] {
                 let line = decorate(&theme, kind, vec![Span::raw("body")], 40);
                 let first = line.spans.first().expect("gutter span");

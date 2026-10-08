@@ -24,10 +24,11 @@ use crate::wrap;
 /// One logical transcript line rendered into `width`-wide screen rows.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RenderedLine {
-    /// The role the rows came from. Carried alongside them because the draw path
-    /// decorates per kind and a wrapped logical line yields *several* rows that
-    /// all share one kind — the row offset table cannot recover it.
-    pub kind: LineKind,
+    /// The role of each row, parallel to `rows`. Almost always one kind —
+    /// the exception is a tool card, whose title keeps the line's kind and
+    /// whose body rows nest under `CardBody`. Carried alongside because the
+    /// draw path decorates per kind and the row offset table cannot recover it.
+    pub kinds: Vec<LineKind>,
     /// Wrapped rows (already prefixed/styled); total height = `rows.len()`.
     pub rows: Vec<Vec<(String, Style)>>,
 }
@@ -101,31 +102,47 @@ impl RenderedLine {
         // counterpart" disappeared. No 80-column diff test could see it, because
         // only a 120-column body takes the split branch.
         let mut rows = Vec::new();
-        for logical in logical_lines(line, state, theme, width) {
+        let mut kinds = Vec::new();
+        // A card's title keeps the line's kind; its body rows nest under
+        // `CardBody` (presentation pass: a title and its output must not
+        // share a gutter). Wrapped pieces inherit their logical row's kind.
+        // Every other line is one kind throughout (today's behavior).
+        let is_card = line.card.is_some();
+        for (i, logical) in logical_lines(line, state, theme, width)
+            .into_iter()
+            .enumerate()
+        {
+            let kind = if is_card && i > 0 {
+                crate::state::LineKind::CardBody
+            } else {
+                line.kind
+            };
             if crate::ui::card::row_width(&logical) <= width {
                 rows.push(logical);
+                kinds.push(kind);
             } else {
                 // Borrowed: the logical lines are already owned here, so this
                 // reuses them rather than copying every span into a second
                 // allocation before wrapping. It runs once per line id, on the
                 // one frame a new row appears — but the paths it takes (a diff,
                 // a long tool line) are exactly the wide ones.
-                rows.extend(wrap::wrap_line(
+                let wrapped = wrap::wrap_line(
                     &logical
                         .iter()
                         .map(|(text, style)| (text.as_str(), *style))
                         .collect::<Vec<_>>(),
                     width,
-                ));
+                );
+                kinds.extend(std::iter::repeat_n(kind, wrapped.len()));
+                rows.extend(wrapped);
             }
         }
         if rows.is_empty() {
             rows.push(Vec::new());
+            kinds.push(line.kind);
         }
-        Self {
-            kind: line.kind,
-            rows,
-        }
+        debug_assert_eq!(rows.len(), kinds.len());
+        Self { kinds, rows }
     }
 }
 
@@ -206,6 +223,9 @@ fn row_marker(kind: LineKind, theme: &Theme) -> String {
         // A notice is not the same event as a tool call and must not share its
         // marker: with `NO_COLOR` or 16 colours the two would be the same pixels.
         LineKind::System => glyphs.bullet,
+        // Card bodies carry no marker (the title introduced them); like
+        // prose, they read better undecorated.
+        LineKind::CardBody => return String::new(),
         LineKind::Assistant | LineKind::Thinking | LineKind::Blank => return String::new(),
     };
     // **Only when it differs from the gutter.**
@@ -251,6 +271,9 @@ fn style_for(kind: LineKind, theme: &Theme) -> Style {
         // No text to style; the assistant's prose style keeps it out of
         // every role's color.
         LineKind::Blank => theme.assistant(),
+        // Unreachable for plain lines (bodies are assigned at render, never
+        // pushed); dim matches the bodies it gutters.
+        LineKind::CardBody => theme.dim(),
     }
 }
 
@@ -550,12 +573,15 @@ impl RenderCache {
             }
             let from = skip.saturating_sub(line_top);
             let to = rendered.rows.len().min(end - line_top);
-            for row in &rendered.rows[from..to] {
+            for (row, kind) in rendered.rows[from..to]
+                .iter()
+                .zip(rendered.kinds[from..to].iter())
+            {
                 let spans: Vec<Span<'static>> = row
                     .iter()
                     .map(|(t, s)| Span::styled(t.clone(), *s))
                     .collect();
-                out.push((rendered.kind, Line::from(spans)));
+                out.push((*kind, Line::from(spans)));
             }
         }
         out

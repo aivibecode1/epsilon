@@ -6740,3 +6740,51 @@ fn tool_cards_are_separated_by_blank_rows() {
         "a blank row precedes the card:\n{frame}"
     );
 }
+
+/// A card's body nests under its title with a continuation gutter.
+///
+/// The title keeps the line's gutter; body rows draw `│` (unicode) so a
+/// title and its output never share a gutter. Asserted on the frame.
+#[test]
+fn card_bodies_nest_under_a_continuation_gutter() {
+    use epsilon_contracts::agent_event::AgentEvent;
+    use epsilon_contracts::message::{AssistantMessage, Message, StopReason, Usage};
+    let (mut app, _agent, _rx) = test_app();
+    app.ui.push_local_input("run it");
+    app.ui.apply(&AgentEvent::MessageEnd {
+        message: Box::new(Message::Assistant(AssistantMessage {
+            id: "m1".into(),
+            timestamp_ms: 0,
+            provider: "faux".into(),
+            model_id: "faux-1".into(),
+            content: vec![epsilon_contracts::content::ContentBlock::ToolCall {
+                id: "c1".into(),
+                name: "bash".into(),
+                arguments: serde_json::json!({ "command": "echo hi" }),
+            }],
+            stop_reason: StopReason::ToolUse,
+            error_message: None,
+            usage: Usage::default(),
+        })),
+    });
+    app.ui.apply(&AgentEvent::ToolExecutionEnd {
+        tool_call_id: "c1".into(),
+        tool_name: "bash".into(),
+        is_error: false,
+    });
+
+    let frame = render_rows(&mut app, 80, 24).join("\n");
+    let rows: Vec<&str> = frame.lines().collect();
+    let title = rows
+        .iter()
+        .position(|r| r.contains("bash"))
+        .expect("the title is on screen");
+    assert!(
+        rows[title].starts_with('\\'),
+        "the title keeps the call gutter:\n{frame}"
+    );
+    assert!(
+        rows[title + 1].starts_with('│') || rows[title + 1].starts_with('|'),
+        "the body nests under a continuation gutter:\n{frame}"
+    );
+}

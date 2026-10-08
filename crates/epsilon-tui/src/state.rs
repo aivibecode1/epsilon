@@ -27,6 +27,11 @@ pub enum LineKind {
     /// `push_line`, never by content. Empty text never matches a search,
     /// and the kind keeps it out of every role's styling.
     Blank,
+    /// A tool card's body rows (presentation pass): nested under the title
+    /// with a continuation gutter. Assigned at render, never pushed — lines
+    /// are never this kind, so search, counts and the separation rule never
+    /// see it.
+    CardBody,
 }
 
 use std::collections::BTreeMap;

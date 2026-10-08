@@ -920,17 +920,27 @@ fn a_pending_tool_call_gets_the_pending_band_where_the_terminal_has_one() {
         "the card must carry its gutter marker and its title: {:?}",
         rows[call_row]
     );
-    // Both rows of the card carry its band: the title and the body are one object,
-    // and a band that stopped under the title would read as two.
-    for row in [call_row, call_row + 1] {
-        for x in [0u16, 2, 40, 79] {
-            assert_eq!(
-                cell(&buffer, x, row as u16).style().bg,
-                pending,
-                "column {x} of card row {row} is not on the pending surface: {:?}",
-                cell(&buffer, x, row as u16).style()
-            );
-        }
+    // The title carries the card's band; the body nests under a
+    // continuation gutter instead. This used to assert both rows banded
+    // ("a band that stopped under the title would read as two") — written
+    // before bodies had any gutter of their own, when the band was the only
+    // thing joining them. The continuation now does that joining, so the
+    // band marks state (on the title) rather than painting the whole card.
+    for x in [0u16, 2, 40, 79] {
+        assert_eq!(
+            cell(&buffer, x, call_row as u16).style().bg,
+            pending,
+            "column {x} of the title row is not on the pending surface: {:?}",
+            cell(&buffer, x, call_row as u16).style()
+        );
+    }
+    for x in [0u16, 2, 40, 79] {
+        assert_eq!(
+            cell(&buffer, x, (call_row + 1) as u16).style().bg,
+            Some(ratatui::style::Color::Reset),
+            "column {x} of the body row must not carry the band: {:?}",
+            cell(&buffer, x, (call_row + 1) as u16).style()
+        );
     }
     // Bands belong to the rows that carry them: the blank row below the card is
     // not painted as part of it.
@@ -1990,8 +2000,9 @@ fn the_diff_is_not_run_through_the_markdown_parser() {
     let rows = render_rows(&mut app, 80, 24);
     let joined = rows.join("\n");
     // The transcript's exact width is not assumed here: only the rows of *this*
-    // card are examined, and a card's rows are the ones carrying its ✓ gutter —
-    // the welcome screen's bullet is a different role entirely.
+    // card are examined — the title carrying its ✓ gutter and the body rows
+    // nested under the continuation gutter (presentation pass: they no longer
+    // share one). The welcome screen's bullet is a different role entirely.
     //
     // The card's last row is the `… N more lines` affordance, which carries the
     // `•` of a *system* row because that is what a capped card's tail is. So the
@@ -1999,8 +2010,10 @@ fn the_diff_is_not_run_through_the_markdown_parser() {
     let title_row = row_of(&rows, "edit edited a.rs");
     let card = rows[title_row..]
         .iter()
-        .take_while(|r| r.starts_with('✓'))
-        .take_while(|r| !r.contains("more lines"))
+        .take_while(|r| {
+            (r.starts_with('✓') || r.starts_with('│') || r.starts_with('|'))
+                && !r.contains("more lines")
+        })
         .cloned()
         .collect::<Vec<_>>()
         .join("\n");
@@ -2041,9 +2054,11 @@ fn the_diff_is_not_run_through_the_markdown_parser() {
     );
     // And the hunk line is on its own row rather than joined to its neighbour. The
     // card's rows are padded out to the body width, so the comparison trims.
+    // A body row, so the continuation gutter — not the title's ✓.
     assert!(
-        rows[row_of(&rows, "@@ -1,3 +1,3 @@")].starts_with("✓ @@ -1,3 +1,3 @@"),
-        "the hunk header must be its own row, prefixed by the card's gutter: {:?}",
+        rows[row_of(&rows, "@@ -1,3 +1,3 @@")].starts_with("│ @@ -1,3 +1,3 @@")
+            || rows[row_of(&rows, "@@ -1,3 +1,3 @@")].starts_with("| @@ -1,3 +1,3 @@"),
+        "the hunk header must be its own row, prefixed by the continuation gutter: {:?}",
         rows[row_of(&rows, "@@ -1,3 +1,3 @@")]
     );
 }
