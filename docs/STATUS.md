@@ -128,6 +128,7 @@ Rule: a working, verified product beats breadth. Anything cut goes in the
 | (10-08) | 93. **Full-port round 79 — Ctrl+N starts sessions, empty browser teaches it (P-243)** | `app.session.new` (`ctrl+n`, both front ends' gesture) routes through the `/new` head; the empty browser opens (not refuses) on `No sessions … Ctrl+N starts one`, filtered-empty keeps the widen hint. Three tests (file appears, frame message with draw-miss control, refusal rewritten to open). P-243 done (Pi 56 / 149). Battery `port-r79b` (2,244), green on the second attempt (clippy needless-return, preserved). |
 | (10-08) | 94. **Full-port round 80 — truncated cards name the spill file (P-159)** | `result_head` appends `· full output: <path>` from `details.full_output_path` (set only when truncation actually spilled; small outputs carry no key). One unit test (names it; small grows none) with an append-removal control. P-159 done (Pi 57 / 148). Battery `port-r80` (2,245), green first time. |
 | (10-08) | 95. **Full-port round 81 — window tool titles via shared `call_head` (C-120)** | Rows keep call args and title through the terminal's `call_head` (`bash $ …`, `read` path), so both front ends name a call alike; dead `one_line` JSON formatter deleted. Strengthened the session test to the exact title with a bare-name control. C-120 done (DSH 19 / 93). Battery `port-r81b` (2,245), green on the second attempt (a truncation golden caught untruncated long titles — fixed with a cap, preserved). |
+| (10-08) | 96. **Full-port round 82 — tab measures three columns (T-002)** | `cols` measures sanitized text (same expansion the renderer draws), so the function holds standalone; one unit test with a raw-width control. T-002 done, E-017 note and P-155 cite updated (tab half pinned, ANSI/chunk stays open). Pi now 58 / 112. Battery `port-r82` (2,246), green first time. |
 
 > **A machine fault worth naming, because it nearly made me "fix" working code.** Restoring a
 > file from a `Copy-Item` backup preserved its **old timestamp**, so `cargo` decided nothing had
@@ -219,7 +220,7 @@ inventories are inventories.
 
 | Matrix | Rows | done | partial | missing | deliberately different |
 |---|---|---|---|---|---|
-| [`parity/pi-tui.md`](parity/pi-tui.md) | **339** | 57 | 113 | 148 | 21 |
+| [`parity/pi-tui.md`](parity/pi-tui.md) | **339** | 58 | 112 | 148 | 21 |
 | [`parity/dsh-desktop.md`](parity/dsh-desktop.md) | **433** | 19 | 93 | 279 | 42 |
 
 > **Corrected 2026-10-06 by [an independent review](reviews/2026-10-06-objective-review.md).** The
@@ -275,14 +276,11 @@ instead of newlining, and the sessions sidebar being a keyboard trap. What remai
 
 ## Verification (what is actually true)
 
-**Latest green battery: [`gate-port-r81b-2026-10-08.txt`](../audit/evidence/gate-port-r81b-2026-10-08.txt),
+**Latest green battery: [`gate-port-r82-2026-10-08.txt`](../audit/evidence/gate-port-r82-2026-10-08.txt),
 2026-10-08 — the tree this file describes.** Thirteen legs, all `[exit=0]`, `GATE PASS`.
-**2,245 passed / 0 failed / 13 ignored across 78 binaries**, summed from that one log's
-`test result:` lines — same as `gate-port-r80`: a strengthened test, no new count.
-The first attempt failed on a truncation golden (long titles untruncated);
-preserved as
-[`gate-port-r81-attempt1-FAILED-2026-10-08.txt`](../audit/evidence/gate-port-r81-attempt1-FAILED-2026-10-08.txt),
-fixed with the same 160-cell cap and marker.
+**2,246 passed / 0 failed / 13 ignored across 78 binaries**, summed from that one log's
+`test result:` lines — one more than `gate-port-r81b`: the tab-measure test.
+`CARGO_PROFILE_TEST_DEBUG=1` set preemptively (LNK1104 pattern); no fault.
 (`cargo fmt --check` ran before launching.) The first `port-r55` attempt failed its test leg
 on an integration test driving `/timeline` as refused; preserved as
 [`gate-port-r55-attempt1-FAILED-2026-10-07.txt`](../audit/evidence/gate-port-r55-attempt1-FAILED-2026-10-07.txt).

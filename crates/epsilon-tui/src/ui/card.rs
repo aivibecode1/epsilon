@@ -805,9 +805,15 @@ pub fn cut(text: &str, width: usize) -> String {
 }
 
 /// Display columns, never `chars().count()`: `界` is one `char` and two cells.
+///
+/// Measured over sanitized text (T-002): a tab is three columns, not one
+/// `char` and not a tab stop — the same expansion the renderer draws, so a
+/// width computed here can never disagree with what reaches the screen. Every
+/// production caller sanitizes first (so this changes no drawn row); the
+/// function is correct on its own now, not only in context.
 fn cols(text: &str) -> usize {
     use unicode_width::UnicodeWidthStr;
-    text.width()
+    sanitize(text).width()
 }
 #[cfg(test)]
 mod tests {
@@ -908,5 +914,16 @@ mod tests {
         assert_eq!(super::sanitize("\tindented"), "   indented");
         assert_eq!(super::sanitize("a\tb"), "a   b");
         assert_eq!(super::sanitize("no tabs"), "no tabs");
+    }
+
+    /// A tab measures as three columns (T-002), not one char and not a stop.
+    ///
+    /// `cols` measures sanitized text, so this holds with or without a prior
+    /// `sanitize` call — the function cannot disagree with the renderer.
+    #[test]
+    fn a_tab_measures_three_columns() {
+        assert_eq!(super::cols("\t"), 3);
+        assert_eq!(super::cols("\ta"), 4);
+        assert_eq!(super::cols("ab"), 2);
     }
 }
