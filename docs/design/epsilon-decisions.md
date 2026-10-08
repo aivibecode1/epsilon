@@ -2722,3 +2722,90 @@ below the palette guard and running the same `run_new_session` / `run_fork_sessi
 and `/fork` heads run. Nothing about the mechanism changed — same tables, same `take`, same
 `keybindings.json` — which is the point the amendment records: the first real users of the
 machinery arrived through the front door, driven by real key events in tests.
+
+---
+
+## ADR-032: Permission presets are named rulesets, and privilege-raising ones confirm
+
+**Status:** accepted (design; full-port round 66). Implements plan 025 §C gap 2;
+answers D-080–D-082, I-121, I-131.
+
+**Problem.** Policy today is launch-shaped: plan mode denies mutating
+capabilities outright, otherwise the defaults plus the project `[[rules]]`
+layer decide, and every side-effecting call outside them parks an approval
+ask. There is no named posture a reader can choose — no "work freely in this
+folder", no "read but do not touch", and no "stop asking me" with its eyes
+open. DSH has four such names (`read-only`, `workspace-write`,
+`danger-full-access`, `auto`), and only the two privilege-raising ones gate
+behind a risk confirmation. Pi has no equivalent (per-tool asks plus
+allowlists), so this is port-plus-invention: the names from DSH, the mapping
+onto this engine's own.
+
+**Decision.** Presets are constructors, not configuration: four functions on
+`epsilon-safety` returning `Ruleset`s, selected in one place (`resolve_launch`
+reads it; the front ends offer to change it mid-session through the same
+approval surfaces they already draw).
+
+- `read-only`: deny every side-effecting capability, allow reads. The floor.
+- `workspace-write`: allow reads and writes under the workspace root; asks
+  outside it. The working default for a reader who trusts the folder.
+- `danger-full-access`: allow everything. **Risk-gated** (below): choosing it
+  is the privilege-raising act, and it cannot be taken by a reflexive Enter.
+- `auto`: the current posture under a name — defaults plus project rules,
+  asks where they ask. (DSH's is experimental session review; ours names what
+  the product already does, so a reader can return to it deliberately rather
+  than by forgetting what they changed.)
+
+Project and user deny rules layer **above** every preset and win: deny is
+monotonic (`AGENTS.md` §6), and a preset is a bundle of allows, not a pardon.
+`danger-full-access` therefore means "allow what nothing forbids", never
+"forbid nothing". The plan-mode denial (mutating capabilities denied
+outright) is unchanged — it is a mode, not a preset, and it composes under
+them.
+
+**The risk confirmation is a shared behavior, not a shared widget.** Both
+front ends implement the same contract (D-081, D-082, and the I-121/I-131
+pattern: a destructive or privilege-raising act that cannot be taken
+reflexively):
+
+1. The safe choice is the default: Cancel focused first, never Confirm.
+2. Confirm is disabled until an acknowledgement checkbox is ticked.
+3. Cancelling resets the acknowledgement (a reopened dialog starts unticked).
+4. The two-press variant (I-131) satisfies the same contract where a checkbox
+   does not fit: first press arms, second within 3,000 ms fires, anything
+   else disarms.
+
+The terminal draws it as a composer gate (typed `yes`, like the trust and
+import gates — no overlay to focus); the window draws it as a dialog (real
+checkbox widget, initial focus on the checkbox per D-081, because a dialog
+whose first Tab reaches Confirm is a reflexive Enter with extra steps). Same
+contract, honest to each medium — the ADR-029 principle, not a ported pixel.
+
+Switching presets mid-session takes effect on the **next** evaluation, never
+retroactively: an ask already parked keeps the policy that raised it (fail
+closed beats seamless). The switch itself to `danger-full-access` or `auto`
+is what confirms; switching *down* (to `read-only` or `workspace-write`)
+submits immediately (D-080: only the raising direction gates).
+
+### Alternatives rejected
+
+- **Presets as config-file data.** Rejected: a preset is a semantic bundle
+  ("nothing outside this folder without asking"), and data cannot express
+  "under the workspace root" without a template language. Constructors read
+  the launch they are given; config names them.
+- **One risk dialog component shared by both front ends.** Rejected: the
+  terminal has no focus to move and no checkbox to tick — a shared widget
+  would be a window widget with a terminal shim. The contract is shared; the
+  drawings are native to each front end.
+- **Port DSH's preset list verbatim, including `auto` as session review.**
+  Rejected: there is no reviewer to automate to here, and a name that
+  promises review without one is a lie. `auto` names the current posture
+  instead.
+
+### Phases (tracked in plan 025 §C)
+
+1. Engine: the four constructors plus selection in `resolve_launch`.
+2. Terminal: preset picker surface plus the composer-gate confirmation.
+3. Window: preset surface plus the dialog confirmation.
+4. Matrix: D-080–D-082, I-121, I-131 move with frame-level tests and the
+   standard controls.

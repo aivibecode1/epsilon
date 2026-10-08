@@ -113,6 +113,7 @@ Rule: a working, verified product beats breadth. Anything cut goes in the
 | (10-07) | 78. **Full-port round 63 — the New Session button shows its chord** | Dimmed trailing chord text beside the label (always-visible rather than hover/focus-conditional — same information, no state), plus a frame record for what the button draws. Extended the chord test with a draw+record removal control. L-114 done (DSH 17 / 92). Battery `port-r63` (2,215), green first time. |
 | (10-07) | 79. **Full-port round 64 — `/export` inference pinned** | Bare/default, `json`, and `.jsonl`-suffix paths all reached their writers and their words — the cited test never existed under that name (writers were pinned as `export_command_writes_html_and_json`). Two tests with a dir-mutation control. P-078 done (Pi 49 / 118). Battery `port-r64` (2,217), green first time. |
 | (10-08) | 80. **Full-port round 65 — the owner answered: scope (b), empty (i), preview now, presets next** | Plan 025 §1 stood unanswered for 65 rounds; now (b) under the native invariant (every portable DSH surface in scope, Electron chrome permanently missing, rescoped row by row). Empty-window (i) pinned by `an_empty_window_says_so_and_still_asks`. Release vehicle is cargo-install notes; next focus is permission presets. Recorded in plan 025 §1 + proposals 12/13/14. No product change: battery `port-r65` (2,217), green first time. |
+| (10-08) | 81. **Full-port round 66 — permission presets designed (ADR-032)** | Four named rulesets (`read-only`, `workspace-write`, `danger-full-access`, `auto`) with project/user denies layered above and winning; risk confirmation as a shared behavior (safe-default, disabled-until-acknowledged, reset-on-cancel, two-press variant), drawn natively per front end. Phased: engine → terminal → window → matrix. Design only: battery `port-r66` (2,217), green first time. |
 
 > **A machine fault worth naming, because it nearly made me "fix" working code.** Restoring a
 > file from a `Copy-Item` backup preserved its **old timestamp**, so `cargo` decided nothing had
@@ -260,10 +261,10 @@ instead of newlining, and the sessions sidebar being a keyboard trap. What remai
 
 ## Verification (what is actually true)
 
-**Latest green battery: [`gate-port-r65-2026-10-07.txt`](../audit/evidence/gate-port-r65-2026-10-07.txt),
+**Latest green battery: [`gate-port-r66-2026-10-07.txt`](../audit/evidence/gate-port-r66-2026-10-07.txt),
 2026-10-07 — the tree this file describes.** Thirteen legs, all `[exit=0]`, `GATE PASS`.
 **2,217 passed / 0 failed / 13 ignored across 78 binaries**, summed from that one log's
-`test result:` lines — same as `gate-port-r64`: a steering round with no product change.
+`test result:` lines — same as `gate-port-r65`: a design round with no product change.
 (`cargo fmt --check` ran before launching.) The first `port-r55` attempt failed its test leg
 on an integration test driving `/timeline` as refused; preserved as
 [`gate-port-r55-attempt1-FAILED-2026-10-07.txt`](../audit/evidence/gate-port-r55-attempt1-FAILED-2026-10-07.txt).
