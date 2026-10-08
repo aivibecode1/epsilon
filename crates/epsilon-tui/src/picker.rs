@@ -154,6 +154,30 @@ pub fn build_rows_with(
     let mut rows: Vec<PickerRow> = Vec::new();
     let mut seen: Vec<String> = Vec::new();
 
+    // P-250: pi's `/model` selector searches a **provider-first** haystack and
+    // states the reason in its own doc comment — *"keep the bare model ID out of
+    // the leading position"* so a provider-prefixed query ranks above proxy ids
+    // like `openrouter/openai/gpt-5`
+    // (`references/pi-1.0.0/packages/coding-agent/src/modes/interactive/model-search.ts:13-21`).
+    // Its scoped overlay uses the opposite order deliberately (`:7-11`), which is
+    // why the reference has two functions; Epsilon has one picker over one
+    // haystack, so it takes the selector's order.
+    //
+    // The defect this fixes was measured, not reasoned: with an id-first haystack
+    // the query `openai` ranks `groq`'s `openai/gpt-oss-120b` above every OpenAI
+    // row, because a proxy provider names its upstream **inside its id**. The
+    // reader asked about a provider and was shown another one's models first.
+    //
+    // Each term appears once, and that is a measured constraint rather than a
+    // preference: a longer haystack gives fuzzy subsequence matching more
+    // subsequences to find, so repeating a term widens what a miss test matches.
+    let hay = |info: &epsilon_llm::ModelInfo| {
+        format!(
+            "{} {}/{} {} {}",
+            info.provider, info.provider, info.id, info.id, info.label
+        )
+    };
+
     let push_unique = |row: PickerRow, rows: &mut Vec<PickerRow>, seen: &mut Vec<String>| {
         if !seen.iter().any(|id| id.eq_ignore_ascii_case(&row.id)) {
             seen.push(row.id.clone());
@@ -163,7 +187,7 @@ pub fn build_rows_with(
 
     // Active model floats to top so it is always reachable/visible.
     if let Some(info) = catalog::lookup_model(current)
-        && total_score(&format!("{} {} {}", info.id, info.label, info.provider)).is_some()
+        && total_score(&hay(info)).is_some()
     {
         push_unique(row_from_info(info), &mut rows, &mut seen);
     }
@@ -241,8 +265,7 @@ pub fn build_rows_with(
     {
         let mut cat_cands: Vec<(i64, PickerRow)> = Vec::new();
         for info in catalog::curated() {
-            if let Some(sc) = total_score(&format!("{} {} {}", info.id, info.label, info.provider))
-            {
+            if let Some(sc) = total_score(&hay(info)) {
                 let mut row = row_from_info(info);
                 row.is_favorite = favorites.iter().any(|f| f.eq_ignore_ascii_case(&row.id));
                 row.is_default = default.is_some_and(|d| d.eq_ignore_ascii_case(&row.id));
@@ -518,7 +541,15 @@ pub fn build_models_for_provider(
     };
     let mut scored: Vec<(i64, PickerRow)> = Vec::new();
     for info in catalog::curated().iter().filter(|i| i.provider == provider) {
-        let hay = format!("{} {}", info.id, info.label);
+        // P-250: provider-first, as in `build_rows` — and here it matters twice
+        // over, because this haystack used to be `id label` with the provider
+        // missing entirely, so filtering stage 2 on its own provider's name
+        // matched nothing and drew "no matches — Backspace to widen". Each term
+        // once, for the reason `build_rows`'s `hay` gives.
+        let hay = format!(
+            "{} {}/{} {} {}",
+            info.provider, info.provider, info.id, info.id, info.label
+        );
         if let Some(sc) = score_hay(&hay) {
             scored.push((sc, row_from_info(info)));
         }
@@ -995,6 +1026,54 @@ mod tests {
         );
     }
 
+    /// A provider-name query ranks that provider's own models first (P-250).
+    ///
+    /// Pi's `/model` selector searches a **provider-first** haystack and says why
+    /// in its own doc comment: *"keep the bare model ID out of the leading
+    /// position"* so that a provider-prefixed query ranks above proxy ids like
+    /// `openrouter/openai/gpt-5`
+    /// (`references/pi-1.0.0/packages/coding-agent/src/modes/interactive/model-search.ts:13-21`).
+    /// Its scoped overlay deliberately uses the opposite order, id first
+    /// (`:7-11`), which is why the reference has two functions and Epsilon picks
+    /// the selector's.
+    ///
+    /// RED before the fix, and printed verbatim: `got openai/gpt-oss-120b`,
+    /// `left: "groq"`, `right: "openai"` — a proxy provider naming its upstream
+    /// inside its own id outranked the provider being asked about.
+    #[test]
+    fn a_provider_query_ranks_that_providers_own_models_first() {
+        let rows = build_rows("openai", "", &[], &[]);
+        let top = rows
+            .iter()
+            .find(|r| !r.is_custom)
+            .expect("a non-guidance row matches");
+        assert_eq!(
+            top.provider, "openai",
+            "a provider-name query must rank that provider's own rows first, got {}",
+            top.id
+        );
+    }
+
+    /// Stage 2 answers its own provider's name (P-250's sharper half).
+    ///
+    /// The stage-2 haystack was `id label` with the provider **absent**, so
+    /// typing a provider's own name into stage 2 matched nothing at all and drew
+    /// the widen hint. Descending into `groq` and typing `groq` must list groq's
+    /// models.
+    #[test]
+    fn stage_two_answers_its_own_providers_name() {
+        let rows = build_models_for_provider("groq", "groq", "", &[], None, &[], &[]);
+        assert!(
+            !rows.is_empty(),
+            "filtering on the provider's own name must list its models"
+        );
+        assert!(
+            rows.iter().all(|r| r.provider == "groq"),
+            "and nothing else's: {:?}",
+            rows.iter().map(|r| r.provider.clone()).collect::<Vec<_>>()
+        );
+    }
+
     #[test]
     fn live_rows_surface_only_unknown_ids_under_their_own_group() {
         let rows = build_rows(
@@ -1130,11 +1209,19 @@ mod tests {
             s2.iter().any(|r| r.id == "deepseek-v4-pro"),
             "stage2 multi-token must find deepseek-v4-pro"
         );
-        // Non-matching second token must NOT match
-        let miss = build_rows("deep zzz-nope", "", &[], &[]);
+        // Non-matching second token must NOT match. The token is `qzx` rather
+        // than a hyphenated word because fuzzy subsequence matching is exactly
+        // that — *subsequence*, not substring: `zzz-nope` is a subsequence of
+        // `amazon-bedrock/…nova-premier…`, so with a longer haystack it
+        // legitimately matches and the old "miss" premise quietly became false.
+        // A three-letter cluster found in no catalog id, label or provider is
+        // the honest form of this assertion; it is the same property, stated so
+        // it stays true as the haystack changes.
+        let miss = build_rows("deep qzx", "", &[], &[]);
         assert!(
             miss.iter().all(|r| r.is_custom),
-            "second token miss must yield only custom row"
+            "second token miss must yield only custom row: {:?}",
+            miss.iter().map(|r| r.id.clone()).collect::<Vec<_>>()
         );
     }
 

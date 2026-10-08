@@ -137,6 +137,7 @@ Rule: a working, verified product beats breadth. Anything cut goes in the
 | (10-08) | 102. **Full-port round 88 — `!` announces bash mode in the footer (P-022)** | No border to recolour by design (rule, not box), so the mode word is the signal: `bash` while the draft starts with `!` (`idle_at_with_mode`), `insert` otherwise; thinking level already rides the status mirror. One frame test (real key path; always-insert control). P-022 done (Pi 61 / 110). Committed without a full battery: the tree holds another round's uncommitted P-158/delete work (fmt leg red on those files, one of their warnings); focused test + clippy + read-only gates green on this slice. |
 | (10-08) | 103. **Full-port round 89 — a failed card names its exit code (P-158), and the reason/answer gap** | Two slices, both landed in the tree that already carried round 88 (see the note above — the `port-r88` battery covers both). **P-158's number half:** `details.exit_code` now rides the headline (`$ cargo test · exit 101`), the fact the shell tool already reported and the twelve-row cap was hiding — RED first, negative control run on both halves (the frame prints the title without the code), zero and absent codes controlled. The `(cancelled)` half stays honestly open: no `CardStatus` names a cancellation. **Round 72's rule, one level in:** `draw_transcript` built both tails in one pass, so a reasoning row sat directly above the answer row for the whole text-streaming phase and the one transition a reader watches had no marker; a blank now separates them at draw time, and `streaming_tail_rows` — the hand-copy that counts them for the footer badge — was corrected with it so the badge and the body agree. Battery `port-r88` (2,256), green. |
 | (10-08) | 105. **Full-port round 90 — the `todo` card settles instead of doubling (P-050's one hole)** | The top item from last round's queue, and it was worth taking first: `todo` is a built-in the model is told to reach for on any 3+ step task, and its result arm returned *before* the in-place settle every other tool goes through, so **every multi-step turn** drew `▸ todo · pending` directly above `✓ todo …` — a pending row that never retires, a raw JSON dump for a body, and a checklist that carried neither the continuation gutter nor the `… N more lines (ctrl+x to open)` affordance because it was an expandable, not a card. The checklist is now the card body and the settle path supplies the rest. One decision came out of it: the headline **counts** (`(1/3 done)`) and names no items, because a title that repeats its own body is the M153 defect in miniature — and the tool's name is left off too, since `card::title` prints it ahead of the headline. Negative control run by restoring the old early return: three tests fail, the frame test naming *"one row names todo — a second is the double-draw"*. |
+| (10-08) | 106. **Full-port round 91 — the picker answers a provider's name (P-250)** | The queue's #4, and the RED was the starkest finding of the five investigations: the query `openai` ranked **`groq`'s `openai/gpt-oss-120b`** above every OpenAI row, because a proxy provider names its upstream *inside its id* and the haystack put the id first. Worse, stage 2's haystack was `id label` with the provider **absent entirely**, so descending into `groq` and typing `groq` drew *no matches — Backspace to widen*. One provider-first haystack, three sites, Pi's selector order (`model-search.ts:17-21`, whose doc comment names this exact defect); the scoped overlay's opposite order is recorded as deliberately not built — one picker, one order. **Two things this round cost that are worth more than the change:** a longer haystack gives fuzzy subsequence matching more subsequences to find, so a `zzz-nope` "miss" test that had passed for months went red (it is a subsequence of `…nova-premier…`); the test was restated with a genuinely unmatchable token rather than left passing by luck. And restoring the defect with `git checkout` **destroyed the uncommitted work** — the negative control must be run on a copy, never on the tree. |
 | (10-08) | 104. **A fifth read-only sweep — and the four ranked findings it produced** | Four investigators ran against the matrix while the round-88 battery ran: session deletion (P-237), the model picker (P-250/P-260), the transcript filter cycle (P-294), the tool cards (§12/§13, 27 rows ranked), and the transcript's presentation. They are recorded in the next-round note below rather than acted on — two of them were verified against the vendored reference by hand before being believed. One of their own "missing" rows (`P-153`'s "nothing marks the card") turned out to be **stale twice over**, which is the scoreboard earning its keep. |
 
 > **A machine fault worth naming, because it nearly made me "fix" working code.** Restoring a
@@ -229,7 +230,7 @@ inventories are inventories.
 
 | Matrix | Rows | done | partial | missing | deliberately different |
 |---|---|---|---|---|---|
-| [`parity/pi-tui.md`](parity/pi-tui.md) | **339** | 61 | 110 | 145 | 23 |
+| [`parity/pi-tui.md`](parity/pi-tui.md) | **339** | 61 | 111 | 144 | 23 |
 | [`parity/dsh-desktop.md`](parity/dsh-desktop.md) | **433** | 20 | 92 | 279 | 42 |
 
 > **Corrected 2026-10-06 by [an independent review](reviews/2026-10-06-objective-review.md).** The
@@ -285,14 +286,14 @@ instead of newlining, and the sessions sidebar being a keyboard trap. What remai
 
 ## Verification (what is actually true)
 
-**Latest green battery: [`gate-port-r89-2026-10-08.txt`](../audit/evidence/gate-port-r89-2026-10-08.txt),
+**Latest green battery: [`gate-port-r90-2026-10-08.txt`](../audit/evidence/gate-port-r90-2026-10-08.txt),
 2026-10-08 — the tree this file describes, and it is the one HEAD holds.** Thirteen legs, all
-`[exit=0]`, `GATE PASS`. **2,256 passed / 0 failed / 13 ignored across 78 binaries**, summed from
-that one log's `test result:` lines — identical to `gate-port-r88`, which is the point: that run
-validated this tree *plus* another session's commit, and this one confirms the committed tree on
-its own. `CARGO_PROFILE_TEST_DEBUG=1` set preemptively (LNK1104 pattern); no fault.
-(`cargo fmt --check` ran before launching.) The first `port-r55` attempt failed its test leg
-on an integration test driving `/timeline` as refused; preserved as
+`[exit=0]`, `GATE PASS`. **2,257 passed / 0 failed / 13 ignored across 78 binaries**, summed from
+that one log's `test result:` lines — one more than `gate-port-r89`: the rewritten
+`todo_results_render_as_a_checklist_card_body` (the other two new tests replaced assertions inside
+tests that already existed, so the net is one). `CARGO_PROFILE_TEST_DEBUG=1` set preemptively
+(LNK1104 pattern); no fault. (`cargo fmt --check` ran before launching.) The first `port-r55`
+attempt failed its test leg on an integration test driving `/timeline` as refused; preserved as
 [`gate-port-r55-attempt1-FAILED-2026-10-07.txt`](../audit/evidence/gate-port-r55-attempt1-FAILED-2026-10-07.txt).
 
 > **Two writers, one repository, again — and this time the battery had to cover both.** While
