@@ -287,10 +287,10 @@ instead of newlining, and the sessions sidebar being a keyboard trap. What remai
 
 ## Verification (what is actually true)
 
-**Latest green battery: [`gate-port-r91-2026-10-08.txt`](../audit/evidence/gate-port-r91-2026-10-08.txt),
+**Latest green battery: [`gate-port-r92-2026-10-08.txt`](../audit/evidence/gate-port-r92-2026-10-08.txt),
 2026-10-08 — the tree this file describes, and it is the one HEAD holds.** Thirteen legs, all
-`[exit=0]`, `GATE PASS`. **2,259 passed / 0 failed / 13 ignored across 78 binaries**, summed from
-that one log's `test result:` lines — two more than `gate-port-r90`: the two picker tests.
+`[exit=0]`, `GATE PASS`. **2,261 passed / 0 failed / 13 ignored across 78 binaries**, summed from
+that one log's `test result:` lines — two more than `gate-port-r91`: the two cap tests.
 `CARGO_PROFILE_TEST_DEBUG=1` set preemptively (LNK1104 pattern); no fault.
 (`cargo fmt --check` ran before launching.) The first `port-r55` attempt failed its test leg
 on an integration test driving `/timeline` as refused; preserved as
