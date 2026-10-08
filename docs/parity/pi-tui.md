@@ -88,8 +88,8 @@ this document**, tallied from its own tables — not a projection.
 | 15. Markdown, mermaid and truncation | 22 | 5 | 8 | 9 | 0 |
 | 16. Status indicators | 13 | 2 | 5 | 5 | 1 |
 | 17. Footer | 12 | 3 | 4 | 3 | 2 |
-| 18. Selector and overlay components | 79 | 8 | 24 | 41 | 6 |
-| **Total** | **339** | **52** | **115** | **151** | **21** |
+| 18. Selector and overlay components | 79 | 9 | 23 | 41 | 6 |
+| **Total** | **339** | **53** | **114** | **151** | **21** |
 
 A further **17 rows are not in the counts above**: the 10 `Y-###` rows Pi ships outside its interactive mode (out of
 scope by design) and the 7 `AA-###` rows recording what was never inventoried. Both are listed in full near the end
@@ -680,7 +680,7 @@ the per-selector ones.
 | P-250 | The model selector ranks over `provider provider/id provider id name`; the scoped selector uses the opposite order, id first | `packages/coding-agent/src/modes/interactive/model-search.ts:17`, `:7-11`, `packages/coding-agent/src/modes/interactive/components/scoped-models-selector.ts:222` | missing | none — Epsilon has one picker over one haystack (`crates/epsilon-tui/src/picker.rs:1083`) | — |
 | P-251 | Typing any prefix of `default` moves all default models to the top — even a single `d` | `packages/coding-agent/src/modes/interactive/components/model-selector.ts:262`, `:285` | missing | none | — |
 | P-252 | Entering a query resets the selection to row 0 so the best match is highlighted | `packages/coding-agent/src/modes/interactive/components/model-selector.ts:301` | done | `crates/epsilon-tui/src/app/keys.rs:1325` — a printable character filters and the highlight resets | `typing_a_query_resets_the_picker_selection_to_row_zero` (descends, moves to row 1, types `x`, asserts row 0 with the filter kept; negative control run — without the reset it fails `left: 1, right: 0`) |
-| P-253 | The selector paints the cached snapshot immediately, refreshes behind it, and reports success, timeout or per-provider failure | `packages/coding-agent/src/modes/interactive/components/model-selector.ts:154`, `:185`, `:196`, `:216` | partial | `crates/epsilon-tui/src/app/keys.rs:1431` — opening starts a **silent** live listing fetch and `Ctrl+G` forces a refresh (`crates/epsilon-tui/src/app/keys.rs:1320`); there is no outcome line | `a_panel_row_is_stripped_before_it_is_drawn` (frame) — E-045 records that `Ctrl+G` is never pressed by any test |
+| P-253 | The selector paints the cached snapshot immediately, refreshes behind it, and reports success, timeout or per-provider failure | `packages/coding-agent/src/modes/interactive/components/model-selector.ts:154`, `:185`, `:196`, `:216` | done | `crates/epsilon-tui/src/app.rs` — opening starts the silent fetch over the bundled snapshot; `record_live_result` merges and reports (`live listing: N models merged`, `live listing failed: …`), surfaced by the event loop; `Ctrl+G` forces with its own notices (no fetcher, no endpoint, no key all named) | `ctrl_g_reports_unavailable_without_the_real_feature` (real key path; notice-mutation control), `finished_refresh_reports_success_and_failure` (merge + report, both halves; notice-mutation control) |
 | P-254 | Enter applies to the session, `Ctrl+S` applies **and** writes settings, Esc cancels and aborts the refresh | `packages/coding-agent/src/modes/interactive/components/model-selector.ts:399`, `:387`, `:394`, `:137` | done | `crates/epsilon-tui/src/app/keys.rs` — `app.model.saveDefault` (`ctrl+s`, rebindable) saves the highlighted stage-2 row via `save_model_id_in` (override dir in tests, global in production) and refreshes memory; Enter applies, Esc cancels (unchanged) | `ctrl_s_in_the_picker_saves_the_default` (real key path, file + memory; binding-miss control). Window Ctrl+S deferred (no picker save surface yet) |
 | P-255 | The scoped-models overlay says `Session-only. Ctrl+S to save to settings.` and applies every edit immediately | `packages/coding-agent/src/modes/interactive/components/scoped-models-selector.ts:137`, `:86-89` | missing | none | — |
 | P-256 | Enter toggles a model and "all enabled" materialises into an explicit list on the first toggle | `packages/coding-agent/src/modes/interactive/components/scoped-models-selector.ts:320`, `:30`, `:26` | missing | none | — |
@@ -779,8 +779,8 @@ row says so — that is a gap in the inventory, and closing it is cheap.
 | 15. Markdown, mermaid and truncation | 22 | 5 | 8 | 9 | 0 |
 | 16. Status indicators | 13 | 2 | 5 | 5 | 1 |
 | 17. Footer | 12 | 3 | 4 | 3 | 2 |
-| 18. Selector and overlay components | 79 | 8 | 24 | 41 | 6 |
-| **Total** | **339** | **52** | **115** | **151** | **21** |
+| 18. Selector and overlay components | 79 | 9 | 23 | 41 | 6 |
+| **Total** | **339** | **53** | **114** | **151** | **21** |
 
 ### The `missing` rows — 161
 
@@ -829,7 +829,7 @@ An `E-` row covers these and something is not finished. The reason column is the
 | Markdown, mermaid and truncation (8) | P-176, T-002, T-003, T-004, T-005, T-006, T-008, T-011 | hint placement has no keep-last mode; tab width matches with no test; stripping established at two boundaries, not one central measure; hyperlink/reset closing held by a different mechanism with a re-measure backstop; span-dropping, not column slicing; style is per-`Span`, so no reset ladder; row caching, but no ASCII fast path or bounded width cache; CJK as a word character unestablished for completion |
 | Status indicators (5) | P-018, P-186, P-188, P-189, P-190 | a drawn spinner rather than the terminal's progress state; one run-state slot rather than four kinds; whole-gauge dropping rather than a four-step border ladder; a retry notice and elapsed seconds rather than a cancelable countdown; one compaction wording rather than three |
 | Footer (4) | P-200, P-203, P-205, P-206 | no `~` substitution and no `• session-name` segment; no routed-model `→ id`; the footer's own recompute trigger unestablished; the no-spawn `.git/HEAD` read unestablished |
-| Selector and overlay components (24) | P-226, P-228, P-231, P-233, P-236, P-238, P-241, P-246, P-247, P-253, P-282, P-288, P-291, P-292, P-293, P-295, P-299, P-301, P-302, P-303, P-305, P-309, P-313, P-315 | per-overlay focus targets; no overlay-scoped id space; fixed sort, path always shown, current session marked not protected, rename outside the picker, no phrase/regex search, no message count, no pre-filled picker, no refresh outcome line, no resource overlay, capacity derived, per-tool entry detail, active-path marker, five filter modes, no `n/total`, one-stage Esc in the tree, no fold glyph, wrap not clip, ordering guarantee unestablished, tree drop rules unestablished, no tree-specific key list, no provider-selector empty state, provider badges in this window's visual language rather than Pi's literals |
+| Selector and overlay components (23) | P-226, P-228, P-231, P-233, P-236, P-238, P-241, P-246, P-247, P-282, P-288, P-291, P-292, P-293, P-295, P-299, P-301, P-302, P-303, P-305, P-309, P-313, P-315 | per-overlay focus targets; no overlay-scoped id space; fixed sort, path always shown, current session marked not protected, rename outside the picker, no phrase/regex search, no message count, no pre-filled picker, no resource overlay, capacity derived, per-tool entry detail, active-path marker, five filter modes, no `n/total`, one-stage Esc in the tree, no fold glyph, wrap not clip, ordering guarantee unestablished, tree drop rules unestablished, no tree-specific key list, no provider-selector empty state, provider badges in this window's visual language rather than Pi's literals |
 
 ### Four gaps that are not about features at all
 

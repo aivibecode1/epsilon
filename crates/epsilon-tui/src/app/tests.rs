@@ -6871,3 +6871,50 @@ fn ctrl_s_in_the_picker_saves_the_default() {
         "and memory must follow the file"
     );
 }
+
+/// Ctrl+G is pressed and answers honestly without the `real` feature.
+///
+/// E-045 recorded that no test pressed it. Without a fetcher there is
+/// nothing to refresh; the key must say so rather than silently do nothing.
+/// Notices travel the channel (not `ui.lines`), drained synchronously — the
+/// send happens inside the key handler, before it returns.
+#[test]
+fn ctrl_g_reports_unavailable_without_the_real_feature() {
+    let (mut app, agent, (_frx, mut nrx)) = test_app();
+    app.picker_open = true;
+    handle_key(&mut app, &agent, ctrl(KeyCode::Char('g')));
+    let said: Vec<_> = std::iter::from_fn(|| nrx.try_recv().ok()).collect();
+    assert!(
+        said.iter()
+            .any(|l| l.contains("built without --features real")),
+        "must name the missing build, not go silent: {said:?}"
+    );
+}
+
+/// A finished refresh reports its outcome (P-253).
+///
+/// Success merges ids into the cache and says how many; failure names the
+/// error. Driven directly (the channel end belongs to the event loop), both
+/// halves asserted — a merge without a report, or a report without a merge,
+/// fails.
+#[test]
+fn finished_refresh_reports_success_and_failure() {
+    let (mut app, _agent, _rx) = test_app();
+    let said = app.record_live_result("deepseek".to_string(), Ok(vec!["deepseek-new".to_string()]));
+    assert!(
+        said.is_some_and(|s| s.contains("1 models merged")),
+        "success must report the count"
+    );
+    assert!(
+        app.live_cache
+            .iter()
+            .any(|(p, ids)| p == "deepseek" && ids.contains(&"deepseek-new".to_string())),
+        "and merge the ids"
+    );
+
+    let said = app.record_live_result("deepseek".to_string(), Err("timeout".to_string()));
+    assert!(
+        said.is_some_and(|s| s.contains("live listing failed") && s.contains("timeout")),
+        "failure must name the error"
+    );
+}
