@@ -17,7 +17,7 @@ nothing in the workspace reads it.
 | [`install.md`](install.md) | install Epsilon, give it a model, verify the loop works offline |
 | [`configuration.md`](configuration.md) | configure models, custom providers, client ids, editors, keybindings |
 | [`auth.md`](auth.md) | manage API keys and OAuth subscriptions, fix credential problems |
-| [`permissions.md`](permissions.md) | understand permission rules, sandbox modes, `--plan`, headless behavior |
+| [`permissions.md`](permissions.md) | understand permission rules, presets, sandbox modes, `--plan`, headless behavior |
 | [sessions.md](sessions.md) | resume, fork, export, recover damaged transcripts, leases |
 | [`goals.md`](goals.md) | park one long-running objective, watch it, stop it, understand what it costs |
 | [`extensions.md`](extensions.md) | write or install a helper process that sees or answers tool calls |

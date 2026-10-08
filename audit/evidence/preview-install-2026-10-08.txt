@@ -1,0 +1,63 @@
+# Preview install transcript — 2026-10-08, full-port round 73
+
+Vehicle chosen round 65: preview now, via cargo-install notes (no versioned
+artifacts, no registry publish). This file is the clean-install transcript
+plan 025 §I demands: every command run, what it printed, what it proved.
+
+## Environment
+
+- Machine: Windows x86_64, Rust 1.97.1 (rustup), isolated `--root`
+  `%TEMP%\epsilon-preview` (no touch to `~/.cargo/bin`).
+- Tree: commit `2fdd52c` (round 72 green battery `gate-port-r72b`).
+- Target dir outside the repo (`%TEMP%\epsilon-target`), `CARGO_BUILD_JOBS=1`.
+
+## Commands
+
+```sh
+cargo install --path crates/epsilon-cli --root %TEMP%\epsilon-preview --force
+# Finished release profile in 30m 40s. Installed epsilon.exe (22,009,856 bytes).
+
+cargo install --path crates/epsilon-desktop --root %TEMP%\epsilon-preview --force
+# Finished release profile in 27m 15s. Installed epsilon-desktop.exe.
+
+%TEMP%\epsilon-preview\bin\epsilon.exe --version
+# epsilon 0.1.0
+
+%TEMP%\epsilon-preview\bin\epsilon.exe --help   # (excerpt)
+# epsilon — a coding-agent harness in Rust.
+# MODES: (none) TUI, -p/--print, --tui, --serve, ...
+# --preset NAME shown with all four postures (ADR-032).
+
+%TEMP%\epsilon-preview\bin\epsilon.exe --demo   # in an empty temp dir
+# Offline scripted run, faux provider, three turns, intentional failure
+# handled: "One check failed; here is the summary of what I found."
+# Proves: the installed binary runs the loop with no key and no network.
+
+%TEMP%\epsilon-preview\bin\epsilon.exe doctor   # same temp dir
+# version 0.1.0, target windows x86_64, real providers compiled in.
+# Requested model deepseek-chat resolved to deepseek/deepseek-chat-v3.1
+# (openrouter); credentials MISSING (honest); sandbox backend
+# windows-job-object (available) with stated limits; workspace root correct.
+# Proves: self-diagnosis runs and tells the truth about what's missing.
+```
+
+## Hashes (SHA-256, of the binaries this transcript installed)
+
+- `epsilon.exe`: `4633B0CC2CE5109DA177E4E5641BBE9E110BEF856AB24415F4F7A723C93CA041`
+- `epsilon-desktop.exe`: `C7004014DFEE5A7439A6D8DE11A77D467AF37F3F609624ABB81D2B7CDE871202`
+
+## What was NOT done
+
+- `epsilon-desktop.exe` was installed but not launched: this machine runs
+  headless sessions and launching a GUI window unattended is not something
+  to do to the owner's desktop. Window behavior is covered by the battery's
+  300+ frame-asserted desktop tests (same tree, `gate-port-r72b`).
+- No registry publish, no tag, no remote touch (hygiene rules).
+- macOS/Linux install NOT verified here (install.md already says so).
+
+## Scope (mirrors docs/user/install.md "Preview scope")
+
+Works: agent loop + tools + approvals + checkpoints; 38 slash heads in the
+terminal, 37 in the window (all but `/editor`); shared sessions; permission
+presets with a risk gate up. Missing: most of both parity matrices
+(Pi 50/339, DSH 17/433), screen-reader pass, context menus.

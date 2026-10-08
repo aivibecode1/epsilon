@@ -119,6 +119,7 @@ Rule: a working, verified product beats breadth. Anything cut goes in the
 | (10-08) | 84. **Full-port round 70 — transcript blocks read as blocks (P-136)** | First presentation slice: `push_line` inserts a `Blank` separator (always before tool cards, on kind change otherwise; never first, never twice). Looked at the dumped frame, not only asserted. One test with a rule-removal control; two goldens updated to the new shape. P-136 done (Pi 50 / 117). Battery `port-r70b` (2,231), green on the second attempt (LNK1104 machine fault first, preserved). |
 | (10-08) | 85. **Full-port round 71 — card bodies nest under a continuation gutter** | Second presentation slice: per-row kinds (`RenderedLine.kinds`) so a card's title keeps the line gutter and body rows draw `│`/`|` (no width change, no boxes — the gutter paradigm holds). Title keeps the state band; bodies drop it (overturns the both-rows-banded pin, with reason: the continuation now joins what the band joined). Looked at the frame. One test with control; three goldens updated. No matrix row (original design). Battery `port-r71b` (2,232), green on the second attempt (clippy `repeat_n` + LNK1104, preserved). |
 | (10-08) | 86. **Full-port round 72 — the live tail separates while streaming** | Third presentation slice: the streaming tail glued to the previous block until commit (committed lines separate in `push_line`; the tail is not a line). Same rule at draw time in `draw_transcript`, inside the tail rows so scroll math counts it. Verified no interop test was missing first (both sides pin the shared store; a cross test would duplicate). One test with control; no golden fallout. No matrix row (original design). Battery `port-r72b` (2,233), green on the second attempt (LNK1104, preserved). |
+| (10-08) | 87. **Full-port round 73 — preview install verified, scope written down** | The decided vehicle (round 65): both binaries installed isolated from source (`epsilon` + `epsilon-desktop`, hashes recorded), `--help`/`--demo`/`doctor` transcribed, honest scope section in `install.md`, presets documented in `permissions.md`. Desktop installed but not launched (headless session; window covered by frame tests). Evidence in `audit/evidence/preview-install-2026-10-08.txt`. No product change: battery `port-r73` (2,233), green first time. |
 
 > **A machine fault worth naming, because it nearly made me "fix" working code.** Restoring a
 > file from a `Copy-Item` backup preserved its **old timestamp**, so `cargo` decided nothing had
@@ -266,13 +267,13 @@ instead of newlining, and the sessions sidebar being a keyboard trap. What remai
 
 ## Verification (what is actually true)
 
-**Latest green battery: [`gate-port-r72b-2026-10-08.txt`](../audit/evidence/gate-port-r72b-2026-10-08.txt),
+**Latest green battery: [`gate-port-r73b-2026-10-08.txt`](../audit/evidence/gate-port-r73b-2026-10-08.txt),
 2026-10-08 — the tree this file describes.** Thirteen legs, all `[exit=0]`, `GATE PASS`.
 **2,233 passed / 0 failed / 13 ignored across 78 binaries**, summed from that one log's
-`test result:` lines — one more than `gate-port-r71b`: the tail-separation test.
+`test result:` lines — same as `gate-port-r72b`: a docs round with no product change.
 The first attempt failed on an LNK1104 link fault (machine fault, Avira-class);
 preserved as
-[`gate-port-r72-attempt1-FAILED-2026-10-08.txt`](../audit/evidence/gate-port-r72-attempt1-FAILED-2026-10-08.txt),
+[`gate-port-r73-attempt1-FAILED-2026-10-08.txt`](../audit/evidence/gate-port-r73-attempt1-FAILED-2026-10-08.txt),
 rebuilt with `CARGO_PROFILE_TEST_DEBUG=1` per `AGENTS.md`.
 (`cargo fmt --check` ran before launching.) The first `port-r55` attempt failed its test leg
 on an integration test driving `/timeline` as refused; preserved as

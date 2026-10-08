@@ -31,6 +31,24 @@ mask a plan deny on `bash`/`shell`. Remaining limits: plan mode does not
 classify the side effects of arbitrary extension/MCP tools, and out-of-workspace
 subjects keep their raw spelling (known prompt-dedup limitation, no bypass).
 
+## Permission presets
+
+Four named postures (ADR-032). A preset is a bundle of allows, never a pardon:
+project and user deny rules layer above every preset and win, and switching
+presets clears the session's always-allow memory.
+
+```sh
+--preset auto                  # today's behavior under a name (default)
+--preset workspace-write       # reads and writes under the workspace; asks outside it
+--preset read-only              # denies write/edit/bash/shell; reads stay free
+--preset danger-full-access     # allows everything nothing forbids
+```
+
+`/preset` lists the four with the current marked and switches mid-session in
+both front ends. Switching *down* applies at once; switching *up* to
+`danger-full-access` asks first — type `yes` to confirm, anything else leaves
+the posture unchanged. Parked approval asks keep the policy that raised them.
+
 ## Layer 2 — OS confinement for shell commands
 
 ```sh

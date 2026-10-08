@@ -51,3 +51,20 @@ epsilon -p "summarize this repo" # headless: reply to stdout, diagnostics to std
 
 In the TUI: type a task, press Enter; `Esc` stops a run, `/help` lists slash commands,
 `epsilon --help` has the full reference.
+
+## Preview scope (honest version)
+
+This is a preview, not a release: no versioned artifacts, install is from
+source, and the gap lists are the parity matrices —
+[Pi port](../parity/pi-tui.md) (50 done of 339) and
+[DSH Desktop](../parity/dsh-desktop.md) (17 done of 433).
+
+What works: the agent loop with tools, approvals and checkpoints; 38 slash
+heads in the terminal and 37 in the native desktop window (which answers
+everything the terminal does except `/editor`); sessions shared between both
+front ends; permission presets with a risk gate on the way up. What does not:
+much of both matrices, a screen-reader pass (never done), context menus, and
+any platform beyond the dev machines. The defect ledger is
+[audit/03-defects.md](../../audit/03-defects.md). The install this was
+verified with — commands, outputs, hashes — is
+[the preview transcript](../../audit/evidence/preview-install-2026-10-08.txt).
