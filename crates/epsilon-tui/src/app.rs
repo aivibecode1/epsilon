@@ -179,6 +179,11 @@ pub(crate) struct App {
     /// `submit_editor`, next to the trust gate, for the same reason: a
     /// session swap drops the current context from view, so it asks first.
     pending_import: Option<(std::path::PathBuf, String)>,
+    /// Pending `/preset` switch to full access (ADR-032): held while the
+    /// reader confirms. `None` means no question is open. Answered in
+    /// `submit_editor`, next to the trust and import gates: choosing it is
+    /// the privilege-raising act, so it cannot be taken by a reflexive Enter.
+    pending_preset: Option<String>,
     guidance_mode: bool,
     scroll_from_bottom: usize,
 
@@ -868,6 +873,38 @@ impl App {
                     self.ui.push_notice(format!(
                         "Replace current session with '{}'? (yes/no)",
                         abs.display()
+                    ));
+                }
+            }
+            return false;
+        }
+        // P-079's sibling (ADR-032): a pending preset switch holds ALL
+        // submits until answered. Only the two answers are accepted; anything
+        // else repeats the question (the gate must not eat a prompt).
+        if let Some(name) = self.pending_preset.clone() {
+            match text.trim().to_ascii_lowercase().as_str() {
+                "yes" | "y" => {
+                    self.pending_preset = None;
+                    if agent.set_preset(&name, &self.workspace_root) {
+                        self.ui.push_notice(format!(
+                            "permission preset: {name} — everything nothing forbids is now allowed"
+                        ));
+                    } else {
+                        self.ui.push_notice(format!(
+                            "preset not switched — the gate reported no change ({name})"
+                        ));
+                    }
+                }
+                "no" | "n" => {
+                    self.pending_preset = None;
+                    self.ui.push_notice(format!(
+                        "preset switch cancelled — still on {}",
+                        agent.current_preset()
+                    ));
+                }
+                _ => {
+                    self.ui.push_notice(format!(
+                        "Switch permission preset to '{name}'? This allows everything nothing forbids. (yes/no)"
                     ));
                 }
             }

@@ -497,7 +497,10 @@ impl App {
             | crate::picker::Command::Skill(_)
             // M203: mutates the session's goal, and the bare form reads it. It lives here
             // rather than with the view commands because half its verbs write.
-            | crate::picker::Command::Goal(_) => self.run_session_command(agent, command),
+            | crate::picker::Command::Goal(_)
+            // ADR-032: the session's permission posture — bare reads it,
+            // a name switches it (full-access confirms first).
+            | crate::picker::Command::Preset(_) => self.run_session_command(agent, command),
             // Show the user something.
             crate::picker::Command::Help
             | crate::picker::Command::Skills
@@ -669,6 +672,7 @@ impl App {
             crate::picker::Command::New
             | crate::picker::Command::Resume(_)
             | crate::picker::Command::Reload => self.run_restore_command(agent, command),
+            crate::picker::Command::Preset(arg) => self.run_preset_command(agent, arg),
             crate::picker::Command::Skill(arg) => {
                 let arg = arg.trim();
                 let (name, want_off) = match arg.rsplit_once(char::is_whitespace) {
@@ -1113,6 +1117,49 @@ impl App {
                 debug_assert!(false, "{other:?} is not a run_navigate case");
                 return false;
             }
+        }
+        false
+    }
+
+    /// Show or switch the permission preset (ADR-032).
+    ///
+    /// Bare lists the four with the current marked; a name switches
+    /// immediately except `danger-full-access`, which holds the question in
+    /// `pending_preset` until the reader types `yes` (answered in
+    /// `submit_editor`, next to the trust and import gates). Switching down
+    /// never confirms (D-080: only the raising direction gates).
+    fn run_preset_command(&mut self, agent: &Arc<Agent>, arg: Option<String>) -> bool {
+        let current = agent.current_preset();
+        let Some(name) = arg.as_deref().map(str::trim).filter(|s| !s.is_empty()) else {
+            self.ui.push_notice(format!(
+                "permission preset: {current} (current) — auto | workspace-write | read-only | danger-full-access"
+            ));
+            return false;
+        };
+        let Ok(preset) = epsilon_safety::Preset::parse(name) else {
+            self.ui.push_notice(format!(
+                "unknown preset '{name}' — one of: auto, workspace-write, read-only, danger-full-access"
+            ));
+            return false;
+        };
+        if preset.raises_privilege() {
+            self.pending_preset = Some(preset.name().to_string());
+            self.ui.push_notice(format!(
+                "Switch permission preset to '{}'? This allows everything nothing forbids. (yes/no)",
+                preset.name()
+            ));
+            return false;
+        }
+        if agent.set_preset(preset.name(), &self.workspace_root) {
+            self.ui.push_notice(format!(
+                "permission preset: {} (was {current})",
+                preset.name()
+            ));
+        } else {
+            self.ui.push_notice(format!(
+                "preset not switched — the gate reported no change ({})",
+                preset.name()
+            ));
         }
         false
     }

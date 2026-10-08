@@ -4529,7 +4529,7 @@ mod goal_command_tests {
 // ==========================================================================================
 
 use epsilon_contracts::message::Message;
-use epsilon_core::{Agent, LoopLimits};
+use epsilon_core::{Agent, LoopLimits, PermissionGate};
 use epsilon_mcp::McpServerConfig;
 use epsilon_safety::{ApprovalUi, RulesetGate};
 
@@ -4763,23 +4763,22 @@ pub async fn build_runtime_and_gate_runner(
     // deny still wins immediately — ADR-006 stacking semantics). `--plan` prepends the
     // plan-mode layer: mutating capabilities are DENIED outright and monotonic-deny
     // makes that boundary hold regardless of project rules or approvals.
-    // `--preset` (ADR-032) layers its ruleset over the defaults: a bundle of
-    // allows, never a pardon — project and user denies still win.
+    // `--preset` (ADR-032) is applied to the gate afterwards, not layered here:
+    // the gate owns the preset layer separately so mid-session switches keep
+    // the base stack (defaults + project) intact.
     let base_engine = if plan_mode {
         let mut layers = vec![epsilon_safety::plan_ruleset()];
-        layers.push(epsilon_safety::preset_ruleset(preset, workspace));
         if !project.rules.is_empty() {
             layers.push(project_rules_layer(&project.rules));
         }
         epsilon_safety::PermissionEngine::layered(layers)
+    } else if project.rules.is_empty() {
+        epsilon_safety::PermissionEngine::with_defaults()
     } else {
-        let mut layers = vec![epsilon_safety::preset_ruleset(preset, workspace)];
-        if !project.rules.is_empty() {
-            layers.push(project_rules_layer(&project.rules));
-        }
-        epsilon_safety::PermissionEngine::layered(layers)
+        epsilon_safety::PermissionEngine::layered(vec![project_rules_layer(&project.rules)])
     };
     let gate = Arc::new(RulesetGate::layered(base_engine, approvals));
+    gate.set_preset(preset.name(), workspace);
     // `Agent::new` already returns an `Arc`, which is why the extension hooks below can be
     // installed through it without unwrapping or re-wrapping.
     let agent = Agent::new(

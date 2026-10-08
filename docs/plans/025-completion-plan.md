@@ -119,13 +119,13 @@ write the checker, let it print the failures, then fix what it names.
 
 ### C. Bring the window up to a usable floor — **P1** (L)
 
-**Why.** The desktop is half the objective and answers 36 of 37 commands (review §3.2, plus `/help` in round 4, `/new` in round 6, `/resume` in round 7, `/fork` + `/clone` in round 8, `/export` in round 15, `/model` in round 20, `/think` in round 30, `/settings` in round 33, `/login` + `/logout` in round 38, `/hotkeys` + `/copy` in round 40, `/exit` in round 41, `/reload` in round 42, `/skills` + `/skill` in round 43, `/changelog` in round 44, `/name` in round 46, `/restore` in round 47, `/import` in round 48, `/search` in round 51, `/share` in round 52, `/trust` in round 53, `/expand` in round 54, `/branch` + `/tree` in round 55, `/templates` in round 56 and `/scoped_models` in round 57 — one refusal left, `/editor`, a terminal concept). Four gaps are
+**Why.** The desktop is half the objective and answers 37 of 38 commands (review §3.2, plus `/help` in round 4, `/new` in round 6, `/resume` in round 7, `/fork` + `/clone` in round 8, `/export` in round 15, `/model` in round 20, `/think` in round 30, `/settings` in round 33, `/login` + `/logout` in round 38, `/hotkeys` + `/copy` in round 40, `/exit` in round 41, `/reload` in round 42, `/skills` + `/skill` in round 43, `/changelog` in round 44, `/name` in round 46, `/restore` in round 47, `/import` in round 48, `/search` in round 51, `/share` in round 52, `/trust` in round 53, `/expand` in round 54, `/branch` + `/tree` in round 55, `/templates` in round 56, `/scoped_models` in round 57 and `/preset` in round 68 — one refusal left, `/editor`, a terminal concept). Four gaps are
 the ones a user hits first, and three of them are already itemised in the matrices:
 
 | Gap | Rows | Where | State at round 65 |
 |---|---|---|---|
 | Session verbs in the window (all the terminal answers, `/editor` refused with reason) | D-1xx, U-0xx | [`../../crates/epsilon-desktop/src/commands.rs`](../../crates/epsilon-desktop/src/commands.rs) | **Done** — 36 of 37 heads answered, rounds 4–57 |
-| A permission-preset surface, so a privilege-raising control has a gate to sit behind | D-080–D-082, I-121, I-131 | `epsilon-safety` + the window | Open — needs a design (no owner input needed to draft one) |
+| A permission-preset surface, so a privilege-raising control has a gate to sit behind | D-080–D-082, I-121, I-131 | `epsilon-safety` + the window | Engine + `/preset` heads + typed gates done (rounds 66–68, ADR-032); select widgets pending |
 | A context menu in editable fields (cut/copy/paste/select-all) | D-007, D-008 | the composer and the editor | **Blocked** — egui 0.36 exposes no cursor/selection or clipboard-read API; needs an `arboard` dependency plus state surgery (recorded in the rows, round 59) |
 | The quit dialog's appearance (M316 tests its behaviour; the rasteriser blanks on it) | — | `app.rs:5141-5150` | **Blocked** — offscreen raster crashes on this machine (Vulkan access-violation, Dx12 hangs; baseline crashes identically); visual QA must happen where the raster works (round 58) |
 

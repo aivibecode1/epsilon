@@ -49,7 +49,17 @@ type SessionMemory = Arc<Mutex<Vec<(String, String)>>>;
 /// Gate implementing the opencode-style flow:
 /// session memory → engine evaluation → (`ask`) approval UI → optional memory promotion.
 pub struct RulesetGate {
-    engine: PermissionEngine,
+    /// The launch-time stack (defaults + project rules), never touched by
+    /// `set_preset`. Locked for the same reason as `preset`: evaluation holds
+    /// each lock only for its synchronous call, never across the UI await.
+    base: Mutex<PermissionEngine>,
+    /// The ADR-032 preset layer over `base`: a matching rule decides (deny
+    /// immediately, like everywhere), no match falls back to `base`.
+    preset: Mutex<crate::engine::Ruleset>,
+    /// The preset name last applied (`auto` at construction). What bare
+    /// `/preset` reports — the gate is the only place that knows both the
+    /// launch posture and every mid-session switch.
+    current: Mutex<String>,
     ui: Arc<dyn ApprovalUi>,
     memory: SessionMemory,
 }
@@ -63,15 +73,60 @@ impl RulesetGate {
     /// Gate over a custom engine.
     pub fn layered(engine: PermissionEngine, ui: Arc<dyn ApprovalUi>) -> Self {
         Self {
-            engine,
+            base: Mutex::new(engine),
+            preset: Mutex::new(crate::engine::preset_ruleset(
+                crate::engine::Preset::Auto,
+                std::path::Path::new(""),
+            )),
+            current: Mutex::new(crate::engine::Preset::Auto.name().to_string()),
             ui,
             memory: Arc::new(Mutex::new(Vec::new())),
         }
     }
 
+    /// The preset name last applied (diagnostics/front ends).
+    pub fn current_preset(&self) -> String {
+        self.current
+            .lock()
+            .map(|c| c.clone())
+            .unwrap_or_else(|_| "unknown".to_string())
+    }
+
     /// Read-only view of promoted always-allow pairs (diagnostics/tests).
     pub fn session_allows(&self) -> Vec<(String, String)> {
         self.memory.lock().map(|m| m.clone()).unwrap_or_default()
+    }
+
+    /// Evaluate one capability/subject across base + preset: either side's
+    /// deny wins immediately (monotonic, both directions), a preset match
+    /// otherwise decides, and no preset match falls back to base. A lock
+    /// failure denies (fail closed, like the engine helper below).
+    fn evaluate(&self, capability: &str, pattern: &str) -> Action {
+        let base = self
+            .base
+            .lock()
+            .map(|e| e.evaluate(capability, pattern))
+            .unwrap_or(Action::Deny);
+        if base == Action::Deny {
+            return Action::Deny;
+        }
+        let Ok(preset) = self.preset.lock() else {
+            return Action::Deny;
+        };
+        let mut decision: Option<Action> = None;
+        for rule in &preset.rules {
+            if rule.capability != "*" && rule.capability != capability {
+                continue;
+            }
+            if !crate::glob_match(&rule.pattern, pattern) {
+                continue;
+            }
+            if rule.action == Action::Deny {
+                return Action::Deny;
+            }
+            decision = Some(rule.action);
+        }
+        decision.unwrap_or(base)
     }
 }
 
@@ -82,7 +137,7 @@ impl PermissionGate for RulesetGate {
         // "always allow" promotion must never override a deny the engine would now
         // produce — policy tightening mid-session takes effect immediately. Memory
         // only converts Ask→Allow below; it can never resurrect a denied call.
-        if self.engine.evaluate(&req.capability, &req.pattern) == Action::Deny {
+        if self.evaluate(&req.capability, &req.pattern) == Action::Deny {
             return Authorization {
                 decision: PermissionDecision::Deny,
                 asked: false,
@@ -102,7 +157,7 @@ impl PermissionGate for RulesetGate {
         }
 
         // 3. Engine evaluation.
-        let action = self.engine.evaluate(&req.capability, &req.pattern);
+        let action = self.evaluate(&req.capability, &req.pattern);
         match action {
             Action::Allow => Authorization {
                 decision: PermissionDecision::AllowOnce,
@@ -154,10 +209,41 @@ impl PermissionGate for RulesetGate {
     /// integration test caught it, which is the argument for having one that exercises a real
     /// subagent rather than the seam directly.
     fn child_gate(&self) -> Option<std::sync::Arc<dyn epsilon_core::PermissionGate>> {
-        Some(std::sync::Arc::new(Self::layered(
-            self.engine.clone(),
-            std::sync::Arc::clone(&self.ui),
-        )))
+        let base = self.base.lock().ok()?.clone();
+        let preset = self.preset.lock().ok()?.clone();
+        let mut gate = Self::layered(base, std::sync::Arc::clone(&self.ui));
+        gate.preset = Mutex::new(preset);
+        Some(std::sync::Arc::new(gate))
+    }
+
+    /// Swap the preset layer for the named preset's ruleset (ADR-032) and
+    /// clear the session memory: a promotion under the old policy must not
+    /// survive the switch, whichever direction it goes. The base stack
+    /// (defaults + project rules) is untouched, so project denies still win.
+    /// Unknown names refuse (`false`) rather than running a different policy
+    /// than asked for.
+    fn set_preset(&self, preset: &str, workspace: &std::path::Path) -> bool {
+        let Ok(parsed) = crate::engine::Preset::parse(preset) else {
+            return false;
+        };
+        let Ok(mut layer) = self.preset.lock() else {
+            return false;
+        };
+        *layer = crate::engine::preset_ruleset(parsed, workspace);
+        if let Ok(mut current) = self.current.lock() {
+            *current = parsed.name().to_string();
+        }
+        if let Ok(mut mem) = self.memory.lock() {
+            mem.clear();
+        }
+        true
+    }
+
+    fn current_preset(&self) -> String {
+        self.current
+            .lock()
+            .map(|c| c.clone())
+            .unwrap_or_else(|_| "unknown".to_string())
     }
 }
 
@@ -283,5 +369,31 @@ mod tests {
         // Fresh gate has no memory; the engine deny alone must hold...
         let denied = tightened.authorize(req("bash", "git")).await;
         assert!(!denied.allowed() && !denied.asked, "deny wins");
+    }
+
+    /// `set_preset` swaps the posture mid-session (ADR-032): read-only
+    /// denies what the defaults asked, full-access allows it, and unknown
+    /// names refuse without changing anything.
+    #[tokio::test]
+    async fn set_preset_swaps_the_posture_and_refuses_unknown() {
+        use epsilon_core::PermissionGate;
+        let ui = Arc::new(ScriptedUi {
+            answers: Mutex::new(vec![PermissionDecision::AllowOnce]),
+            asked: Mutex::new(0),
+        });
+        let gate = RulesetGate::new(Arc::clone(&ui) as Arc<dyn ApprovalUi>);
+        let ws = std::path::Path::new("/ws");
+
+        assert!(gate.set_preset("read-only", ws));
+        let a = gate.authorize(req("bash", "echo hi")).await;
+        assert!(!a.allowed() && !a.asked, "read-only denies shell outright");
+
+        assert!(gate.set_preset("danger-full-access", ws));
+        let b = gate.authorize(req("bash", "echo hi")).await;
+        assert!(b.allowed() && !b.asked, "full-access allows it");
+
+        assert!(!gate.set_preset("yolo", ws), "unknown refuses");
+        let c = gate.authorize(req("bash", "echo hi")).await;
+        assert!(c.allowed(), "a refused switch changes nothing");
     }
 }

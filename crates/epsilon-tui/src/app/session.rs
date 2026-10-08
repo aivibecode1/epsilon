@@ -45,6 +45,7 @@ impl App {
             approval_painted_id: None,
             trust_review_pending: false,
             pending_import: None,
+            pending_preset: None,
             guidance_mode: false,
             scroll_from_bottom: 0,
             search: None,

@@ -245,6 +245,10 @@ pub const SLASH_ITEMS: &[SlashItem] = &[
         value: "/scoped_models",
         description: "enable/disable models for Ctrl+P cycling (underscore spelling)",
     },
+    SlashItem {
+        value: "/preset",
+        description: "show or switch the permission preset (ADR-032)",
+    },
 ];
 
 /// A parsed editor command.
@@ -363,6 +367,8 @@ pub enum Command {
     Settings,
     /// Enable/disable models for picker cycling.
     ScopedModels,
+    /// Show or switch the permission preset (ADR-032).
+    Preset(Option<String>),
     /// Exit the session.
     Quit,
     /// A `/word` we do not know — surfaced as an error, never sent to the model.
@@ -421,6 +427,7 @@ pub const COMMAND_HEADS: &[&str] = &[
     "hotkeys",
     "settings",
     "scoped_models",
+    "preset",
     "clear",
     // M194: the palette's "Toggle tool output expand" entry shipped a `\u{1}expand`
     // pseudo-command this parser cannot read, so choosing it ran nothing. Naming a
@@ -542,6 +549,11 @@ pub fn parse_command(input: &str) -> Option<Command> {
         "hotkeys" => Some(Command::Hotkeys),
         "settings" => Some(Command::Settings),
         "scoped-models" | "scoped_models" => Some(Command::ScopedModels),
+        "preset" => Some(Command::Preset(if tail.is_empty() {
+            None
+        } else {
+            Some(tail.to_string())
+        })),
         "help" | "?" => Some(Command::Help),
         "clear" => Some(Command::Clear),
         "expand" => Some(Command::Expand),

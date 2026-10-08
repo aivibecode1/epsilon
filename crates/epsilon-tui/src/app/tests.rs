@@ -6597,3 +6597,83 @@ fn export_json_fmt_and_jsonl_suffix() {
         app.ui.lines().iter().map(|l| &l.text).collect::<Vec<_>>()
     );
 }
+
+/// Bare `/preset` names the four with the current marked (ADR-032).
+#[test]
+fn preset_bare_lists_with_current_marked() {
+    let (mut app, agent, _rx) = test_app();
+    app.run_command(
+        &agent,
+        crate::picker::parse_command("/preset").expect("/preset parses"),
+    );
+    let lines: Vec<_> = app.ui.lines().iter().map(|l| l.text.clone()).collect();
+    assert!(
+        lines.iter().any(|l| l.contains("auto")
+            && l.contains("workspace-write")
+            && l.contains("read-only")
+            && l.contains("danger-full-access")),
+        "must list all four: {lines:?}"
+    );
+}
+
+/// `/preset read-only` switches at once; unknown names name the four.
+#[test]
+fn preset_switch_down_applies_and_unknown_names_choices() {
+    let (mut app, agent, _rx) = test_app();
+    app.run_command(
+        &agent,
+        crate::picker::parse_command("/preset read-only").expect("/preset parses"),
+    );
+    assert_eq!(agent.current_preset(), "read-only");
+    assert!(
+        app.ui
+            .lines()
+            .iter()
+            .any(|l| l.text.contains("read-only") && l.text.contains("was auto")),
+        "must report the switch: {:?}",
+        app.ui.lines().iter().map(|l| &l.text).collect::<Vec<_>>()
+    );
+
+    app.run_command(
+        &agent,
+        crate::picker::parse_command("/preset yolo").expect("/preset parses"),
+    );
+    assert_eq!(
+        agent.current_preset(),
+        "read-only",
+        "unknown changes nothing"
+    );
+}
+
+/// `/preset danger-full-access` asks; only `yes` switches (ADR-032).
+#[test]
+fn preset_full_access_asks_and_only_yes_switches() {
+    let (mut app, agent, _rx) = test_app();
+    app.run_command(
+        &agent,
+        crate::picker::parse_command("/preset danger-full-access").expect("/preset parses"),
+    );
+    assert!(
+        app.ui
+            .lines()
+            .iter()
+            .any(|l| l.text.contains("Switch permission preset")),
+        "must ask before raising: {:?}",
+        app.ui.lines().iter().map(|l| &l.text).collect::<Vec<_>>()
+    );
+    assert!(app.pending_preset.is_some(), "and hold the question open");
+    assert_eq!(agent.current_preset(), "auto", "asking switches nothing");
+
+    app.input = "no".to_string();
+    app.submit_editor(&agent);
+    assert!(app.pending_preset.is_none(), "no must close the question");
+    assert_eq!(agent.current_preset(), "auto", "no switches nothing");
+
+    app.run_command(
+        &agent,
+        crate::picker::parse_command("/preset danger-full-access").expect("/preset parses"),
+    );
+    app.input = "yes".to_string();
+    app.submit_editor(&agent);
+    assert_eq!(agent.current_preset(), "danger-full-access");
+}

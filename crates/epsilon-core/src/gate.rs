@@ -75,6 +75,30 @@ pub trait PermissionGate: Send + Sync {
     fn child_gate(&self) -> Option<std::sync::Arc<dyn PermissionGate>> {
         None
     }
+
+    /// Switch the named permission posture mid-session (ADR-032), or `false`
+    /// when this gate has no notion of presets.
+    ///
+    /// Defaulted to `false` so fixed-posture gates (`AutoAllow`, `AutoDeny`,
+    /// test doubles) compile unchanged — and correctly, since a gate that
+    /// allows everything has nothing to switch. `RulesetGate` overrides it:
+    /// it parses the name, swaps its engine, and clears the session memory
+    /// (a promotion under the old policy must not survive the switch,
+    /// whichever direction it goes).
+    ///
+    /// Takes the preset *name*, not the enum, because the enum lives in
+    /// `epsilon-safety` and this crate cannot name it without a dependency
+    /// cycle (`safety` implements this trait). Front ends validate with
+    /// `Preset::parse` before calling.
+    fn set_preset(&self, _preset: &str, _workspace: &std::path::Path) -> bool {
+        false
+    }
+
+    /// The preset name last applied, or `"unknown"` for gates with no notion
+    /// of presets. What bare `/preset` reports.
+    fn current_preset(&self) -> String {
+        "unknown".to_string()
+    }
 }
 
 /// Allows everything without asking — for tests and trusted automation only.

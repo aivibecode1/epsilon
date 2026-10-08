@@ -2809,3 +2809,17 @@ submits immediately (D-080: only the raising direction gates).
 3. Window: preset surface plus the dialog confirmation.
 4. Matrix: D-080–D-082, I-121, I-131 move with frame-level tests and the
    standard controls.
+
+**Amendment (full-port round 68).** Phases 1–3 landed with a correction to
+phase 3: both front ends confirm with a typed-`yes` composer gate (next to
+the trust/import gates), not a window dialog. The gate satisfies the
+contract item for item — non-`yes` cancels or repeats (safe-default), the
+switch takes only an explicit `yes` (strictly stronger than
+disabled-until-ticked), cancelling clears the pending question
+(reset-on-cancel) — so the dialog is an option, not a requirement. D-080–D-082
+move to `partial` on the capability (no select widget; `auto` switches
+immediately by design since it names today's posture rather than a raising
+review). Mid-session switching rides a `set_preset` seam on the gate trait
+(defaulted no-op for fixed-posture gates), with the preset as a separate
+layer over an untouched base stack — project denies survive every switch,
+and the session memory clears on all of them.

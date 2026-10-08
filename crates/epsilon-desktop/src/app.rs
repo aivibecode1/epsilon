@@ -2417,6 +2417,12 @@ pub struct IdeApp {
     /// current context from view, so it asks first. `pub(crate)` for the
     /// command arm and the tests, like `keys`.
     pub(crate) pending_import: Option<std::path::PathBuf>,
+    /// Pending `/preset` switch to full access (ADR-032): held while the
+    /// reader confirms. `None` means no question is open. Answered in
+    /// `send_draft`, like the terminal: choosing it is the
+    /// privilege-raising act. `pub(crate)` for the command arm and the
+    /// tests, like `keys`.
+    pub(crate) pending_preset: Option<String>,
     /// The OS window title to show (`<session> — Epsilon`).
     ///
     /// Recomputed where the session can change it (start, resume, rename,
@@ -3004,6 +3010,7 @@ impl IdeApp {
             timeline: None,
             timeline_rects: Vec::new(),
             pending_import: None,
+            pending_preset: None,
             window_title: String::new(),
             sent_title: String::new(),
             tabs: Vec::new(),
@@ -3105,6 +3112,7 @@ impl IdeApp {
             timeline: None,
             timeline_rects: Vec::new(),
             pending_import: None,
+            pending_preset: None,
             window_title: String::new(),
             sent_title: String::new(),
             tabs: Vec::new(),
@@ -7958,6 +7966,18 @@ impl IdeApp {
             let answer = text.clone();
             self.draft.clear();
             if let Some(said) = self.answer_pending_import(&answer) {
+                self.transcript.push_notice(&said);
+            }
+            return None;
+        }
+        // A pending `/preset` owns the next submit (ADR-032): `yes` switches,
+        // `no` cancels, anything else repeats the question. Answered here —
+        // after the running guard (never switch mid-run), before templates
+        // and commands (the answer is not a prompt) — like the terminal.
+        if self.pending_preset.is_some() {
+            let answer = text.clone();
+            self.draft.clear();
+            if let Some(said) = self.answer_pending_preset(&answer) {
                 self.transcript.push_notice(&said);
             }
             return None;
@@ -17235,6 +17255,118 @@ mod tests {
         assert_eq!(
             h.app.window_title, "tabby — Epsilon",
             "renaming must retitle the taskbar"
+        );
+    }
+
+    /// Bare `/preset` lists with the current marked; a name switches at
+    /// once (round 68, ADR-032).
+    #[test]
+    fn slash_preset_lists_and_switches() {
+        let (ws, _keep) = scratch_workspace("slash-preset");
+        let (session, notices) = faux_session(&ws);
+        let mut h = Harness::with_session(ws, session, notices);
+
+        let outcome = h.app.try_command("/preset");
+        let crate::commands::Outcome::Ran(said) = outcome else {
+            panic!("/preset must run: {outcome:?}");
+        };
+        assert!(
+            said.contains("auto")
+                && said.contains("workspace-write")
+                && said.contains("read-only")
+                && said.contains("danger-full-access"),
+            "must list all four: {said:?}"
+        );
+
+        let outcome = h.app.try_command("/preset read-only");
+        let crate::commands::Outcome::Ran(said) = outcome else {
+            panic!("/preset read-only must run: {outcome:?}");
+        };
+        assert!(
+            said.contains("read-only") && said.contains("was auto"),
+            "must report the switch: {said:?}"
+        );
+        assert_eq!(
+            h.app
+                .session
+                .as_ref()
+                .expect("session")
+                .agent()
+                .current_preset(),
+            "read-only"
+        );
+
+        let outcome = h.app.try_command("/preset yolo");
+        let crate::commands::Outcome::Ran(said) = outcome else {
+            panic!("/preset yolo must answer: {outcome:?}");
+        };
+        assert!(
+            said.contains("unknown preset"),
+            "unknown must name itself: {said:?}"
+        );
+    }
+
+    /// `/preset danger-full-access` asks; only `yes` switches (round 68).
+    #[test]
+    fn slash_preset_full_access_asks_and_only_yes_switches() {
+        let (ws, _keep) = scratch_workspace("slash-preset-confirm");
+        let (session, notices) = faux_session(&ws);
+        let mut h = Harness::with_session(ws, session, notices);
+
+        let outcome = h.app.try_command("/preset danger-full-access");
+        let crate::commands::Outcome::Ran(said) = outcome else {
+            panic!("/preset danger-full-access must ask: {outcome:?}");
+        };
+        assert!(
+            said.contains("Switch permission preset"),
+            "must ask before raising: {said:?}"
+        );
+        assert!(h.app.pending_preset.is_some(), "and hold the question");
+
+        h.app.draft = "no".to_string();
+        let _ = h.app.send_draft();
+        assert!(h.app.pending_preset.is_none(), "no must close it");
+        assert_eq!(
+            h.app
+                .session
+                .as_ref()
+                .expect("session")
+                .agent()
+                .current_preset(),
+            "auto",
+            "no switches nothing"
+        );
+
+        let outcome = h.app.try_command("/preset danger-full-access");
+        let crate::commands::Outcome::Ran(_) = outcome else {
+            panic!("/preset danger-full-access must ask again: {outcome:?}");
+        };
+        h.app.draft = "yes".to_string();
+        let _ = h.app.send_draft();
+        assert_eq!(
+            h.app
+                .session
+                .as_ref()
+                .expect("session")
+                .agent()
+                .current_preset(),
+            "danger-full-access",
+            "yes must switch"
+        );
+    }
+
+    /// `/preset` without an agent names what's missing (round 68).
+    #[test]
+    fn slash_preset_without_an_agent_names_what_is_missing() {
+        let (ws, _keep) = scratch_workspace("slash-preset-no-agent");
+        let mut h = Harness::new(ws);
+        let outcome = h.app.try_command("/preset read-only");
+        let crate::commands::Outcome::Ran(said) = outcome else {
+            panic!("/preset without an agent must answer: {outcome:?}");
+        };
+        assert!(
+            said.contains("no agent"),
+            "names the missing piece: {said:?}"
         );
     }
 }

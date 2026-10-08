@@ -882,6 +882,21 @@ impl Agent {
         self.record_model_change(&model_id);
     }
 
+    /// Switch the gate's permission preset mid-session (ADR-032).
+    ///
+    /// Returns what the gate reported: `false` means no preset changed (an
+    /// unknown name, or a fixed-posture gate with nothing to switch). The
+    /// workspace scopes the workspace-write allows; parked asks keep the
+    /// policy that raised them (fail closed beats seamless).
+    pub fn set_preset(&self, preset: &str, workspace: &std::path::Path) -> bool {
+        self.gate.set_preset(preset, workspace)
+    }
+
+    /// The preset name last applied (what bare `/preset` reports).
+    pub fn current_preset(&self) -> String {
+        self.gate.current_preset()
+    }
+
     /// Append a `model_change` entry to the attached session, if there is one.
     ///
     /// Called by [`Agent::set_model_id`]; separate only so the test that drives a front end's

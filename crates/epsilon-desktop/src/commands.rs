@@ -27,7 +27,7 @@
 //!
 //! # Why this file holds no list of commands
 //!
-//! It held two, and the second was the expensive one. [`SUPPORTED`] is thirty-six names and is
+//! It held two, and the second was the expensive one. [`SUPPORTED`] is thirty-seven names and is
 //! still here — it is the declaration, and it stays. What went is a 38-arm `head_of` that
 //! spelled every [`Command`] variant out by hand, plus a `refusal_head` that existed only to
 //! re-derive the refusal set through it. Adding a terminal command meant editing that match
@@ -307,6 +307,44 @@ impl IdeApp {
                     Outcome::Ran(format!(
                         "scoped-models: {} favorite(s) — cycling favorites · open Ctrl+M to pick, Ctrl+F to star/unstar",
                         self.favorites.len()
+                    ))
+                }
+            }
+            // **`/preset` shows or switches the permission preset (ADR-032,
+            // full-port round 68).** Bare lists the four with the current
+            // marked; a name switches at once except `danger-full-access`,
+            // which holds the question in `pending_preset` until the reader
+            // types `yes` (answered in `send_draft`, like the terminal).
+            Command::Preset(arg) => {
+                let Some(session) = self.session.as_ref() else {
+                    return Outcome::Ran("preset: no agent attached to this window".to_string());
+                };
+                let current = session.agent().current_preset();
+                let Some(name) = arg.as_deref().map(str::trim).filter(|s| !s.is_empty()) else {
+                    return Outcome::Ran(format!(
+                        "permission preset: {current} (current) — auto | workspace-write | read-only | danger-full-access"
+                    ));
+                };
+                let preset = match epsilon_safety::Preset::parse(name) {
+                    Ok(preset) => preset,
+                    Err(e) => return Outcome::Ran(e),
+                };
+                if preset.raises_privilege() {
+                    self.pending_preset = Some(preset.name().to_string());
+                    return Outcome::Ran(format!(
+                        "Switch permission preset to '{}'? This allows everything nothing forbids. (yes/no)",
+                        preset.name()
+                    ));
+                }
+                if session.agent().set_preset(preset.name(), self.workspace()) {
+                    Outcome::Ran(format!(
+                        "permission preset: {} (was {current})",
+                        preset.name()
+                    ))
+                } else {
+                    Outcome::Ran(format!(
+                        "preset not switched — the gate reported no change ({})",
+                        preset.name()
                     ))
                 }
             }
@@ -721,6 +759,40 @@ impl IdeApp {
             _ => Some(format!(
                 "Replace current session with '{}'? (yes/no)",
                 abs.display()
+            )),
+        }
+    }
+
+    /// Answer a pending `/preset`: `yes` switches, `no` cancels, anything
+    /// else repeats the question (the gate must not eat a prompt).
+    ///
+    /// Called from `send_draft` before anything else, like the terminal.
+    /// Returns the sentence, or `None` when no question is open.
+    pub(crate) fn answer_pending_preset(&mut self, text: &str) -> Option<String> {
+        let name = self.pending_preset.clone()?;
+        match text.trim().to_ascii_lowercase().as_str() {
+            "yes" | "y" => {
+                self.pending_preset = None;
+                let Some(session) = self.session.as_ref() else {
+                    return Some("preset: no agent attached to this window".to_string());
+                };
+                Some(if session.agent().set_preset(&name, self.workspace()) {
+                    format!("permission preset: {name} — everything nothing forbids is now allowed")
+                } else {
+                    format!("preset not switched — the gate reported no change ({name})")
+                })
+            }
+            "no" | "n" => {
+                self.pending_preset = None;
+                let current = self
+                    .session
+                    .as_ref()
+                    .map(|s| s.agent().current_preset())
+                    .unwrap_or_else(|| "auto".to_string());
+                Some(format!("preset switch cancelled — still on {current}"))
+            }
+            _ => Some(format!(
+                "Switch permission preset to '{name}'? This allows everything nothing forbids. (yes/no)"
             )),
         }
     }
@@ -1491,6 +1563,7 @@ pub const SUPPORTED: &[&str] = &[
     "model",
     "name",
     "new",
+    "preset",
     "reload",
     "restore",
     "resume",
@@ -1796,6 +1869,7 @@ mod tests {
             Command::Models,
             Command::Name(None),
             Command::New,
+            Command::Preset(None),
             Command::Reload,
             Command::Restore(String::new()),
             Command::Resume(String::new()),
