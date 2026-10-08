@@ -1993,6 +1993,114 @@ fn a_todo_result_settles_its_call_and_nests_its_checklist() {
     }
 }
 
+/// A capped **text** body keeps its tail, and says which end is hidden.
+///
+/// The most-read long card in a coding agent is a build or test log, and its
+/// verdict is at the bottom. Pi keeps the last twenty wrapped lines of a bash
+/// card (`bash-execution.ts:131`, `.slice(-PREVIEW_LINES)`) and its bash tool
+/// preview keeps `keep: "end"` (`renderers/bash.ts:74`), so Pi is deliberately
+/// non-uniform: the generic fallback keeps the **first** ten
+/// (`tool-execution.ts:166`) and the bash card keeps the **last** twenty.
+/// Epsilon has one card, so it takes the bash card's rule — ours *is* Pi's bash
+/// card.
+///
+/// A diff keeps the head: a change reads from its first hunk down, and a diff
+/// whose top is hidden cannot be reviewed at all. That is why this is per body
+/// kind rather than one rule for the card.
+#[test]
+fn a_capped_text_body_keeps_its_tail_and_says_so() {
+    // 30 lines of compile output whose verdict is the last one.
+    let mut body = String::new();
+    for i in 0..29 {
+        body.push_str(&format!("   Compiling crate-{i} v0.1.0\n"));
+    }
+    body.push_str("test result: FAILED. 3 passed; 1 failed;");
+    let mut app = bench_app(UiState::new());
+    pin_theme(&mut app, ThemeColorMode::Ansi16);
+    app.ui.apply(&AgentEvent::MessageEnd {
+        message: Box::new(Message::Assistant(crate::state::assistant_calling(
+            "building",
+            "tc_build",
+            "bash",
+            serde_json::json!({"command": "cargo test"}),
+        ))),
+    });
+    app.ui.apply(&AgentEvent::MessageEnd {
+        message: Box::new(Message::ToolResult(
+            epsilon_contracts::message::ToolResultMessage {
+                id: epsilon_contracts::ids::new_id("msg"),
+                timestamp_ms: 0,
+                tool_call_id: "tc_build".into(),
+                tool_name: "bash".into(),
+                content: vec![epsilon_contracts::content::ContentBlock::text(&body)],
+                details: serde_json::json!({ "exit_code": 101 }),
+                usage: None,
+                is_error: true,
+            },
+        )),
+    });
+
+    for width in [80u16, 100] {
+        let rows = render_rows(&mut app, width, 40);
+        let screen = rows.join("\n");
+        assert!(
+            screen.contains("test result: FAILED. 3 passed; 1 failed;"),
+            "the verdict is the tail and must be on screen at {width}:\n{screen}"
+        );
+        assert!(
+            !screen.contains("Compiling crate-0 "),
+            "the head is what the cap hid, and must be gone at {width}:\n{screen}"
+        );
+        // The affordance must say the head is hidden, not the tail: a reader who
+        // is told "N more lines" with no direction will assume the missing ones
+        // are below.
+        let affordance = rows
+            .iter()
+            .find(|r| r.contains("lines"))
+            .filter(|r| r.contains("earlier") || r.contains("more lines"))
+            .unwrap_or_else(|| panic!("the card was not capped at {width}:\n{screen}"));
+        assert!(
+            affordance.contains("earlier lines"),
+            "the affordance must name which end is hidden: {affordance:?}"
+        );
+    }
+}
+
+/// A capped **diff** keeps its head (the tail rule does not apply to it).
+///
+/// The control for the row above. A diff reads from its first hunk down, so
+/// hiding the top would make an unreviewable card, and this is the assertion
+/// that stops the tail rule being widened to every body kind by someone who
+/// finds the text rule and generalises it.
+#[test]
+fn a_capped_diff_still_keeps_its_head() {
+    let mut app = edit_app(&long_diff(20), ThemeColorMode::Ansi16);
+    // Tall enough to show the cap: at 80×24 the viewport itself hides the body,
+    // and asserting on a row the window cut off is the mistake the neighbouring
+    // diff test documents. `BODY_ROWS` caps the card at 12, so 40 rows is ample.
+    let rows = render_rows(&mut app, 100, 40);
+    assert!(
+        !rows.iter().any(|r| r.contains("new line 19")),
+        "the diff head is kept, so its last row is still hidden: {rows:#?}"
+    );
+    // The first diff line is on screen. The needle is `old line 0` rather than
+    // `new line 0` because at this width the diff is SPLIT and both halves carry
+    // the same number, so the removed side is the one that cannot be confused
+    // with a later row the way `new line 1` can be with `new line 19`.
+    assert!(
+        rows.iter().any(|r| r.contains("old line 0")),
+        "and its first row is on screen: {rows:#?}"
+    );
+    let affordance = rows
+        .iter()
+        .find(|r| r.contains("more lines"))
+        .expect("the diff is capped");
+    assert!(
+        !affordance.contains("earlier"),
+        "a diff hides its tail, not its head: {affordance:?}"
+    );
+}
+
 #[test]
 fn an_edits_diff_is_drawn_with_a_coloured_gutter_not_as_prose() {
     // The heart of the slice. Each of these assertions fails on the old code for a

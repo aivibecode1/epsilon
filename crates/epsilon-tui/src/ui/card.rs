@@ -159,10 +159,20 @@ pub fn ms_text(ms: u64) -> String {
 /// `app.tools.expand` moves this text with it. `None` means the binding does not
 /// resolve; the affordance then states the count and promises nothing, because a
 /// hint naming a dead key is worse than a bare count.
-pub fn more_lines(remaining: usize, key: Option<&str>) -> String {
+///
+/// `hidden_below` says which end is hidden, and the default is the honest one
+/// for the body kind that keeps its head. A tail-kept card passes `false` so the
+/// sentence reads `N earlier lines` — see [`body_keeps_tail`] for why a card
+/// would keep its tail at all.
+pub fn more_lines(remaining: usize, key: Option<&str>, hidden_below: bool) -> String {
+    let direction = if hidden_below {
+        "more lines"
+    } else {
+        "earlier lines"
+    };
     match key {
-        Some(key) => format!("… {remaining} more lines ({key} to open)"),
-        None => format!("… {remaining} more lines"),
+        Some(key) => format!("… {remaining} {direction} ({key} to open)"),
+        None => format!("… {remaining} {direction}"),
     }
 }
 
@@ -211,6 +221,12 @@ pub fn rows(
             .collect(),
     };
     let mut rows: Vec<CardRow> = vec![vec![(title(card, theme), theme.text())]];
+    // Which end the cap keeps, decided from the body's kind before it is built.
+    let keep_tail = body_keeps_tail(match &card.body {
+        CardBody::Diff(_) => "diff",
+        CardBody::Prompt(_) => "prompt",
+        CardBody::Text(_) => "text",
+    });
     // The budgets the skill asks for are *visible* rows, so the wrap happens first
     // and the cap counts what the reader would actually see.
     //
@@ -250,8 +266,30 @@ pub fn rows(
         theme,
         more_key,
         crate::ui::transcript::GUTTER,
+        keep_tail,
     ));
     rows
+}
+
+/// Which end of a capped body the reader keeps.
+///
+/// **Text keeps the tail; a diff keeps the head**, and the split is a decision
+/// rather than a preference. The most-read long card in a coding agent is a
+/// build or test log, and its verdict is at the bottom — a head-kept cap shows
+/// `Compiling crate-0 …` and hides `test result: FAILED`, which is the entire
+/// reason the card exists. Pi is deliberately non-uniform in exactly this way:
+/// its generic fallback keeps the **first** ten lines
+/// (`tool-execution.ts:40`, `:166`) while its bash card keeps the **last**
+/// twenty (`bash-execution.ts:131`, `.slice(-PREVIEW_LINES)`) and its bash tool
+/// preview keeps `keep: "end"` (`renderers/bash.ts:74`). Epsilon has one card,
+/// so it takes the bash card's rule — ours *is* Pi's bash card.
+///
+/// A diff keeps the head and this is the control on the rule: a change reads
+/// from its first hunk downwards, so a diff whose top is hidden cannot be
+/// reviewed at all. Widening the tail rule to every body kind would fix the log
+/// and break the diff.
+fn body_keeps_tail(kind: &str) -> bool {
+    kind == "text"
 }
 
 /// A pending call: what is about to run.
@@ -274,20 +312,33 @@ fn prompt_rows(text: &str, expanded: bool, theme: &Theme) -> Vec<CardRow> {
 ///
 /// The affordance sits *outside* the cap, so a capped card is `budget + 1` rows
 /// and the number it prints is the true count of rows the reader cannot see.
+///
+/// `keep_tail` decides which end is kept — see [`body_keeps_tail`]. The
+/// affordance names the end too: a reader told only `N more lines` assumes the
+/// missing ones are *below*, which is the opposite of what a tail-kept card did.
 fn cap(
     rows: Vec<CardRow>,
     budget: usize,
     theme: &Theme,
     more_key: Option<&str>,
     indent: usize,
+    keep_tail: bool,
 ) -> Vec<CardRow> {
     if budget == 0 || rows.len() <= budget {
         return rows;
     }
     let remaining = rows.len() - budget;
-    let mut out: Vec<CardRow> = rows.into_iter().take(budget).collect();
+    let mut out: Vec<CardRow> = if keep_tail {
+        rows.into_iter().skip(remaining).collect()
+    } else {
+        rows.into_iter().take(budget).collect()
+    };
     out.push(vec![(
-        format!("{}{}", " ".repeat(indent), more_lines(remaining, more_key)),
+        format!(
+            "{}{}",
+            " ".repeat(indent),
+            more_lines(remaining, more_key, !keep_tail)
+        ),
         theme.faint(),
     )]);
     out
