@@ -19,6 +19,13 @@ here comes from.
 objective not being met was that it was never operationalised (review RC2); starting work without
 that answer would repeat it.
 
+> **Answered 2026-10-07, full-port round 65: (b) — actually port DSH Desktop — under the
+> native-window invariant (§2.3 stands).** Every portable DSH surface is in scope;
+> Electron-only chrome (section A shell rows and anything needing a webview) stays
+> `missing` permanently, to be formally rescoped from "gap" to "unportable" row by
+> row rather than by blanket verdict. The matrices stay the scoreboard; the target
+> is now every portable row, not a must-have subset.
+
 Read [`../../AGENTS.md`](../../AGENTS.md) before the first change. Read [`../HANDOFF.md`](../HANDOFF.md)
 before the first battery.
 
@@ -43,8 +50,9 @@ first, deliberately and in an ADR.
 *Cost: an ADR that reverses a founding decision, then months. Result: a different product.*
 
 **(c) Freeze, release, and stop.** Tag what exists as a **preview**: the terminal is a capable
-harness, the desktop is a native IDE with seven verbs. Publish an artifact, declare the parity
-matrices as the honest gap list, and stop. *Cost: days. Result: something real, honestly labelled,
+harness, the desktop is a native IDE with thirty-six of thirty-seven command heads (one refusal
+left, `/editor`, a terminal concept). Publish an artifact, declare the parity matrices as the
+honest gap list, and stop. *Cost: days. Result: something real, honestly labelled,
 that a user can install — and the option to resume at (a) later.*
 
 **Whichever is chosen, do §2.A first.** Four milestones exist only on disk; if the machine dies
@@ -114,19 +122,20 @@ write the checker, let it print the failures, then fix what it names.
 **Why.** The desktop is half the objective and answers 36 of 37 commands (review §3.2, plus `/help` in round 4, `/new` in round 6, `/resume` in round 7, `/fork` + `/clone` in round 8, `/export` in round 15, `/model` in round 20, `/think` in round 30, `/settings` in round 33, `/login` + `/logout` in round 38, `/hotkeys` + `/copy` in round 40, `/exit` in round 41, `/reload` in round 42, `/skills` + `/skill` in round 43, `/changelog` in round 44, `/name` in round 46, `/restore` in round 47, `/import` in round 48, `/search` in round 51, `/share` in round 52, `/trust` in round 53, `/expand` in round 54, `/branch` + `/tree` in round 55, `/templates` in round 56 and `/scoped_models` in round 57 — one refusal left, `/editor`, a terminal concept). Four gaps are
 the ones a user hits first, and three of them are already itemised in the matrices:
 
-| Gap | Rows | Where |
-|---|---|---|
-| Session verbs in the window (`/new`, `/resume`, `/fork`, `/clone`, `/name`) | D-1xx, U-0xx | [`../../crates/epsilon-desktop/src/commands.rs`](../../crates/epsilon-desktop/src/commands.rs) |
-| A permission-preset surface, so a privilege-raising control has a gate to sit behind | D-080–D-082, I-121, I-131 | `epsilon-safety` + the window |
-| A context menu in editable fields (cut/copy/paste/select-all) | D-007, D-008 | the composer and the editor |
-| The quit dialog's appearance (M316 tests its behaviour; the rasteriser blanks on it) | — | `app.rs:5141-5150` |
+| Gap | Rows | Where | State at round 65 |
+|---|---|---|---|
+| Session verbs in the window (all the terminal answers, `/editor` refused with reason) | D-1xx, U-0xx | [`../../crates/epsilon-desktop/src/commands.rs`](../../crates/epsilon-desktop/src/commands.rs) | **Done** — 36 of 37 heads answered, rounds 4–57 |
+| A permission-preset surface, so a privilege-raising control has a gate to sit behind | D-080–D-082, I-121, I-131 | `epsilon-safety` + the window | Open — needs a design (no owner input needed to draft one) |
+| A context menu in editable fields (cut/copy/paste/select-all) | D-007, D-008 | the composer and the editor | **Blocked** — egui 0.36 exposes no cursor/selection or clipboard-read API; needs an `arboard` dependency plus state surgery (recorded in the rows, round 59) |
+| The quit dialog's appearance (M316 tests its behaviour; the rasteriser blanks on it) | — | `app.rs:5141-5150` | **Blocked** — offscreen raster crashes on this machine (Vulkan access-violation, Dx12 hangs; baseline crashes identically); visual QA must happen where the raster works (round 58) |
 
 **What.** Take them in that order. For each: RED test through the real draw path, then the
 capability, then a rendered frame in `audit/evidence/desktop-frames-<date>/` that a person has
 **looked at**.
 
 **Done when.** The window answers every session verb the terminal answers (or refuses it with a
-reason that names what is missing), an approval cannot be raised past without a gate, and the quit
+reason that names what is missing) — **met at round 57: 36 of 37 heads, `/editor` refused** — an
+approval cannot be raised past without a gate, and the quit
 dialog has a frame someone has read.
 
 **Evidence.** Frame images plus the tests that drive them; the updated `SUPPORTED` count.

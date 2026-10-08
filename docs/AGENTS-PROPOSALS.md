@@ -388,6 +388,70 @@ citations *with line numbers* in the *two matrices*. It does not touch bare
 paths, other documents, or the proposal-vs-stale-pointer distinction — proposal
 10 stays open in full. Noted here so the maintainer can see the overlap.
 
+**Update, full-port round 65.** Now thirteen legs: `check-verb-counts` (round 49)
+and `check-parity-counts` (round 50) joined since. Same fix, longer list.
+
+---
+
+## 12. Name the objective's scope: §1 (a), (b), or (c)
+
+**Filed:** 2026-10-07, full-port round 65.
+
+**The gap.** Plan 025 §1 asks the owner to pick one of three readings — (a) ratify
+plus must-have subset, (b) actually port DSH Desktop, (c) freeze and release —
+and assumes (a) throughout. Sixty-five rounds later no answer is recorded, and
+the tree kept growing under the assumption: the window answers 36 of 37 heads,
+Pi stands at 49 / 118 / 151, DSH at 17 / 92 / 282. Every further round spends
+against an unratified scope.
+
+**Proposed:** record the pick in plan 025 §1 (one letter plus the must-have row
+list for (a), or the invariant change for (b)), and close or re-scope the
+matrices accordingly. Until then the matrices stay the scoreboard and (a) stays
+the working assumption — stated here so the assumption is visible.
+
+**Answered 2026-10-07, round 65: (b) — actually port DSH Desktop — under the
+native-window invariant (§2.3 stands).** Every portable DSH surface is in scope;
+Electron-only chrome stays `missing` permanently, to be rescoped row by row.
+Recorded in plan 025 §1.
+
+## 13. Empty window with no session: choose the behavior
+
+**Filed:** 2026-10-07, full-port round 65.
+
+**The gap.** A window opened with no session file (fresh launch, all sessions
+deleted) shows the agent pane's empty state and a working composer whose sends
+are refused for lack of an agent. Nothing is broken, but no decision is
+recorded: offer a session, start one unasked, or leave the empty state as the
+answer. The longer it stays undecided, the more code guesses around it.
+
+**Proposed:** pick one — (i) empty state stands (current behavior, document it),
+(ii) auto-start a session file on first send, or (iii) a first-run offer —
+and pin it in a test. Recommended: (i); the state is honest and the composer
+says why it refuses.
+
+**Answered 2026-10-07, round 65: (i).** Pinned by
+`an_empty_window_says_so_and_still_asks` (empty state shown, close still asked,
+nothing invented and nothing auto-started).
+
+## 14. Release scope and vehicle
+
+**Filed:** 2026-10-07, full-port round 65.
+
+**The gap.** Plan 025 §I (release) is open: one tag (`v0.1.0`), no artifact,
+install is `cargo install --path`. Sixty-five green batteries later there is
+still no thing a person can install, and no recorded scope for one — preview
+with the matrices as the gap list, or wait for (a)'s must-have list.
+
+**Proposed:** pick the vehicle (cargo-install notes vs. attached binaries) and
+the scope (preview now vs. after the must-have list), then §I proceeds. If
+preview now, the round that builds it also runs the clean-install transcript
+§I demands.
+
+**Answered 2026-10-07, round 65: preview now, vehicle is cargo-install notes.**
+Next: write the install + scope notes and run the clean-install transcript.
+**Next focus, same round: permission presets** (plan §C gap 2) — design first,
+no owner input needed.
+
 ---
 
 ## Closed proposals
