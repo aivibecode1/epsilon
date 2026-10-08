@@ -186,10 +186,15 @@ pub(super) fn draw_session_browser(f: &mut Frame<'_>, app: &mut App, outer: Rect
 
     let mut lines: Vec<Line<'static>> = Vec::new();
     if browser.rows.is_empty() {
-        lines.push(Line::from(Span::styled(
-            "no matches — Backspace to widen, Esc closes",
-            app.theme.dim(),
-        )));
+        // Empty directory vs filtered-out (P-243): an empty filter with no
+        // rows means no sessions exist yet, so the message names the way to
+        // make one; a non-empty filter means the filter hides them.
+        let empty = if app.input.trim().is_empty() {
+            "No sessions in this workspace yet — Ctrl+N starts one, Esc closes"
+        } else {
+            "no matches — Backspace to widen, Esc closes"
+        };
+        lines.push(Line::from(Span::styled(empty, app.theme.dim())));
     }
     for (i, row) in browser
         .rows

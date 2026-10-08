@@ -125,6 +125,7 @@ Rule: a working, verified product beats breadth. Anything cut goes in the
 | (10-08) | 90. **Full-port round 76 — refresh outcome pinned (P-253)** | The outcome line already existed (`record_live_result` + event-loop surface); the row was stale and E-045 (Ctrl+G never pressed) was real. Two tests: real Ctrl+G key path (channel-drained notice) and merge-plus-report both halves, with notice-mutation controls. P-253 done (Pi 53 / 114). Battery `port-r76` (2,239), green first time. |
 | (10-08) | 91. **Full-port round 77 — `/model` hybrid: exact applies, rest pre-fills (P-247)** | One candidate applies instantly; zero or many open the picker pre-filled (same resolution a run uses) — fixing blind-apply of typos (which also saved them globally). `ctrl+l` joins `app.model.select`. Two tests (ambiguous family, chord) with old-arm/chord controls; instant test retargeted to a test-catalog id with the reason written in. P-247 done (Pi 54 / 113). Battery `port-r77` (2,241), green first time. |
 | (10-08) | 92. **Full-port round 78 — Alt+Q restores queued steering (P-033)** | `app.message.dequeue` (`alt+q`, `alt+up`) drains the steering queue into the draft and reports the count; empty says so. One test (seeded queue, real key path, pulled-not-copied + empty) with a chord-miss control. P-033 done (Pi 55 / 150). Battery `port-r78` (2,242), green first time. |
+| (10-08) | 93. **Full-port round 79 — Ctrl+N starts sessions, empty browser teaches it (P-243)** | `app.session.new` (`ctrl+n`, both front ends' gesture) routes through the `/new` head; the empty browser opens (not refuses) on `No sessions … Ctrl+N starts one`, filtered-empty keeps the widen hint. Three tests (file appears, frame message with draw-miss control, refusal rewritten to open). P-243 done (Pi 56 / 149). Battery `port-r79b` (2,244), green on the second attempt (clippy needless-return, preserved). |
 
 > **A machine fault worth naming, because it nearly made me "fix" working code.** Restoring a
 > file from a `Copy-Item` backup preserved its **old timestamp**, so `cargo` decided nothing had
@@ -216,7 +217,7 @@ inventories are inventories.
 
 | Matrix | Rows | done | partial | missing | deliberately different |
 |---|---|---|---|---|---|
-| [`parity/pi-tui.md`](parity/pi-tui.md) | **339** | 55 | 113 | 150 | 21 |
+| [`parity/pi-tui.md`](parity/pi-tui.md) | **339** | 56 | 113 | 149 | 21 |
 | [`parity/dsh-desktop.md`](parity/dsh-desktop.md) | **433** | 18 | 94 | 279 | 42 |
 
 > **Corrected 2026-10-06 by [an independent review](reviews/2026-10-06-objective-review.md).** The
@@ -272,11 +273,12 @@ instead of newlining, and the sessions sidebar being a keyboard trap. What remai
 
 ## Verification (what is actually true)
 
-**Latest green battery: [`gate-port-r78-2026-10-08.txt`](../audit/evidence/gate-port-r78-2026-10-08.txt),
+**Latest green battery: [`gate-port-r79b-2026-10-08.txt`](../audit/evidence/gate-port-r79b-2026-10-08.txt),
 2026-10-08 — the tree this file describes.** Thirteen legs, all `[exit=0]`, `GATE PASS`.
-**2,242 passed / 0 failed / 13 ignored across 78 binaries**, summed from that one log's
-`test result:` lines — one more than `gate-port-r77`: the dequeue test.
-`CARGO_PROFILE_TEST_DEBUG=1` set preemptively (LNK1104 pattern); no fault.
+**2,244 passed / 0 failed / 13 ignored across 78 binaries**, summed from that one log's
+`test result:` lines — two more than `gate-port-r78`: the Ctrl+N and empty-browser tests.
+The first attempt failed on clippy (`needless_return` in the new arm); preserved as
+[`gate-port-r79-attempt1-FAILED-2026-10-08.txt`](../audit/evidence/gate-port-r79-attempt1-FAILED-2026-10-08.txt).
 (`cargo fmt --check` ran before launching.) The first `port-r55` attempt failed its test leg
 on an integration test driving `/timeline` as refused; preserved as
 [`gate-port-r55-attempt1-FAILED-2026-10-07.txt`](../audit/evidence/gate-port-r55-attempt1-FAILED-2026-10-07.txt).

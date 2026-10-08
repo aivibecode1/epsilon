@@ -1200,11 +1200,19 @@ async fn sessions_command_says_when_there_is_nothing_to_browse() {
         "{texts:?}"
     );
 
-    // An empty directory (no session files yet) is explained too.
+    // An empty directory (no session files yet) opens the browser on its
+    // empty state (P-243) — a refusal would hide the message that teaches
+    // the key. The empty words are pinned on the frame, beside this.
     std::fs::create_dir_all(tmp.path().join(".epsilon").join("sessions")).unwrap();
     type_and_enter(&mut app, &agent, "/sessions");
-    let texts: Vec<String> = app.ui.lines().iter().map(|l| l.text.clone()).collect();
-    assert!(texts.join("\n").contains("nothing to resume"), "{texts:?}");
+    assert!(
+        app.session_browser.is_some(),
+        "an existing empty dir opens, not refuses"
+    );
+    assert!(
+        app.session_browser.as_ref().expect("open").rows.is_empty(),
+        "with nothing in it"
+    );
 }
 
 #[tokio::test]
@@ -7004,4 +7012,67 @@ fn alt_q_restores_queued_messages_with_a_count() {
         "empty must say so: {:?}",
         app.ui.lines().iter().map(|l| &l.text).collect::<Vec<_>>()
     );
+}
+
+/// Ctrl+N starts a new session file, like `/new` (P-243).
+///
+/// Routed through the head, so the key and the command share the outcome.
+/// Counts session files before and after: one more, beside the others.
+#[test]
+fn ctrl_n_starts_a_new_session_file() {
+    let (mut app, agent, _rx, dir) = test_app_with_store();
+    let before: Vec<_> = walk_jsonl(dir.path());
+    handle_key(&mut app, &agent, ctrl(KeyCode::Char('n')));
+    let after: Vec<_> = walk_jsonl(dir.path());
+    assert_eq!(
+        after.len(),
+        before.len() + 1,
+        "exactly one session file must appear: {after:?}"
+    );
+}
+
+/// Count every `.jsonl` file under a directory (session files).
+fn walk_jsonl(dir: &std::path::Path) -> Vec<std::path::PathBuf> {
+    let mut out = Vec::new();
+    let mut stack = vec![dir.to_path_buf()];
+    while let Some(d) = stack.pop() {
+        let Ok(entries) = std::fs::read_dir(&d) else {
+            continue;
+        };
+        for e in entries.filter_map(Result::ok) {
+            let p = e.path();
+            if p.is_dir() {
+                stack.push(p);
+            } else if p.extension().is_some_and(|x| x == "jsonl") {
+                out.push(p);
+            }
+        }
+    }
+    out
+}
+
+/// An empty session browser names the key that starts one (P-243).
+///
+/// No sessions + empty filter: actionable (`Ctrl+N`). Filtered-out: the
+/// widen hint (unchanged). Asserted on the frame. Emptied by removing the
+/// fixture's own file (its tempdir, no one else's).
+#[test]
+fn empty_browser_names_the_new_session_key() {
+    let (mut app, agent, _rx, dir) = test_app_with_store();
+    for f in walk_jsonl(dir.path()) {
+        std::fs::remove_file(&f).expect("empty the fixture");
+    }
+    // The directory must exist (a missing dir is no browser, not an empty
+    // one — pinned beside this).
+    assert!(
+        app.session_dir().is_dir(),
+        "the sessions dir must exist to be empty"
+    );
+    app.open_session_browser(&agent);
+    assert!(
+        app.session_browser.is_some(),
+        "an existing empty dir still opens"
+    );
+    let frame = render_rows(&mut app, 80, 24).join("\n");
+    assert!(frame.contains("Ctrl+N"), "empty must name the key: {frame}");
 }

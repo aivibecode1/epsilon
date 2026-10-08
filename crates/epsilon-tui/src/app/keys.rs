@@ -1472,6 +1472,12 @@ pub(crate) fn handle_key(app: &mut App, agent: &Arc<Agent>, key: KeyEvent) -> bo
             }
             false
         }
+        _ if app.keybindings.matches("app.session.new", &key) => {
+            // New session file, like `/new` (P-243 names this chord in the
+            // empty browser). Routed through the head so the key and the
+            // command cannot report different things.
+            app.run_command(agent, crate::picker::Command::New)
+        }
         _ if app.keybindings.matches("app.thinking.cycle", &key) => {
             // Cycle thinking level (pi app.thinking.cycle, Shift+Tab there —
             // Shift+Tab is unreliable across terminals, Ctrl+T is not taken).

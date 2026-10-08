@@ -362,6 +362,9 @@ pub const TERMINAL: &[(&str, &[&str])] = &[
     // **0** -- nothing in the TUI claims one. `ctrl+y` was also tried first and
     // caught, the same way `ctrl+u`/`ctrl+j`/`ctrl+k` were for the half page.
     ("app.message.copy", &["f4"]),
+    // New session file (P-243; pi names Ctrl+N in its empty-list message,
+    // and the window already binds it — one gesture in both front ends).
+    ("app.session.new", &["ctrl+n"]),
     // Restore queued steering messages to the composer (P-033, pi's
     // app.message.dequeue: alt+q on Windows, alt+up elsewhere — both free
     // here, so both work everywhere).

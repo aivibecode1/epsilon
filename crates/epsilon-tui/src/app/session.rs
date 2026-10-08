@@ -205,12 +205,9 @@ impl App {
             return;
         }
         let browser = SessionBrowser::build(dir, self.workspace_root.clone(), current, "");
-        if browser.rows.is_empty() {
-            self.ui.push_notice(
-                "sessions: nothing to resume here — the directory holds no session files",
-            );
-            return;
-        }
+        // An empty directory OPENS (P-243): pi shows "No named sessions…"
+        // with the key that starts one, and a refusal would hide exactly
+        // the message that teaches it. The draw shows the empty state.
         self.input.clear();
         self.cursor_chars = 0;
         self.session_browser = Some(browser);

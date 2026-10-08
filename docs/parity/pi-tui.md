@@ -88,8 +88,8 @@ this document**, tallied from its own tables — not a projection.
 | 15. Markdown, mermaid and truncation | 22 | 5 | 8 | 9 | 0 |
 | 16. Status indicators | 13 | 2 | 5 | 5 | 1 |
 | 17. Footer | 12 | 3 | 4 | 3 | 2 |
-| 18. Selector and overlay components | 79 | 10 | 22 | 41 | 6 |
-| **Total** | **339** | **55** | **113** | **150** | **21** |
+| 18. Selector and overlay components | 79 | 11 | 22 | 40 | 6 |
+| **Total** | **339** | **56** | **113** | **149** | **21** |
 
 A further **17 rows are not in the counts above**: the 10 `Y-###` rows Pi ships outside its interactive mode (out of
 scope by design) and the 7 `AA-###` rows recording what was never inventoried. Both are listed in full near the end
@@ -670,7 +670,7 @@ the per-selector ones.
 | P-240 | Typing fuzzy-matches session id, name, **all message text** and cwd | `packages/coding-agent/src/modes/interactive/components/session-selector-search.ts:26`, `packages/coding-agent/src/modes/interactive/components/session-selector.ts:642` | deliberately different | `crates/epsilon-tui/src/search.rs:72` — `/search` covers the **rendered transcript**, not the session log on disk, and that scope is pinned by name | `search_command_now_searches_the_transcript_and_not_the_session_log` |
 | P-241 | A quoted segment is an exact substring match; a `re:` prefix switches to regular expressions | `packages/coding-agent/src/modes/interactive/components/session-selector-search.ts:136`, `:75`, `:46` | partial | `crates/epsilon-tui/src/search.rs:93`, `:102` — plain matching over the rendered transcript, wrapping in both directions; no phrase or regex mode | `an_open_search_reports_itself_and_the_matches_it_found` (frame), `next_and_previous_wrap_rather_than_stop` |
 | P-242 | In Fuzzy sort results are ordered by match score ascending with newest-first tie-breaks; in Recent the query filters but preserves order | `packages/coding-agent/src/modes/interactive/components/session-selector-search.ts:180`, `:171`, `:125` | missing | none | — |
-| P-243 | An empty list names the exact key to press (`No named sessions in current folder. Press <Ctrl+N>…`) | `packages/coding-agent/src/modes/interactive/components/session-selector.ts:429`, `:443`, `:431` | missing | none — no `E-` row establishes an empty-state message for the session browser | — |
+| P-243 | An empty list names the exact key to press (`No named sessions in current folder. Press <Ctrl+N>…`) | `packages/coding-agent/src/modes/interactive/components/session-selector.ts:429`, `:443`, `:431` | done | `crates/epsilon-tui/src/app/panels.rs` — empty dir opens (not refuses) on `No sessions in this workspace yet — Ctrl+N starts one`; `app.session.new` (`ctrl+n`, both front ends' gesture) routes through the `/new` head. Filtered-empty keeps the widen hint | `ctrl_n_starts_a_new_session_file` (file appears), `empty_browser_names_the_new_session_key` (frame; draw-miss control), updated `sessions_command_says_when_there_is_nothing_to_browse` (opens, not refuses) |
 | P-244 | The header shows `Loading n/total` while sessions are read, and a stale load cannot overwrite a fast one | `packages/coding-agent/src/modes/interactive/components/session-selector.ts:142`, `:956`, `:955` | missing | none | — |
 | P-245 | A failed load is shown for 4000 ms with an empty list | `packages/coding-agent/src/modes/interactive/components/session-selector.ts:1003-1004` | missing | none | — |
 | P-246 | Each row ends with a message count and a relative age (`now` / `5m` / `3h` / `2d` / `2w`), with the active session accent-coloured | `packages/coding-agent/src/modes/interactive/components/session-selector.ts:35`, `:494`, `:515` | partial | `crates/epsilon-tui/src/picker.rs:751` — `age · size · [task child] · [in use] · <file name>`; there is no message count | `session_rows_list_newest_first_and_mark_the_current_file` |
@@ -779,8 +779,8 @@ row says so — that is a gap in the inventory, and closing it is cheap.
 | 15. Markdown, mermaid and truncation | 22 | 5 | 8 | 9 | 0 |
 | 16. Status indicators | 13 | 2 | 5 | 5 | 1 |
 | 17. Footer | 12 | 3 | 4 | 3 | 2 |
-| 18. Selector and overlay components | 79 | 10 | 22 | 41 | 6 |
-| **Total** | **339** | **55** | **113** | **150** | **21** |
+| 18. Selector and overlay components | 79 | 11 | 22 | 40 | 6 |
+| **Total** | **339** | **56** | **113** | **149** | **21** |
 
 ### The `missing` rows — 161
 
@@ -805,7 +805,7 @@ nothing here is a claim that the behaviour cannot be built.
 | Markdown, mermaid and truncation (9) | P-167, P-168, P-169, P-170, P-171, P-172, P-173, T-010, T-012 |
 | Status indicators (5) | P-019, P-191, P-192, P-193, P-194 |
 | Footer (3) | P-197, P-207, P-208 |
-| Selector and overlay components (41) | P-230, P-232, P-234, P-235, P-237, P-239, P-242, P-243, P-244, P-245, P-248, P-250, P-251, P-255, P-256, P-257, P-258, P-259, P-260, P-261, P-281, P-283, P-284, P-285, P-286, P-294, P-296, P-297, P-300, P-304, P-306, P-307, P-308, P-310, P-311, P-314, P-316, P-317, P-318, P-319, P-323 |
+| Selector and overlay components (40) | P-230, P-232, P-234, P-235, P-237, P-239, P-242, P-244, P-245, P-248, P-250, P-251, P-255, P-256, P-257, P-258, P-259, P-260, P-261, P-281, P-283, P-284, P-285, P-286, P-294, P-296, P-297, P-300, P-304, P-306, P-307, P-308, P-310, P-311, P-314, P-316, P-317, P-318, P-319, P-323 |
 
 ### The `partial` rows — 121
 
