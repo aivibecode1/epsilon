@@ -7076,3 +7076,35 @@ fn empty_browser_names_the_new_session_key() {
     let frame = render_rows(&mut app, 80, 24).join("\n");
     assert!(frame.contains("Ctrl+N"), "empty must name the key: {frame}");
 }
+
+/// Ctrl+N works inside the session browser it is named in (P-243).
+///
+/// The empty message promises the key; the browser owns the keyboard, so a
+/// composer-level-only chord would be a promise the UI breaks. Empty the
+/// fixture, open, press: the browser closes and a session file appears.
+#[test]
+fn ctrl_n_inside_the_browser_starts_a_session() {
+    let (mut app, agent, _rx, dir) = test_app_with_store();
+    for f in walk_jsonl(dir.path()) {
+        std::fs::remove_file(&f).expect("empty the fixture");
+    }
+    app.open_session_browser(&agent);
+    assert!(
+        app.session_browser.is_some(),
+        "the empty browser must open to press in"
+    );
+    let before: Vec<_> = walk_jsonl(dir.path());
+
+    handle_key(&mut app, &agent, ctrl(KeyCode::Char('n')));
+
+    assert!(
+        app.session_browser.is_none(),
+        "a new session leaves the browser"
+    );
+    let after: Vec<_> = walk_jsonl(dir.path());
+    assert_eq!(
+        after.len(),
+        before.len() + 1,
+        "and a session file appears: {after:?}"
+    );
+}

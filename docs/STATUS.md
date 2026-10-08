@@ -130,6 +130,7 @@ Rule: a working, verified product beats breadth. Anything cut goes in the
 | (10-08) | 95. **Full-port round 81 — window tool titles via shared `call_head` (C-120)** | Rows keep call args and title through the terminal's `call_head` (`bash $ …`, `read` path), so both front ends name a call alike; dead `one_line` JSON formatter deleted. Strengthened the session test to the exact title with a bare-name control. C-120 done (DSH 19 / 93). Battery `port-r81b` (2,245), green on the second attempt (a truncation golden caught untruncated long titles — fixed with a cap, preserved). |
 | (10-08) | 96. **Full-port round 82 — tab measures three columns (T-002)** | `cols` measures sanitized text (same expansion the renderer draws), so the function holds standalone; one unit test with a raw-width control. T-002 done, E-017 note and P-155 cite updated (tab half pinned, ANSI/chunk stays open). Pi now 58 / 112. Battery `port-r82` (2,246), green first time. |
 | (10-08) | 97. **Full-port round 83 — diff review folds at nine (C-135)** | Reviews over nine lines open folded with a real `Show N more lines` button (keyboard-focusable, named); `review_expanded` resets on open/close. One window test (nine + more, tenth hidden, click unfolds) with a never-fold control. C-135 done (DSH 20 / 92). Battery `port-r83b` (2,247), green on the second attempt (clippy double-ended-`last`, preserved). |
+| (10-08) | 98. **Full-port round 84 — Ctrl+N works inside the browser (P-243 follow-up)** | Round 79's empty message named a key the browser swallowed (it owns the keyboard): added the `app.session.new` arm there too — close, then the same `/new` head. One test (empty open, press, closed + file) with an arm-miss control. No row movement (P-243 stays done). Battery `port-r84` (2,248), green first time. |
 
 > **A machine fault worth naming, because it nearly made me "fix" working code.** Restoring a
 > file from a `Copy-Item` backup preserved its **old timestamp**, so `cargo` decided nothing had
@@ -277,13 +278,11 @@ instead of newlining, and the sessions sidebar being a keyboard trap. What remai
 
 ## Verification (what is actually true)
 
-**Latest green battery: [`gate-port-r83b-2026-10-08.txt`](../audit/evidence/gate-port-r83b-2026-10-08.txt),
+**Latest green battery: [`gate-port-r84-2026-10-08.txt`](../audit/evidence/gate-port-r84-2026-10-08.txt),
 2026-10-08 — the tree this file describes.** Thirteen legs, all `[exit=0]`, `GATE PASS`.
-**2,247 passed / 0 failed / 13 ignored across 78 binaries**, summed from that one log's
-`test result:` lines — one more than `gate-port-r82`: the fold test.
-The first attempt failed on clippy (double-ended `last` in the new test);
-preserved as
-[`gate-port-r83-attempt1-FAILED-2026-10-08.txt`](../audit/evidence/gate-port-r83-attempt1-FAILED-2026-10-08.txt).
+**2,248 passed / 0 failed / 13 ignored across 78 binaries**, summed from that one log's
+`test result:` lines — one more than `gate-port-r83b`: the in-browser Ctrl+N test.
+`CARGO_PROFILE_TEST_DEBUG=1` set preemptively (LNK1104 pattern); no fault.
 (`cargo fmt --check` ran before launching.) The first `port-r55` attempt failed its test leg
 on an integration test driving `/timeline` as refused; preserved as
 [`gate-port-r55-attempt1-FAILED-2026-10-07.txt`](../audit/evidence/gate-port-r55-attempt1-FAILED-2026-10-07.txt).

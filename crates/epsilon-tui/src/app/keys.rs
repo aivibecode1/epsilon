@@ -1126,6 +1126,16 @@ pub(crate) fn handle_key(app: &mut App, agent: &Arc<Agent>, key: KeyEvent) -> bo
                     b.rebuild(&filter);
                 }
             }
+            // Ctrl+N inside the browser (P-243 names it in the empty state):
+            // close, then start the session through the head — the same act
+            // as the composer-level chord, so the key works where the
+            // message promises it.
+            _ if app.keybindings.matches("app.session.new", &key) => {
+                app.session_browser = None;
+                app.input.clear();
+                app.cursor_chars = 0;
+                let _ = app.run_command(agent, crate::picker::Command::New);
+            }
             _ => {}
         }
         return false;
