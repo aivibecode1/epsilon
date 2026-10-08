@@ -7140,3 +7140,67 @@ async fn alt_enter_while_streaming_queues_a_follow_up() {
         "not in the steering queue: a follow-up waits, it does not steer"
     );
 }
+
+/// Up/Down recall prompt history through the explicit bindings (P-211).
+///
+/// Two submits, then Up twice (older, oldest), Down (newer), Down (empty
+/// again). Driven through the real key path — the defect class is chords
+/// that parse and never fire, and recall had no test at all.
+#[tokio::test]
+async fn up_and_down_walk_prompt_history() {
+    let (mut app, agent, _rx) = test_app();
+    assert!(!type_and_enter(&mut app, &agent, "first thought"));
+    assert!(!type_and_enter(&mut app, &agent, "second thought"));
+
+    handle_key(&mut app, &agent, key(KeyCode::Up));
+    assert_eq!(app.input, "second thought", "newest first");
+    handle_key(&mut app, &agent, key(KeyCode::Up));
+    assert_eq!(app.input, "first thought", "then older");
+    handle_key(&mut app, &agent, key(KeyCode::Down));
+    assert_eq!(app.input, "second thought", "and back forward");
+    handle_key(&mut app, &agent, key(KeyCode::Down));
+    assert!(
+        app.input.is_empty(),
+        "past newest restores the empty draft: {:?}",
+        app.input
+    );
+}
+
+/// Ctrl+Up jumps the viewport to prompts; it does not recall (P-211).
+///
+/// The recall arms used to match bare `KeyCode::Up`, which also caught
+/// Ctrl+Up and starved the prompt-jump binding — advertised by `/hotkeys`,
+/// printed nowhere, firing never. Converting recall to explicit ids
+/// un-shadows it; this pins the split: modified Up jumps, bare Up recalls.
+#[tokio::test]
+async fn ctrl_up_jumps_to_prompts_instead_of_recalling() {
+    let (mut app, agent, _rx) = test_app();
+    assert!(!type_and_enter(&mut app, &agent, "first thought"));
+    assert!(!type_and_enter(&mut app, &agent, "second thought"));
+    // At the floor, empty draft: bare Up must recall, and must not move
+    // the viewport; Ctrl+Up must jump to the earlier prompt, and must not
+    // recall. (A larger starting offset would step off a transcript this
+    // short — `jump_to_prompt` saturates instead of inventing a row.)
+    app.scroll_from_bottom = 0;
+    handle_key(&mut app, &agent, key(KeyCode::Up));
+    assert_eq!(app.input, "second thought", "bare Up recalls");
+    assert_eq!(
+        app.scroll_from_bottom, 0,
+        "and leaves the viewport where it was"
+    );
+
+    app.input.clear();
+    app.cursor_chars = 0;
+    let before = app.scroll_from_bottom;
+    handle_key(&mut app, &agent, ctrl(KeyCode::Up));
+    assert!(
+        app.scroll_from_bottom != before,
+        "Ctrl+Up must jump the viewport, not sit still: {}",
+        before
+    );
+    assert!(
+        app.input.is_empty(),
+        "and must not recall into the draft: {:?}",
+        app.input
+    );
+}

@@ -133,6 +133,7 @@ Rule: a working, verified product beats breadth. Anything cut goes in the
 | (10-08) | 98. **Full-port round 84 — Ctrl+N works inside the browser (P-243 follow-up)** | Round 79's empty message named a key the browser swallowed (it owns the keyboard): added the `app.session.new` arm there too — close, then the same `/new` head. One test (empty open, press, closed + file) with an arm-miss control. No row movement (P-243 stays done). Battery `port-r84` (2,248), green first time. |
 | (10-08) | 99. **Full-port round 85 — two verdicts: Ctrl+Z stays undo, no accept-and-discard placeholders (P-029, P-214)** | P-029: `Ctrl+Z` is undo (tested); Pi itself prints unsupported on win32 (verified in refs) — this platform, so deliberately different. P-214: no extension-input surface exists (verified by grep); invariant 7 would refuse accept-and-discard. Pi now 58 / 146 / 23dd. Battery `port-r85` (2,248), green first time. |
 | (10-08) | 100. **Full-port round 86 — Alt+Enter queues a follow-up (P-030)** | `submit_editor` takes a follow-up flag (Pi's `app.message.followUp`, `alt+enter` only); running diverts to `follow_up`, idle submits normally, every gate first. One test (real key path; notice + queue, steering untouched) with an arm-miss control. P-030 done (Pi 59 / 111). Battery `port-r86` (2,249), green first time. |
+| (10-08) | 101. **Full-port round 87 — explicit history bindings (P-211)** | Pi's `tui.editor.historyPrevious`/`historyNext` (`up`/`down`, rebindable); recall arms match ids not bare keycodes — which also un-shadows Ctrl+Up (it starved the prompt jump). Two tests (walk + empty-restore, split pinned) with a KeyCode-revert control proving the starvation. P-211 done (Pi 60 / 145). Battery `port-r87` (2,251), green first time. |
 
 > **A machine fault worth naming, because it nearly made me "fix" working code.** Restoring a
 > file from a `Copy-Item` backup preserved its **old timestamp**, so `cargo` decided nothing had
@@ -224,7 +225,7 @@ inventories are inventories.
 
 | Matrix | Rows | done | partial | missing | deliberately different |
 |---|---|---|---|---|---|
-| [`parity/pi-tui.md`](parity/pi-tui.md) | **339** | 59 | 111 | 146 | 23 |
+| [`parity/pi-tui.md`](parity/pi-tui.md) | **339** | 60 | 111 | 145 | 23 |
 | [`parity/dsh-desktop.md`](parity/dsh-desktop.md) | **433** | 20 | 92 | 279 | 42 |
 
 > **Corrected 2026-10-06 by [an independent review](reviews/2026-10-06-objective-review.md).** The
@@ -280,14 +281,22 @@ instead of newlining, and the sessions sidebar being a keyboard trap. What remai
 
 ## Verification (what is actually true)
 
-**Latest green battery: [`gate-port-r86-2026-10-08.txt`](../audit/evidence/gate-port-r86-2026-10-08.txt),
+**Latest green battery: [`gate-port-r87-2026-10-08.txt`](../audit/evidence/gate-port-r87-2026-10-08.txt),
 2026-10-08 — the tree this file describes.** Thirteen legs, all `[exit=0]`, `GATE PASS`.
-**2,249 passed / 0 failed / 13 ignored across 78 binaries**, summed from that one log's
-`test result:` lines — one more than `gate-port-r85`: the follow-up test.
+**2,251 passed / 0 failed / 13 ignored across 78 binaries**, summed from that one log's
+`test result:` lines — two more than `gate-port-r86`: the two prompt-history tests.
 `CARGO_PROFILE_TEST_DEBUG=1` set preemptively (LNK1104 pattern); no fault.
 (`cargo fmt --check` ran before launching.) The first `port-r55` attempt failed its test leg
 on an integration test driving `/timeline` as refused; preserved as
 [`gate-port-r55-attempt1-FAILED-2026-10-07.txt`](../audit/evidence/gate-port-r55-attempt1-FAILED-2026-10-07.txt).
+
+> **This battery's log was nearly lost, which is its own finding.** `port-r87` finished
+> green at 20:49 and its log lived only in `target/`, which is disposable; the round's STATUS
+> entry already claimed "green first time" for a run nobody outside `target/` could open.
+> It was copied to `audit/evidence/` the next session, after confirming `GATE PASS`, the
+> thirteen `[exit=0]` legs, and the 2,251/0/13 totals by re-summing the log's own
+> `test result:` lines. **A green battery that exists only in `target/` is a claim, not
+> evidence** — the same failure mode as a summary that outruns its tree.
 
 > **How this battery came to exist.** The first attempt on this tree (`gate-land316a`) went 9 of 10
 > green and failed the test leg with `Access is denied. (os error 5)` on a freshly linked

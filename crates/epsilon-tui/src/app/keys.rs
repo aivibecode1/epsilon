@@ -1721,7 +1721,7 @@ pub(crate) fn handle_key(app: &mut App, agent: &Arc<Agent>, key: KeyEvent) -> bo
             app.cursor_chars = crate::editor_ops::next_cluster_end(&app.input, app.cursor_chars);
             false
         }
-        KeyCode::Up => {
+        _ if app.keybindings.matches("tui.editor.historyPrevious", &key) => {
             if app.at_open {
                 let total = app.at_rows.as_ref().map(|r| r.len()).unwrap_or(0);
                 app.at_index = app.at_index.saturating_sub(1).min(total.saturating_sub(1));
@@ -1740,7 +1740,7 @@ pub(crate) fn handle_key(app: &mut App, agent: &Arc<Agent>, key: KeyEvent) -> bo
             app.recall(true);
             false
         }
-        KeyCode::Down => {
+        _ if app.keybindings.matches("tui.editor.historyNext", &key) => {
             if app.at_open {
                 if let Some(rows) = &app.at_rows
                     && !rows.is_empty()

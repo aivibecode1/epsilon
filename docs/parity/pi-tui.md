@@ -73,7 +73,7 @@ this document**, tallied from its own tables — not a projection.
 |---|---|---|---|---|---|
 | 1. Startup, header and resources | 20 | 1 | 6 | 12 | 1 |
 | 2. Layout and renderer | 10 | 3 | 2 | 4 | 1 |
-| 3. Composer and editor | 24 | 4 | 13 | 5 | 2 |
+| 3. Composer and editor | 24 | 5 | 13 | 4 | 2 |
 | 4. Slash commands and autocomplete | 13 | 2 | 5 | 6 | 0 |
 | 5. Transcript and streaming | 35 | 8 | 6 | 21 | 0 |
 | 6. Model picker and thinking | 9 | 0 | 4 | 5 | 0 |
@@ -89,7 +89,7 @@ this document**, tallied from its own tables — not a projection.
 | 16. Status indicators | 13 | 2 | 5 | 5 | 1 |
 | 17. Footer | 12 | 3 | 4 | 3 | 2 |
 | 18. Selector and overlay components | 79 | 11 | 22 | 40 | 6 |
-| **Total** | **339** | **59** | **111** | **146** | **23** |
+| **Total** | **339** | **60** | **111** | **145** | **23** |
 
 A further **17 rows are not in the counts above**: the 10 `Y-###` rows Pi ships outside its interactive mode (out of
 scope by design) and the 7 `AA-###` rows recording what was never inventoried. Both are listed in full near the end
@@ -241,7 +241,7 @@ destination — steering — rather than steer-or-follow-up chosen by key.
 | P-036 | `Ctrl+G` stops the TUI, opens `$EDITOR` on the composer text, and replaces it only on a zero exit | `packages/coding-agent/src/modes/interactive/interactive-mode.ts:4509-4525`, `packages/coding-agent/src/modes/interactive/external-editor.ts:14-45` | partial | `crates/epsilon-tui/src/app/session.rs:218`, `crates/epsilon-tui/src/app/editor.rs:36`, `:56` — same resolution order (config, `$VISUAL`, `$EDITOR`) and the same rule that a non-zero exit leaves the draft alone; the chord is `Ctrl+O` / `Alt+E` | `external_editor_keeps_the_draft_when_the_editor_fails`, `editor_command_prefers_config_then_visual_then_editor` — all five tests run the spawner seam; the alternate-screen hand-off is asserted on no frame |
 | P-209 | Escape reaches the app as "interrupt" only when the autocomplete popup is closed; with the popup open it cancels the popup | `packages/coding-agent/src/modes/interactive/components/custom-editor.ts:104`, `:113` | partial | `crates/epsilon-tui/src/app/completion.rs:161` — Esc dismisses the popup and keeps the text | none — `slash_popup_opens_and_arrows_move_selection` is state only and does not press Esc |
 | P-210 | `Ctrl+D` falls through to delete-forward when the composer is not empty | `packages/coding-agent/src/modes/interactive/components/custom-editor.ts:119`, `:124` | partial | `crates/epsilon-tui/src/app/editing.rs:85` — the fall-through half holds; the empty-editor exit it falls through *from* does not exist (exit is `ctrl+q`) | `ctrl_d_forward_deletes_and_alt_backspace_kills_word` |
-| P-211 | Explicit history bindings beat application actions on the same key | `packages/coding-agent/src/modes/interactive/components/custom-editor.ts:130`, `:133` | missing | none — Epsilon has no prompt-history navigation | — |
+| P-211 | Explicit history bindings beat application actions on the same key | `packages/coding-agent/src/modes/interactive/components/custom-editor.ts:130`, `:133` | done | `crates/epsilon-contracts/src/keybind.rs` — Pi's `tui.editor.historyPrevious`/`historyNext` (`up`/`down`, rebindable); the recall arms match these ids (not bare keycodes, which also caught Ctrl+Up and starved the prompt jump — fixed as part of this) and sit before app actions on the chord | `up_and_down_walk_prompt_history` (walk + empty-restore), `ctrl_up_jumps_to_prompts_instead_of_recalling` (split pinned; KeyCode-revert control) |
 | P-212 | Extension shortcuts are consulted before every built-in binding | `packages/coding-agent/src/modes/interactive/components/custom-editor.ts:90`, `packages/coding-agent/src/modes/interactive/interactive-mode.ts:2233-2246` | missing | none | — |
 | P-213 | An extension editor mirrors the main editor's keys and the same `$EDITOR` resolution | `packages/coding-agent/src/modes/interactive/components/extension-editor.ts:71`, `:92`, `:83` | missing | none | — |
 | P-214 | An extension input accepts a `placeholder` argument and discards it | `packages/coding-agent/src/modes/interactive/components/extension-input.ts:38`, `:37` | deliberately different | none — verified by grep: no extension-input surface exists here (extensions are tools and processes, no custom input widgets), so there is nothing to accept a placeholder; per `AGENTS.md` invariant 7 an accept-and-discard argument would be refused as a no-op, not implemented | — |
@@ -764,7 +764,7 @@ row says so — that is a gap in the inventory, and closing it is cheap.
 |---|---|---|---|---|---|
 | 1. Startup, header and resources | 20 | 1 | 6 | 12 | 1 |
 | 2. Layout and renderer | 10 | 3 | 2 | 4 | 1 |
-| 3. Composer and editor | 24 | 4 | 13 | 5 | 2 |
+| 3. Composer and editor | 24 | 5 | 13 | 4 | 2 |
 | 4. Slash commands and autocomplete | 13 | 2 | 5 | 6 | 0 |
 | 5. Transcript and streaming | 35 | 8 | 6 | 21 | 0 |
 | 6. Model picker and thinking | 9 | 0 | 4 | 5 | 0 |
@@ -780,7 +780,7 @@ row says so — that is a gap in the inventory, and closing it is cheap.
 | 16. Status indicators | 13 | 2 | 5 | 5 | 1 |
 | 17. Footer | 12 | 3 | 4 | 3 | 2 |
 | 18. Selector and overlay components | 79 | 11 | 22 | 40 | 6 |
-| **Total** | **339** | **59** | **111** | **146** | **23** |
+| **Total** | **339** | **60** | **111** | **145** | **23** |
 
 ### The `missing` rows — 161
 
@@ -791,7 +791,7 @@ nothing here is a claim that the behaviour cannot be built.
 |---|---|
 | Startup, header and resources (12) | P-002, P-004, P-005, P-008, P-009, P-011, P-012, P-059, P-088, P-089, P-119, P-216 |
 | Layout and renderer (4) | P-015, P-020, P-021, P-220 |
-| Composer and editor (5) | P-013, P-032, P-211, P-212, P-213 |
+| Composer and editor (4) | P-013, P-032, P-212, P-213 |
 | Slash commands and autocomplete (6) | P-042, P-045, P-221, P-222, P-223, P-224 |
 | Transcript and streaming (21) | P-051, P-052, P-053, P-056, P-057, P-060, P-122, P-124, P-125, P-126, P-129, P-132, P-134, P-135, P-178, P-179, P-180, P-181, P-182, P-184, P-185 |
 | Model picker and thinking (5) | P-262, P-263, P-264, P-265, P-273 |

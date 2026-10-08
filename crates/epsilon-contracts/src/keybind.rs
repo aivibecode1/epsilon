@@ -376,6 +376,12 @@ pub const TERMINAL: &[(&str, &[&str])] = &[
     ("app.live.refresh", &["ctrl+g"]),
     ("tui.editor.undo", &["ctrl+z"]),
     ("tui.editor.redo", &["ctrl+."]),
+    // Prompt-history recall (P-211, pi's tui.editor.historyPrevious/Next):
+    // explicit bindings that beat application actions on the same key while
+    // the editor is focused — the arms match these ids before any app action
+    // that could claim the chord.
+    ("tui.editor.historyPrevious", &["up"]),
+    ("tui.editor.historyNext", &["down"]),
     ("tui.input.newLine", &["ctrl+j"]),
     ("tui.input.submit", &["enter"]),
     ("app.clipboard.paste", &["ctrl+v", "shift+insert"]),
