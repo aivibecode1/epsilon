@@ -73,7 +73,7 @@ this document**, tallied from its own tables — not a projection.
 |---|---|---|---|---|---|
 | 1. Startup, header and resources | 20 | 1 | 6 | 12 | 1 |
 | 2. Layout and renderer | 10 | 3 | 2 | 4 | 1 |
-| 3. Composer and editor | 24 | 3 | 14 | 7 | 0 |
+| 3. Composer and editor | 24 | 3 | 14 | 5 | 2 |
 | 4. Slash commands and autocomplete | 13 | 2 | 5 | 6 | 0 |
 | 5. Transcript and streaming | 35 | 8 | 6 | 21 | 0 |
 | 6. Model picker and thinking | 9 | 0 | 4 | 5 | 0 |
@@ -89,7 +89,7 @@ this document**, tallied from its own tables — not a projection.
 | 16. Status indicators | 13 | 2 | 5 | 5 | 1 |
 | 17. Footer | 12 | 3 | 4 | 3 | 2 |
 | 18. Selector and overlay components | 79 | 11 | 22 | 40 | 6 |
-| **Total** | **339** | **58** | **112** | **148** | **21** |
+| **Total** | **339** | **58** | **112** | **146** | **23** |
 
 A further **17 rows are not in the counts above**: the 10 `Y-###` rows Pi ships outside its interactive mode (out of
 scope by design) and the 7 `AA-###` rows recording what was never inventoried. Both are listed in full near the end
@@ -231,7 +231,7 @@ destination — steering — rather than steer-or-follow-up chosen by key.
 | P-025 | Escape has a four-way priority: abort the stream (restoring queued text), abort bash, leave bash mode, then arm a double-Escape timer | `packages/coding-agent/src/modes/interactive/interactive-mode.ts:3011-3037` | partial | `crates/epsilon-tui/src/app/keys.rs:1369` — Escape aborts a run and disarms the goal, and quits when idle; there is no bash-command abort, no bash-mode exit and no double-Escape arm | `a_rebound_interrupt_key_is_the_key_that_interrupts`, `aborting_a_run_disarms_the_goal_without_touching_it` (frame) |
 | P-027 | `Ctrl+C` clears the composer; a second one inside 500 ms quits | `packages/coding-agent/src/modes/interactive/interactive-mode.ts:4189-4197`, `packages/coding-agent/src/core/keybindings.ts:94` | partial | `crates/epsilon-tui/src/app/keys.rs:649` — `app.clear` is `ctrl+c`; the exit chord is `ctrl+q` (`crates/epsilon-contracts/src/keybind.rs:252`), so there is no two-stage clear-then-quit | `/hotkeys` reaches the table through `no_slash_command_panics_when_typed`; the two-stage timing is unpinned |
 | P-028 | `Ctrl+D` quits only when the composer is empty, and the enforcement lives in the editor component | `packages/coding-agent/src/modes/interactive/interactive-mode.ts:4199-4202` | partial | `crates/epsilon-tui/src/app/editing.rs:85` — `Ctrl+D` is unconditionally delete-forward and guarded past the end; exit is `ctrl+q` | `ctrl_d_forward_deletes_and_alt_backspace_kills_word` |
-| P-029 | `Ctrl+Z` suspends with `SIGTSTP` and restarts on `SIGCONT`; on Windows it prints that it is unsupported | `packages/coding-agent/src/modes/interactive/interactive-mode.ts:4351-4386`, `packages/coding-agent/src/core/keybindings.ts:96-99` | missing | none — Epsilon's `Ctrl+Z` is undo (`crates/epsilon-contracts/src/keybind.rs:357`) | — |
+| P-029 | `Ctrl+Z` suspends with `SIGTSTP` and restarts on `SIGCONT`; on Windows it prints that it is unsupported | `packages/coding-agent/src/modes/interactive/interactive-mode.ts:4351-4386`, `:4352-4355`, `packages/coding-agent/src/core/keybindings.ts:96-99` | deliberately different | `crates/epsilon-contracts/src/keybind.rs:357` — `Ctrl+Z` is undo, pinned by `ctrl_z_undoes_backspace_and_kills`; Pi itself prints `Suspend to background is not supported on Windows` on win32 (verified at `:4352`), which is this platform — there is no suspend to port, only an editor chord to keep | — |
 | P-030 | `Alt+Enter` queues a follow-up that waits for the turn; when idle it is plain Enter | `packages/coding-agent/src/modes/interactive/interactive-mode.ts:4388-4418`, `packages/coding-agent/src/core/keybindings.ts:134-137` | partial | `crates/epsilon-tui/src/app.rs:881` — one queue destination (steer), reached with the submit key; there is no separate follow-up chord | `none found` per E-037 |
 | P-031 | Enter while streaming steers the running turn rather than queueing behind it | `packages/coding-agent/src/modes/interactive/interactive-mode.ts:3317-3326` | done | `crates/epsilon-tui/src/app.rs:881`, `:882` — the queue decision and its transcript notice are both in the source | `enter_while_streaming_steers_rather_than_queueing` (staged through the `running` seam; asserts the notice and the steer-queue length, with a flag-off control) |
 | P-032 | Enter during compaction queues into a separate list, flushed in order when compaction ends | `packages/coding-agent/src/modes/interactive/interactive-mode.ts:3306-3315`, `:4676-4682`, `:4694-4771` | missing | none — `/compact` is queued behind a live turn (`crates/epsilon-tui/src/app/commands.rs:1561`), which is the reverse direction | — |
@@ -244,7 +244,7 @@ destination — steering — rather than steer-or-follow-up chosen by key.
 | P-211 | Explicit history bindings beat application actions on the same key | `packages/coding-agent/src/modes/interactive/components/custom-editor.ts:130`, `:133` | missing | none — Epsilon has no prompt-history navigation | — |
 | P-212 | Extension shortcuts are consulted before every built-in binding | `packages/coding-agent/src/modes/interactive/components/custom-editor.ts:90`, `packages/coding-agent/src/modes/interactive/interactive-mode.ts:2233-2246` | missing | none | — |
 | P-213 | An extension editor mirrors the main editor's keys and the same `$EDITOR` resolution | `packages/coding-agent/src/modes/interactive/components/extension-editor.ts:71`, `:92`, `:83` | missing | none | — |
-| P-214 | An extension input accepts a `placeholder` argument and discards it | `packages/coding-agent/src/modes/interactive/components/extension-input.ts:38`, `:37` | missing | none — and worth stating as a rule rather than a gap: [`../../AGENTS.md`](../../AGENTS.md) invariant 7 forbids accepting an argument and doing nothing with it | — |
+| P-214 | An extension input accepts a `placeholder` argument and discards it | `packages/coding-agent/src/modes/interactive/components/extension-input.ts:38`, `:37` | deliberately different | none — verified by grep: no extension-input surface exists here (extensions are tools and processes, no custom input widgets), so there is nothing to accept a placeholder; per `AGENTS.md` invariant 7 an accept-and-discard argument would be refused as a no-op, not implemented | — |
 | L-000 | The `tui.*` table: 47 editor, input, select and fullscreen-navigation bindings spread into the app table | `packages/tui/src/keybindings.ts:71-210`, `packages/coding-agent/src/core/keybindings.ts:76` | partial | `crates/epsilon-contracts/src/keybind.rs:242` — Epsilon declares 23 ids in one table and reads every key through it; the editor motions exist (`Ctrl+A`/`Ctrl+E`/Home/End at `crates/epsilon-tui/src/app/keys.rs:1523`, `Ctrl+J` newline at `:1777`) but there is no `tui.select.*` or `tui.altScreen.*` half | `a_rebound_submit_key_is_the_key_that_submits`, `no_chord_is_bound_to_two_ids_by_default` |
 | L-001 | Six shipped actions have handlers but **no default key**, so they do nothing until the user binds them | `packages/tui/src/keybindings.ts:74-81`, `:168-183` | partial | `crates/epsilon-contracts/src/keybind.rs:328-337` — `app.transcript.halfUp` / `halfDown` ship unbound with the reason written down (three chords were tried and each is already the composer's); two rather than six, and a different set | `no_chord_is_bound_to_two_ids_by_default` |
 | L-002 | In fullscreen, `PageUp`, `PageDown`, `Home` and `End` scroll the transcript instead of moving the composer cursor | `packages/tui/src/keybindings.ts:159`, `:160-166` | partial | `crates/epsilon-tui/src/app/keys.rs:1699`, `:1725` — the page chords scroll the transcript (E-101), but bare `Home`/`End` still drive the composer caret and only `Ctrl+Home`/`Ctrl+End` scroll | `the_advertised_scroll_key_scrolls_the_real_frame` (frame) |
@@ -764,7 +764,7 @@ row says so — that is a gap in the inventory, and closing it is cheap.
 |---|---|---|---|---|---|
 | 1. Startup, header and resources | 20 | 1 | 6 | 12 | 1 |
 | 2. Layout and renderer | 10 | 3 | 2 | 4 | 1 |
-| 3. Composer and editor | 24 | 3 | 14 | 7 | 0 |
+| 3. Composer and editor | 24 | 3 | 14 | 5 | 2 |
 | 4. Slash commands and autocomplete | 13 | 2 | 5 | 6 | 0 |
 | 5. Transcript and streaming | 35 | 8 | 6 | 21 | 0 |
 | 6. Model picker and thinking | 9 | 0 | 4 | 5 | 0 |
@@ -780,7 +780,7 @@ row says so — that is a gap in the inventory, and closing it is cheap.
 | 16. Status indicators | 13 | 2 | 5 | 5 | 1 |
 | 17. Footer | 12 | 3 | 4 | 3 | 2 |
 | 18. Selector and overlay components | 79 | 11 | 22 | 40 | 6 |
-| **Total** | **339** | **58** | **112** | **148** | **21** |
+| **Total** | **339** | **58** | **112** | **146** | **23** |
 
 ### The `missing` rows — 161
 
@@ -791,7 +791,7 @@ nothing here is a claim that the behaviour cannot be built.
 |---|---|
 | Startup, header and resources (12) | P-002, P-004, P-005, P-008, P-009, P-011, P-012, P-059, P-088, P-089, P-119, P-216 |
 | Layout and renderer (4) | P-015, P-020, P-021, P-220 |
-| Composer and editor (7) | P-013, P-029, P-032, P-211, P-212, P-213, P-214 |
+| Composer and editor (5) | P-013, P-032, P-211, P-212, P-213 |
 | Slash commands and autocomplete (6) | P-042, P-045, P-221, P-222, P-223, P-224 |
 | Transcript and streaming (21) | P-051, P-052, P-053, P-056, P-057, P-060, P-122, P-124, P-125, P-126, P-129, P-132, P-134, P-135, P-178, P-179, P-180, P-181, P-182, P-184, P-185 |
 | Model picker and thinking (5) | P-262, P-263, P-264, P-265, P-273 |
