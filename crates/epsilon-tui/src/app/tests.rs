@@ -6950,3 +6950,58 @@ fn ctrl_l_opens_the_model_picker() {
     handle_key(&mut app, &agent, ctrl(KeyCode::Char('l')));
     assert!(app.picker_open, "ctrl+l must open the picker");
 }
+
+/// Alt+Q pulls queued steering back into the composer with a count (P-033).
+///
+/// Seeded directly (steer pushes without a run); driven through the real key
+/// path. Empty queue says so instead of going silent.
+#[test]
+fn alt_q_restores_queued_messages_with_a_count() {
+    use epsilon_contracts::content::UserContent;
+    use epsilon_contracts::message::{Message, UserMessage};
+    let (mut app, agent, _rx) = test_app();
+    for (i, text) in ["first thought", "second thought"].iter().enumerate() {
+        agent.steer(Message::User(UserMessage {
+            id: format!("m-q{i}"),
+            timestamp_ms: 0,
+            content: vec![UserContent::Text {
+                text: text.to_string(),
+            }],
+        }));
+    }
+    assert_eq!(agent.steer_queue_len(), 2);
+
+    handle_key(
+        &mut app,
+        &agent,
+        key_mod(KeyModifiers::ALT, KeyCode::Char('q')),
+    );
+    assert_eq!(agent.steer_queue_len(), 0, "pulled, not copied");
+    assert!(
+        app.input.contains("first thought") && app.input.contains("second thought"),
+        "both queued messages must land in the draft: {:?}",
+        app.input
+    );
+    assert!(
+        app.ui
+            .lines()
+            .iter()
+            .any(|l| l.text.contains("Restored 2 queued messages")),
+        "and report the count: {:?}",
+        app.ui.lines().iter().map(|l| &l.text).collect::<Vec<_>>()
+    );
+
+    handle_key(
+        &mut app,
+        &agent,
+        key_mod(KeyModifiers::ALT, KeyCode::Char('q')),
+    );
+    assert!(
+        app.ui
+            .lines()
+            .iter()
+            .any(|l| l.text.contains("No queued messages")),
+        "empty must say so: {:?}",
+        app.ui.lines().iter().map(|l| &l.text).collect::<Vec<_>>()
+    );
+}

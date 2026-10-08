@@ -362,6 +362,10 @@ pub const TERMINAL: &[(&str, &[&str])] = &[
     // **0** -- nothing in the TUI claims one. `ctrl+y` was also tried first and
     // caught, the same way `ctrl+u`/`ctrl+j`/`ctrl+k` were for the half page.
     ("app.message.copy", &["f4"]),
+    // Restore queued steering messages to the composer (P-033, pi's
+    // app.message.dequeue: alt+q on Windows, alt+up elsewhere — both free
+    // here, so both work everywhere).
+    ("app.message.dequeue", &["alt+q", "alt+up"]),
     ("app.live.refresh", &["ctrl+g"]),
     ("tui.editor.undo", &["ctrl+z"]),
     ("tui.editor.redo", &["ctrl+."]),

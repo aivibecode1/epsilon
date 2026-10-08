@@ -1518,6 +1518,48 @@ pub(crate) fn handle_key(app: &mut App, agent: &Arc<Agent>, key: KeyEvent) -> bo
             }
             false
         }
+        _ if app.keybindings.matches("app.message.dequeue", &key) => {
+            // Restore queued steering messages to the composer (P-033, pi's
+            // app.message.dequeue): pull every queued message back into the
+            // draft and report the count. Empty queue says so (a silent key
+            // is a missing feature per §2.7).
+            let restored: Vec<String> = agent
+                .drain_steering_all()
+                .iter()
+                .filter_map(|m| match m {
+                    epsilon_contracts::message::Message::User(u) => {
+                        let t: String = u
+                            .content
+                            .iter()
+                            .filter_map(|b| match b {
+                                epsilon_contracts::content::UserContent::Text { text } => {
+                                    Some(text.as_str())
+                                }
+                                _ => None,
+                            })
+                            .collect::<Vec<_>>()
+                            .join("\n");
+                        (!t.trim().is_empty()).then(|| t.trim().to_string())
+                    }
+                    _ => None,
+                })
+                .collect();
+            if restored.is_empty() {
+                app.ui.push_notice("No queued messages to restore");
+            } else {
+                let n = restored.len();
+                if !app.input.is_empty() && !app.input.ends_with('\n') {
+                    app.input.push('\n');
+                }
+                app.input.push_str(&restored.join("\n"));
+                app.cursor_chars = app.input.chars().count();
+                app.ui.push_notice(format!(
+                    "Restored {n} queued message{} to editor",
+                    if n == 1 { "" } else { "s" }
+                ));
+            }
+            false
+        }
         _ if app.keybindings.matches("app.model.cycleForward", &key)
             || app.keybindings.matches("app.model.cycleBackward", &key) =>
         {

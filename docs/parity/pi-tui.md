@@ -73,7 +73,7 @@ this document**, tallied from its own tables — not a projection.
 |---|---|---|---|---|---|
 | 1. Startup, header and resources | 20 | 1 | 6 | 12 | 1 |
 | 2. Layout and renderer | 10 | 3 | 2 | 4 | 1 |
-| 3. Composer and editor | 24 | 2 | 14 | 8 | 0 |
+| 3. Composer and editor | 24 | 3 | 14 | 7 | 0 |
 | 4. Slash commands and autocomplete | 13 | 2 | 5 | 6 | 0 |
 | 5. Transcript and streaming | 35 | 8 | 6 | 21 | 0 |
 | 6. Model picker and thinking | 9 | 0 | 4 | 5 | 0 |
@@ -89,7 +89,7 @@ this document**, tallied from its own tables — not a projection.
 | 16. Status indicators | 13 | 2 | 5 | 5 | 1 |
 | 17. Footer | 12 | 3 | 4 | 3 | 2 |
 | 18. Selector and overlay components | 79 | 10 | 22 | 41 | 6 |
-| **Total** | **339** | **54** | **113** | **151** | **21** |
+| **Total** | **339** | **55** | **113** | **150** | **21** |
 
 A further **17 rows are not in the counts above**: the 10 `Y-###` rows Pi ships outside its interactive mode (out of
 scope by design) and the 7 `AA-###` rows recording what was never inventoried. Both are listed in full near the end
@@ -235,7 +235,7 @@ destination — steering — rather than steer-or-follow-up chosen by key.
 | P-030 | `Alt+Enter` queues a follow-up that waits for the turn; when idle it is plain Enter | `packages/coding-agent/src/modes/interactive/interactive-mode.ts:4388-4418`, `packages/coding-agent/src/core/keybindings.ts:134-137` | partial | `crates/epsilon-tui/src/app.rs:881` — one queue destination (steer), reached with the submit key; there is no separate follow-up chord | `none found` per E-037 |
 | P-031 | Enter while streaming steers the running turn rather than queueing behind it | `packages/coding-agent/src/modes/interactive/interactive-mode.ts:3317-3326` | done | `crates/epsilon-tui/src/app.rs:881`, `:882` — the queue decision and its transcript notice are both in the source | `enter_while_streaming_steers_rather_than_queueing` (staged through the `running` seam; asserts the notice and the steer-queue length, with a flag-off control) |
 | P-032 | Enter during compaction queues into a separate list, flushed in order when compaction ends | `packages/coding-agent/src/modes/interactive/interactive-mode.ts:3306-3315`, `:4676-4682`, `:4694-4771` | missing | none — `/compact` is queued behind a live turn (`crates/epsilon-tui/src/app/commands.rs:1561`), which is the reverse direction | — |
-| P-033 | One key pulls every queued message back into the composer and reports the count | `packages/coding-agent/src/modes/interactive/interactive-mode.ts:4420-4427`, `:4655-4674` | missing | none | — |
+| P-033 | One key pulls every queued message back into the composer and reports the count | `packages/coding-agent/src/modes/interactive/interactive-mode.ts:4420-4427`, `:4655-4674` | done | `crates/epsilon-tui/src/app/keys.rs` — `app.message.dequeue` (`alt+q`, `alt+up`, both free) drains `drain_steering_all` into the draft (user text parts joined) and reports the count; empty says `No queued messages` | `alt_q_restores_queued_messages_with_a_count` (seeded queue, real key path, pulled-not-copied + empty case; chord-miss control) |
 | P-034 | `Ctrl+X` copies the live selection in fullscreen, otherwise the last assistant message; the confirmation is a flash in fullscreen and a status line in regular mode | `packages/coding-agent/src/modes/interactive/interactive-mode.ts:6556-6585`, `packages/coding-agent/src/core/settings-manager.ts:1379-1381` | partial | `crates/epsilon-tui/src/app/commands.rs:2351`; chord `f4` at `crates/epsilon-contracts/src/keybind.rs:355` — the last-assistant-message half is done; the selection half is a deliberate divergence (mouse capture is off so drag-select still copies, `crates/epsilon-tui/src/app.rs:1359`) | `the_copy_key_reaches_the_clipboard_path`, `copy_parks_a_sequence_that_carries_the_message_and_the_notice_names_the_path` |
 | P-035 | One paste key tries clipboard **file paths**, then a clipboard **image**, then clipboard **text** | `packages/coding-agent/src/modes/interactive/interactive-mode.ts:3093-3133` | partial | `crates/epsilon-tui/src/app/keys.rs:1755`; `crates/epsilon-tui/src/app.rs:775` — text paste works and a large paste becomes a `[paste #N …]` marker expanded on submit; no clipboard file or image path | `paste_marker_expands_to_payload_on_submit` |
 | P-036 | `Ctrl+G` stops the TUI, opens `$EDITOR` on the composer text, and replaces it only on a zero exit | `packages/coding-agent/src/modes/interactive/interactive-mode.ts:4509-4525`, `packages/coding-agent/src/modes/interactive/external-editor.ts:14-45` | partial | `crates/epsilon-tui/src/app/session.rs:218`, `crates/epsilon-tui/src/app/editor.rs:36`, `:56` — same resolution order (config, `$VISUAL`, `$EDITOR`) and the same rule that a non-zero exit leaves the draft alone; the chord is `Ctrl+O` / `Alt+E` | `external_editor_keeps_the_draft_when_the_editor_fails`, `editor_command_prefers_config_then_visual_then_editor` — all five tests run the spawner seam; the alternate-screen hand-off is asserted on no frame |
@@ -764,7 +764,7 @@ row says so — that is a gap in the inventory, and closing it is cheap.
 |---|---|---|---|---|---|
 | 1. Startup, header and resources | 20 | 1 | 6 | 12 | 1 |
 | 2. Layout and renderer | 10 | 3 | 2 | 4 | 1 |
-| 3. Composer and editor | 24 | 2 | 14 | 8 | 0 |
+| 3. Composer and editor | 24 | 3 | 14 | 7 | 0 |
 | 4. Slash commands and autocomplete | 13 | 2 | 5 | 6 | 0 |
 | 5. Transcript and streaming | 35 | 8 | 6 | 21 | 0 |
 | 6. Model picker and thinking | 9 | 0 | 4 | 5 | 0 |
@@ -780,7 +780,7 @@ row says so — that is a gap in the inventory, and closing it is cheap.
 | 16. Status indicators | 13 | 2 | 5 | 5 | 1 |
 | 17. Footer | 12 | 3 | 4 | 3 | 2 |
 | 18. Selector and overlay components | 79 | 10 | 22 | 41 | 6 |
-| **Total** | **339** | **54** | **113** | **151** | **21** |
+| **Total** | **339** | **55** | **113** | **150** | **21** |
 
 ### The `missing` rows — 161
 
@@ -791,7 +791,7 @@ nothing here is a claim that the behaviour cannot be built.
 |---|---|
 | Startup, header and resources (12) | P-002, P-004, P-005, P-008, P-009, P-011, P-012, P-059, P-088, P-089, P-119, P-216 |
 | Layout and renderer (4) | P-015, P-020, P-021, P-220 |
-| Composer and editor (8) | P-013, P-029, P-032, P-033, P-211, P-212, P-213, P-214 |
+| Composer and editor (7) | P-013, P-029, P-032, P-211, P-212, P-213, P-214 |
 | Slash commands and autocomplete (6) | P-042, P-045, P-221, P-222, P-223, P-224 |
 | Transcript and streaming (21) | P-051, P-052, P-053, P-056, P-057, P-060, P-122, P-124, P-125, P-126, P-129, P-132, P-134, P-135, P-178, P-179, P-180, P-181, P-182, P-184, P-185 |
 | Model picker and thinking (5) | P-262, P-263, P-264, P-265, P-273 |
