@@ -385,6 +385,16 @@ pub(super) fn draw_transcript(
     } else {
         app.ui.streaming_thinking()
     };
+    // Round 72's rule, one level in. The two tails are built in one pass, and
+    // that made reasoning and the answer **adjacent** for the whole of the
+    // text-streaming phase: the frame then carries a `│` gutter row directly
+    // above an answer row, and the transition a reader is watching for — the
+    // model stops reasoning and starts answering — has no marker at all. On
+    // commit `push_line`'s kind-change rule separates them, so the frame also
+    // changed shape mid-turn. Same rule, applied at draw time inside the tail:
+    // the first row of a second tail kind gets a blank above it.
+    let mut tail_kinds_seen = false;
+    let mut last_tail_kind = None;
     for (text, style, kind) in [
         (thinking_tail, app.theme.thinking(), LineKind::Thinking),
         (
@@ -394,6 +404,14 @@ pub(super) fn draw_transcript(
         ),
     ] {
         if !text.is_empty() {
+            // The separator goes above the first row of this kind, so it counts
+            // as a tail row for the skip arithmetic below — exactly like the
+            // separator round 72 put above the whole tail.
+            if tail_kinds_seen && last_tail_kind != Some(kind) {
+                tail_rows.push((LineKind::Blank, Line::from(Vec::new())));
+            }
+            tail_kinds_seen = true;
+            last_tail_kind = Some(kind);
             for line in text.split('\n') {
                 for wrapped in crate::wrap::wrap_line(&[(line, style)], body_width) {
                     tail_rows.push((

@@ -1852,6 +1852,64 @@ fn a_failed_tool_result_says_failed_on_its_title() {
     );
 }
 
+/// A failed shell card's title carries the exit **number** (P-158).
+///
+/// The frame, not a unit assertion on the renderer: this is the one property of
+/// the change that the unit test cannot see — that the number reaches the row a
+/// reader actually reads, under the real reducer and the real draw. `bash boom`
+/// above already proves the word; this proves the code beside it.
+///
+/// The event is hand-built rather than taken from `agent_event_tool_result`,
+/// because that helper hard-codes `details: {}` and the exit code lives in
+/// `details` — exactly the case `state.rs:1684`'s note anticipates. Both widths
+/// are drawn: the headline is the longest string a title carries, and a card
+/// whose suffix pushed its command off an 80-column screen would pass at 100.
+#[test]
+fn a_failed_shell_card_shows_its_exit_code_on_the_frame() {
+    let mut app = bench_app(UiState::new());
+    pin_theme(&mut app, ThemeColorMode::Ansi16);
+    app.ui.apply(&AgentEvent::MessageEnd {
+        message: Box::new(Message::Assistant(crate::state::assistant_calling(
+            "checking the build",
+            "tc_exit",
+            "bash",
+            serde_json::json!({"command": "cargo test"}),
+        ))),
+    });
+    app.ui.apply(&AgentEvent::MessageEnd {
+        message: Box::new(Message::ToolResult(
+            epsilon_contracts::message::ToolResultMessage {
+                id: epsilon_contracts::ids::new_id("msg"),
+                timestamp_ms: 0,
+                tool_call_id: "tc_exit".into(),
+                tool_name: "bash".into(),
+                content: vec![epsilon_contracts::content::ContentBlock::text(
+                    "error: process didn't exit successfully",
+                )],
+                details: serde_json::json!({ "exit_code": 101 }),
+                usage: None,
+                is_error: true,
+            },
+        )),
+    });
+
+    for width in [80u16, 100] {
+        let rows = render_rows(&mut app, width, 24);
+        let needle = "$ cargo test · exit 101";
+        let title = &rows[row_of(&rows, needle)];
+        assert!(
+            title.starts_with("✗ bash $ cargo test · exit 101 · failed"),
+            "the title must read as a command that exited 101, at {width}: {title:?}"
+        );
+        // The command is still on the row — the suffix added a fact, it did not
+        // push the command off the line.
+        assert!(
+            title.contains("$ cargo test · exit 101 · failed · "),
+            "status and duration must survive beside the exit code at {width}: {title:?}"
+        );
+    }
+}
+
 #[test]
 fn an_edits_diff_is_drawn_with_a_coloured_gutter_not_as_prose() {
     // The heart of the slice. Each of these assertions fails on the old code for a

@@ -251,3 +251,61 @@ fn truncated_shell_result_names_its_spill_file() {
         "must not invent one: {small}"
     );
 }
+
+/// A failed shell card's title carries the exit number (P-158).
+///
+/// Pi prints `(exit 101)` in its card's status parts
+/// (`bash-execution.ts:192`); Epsilon's status parts are the `· {word}` the title
+/// already draws, so the number goes in the headline — the place whose documented
+/// job is *what a settled card knows that the call did not*. Before this, the
+/// number reached the screen only as the last line of a body the twelve-row cap
+/// hides, so the commonest failure in a coding agent cost a scroll.
+#[test]
+fn a_failed_shell_card_names_its_exit_code() {
+    let failed = super::result_head(
+        "bash",
+        &json!({ "command": "cargo test" }),
+        &json!({ "exit_code": 101 }),
+        "error[E0425]: boom",
+        "…",
+    );
+    assert!(
+        failed.contains("exit 101"),
+        "the headline must carry the code: {failed}"
+    );
+    assert!(
+        failed.starts_with("$ cargo test"),
+        "and must still read as the command line: {failed}"
+    );
+}
+
+/// The same headline grows nothing for a command that succeeded.
+///
+/// `exit 0` beside `ok` is noise, and an absent code — a process killed by a
+/// signal, which the body already names `[terminated by signal]` — must not
+/// become `exit ` with nothing after it. This is the control the row above is
+/// read against: without it, printing the code unconditionally would still pass.
+#[test]
+fn a_successful_shell_card_grows_no_exit_code() {
+    let zero = super::result_head(
+        "bash",
+        &json!({ "command": "echo hi" }),
+        &json!({ "exit_code": 0 }),
+        "hi",
+        "…",
+    );
+    assert!(!zero.contains("exit"), "zero must stay silent: {zero}");
+    let absent = super::result_head(
+        "bash",
+        &json!({ "command": "sleep 999" }),
+        &json!({ "output_complete": false }),
+        "stopped",
+        "…",
+    );
+    assert!(
+        !absent.contains("exit"),
+        "no code must not print an empty one: {absent}"
+    );
+    // The incomplete-output marker this headline already carried is unaffected.
+    assert!(absent.contains("output incomplete"), "{absent}");
+}

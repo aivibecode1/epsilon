@@ -135,6 +135,8 @@ Rule: a working, verified product beats breadth. Anything cut goes in the
 | (10-08) | 100. **Full-port round 86 — Alt+Enter queues a follow-up (P-030)** | `submit_editor` takes a follow-up flag (Pi's `app.message.followUp`, `alt+enter` only); running diverts to `follow_up`, idle submits normally, every gate first. One test (real key path; notice + queue, steering untouched) with an arm-miss control. P-030 done (Pi 59 / 111). Battery `port-r86` (2,249), green first time. |
 | (10-08) | 101. **Full-port round 87 — explicit history bindings (P-211)** | Pi's `tui.editor.historyPrevious`/`historyNext` (`up`/`down`, rebindable); recall arms match ids not bare keycodes — which also un-shadows Ctrl+Up (it starved the prompt jump). Two tests (walk + empty-restore, split pinned) with a KeyCode-revert control proving the starvation. P-211 done (Pi 60 / 145). Battery `port-r87` (2,251), green first time. |
 | (10-08) | 102. **Full-port round 88 — `!` announces bash mode in the footer (P-022)** | No border to recolour by design (rule, not box), so the mode word is the signal: `bash` while the draft starts with `!` (`idle_at_with_mode`), `insert` otherwise; thinking level already rides the status mirror. One frame test (real key path; always-insert control). P-022 done (Pi 61 / 110). Committed without a full battery: the tree holds another round's uncommitted P-158/delete work (fmt leg red on those files, one of their warnings); focused test + clippy + read-only gates green on this slice. |
+| (10-08) | 103. **Full-port round 89 — a failed card names its exit code (P-158), and the reason/answer gap** | Two slices, both landed in the tree that already carried round 88 (see the note above — the `port-r88` battery covers both). **P-158's number half:** `details.exit_code` now rides the headline (`$ cargo test · exit 101`), the fact the shell tool already reported and the twelve-row cap was hiding — RED first, negative control run on both halves (the frame prints the title without the code), zero and absent codes controlled. The `(cancelled)` half stays honestly open: no `CardStatus` names a cancellation. **Round 72's rule, one level in:** `draw_transcript` built both tails in one pass, so a reasoning row sat directly above the answer row for the whole text-streaming phase and the one transition a reader watches had no marker; a blank now separates them at draw time, and `streaming_tail_rows` — the hand-copy that counts them for the footer badge — was corrected with it so the badge and the body agree. Battery `port-r88` (2,256), green. |
+| (10-08) | 104. **A fifth read-only sweep — and the four ranked findings it produced** | Four investigators ran against the matrix while the round-88 battery ran: session deletion (P-237), the model picker (P-250/P-260), the transcript filter cycle (P-294), the tool cards (§12/§13, 27 rows ranked), and the transcript's presentation. They are recorded in the next-round note below rather than acted on — two of them were verified against the vendored reference by hand before being believed. One of their own "missing" rows (`P-153`'s "nothing marks the card") turned out to be **stale twice over**, which is the scoreboard earning its keep. |
 
 > **A machine fault worth naming, because it nearly made me "fix" working code.** Restoring a
 > file from a `Copy-Item` backup preserved its **old timestamp**, so `cargo` decided nothing had
@@ -282,22 +284,35 @@ instead of newlining, and the sessions sidebar being a keyboard trap. What remai
 
 ## Verification (what is actually true)
 
-**Latest green battery: [`gate-port-r87-2026-10-08.txt`](../audit/evidence/gate-port-r87-2026-10-08.txt),
+**Latest green battery: [`gate-port-r88-2026-10-08.txt`](../audit/evidence/gate-port-r88-2026-10-08.txt),
 2026-10-08 — the tree this file describes.** Thirteen legs, all `[exit=0]`, `GATE PASS`.
-**2,251 passed / 0 failed / 13 ignored across 78 binaries**, summed from that one log's
-`test result:` lines — two more than `gate-port-r86`: the two prompt-history tests.
+**2,256 passed / 0 failed / 13 ignored across 78 binaries**, summed from that one log's
+`test result:` lines — five more than `gate-port-r87`: two exit-code units, one exit-code
+frame, the reasoning/answer separation test, and the footer mode test another session landed
+in the same tree.
 `CARGO_PROFILE_TEST_DEBUG=1` set preemptively (LNK1104 pattern); no fault.
 (`cargo fmt --check` ran before launching.) The first `port-r55` attempt failed its test leg
 on an integration test driving `/timeline` as refused; preserved as
 [`gate-port-r55-attempt1-FAILED-2026-10-07.txt`](../audit/evidence/gate-port-r55-attempt1-FAILED-2026-10-07.txt).
 
-> **This battery's log was nearly lost, which is its own finding.** `port-r87` finished
-> green at 20:49 and its log lived only in `target/`, which is disposable; the round's STATUS
-> entry already claimed "green first time" for a run nobody outside `target/` could open.
-> It was copied to `audit/evidence/` the next session, after confirming `GATE PASS`, the
-> thirteen `[exit=0]` legs, and the 2,251/0/13 totals by re-summing the log's own
-> `test result:` lines. **A green battery that exists only in `target/` is a claim, not
-> evidence** — the same failure mode as a summary that outruns its tree.
+> **Two writers, one repository, again — and this time the battery had to cover both.** While
+> this session was mid-round, a second session committed
+> `79c23bb feat(tui): leading bang announces bash mode in the footer` as *its* round 88. The
+> `port-r88` battery was therefore run against **its commit plus this session's uncommitted
+> work**, which is what the log describes — and it is recorded here rather than implied,
+> because a battery log is a claim about a tree and this one spans two authors. The other
+> session's own entry says it committed *without* a battery, because `fmt` was red on this
+> session's files at the time; this run closes that gap. **Both slices are green in the same
+> log**, and the phase-log rows below are numbered so neither is hidden by the other.
+>
+> **The same collision left a booby trap, removed before it armed.** This session had written
+> `crates/epsilon-session/src/delete.rs` (a trash-preferred session delete, for parity row
+> P-237) and wired `pub mod delete;` into `epsilon-session/src/lib.rs` — but had not yet
+> reached the front-end wiring or its tests, so a session could not be deleted from anywhere.
+> A tracked `lib.rs` declaring an **untracked** module is a build break waiting for whichever
+> writer commits first. Both were reverted out of the tree; the design and its citations are
+> recorded in the next-round note below so the work is not lost. **An unreachable primitive is
+> not a feature, and a half-wired one is worse than none.**
 
 > **How this battery came to exist.** The first attempt on this tree (`gate-land316a`) went 9 of 10
 > green and failed the test leg with `Access is denied. (os error 5)` on a freshly linked
@@ -2294,6 +2309,78 @@ bodies, not counted line by line.
 ---
 
 ## Next
+
+### The five investigations of 2026-10-08 — what to take next, in value order
+
+Five read-only subagents ran in parallel against the parity matrices while the round-88 battery
+ran. None of them wrote code. Every finding below was **checked against the vendored reference by
+hand before it was believed**, and one of them turned out to be stale in two places at once — which
+is the scoreboard earning its keep. They are recorded here so the next round starts from evidence
+rather than from a fresh sweep.
+
+**1. The transcript's `todo` card is drawn twice, and the first copy says `pending` forever.**
+The `todo` result arm returns *before* the in-place settle that every other tool goes through
+(`crates/epsilon-tui/src/state.rs:1339-1349` live, `:1164-1173` replay), so the frame carries
+`▸ todo · pending` beside `✓ todo [x] …`, the pending body is a raw JSON dump (the `call_head`
+key walk at `renderers/mod.rs:53-59` finds no `todo` arm), and the checklist row gets no
+continuation gutter and **no `… N more lines (ctrl+x to open)` affordance** — because it is an
+expandable rather than a card, so `card::cap` never runs on it. `todo` is a built-in the model is
+told to use for any 3+ step task (`crates/epsilon-tools/descriptions/todo.txt:7-8`), so this is
+**every multi-step turn**. `state.rs:862-864` names this exact defect class — "a row still saying
+*pending* after its result has arrived is a row that lies" — and P-050's claim that the result
+settles the call's own card is pinned only against `bash`
+(`crates/epsilon-tui/src/app/golden.rs:1717`). **Fix:** extend the body match at
+`state.rs:875-878` so `todo` produces a card body, keep the summary as the headline at
+`:899-905`, delete the two early returns. The settle path then supplies the title, the gutter,
+the cap and the affordance for free.
+
+**2. Deletion does not exist anywhere (P-237).** No surface can delete a session: the browser has
+no delete arm (`app/keys.rs:1063-1141`), `SessionStore` has no delete API, and neither
+`app.session.delete` nor any command variant exists. Pi spawns the `trash` CLI and falls back to
+`unlink` (`references/pi-1.0.0/packages/coding-agent/src/modes/interactive/components/session-selector.ts:654-689`,
+success message at `:857`, guarded by a two-key confirm that refuses the active session at
+`:407-409`). **The design was written and then reverted rather than half-landed** — see the note
+above. It is: one `delete_session_file` + `DeleteOutcome` in `epsilon-session`, one
+`confirming_delete: Option<PathBuf>` on `SessionBrowser` (`app.rs:516`), one key arm in the
+browser's own block, a confirm line and a footer hint in `panels.rs:149-231`, and
+`("app.session.delete", &["ctrl+d"])` in `TERMINAL`. **Windows has no `trash` binary**, so the
+preferred branch is dead code on this platform and every delete is the unlink fallback — port that
+honestly, and note that Pi's `:675` reports *"moved to trash"* for a file that merely vanished,
+which we decline to copy.
+
+**3. The tool cards, ranked (27 rows read).** #1 **P-158's number half — DONE this round.** #2
+**P-156 + the head/tail halves of P-142 and P-177:** our cap keeps the *first* 12 rows
+(`ui/card.rs:277-294`), so `cargo test`'s summary is exactly what gets hidden; Pi keeps the last
+20 (`bash-execution.ts:131`, `.slice(-PREVIEW_LINES)`). One rule re-decides every long text card,
+so it wants a written decision, and the honest caveat is that the tool's own truncation marker sits
+*between* the two halves (`epsilon-tools/src/util.rs:858-930`) so it stays hidden either way. #3
+**P-153:** the `!!` marker exists in the label (`app.rs:1318-1322`) but the running notice does not
+carry it — **the matrix's "nothing marks the card" is stale twice over**, because `!`/`!!` output
+is a `LineKind::System` notice here, not a card, by design.
+
+**4. The model picker (P-250, P-260).** Three id-first haystacks (`picker.rs:166`, `:244`, `:521`)
+against Pi's two deliberately-ordered ones — the `/model` selector is *provider*-first so a
+provider query outranks proxy ids (`model-search.ts:17-21`, rationale at `:13-16`). The stark RED:
+stage 2 on `groq` with filter `groq` draws **"no matches"**, because the stage-2 haystack is `id
+label` and no groq row contains those letters. P-260's `[unavailable]` needs a synthetic row for a
+configured-but-uncatalogued id (the catalog cannot express it and stage 2 drops it), struck through
+with `Modifier::CROSSED_OUT`, plus the badge and the count. P-260's `(unsaved)` clause has **no
+target here** — Ctrl+S and Ctrl+F write immediately.
+
+**5. The transcript filter cycle (P-294).** Pi's five modes are `default → no-tools → user-only →
+labeled-only → all` (`tree-selector.ts:95`, cycle at `:1079`). Only three are representable on our
+live transcript — `labeled-only` needs an entry id and a label that `TranscriptLine` does not carry
+(hydrate takes `&[Message]`), and `all` is identical to `default` here. `ctrl+o` is **taken** by
+`app.editor.external` (`keybind.rs:390`, which already lists `alt+e`), and Windows consoles
+typically drop SHIFT from Ctrl+Shift+O. Do **not** touch `TreeFilter`'s order: it is pinned by
+`app/tests.rs:4515` and its `NoTools` semantics differ from Pi's.
+
+**6. The presentation audit found four places the brief assumed were broken that are fine by
+design**, and named them so they are not "fixed": the notice's missing band (P-137's recorded
+decision), assistant prose having no gutter glyph on truecolor, the frozen view's scroll state,
+and the assistant/tool-result distinction. Its one structural note: **`LineKind::System` has no
+severity dimension**, so `error: 500 from provider` is drawn as faintly as a command echo
+(`ui/transcript.rs:110-115`). That is P-058 and P-128, both already `partial`.
 
 ### Not done, and a green battery does not mean otherwise
 

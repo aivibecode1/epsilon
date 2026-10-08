@@ -102,6 +102,23 @@ pub fn result_head(
                 Some(false) => " · output incomplete".to_string(),
                 _ => String::new(),
             };
+            // P-158: the exit number on the card, not only in its body. A failed command is
+            // the commonest long card, and `cargo test`'s verdict is exactly the fact a reader
+            // needs first — the shell tool already reports it (`epsilon-tools/src/shell.rs:466`,
+            // `:612`), and it was reaching the screen only as the last line of a body the
+            // twelve-row cap hides (`ui/card.rs:70`). Pi prints `(exit 101)` in its status
+            // parts (`bash-execution.ts:192`); the headline is this crate's place for what a
+            // settled card knows that the call did not, which is what the exit code is.
+            //
+            // Zero grows nothing: a successful command's exit code carries no information the
+            // status word does not, and printing `exit 0` beside `ok` is noise. Absent grows
+            // nothing either — a process killed by a signal has no code, and the body already
+            // says `[terminated by signal]` (`shell.rs:383`).
+            if let Some(code) = details.get("exit_code").and_then(Value::as_i64)
+                && code != 0
+            {
+                extra.push_str(&format!(" · exit {code}"));
+            }
             // P-159: truncated output was spilled whole; the card names the
             // file so the rest is retrievable. Only present when truncation
             // actually spilled (small outputs carry no key).

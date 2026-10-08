@@ -6857,6 +6857,63 @@ fn streaming_text_is_separated_from_the_previous_block() {
     );
 }
 
+/// Reasoning and the answer separate *while* streaming, not only at commit.
+///
+/// Round 72's rule one level in. `draw_transcript` built both tails in one
+/// pass, so for the whole of the text-streaming phase a reasoning row sat
+/// directly above the answer row — and the moment the model stops reasoning and
+/// starts answering, the one transition a reader is watching, had no marker
+/// beyond the gutter glyph changing. At commit `push_line`'s kind-change rule
+/// inserted a blank, so the frame also changed shape mid-turn.
+///
+/// One `MessageUpdate` carrying a Thinking block *and* a Text block, exactly as
+/// a provider that reasons streams them. Asserted at both widths the evidence
+/// discipline names.
+#[test]
+fn reasoning_and_the_answer_separate_while_streaming() {
+    use epsilon_contracts::agent_event::AgentEvent;
+    use epsilon_contracts::message::{AssistantMessage, Message, StopReason, Usage};
+    let (mut app, _agent, _rx) = test_app();
+    app.ui.apply(&AgentEvent::MessageUpdate {
+        message: Box::new(Message::Assistant(AssistantMessage {
+            id: "m1".into(),
+            timestamp_ms: 0,
+            provider: "faux".into(),
+            model_id: "faux-1".into(),
+            content: vec![
+                epsilon_contracts::content::ContentBlock::Thinking {
+                    text: "weighing the two options".into(),
+                    signature: Some(String::new()),
+                },
+                epsilon_contracts::content::ContentBlock::Text {
+                    text: "the answer is B".into(),
+                },
+            ],
+            stop_reason: StopReason::EndTurn,
+            error_message: None,
+            usage: Usage::default(),
+        })),
+    });
+
+    for width in [80u16, 100] {
+        let frame = render_rows(&mut app, width, 24).join("\n");
+        let rows: Vec<&str> = frame.lines().collect();
+        let reasoning = rows
+            .iter()
+            .position(|r| r.contains("weighing the two options"))
+            .expect("the reasoning tail is on screen");
+        let answer = rows
+            .iter()
+            .position(|r| r.contains("the answer is B"))
+            .expect("the answer tail is on screen");
+        assert!(answer > reasoning, "reasoning streams first:\n{frame}");
+        assert!(
+            rows[answer - 1].trim().is_empty(),
+            "the row between them must be blank at {width}:\n{frame}"
+        );
+    }
+}
+
 /// Ctrl+S in the model picker saves the highlighted row as the default.
 ///
 /// Written to an override dir, never global — then ordered second and

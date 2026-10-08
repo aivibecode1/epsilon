@@ -653,17 +653,24 @@ impl App {
         } else {
             self.ui.streaming_thinking()
         };
-        [
-            (thinking_tail, self.theme.thinking()),
-            (self.ui.streaming_text(), self.theme.assistant()),
-        ]
-        .into_iter()
-        .filter(|(text, _)| !text.is_empty())
-        .map(|(text, style)| {
-            text.split('\n')
-                .map(|line| crate::wrap::wrap_line(&[(line, style)], body_width).len())
-                .sum::<usize>()
-        })
-        .sum()
+        let text_tail = self.ui.streaming_text();
+        // The separator `draw_transcript` inserts between the two tails. This
+        // function is a hand-copy of that draw loop, so the rule has to be
+        // restated here rather than shared: two tails that differ in the count
+        // would make the position badge disagree with the body.
+        let separator = usize::from(!thinking_tail.is_empty() && !text_tail.is_empty());
+        separator
+            + [
+                (thinking_tail, self.theme.thinking()),
+                (text_tail, self.theme.assistant()),
+            ]
+            .into_iter()
+            .filter(|(text, _)| !text.is_empty())
+            .map(|(text, style)| {
+                text.split('\n')
+                    .map(|line| crate::wrap::wrap_line(&[(line, style)], body_width).len())
+                    .sum::<usize>()
+            })
+            .sum::<usize>()
     }
 }
