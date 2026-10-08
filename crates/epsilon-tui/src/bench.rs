@@ -154,9 +154,17 @@ mod tests {
         let mut ui = UiState::new();
         build_synthetic_transcript(&mut ui, 3);
         // No lifecycle markers: 3 assistant rows, a tool call on the first
-        // message, and 3 tool results = 7.
-        assert_eq!(ui.lines().len(), 7);
+        // message, and 3 tool results = 7 content lines, plus 6 blank
+        // separators (every adjacent pair changes block).
+        assert_eq!(ui.lines().len(), 13);
         assert!(ui.lines().iter().any(|l| l.md.is_some()));
+        let kinds: Vec<_> = ui.lines().iter().map(|l| l.kind).collect();
+        assert!(
+            kinds
+                .windows(2)
+                .all(|w| !(w[0] == w[1] && w[0] == crate::state::LineKind::Blank)),
+            "separators never double: {kinds:?}"
+        );
     }
 
     #[test]

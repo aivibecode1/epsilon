@@ -82,14 +82,14 @@ this document**, tallied from its own tables — not a projection.
 | 9. Themes | 18 | 0 | 6 | 8 | 4 |
 | 10. Settings | 22 | 1 | 9 | 11 | 1 |
 | 11. Project trust | 4 | 1 | 2 | 0 | 1 |
-| 12. Tool cards | 16 | 2 | 7 | 6 | 1 |
+| 12. Tool cards | 16 | 3 | 6 | 6 | 1 |
 | 13. Bash cards | 11 | 2 | 6 | 3 | 0 |
 | 14. Diffs | 6 | 4 | 0 | 2 | 0 |
 | 15. Markdown, mermaid and truncation | 22 | 5 | 8 | 9 | 0 |
 | 16. Status indicators | 13 | 2 | 5 | 5 | 1 |
 | 17. Footer | 12 | 3 | 4 | 3 | 2 |
 | 18. Selector and overlay components | 79 | 6 | 26 | 41 | 6 |
-| **Total** | **339** | **49** | **118** | **151** | **21** |
+| **Total** | **339** | **50** | **117** | **151** | **21** |
 
 A further **17 rows are not in the counts above**: the 10 `Y-###` rows Pi ships outside its interactive mode (out of
 scope by design) and the 7 `AA-###` rows recording what was never inventoried. Both are listed in full near the end
@@ -494,7 +494,7 @@ copy (E-076 uses `F4`).
 
 | id | behaviour | reference | status | ours | verified |
 |---|---|---|---|---|---|
-| P-136 | A blank line precedes every tool block | `packages/coding-agent/src/modes/interactive/components/tool-execution.ts:100`, `packages/coding-agent/src/modes/interactive/interactive-mode.ts:3965` | partial | `crates/epsilon-tui/src/ui/card.rs:213` — spacing is per-turn with a shared two-column gutter, not a blank line before each card | `a_completed_tool_call_is_drawn_once_on_a_real_frame` (frame) |
+| P-136 | A blank line precedes every tool block | `packages/coding-agent/src/modes/interactive/components/tool-execution.ts:100`, `packages/coding-agent/src/modes/interactive/interactive-mode.ts:3965` | done | `crates/epsilon-tui/src/state.rs` — `push_line` (the single funnel) inserts a `Blank` separator: always before tool cards, on kind change otherwise; never first, never twice. Generalizes Pi: user/assistant/reasoning/notices block the same way | `tool_cards_are_separated_by_blank_rows` (frame + lines, rule-removal control) |
 | P-137 | The card's background is pending / red / green, and colour is the **only** state channel | `packages/coding-agent/src/modes/interactive/components/tool-execution.ts:307`, `packages/coding-agent/src/modes/interactive/interactive-mode.ts:3574`, `:3583` | deliberately different | `crates/epsilon-tui/src/ui/card.rs:213` (state as a word in the title), `crates/epsilon-tui/src/ui/transcript.rs:70` (role glyph), `crates/epsilon-tui/src/state.rs:971` (a notice carries no band) — [`../../AGENTS.md`](../../AGENTS.md) §8 forbids colour alone | `a_tool_call_and_a_notice_are_distinguishable_on_a_real_frame_without_colour` (frame, `NO_COLOR`), `an_answer_and_its_reasoning_are_distinguishable_on_a_real_frame_without_colour` (frame) |
 | P-138 | A tool with a registered definition renders in a padded bordered box; one without renders bare, dumping pretty-printed JSON args | `packages/coding-agent/src/modes/interactive/components/tool-execution.ts:110`, `:369`, `:421` | partial | `crates/epsilon-tui/src/renderers/mod.rs:79` — every tool renders the same card; a tool with nothing sayable falls back to its name plus the first non-blank output line rather than a JSON dump | `a_tool_with_nothing_sayable_falls_back_to_the_first_output_line`, `a_card_with_no_headline_still_renders_its_name` |
 | P-139 | A renderer may declare `renderShell: "self"` and draw its own lines with no box, after one blank line | `packages/coding-agent/src/modes/interactive/components/tool-execution.ts:131`, `:269`, `:277-281` | missing | none | — |
@@ -773,14 +773,14 @@ row says so — that is a gap in the inventory, and closing it is cheap.
 | 9. Themes | 18 | 0 | 6 | 8 | 4 |
 | 10. Settings | 22 | 1 | 9 | 11 | 1 |
 | 11. Project trust | 4 | 1 | 2 | 0 | 1 |
-| 12. Tool cards | 16 | 2 | 7 | 6 | 1 |
+| 12. Tool cards | 16 | 3 | 6 | 6 | 1 |
 | 13. Bash cards | 11 | 2 | 6 | 3 | 0 |
 | 14. Diffs | 6 | 4 | 0 | 2 | 0 |
 | 15. Markdown, mermaid and truncation | 22 | 5 | 8 | 9 | 0 |
 | 16. Status indicators | 13 | 2 | 5 | 5 | 1 |
 | 17. Footer | 12 | 3 | 4 | 3 | 2 |
 | 18. Selector and overlay components | 79 | 6 | 26 | 41 | 6 |
-| **Total** | **339** | **49** | **118** | **151** | **21** |
+| **Total** | **339** | **50** | **117** | **151** | **21** |
 
 ### The `missing` rows — 161
 
@@ -824,7 +824,7 @@ An `E-` row covers these and something is not finished. The reason column is the
 | Themes (6) | P-091, P-093, P-097, P-099, P-102, P-269 | three palettes and no file-loaded themes; the measured contrast floor is asserted for `high-contrast` only; an unknown name is refused rather than silently reverted; no theme-token language; the ASCII repertoire is overridable but colour depth is not; no theme submenu |
 | Settings (9) | P-104, P-107, P-108, P-109, P-110, P-274, P-276, P-278, P-280 | a fixed eight-row popup; a trust review rather than a layered merge; no keybinding migration; a Windows predicate for glyphs, not chords; 23 ids against 44+; empty states live in transcript notices; one enum edited by name; capacity measured rather than a ten-row cap; the stage is named by the title, not `Step N/M` |
 | Project trust (2) | P-115, P-117 | a hash-triggered review answered in the composer, not a five-option dialog naming parent-folder trust; the trigger is a changed config hash, not one of eight named resource kinds |
-| Tool cards (7) | P-136, P-138, P-140, P-142, P-143, P-146, P-147 | spacing per turn, not per card; a named headline instead of bare JSON for an unregistered tool; a title row survives an empty body; twelve rows rather than ten; per-card explicit state that nothing sets (no mouse); arguments not re-rendered as they stream; the diff arrives as a result field, so there is no partial-args guard |
+| Tool cards (6) | P-138, P-140, P-142, P-143, P-146, P-147 | a named headline instead of bare JSON for an unregistered tool; a title row survives an empty body; twelve rows rather than ten; per-card explicit state that nothing sets (no mouse); arguments not re-rendered as they stream; the diff arrives as a result field, so there is no partial-args guard |
 | Bash cards (6) | P-153, P-154, P-155, P-156, P-158, P-177 | `!!` is implemented but not marked on the card; the run state is in the header, not a cancellable card line; tab/CR normalisation pinned by source only; twelve rows and which end is kept is unestablished; the exit **number** is not on the card; duration yes, truncation warning no |
 | Markdown, mermaid and truncation (8) | P-176, T-002, T-003, T-004, T-005, T-006, T-008, T-011 | hint placement has no keep-last mode; tab width matches with no test; stripping established at two boundaries, not one central measure; hyperlink/reset closing held by a different mechanism with a re-measure backstop; span-dropping, not column slicing; style is per-`Span`, so no reset ladder; row caching, but no ASCII fast path or bounded width cache; CJK as a word character unestablished for completion |
 | Status indicators (5) | P-018, P-186, P-188, P-189, P-190 | a drawn spinner rather than the terminal's progress state; one run-state slot rather than four kinds; whole-gauge dropping rather than a four-step border ladder; a retry notice and elapsed seconds rather than a cancelable countdown; one compaction wording rather than three |

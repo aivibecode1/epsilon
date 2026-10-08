@@ -23,6 +23,10 @@ pub enum LineKind {
     ToolResultErr,
     /// Lifecycle/system notice.
     System,
+    /// Block separator (P-136): an empty row between blocks, pushed by
+    /// `push_line`, never by content. Empty text never matches a search,
+    /// and the kind keeps it out of every role's styling.
+    Blank,
 }
 
 use std::collections::BTreeMap;
@@ -1566,6 +1570,24 @@ impl UiState {
     /// [`crate::text_safety`] for why a bidi override in a command line is not a rendering
     /// bug but an approval prompt that lies.
     fn push_line(&mut self, mut line: TranscriptLine) {
+        // Block separation (P-136, presentation pass): a blank row between
+        // blocks. Every tool card is its own block — one line per call,
+        // results settling in place — so card kinds always separate (even
+        // two calls in a row). Prose, reasoning and notices separate on
+        // kind change only, so chunked continuations stay one block.
+        // Decided here — the single funnel — so every producer gets it and
+        // none can forget it. Never before the first line, never twice.
+        let card_kind = matches!(
+            line.kind,
+            LineKind::ToolCall | LineKind::ToolResultOk | LineKind::ToolResultErr
+        );
+        if line.kind != LineKind::Blank
+            && let Some(last) = self.lines.last()
+            && last.kind != LineKind::Blank
+            && (card_kind || last.kind != line.kind)
+        {
+            self.lines.push(TranscriptLine::plain(LineKind::Blank, ""));
+        }
         let mut removed = crate::text_safety::Stripped::default();
         let (text, hit) = crate::text_safety::display_safe(&line.text);
         if hit.any() {
@@ -2226,14 +2248,18 @@ mod tests {
         // it drew one tool call twice. The call row is not gone; it is the result
         // row, which is where it always should have been.
         let kinds: Vec<LineKind> = st.lines().iter().map(|l| l.kind).collect();
-        assert_eq!(kinds, vec![LineKind::Assistant, LineKind::ToolResultOk]);
+        assert_eq!(
+            kinds,
+            vec![LineKind::Assistant, LineKind::Blank, LineKind::ToolResultOk]
+        );
         // One row carries both halves: which tool ran, and what it said.
         // M153 moved the tool's identity out of the line text and into the card title:
         // the row reads the command, and `bash` is what the card's title says. Asserting
         // the line for the tool name would be asserting M153 never happened.
-        let row = &st.lines()[1].text;
+        // Index 2, not 1: the blank separator sits between the prose and the card.
+        let row = &st.lines()[2].text;
         assert!(row.contains("hi"), "{row:?}");
-        let card = st.lines()[1]
+        let card = st.lines()[2]
             .card
             .as_ref()
             .expect("a tool row carries a card");

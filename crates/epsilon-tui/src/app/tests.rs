@@ -6677,3 +6677,66 @@ fn preset_full_access_asks_and_only_yes_switches() {
     app.submit_editor(&agent);
     assert_eq!(agent.current_preset(), "danger-full-access");
 }
+
+/// Tool cards read as blocks: a blank row before each card (P-136).
+///
+/// Pushed in `push_line` (the single funnel), not by producers — so every
+/// card gets it and none can forget it. Asserted on the frame (blank row
+/// present, exactly one) and on the lines (no blank first, never two).
+#[test]
+fn tool_cards_are_separated_by_blank_rows() {
+    use epsilon_contracts::agent_event::AgentEvent;
+    use epsilon_contracts::message::{AssistantMessage, Message, StopReason, Usage};
+    let (mut app, _agent, _rx) = test_app();
+    app.ui.push_local_input("run it");
+    let call = |id: &str, name: &str, args: serde_json::Value| {
+        epsilon_contracts::content::ContentBlock::ToolCall {
+            id: id.into(),
+            name: name.into(),
+            arguments: args,
+        }
+    };
+    app.ui.apply(&AgentEvent::MessageEnd {
+        message: Box::new(Message::Assistant(AssistantMessage {
+            id: "m1".into(),
+            timestamp_ms: 0,
+            provider: "faux".into(),
+            model_id: "faux-1".into(),
+            content: vec![
+                call("c1", "bash", serde_json::json!({ "command": "echo hi" })),
+                call("c2", "read", serde_json::json!({ "path": "a.txt" })),
+            ],
+            stop_reason: StopReason::ToolUse,
+            error_message: None,
+            usage: Usage::default(),
+        })),
+    });
+
+    let kinds: Vec<_> = app.ui.lines().iter().map(|l| l.kind).collect();
+    let blanks = kinds
+        .iter()
+        .filter(|k| **k == crate::state::LineKind::Blank)
+        .count();
+    assert_eq!(
+        blanks, 2,
+        "one blank before each of the two cards, none elsewhere: {kinds:?}"
+    );
+    assert!(
+        kinds
+            .windows(2)
+            .all(|w| !(w[0] == crate::state::LineKind::Blank
+                && w[1] == crate::state::LineKind::Blank)),
+        "never two blanks: {kinds:?}"
+    );
+
+    let frame = render_rows(&mut app, 80, 24).join("\n");
+    let rows: Vec<&str> = frame.lines().collect();
+    let first_card = rows
+        .iter()
+        .position(|r| r.contains("bash"))
+        .expect("the card is on screen");
+    assert!(
+        rows[first_card - 1].trim().is_empty(),
+        "a blank row precedes the card:\n{frame}"
+    );
+}

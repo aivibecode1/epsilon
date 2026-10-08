@@ -116,6 +116,7 @@ Rule: a working, verified product beats breadth. Anything cut goes in the
 | (10-08) | 81. **Full-port round 66 — permission presets designed (ADR-032)** | Four named rulesets (`read-only`, `workspace-write`, `danger-full-access`, `auto`) with project/user denies layered above and winning; risk confirmation as a shared behavior (safe-default, disabled-until-acknowledged, reset-on-cancel, two-press variant), drawn natively per front end. Phased: engine → terminal → window → matrix. Design only: battery `port-r66` (2,217), green first time. |
 | (10-08) | 82. **Full-port round 67 — preset engine lands (ADR-032 phase 1)** | `Preset` + `preset_ruleset` in `epsilon-safety` (deny-monotonic: full-access allows what nothing forbids, project deny still wins); `--preset` flag through `LaunchRequest`/`Launch`/`RunParams` into the gate layers (all four front-end modes + desktop). Six tests (five ruleset behaviors, one resolution carry) with mutation controls. Rows stay missing until the surfaces (phases 2–3). Battery `port-r67` (2,223), green first time. |
 | (10-08) | 83. **Full-port round 68 — `/preset` in both front ends (ADR-032 phases 2–3)** | New head (38): bare lists with current marked, names switch at once, `danger-full-access` holds a typed-`yes` gate in both composers (ADR amended: gates satisfy the contract, dialog optional). Mid-session switching rides a defaulted `set_preset` seam with the preset as a separate layer (base untouched, memory cleared, current tracked). Thirteen tests (5 ruleset + gate + wiring + 3 TUI + 3 window) with mutation/arm controls. D-080–D-082 partial, DSH 17 / 95. Window 37 of 38. Battery `port-r68d` (2,230), green on the fourth attempt (clippy borrow, guard list, AV machine fault — all three failures preserved). |
+| (10-08) | 84. **Full-port round 70 — transcript blocks read as blocks (P-136)** | First presentation slice: `push_line` inserts a `Blank` separator (always before tool cards, on kind change otherwise; never first, never twice). Looked at the dumped frame, not only asserted. One test with a rule-removal control; two goldens updated to the new shape. P-136 done (Pi 50 / 117). Battery `port-r70b` (2,231), green on the second attempt (LNK1104 machine fault first, preserved). |
 
 > **A machine fault worth naming, because it nearly made me "fix" working code.** Restoring a
 > file from a `Copy-Item` backup preserved its **old timestamp**, so `cargo` decided nothing had
@@ -207,7 +208,7 @@ inventories are inventories.
 
 | Matrix | Rows | done | partial | missing | deliberately different |
 |---|---|---|---|---|---|
-| [`parity/pi-tui.md`](parity/pi-tui.md) | **339** | 49 | 118 | 151 | 21 |
+| [`parity/pi-tui.md`](parity/pi-tui.md) | **339** | 50 | 117 | 151 | 21 |
 | [`parity/dsh-desktop.md`](parity/dsh-desktop.md) | **433** | 17 | 95 | 279 | 42 |
 
 > **Corrected 2026-10-06 by [an independent review](reviews/2026-10-06-objective-review.md).** The
@@ -263,18 +264,14 @@ instead of newlining, and the sessions sidebar being a keyboard trap. What remai
 
 ## Verification (what is actually true)
 
-**Latest green battery: [`gate-port-r68d-2026-10-08.txt`](../audit/evidence/gate-port-r68d-2026-10-08.txt),
+**Latest green battery: [`gate-port-r70b-2026-10-08.txt`](../audit/evidence/gate-port-r70b-2026-10-08.txt),
 2026-10-08 — the tree this file describes.** Thirteen legs, all `[exit=0]`, `GATE PASS`.
-**2,230 passed / 0 failed / 13 ignored across 78 binaries**, summed from that one log's
-`test result:` lines — seven more than `gate-port-r67`: the gate switch, TUI preset, and
-window preset tests. Three earlier attempts failed and are preserved:
-[`gate-port-r68-attempt1-FAILED-2026-10-08.txt`](../audit/evidence/gate-port-r68-attempt1-FAILED-2026-10-08.txt)
-(clippy needless-borrow in the new arm),
-[`gate-port-r68b-attempt2-FAILED-2026-10-08.txt`](../audit/evidence/gate-port-r68b-attempt2-FAILED-2026-10-08.txt)
-(guard list missing the new variant),
-[`gate-port-r68c-attempt3-FAILED-2026-10-08.txt`](../audit/evidence/gate-port-r68c-attempt3-FAILED-2026-10-08.txt)
-(AV blocked the core test binary — machine fault, rebuilt with
-`CARGO_PROFILE_TEST_DEBUG=1` per `AGENTS.md`).
+**2,231 passed / 0 failed / 13 ignored across 78 binaries**, summed from that one log's
+`test result:` lines — one more than `gate-port-r68d`: the block-separation test.
+The first attempt failed on an LNK1104 link fault (machine fault, Avira-class);
+preserved as
+[`gate-port-r70-attempt1-FAILED-2026-10-08.txt`](../audit/evidence/gate-port-r70-attempt1-FAILED-2026-10-08.txt),
+rebuilt with `CARGO_PROFILE_TEST_DEBUG=1` per `AGENTS.md`.
 (`cargo fmt --check` ran before launching.) The first `port-r55` attempt failed its test leg
 on an integration test driving `/timeline` as refused; preserved as
 [`gate-port-r55-attempt1-FAILED-2026-10-07.txt`](../audit/evidence/gate-port-r55-attempt1-FAILED-2026-10-07.txt).

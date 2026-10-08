@@ -113,6 +113,14 @@ pub fn row_style(theme: &Theme, kind: LineKind) -> (String, Style, Style, Style)
             theme.faint(),
             Style::default(),
         ),
+        // A separator is not content: no glyph (a gutter mark on an empty
+        // row is noise), no band, no body style to inherit.
+        LineKind::Blank => (
+            String::new(),
+            Style::default(),
+            Style::default(),
+            Style::default(),
+        ),
     }
 }
 

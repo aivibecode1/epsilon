@@ -206,7 +206,7 @@ fn row_marker(kind: LineKind, theme: &Theme) -> String {
         // A notice is not the same event as a tool call and must not share its
         // marker: with `NO_COLOR` or 16 colours the two would be the same pixels.
         LineKind::System => glyphs.bullet,
-        LineKind::Assistant | LineKind::Thinking => return String::new(),
+        LineKind::Assistant | LineKind::Thinking | LineKind::Blank => return String::new(),
     };
     // **Only when it differs from the gutter.**
     //
@@ -248,6 +248,9 @@ fn style_for(kind: LineKind, theme: &Theme) -> Style {
         LineKind::ToolResultOk => theme.dim(),
         LineKind::ToolResultErr => theme.danger(),
         LineKind::System => theme.system(),
+        // No text to style; the assistant's prose style keeps it out of
+        // every role's color.
+        LineKind::Blank => theme.assistant(),
     }
 }
 
