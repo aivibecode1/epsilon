@@ -251,7 +251,7 @@ pub const TERMINAL: &[(&str, &[&str])] = &[
     // `app/keys.rs`, so ctrl+c empties the draft; ctrl+q is the way out.
     ("app.exit", &["ctrl+q"]),
     ("app.clear", &["ctrl+c"]),
-    ("app.model.select", &["ctrl+m"]),
+    ("app.model.select", &["ctrl+m", "ctrl+l"]),
     // Save the highlighted model as the default (P-254): receivable because
     // crossterm raw mode disables XON/XOFF flow control; rebindable like the
     // rest of this table.

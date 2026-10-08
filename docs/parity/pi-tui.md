@@ -88,8 +88,8 @@ this document**, tallied from its own tables — not a projection.
 | 15. Markdown, mermaid and truncation | 22 | 5 | 8 | 9 | 0 |
 | 16. Status indicators | 13 | 2 | 5 | 5 | 1 |
 | 17. Footer | 12 | 3 | 4 | 3 | 2 |
-| 18. Selector and overlay components | 79 | 9 | 23 | 41 | 6 |
-| **Total** | **339** | **53** | **114** | **151** | **21** |
+| 18. Selector and overlay components | 79 | 10 | 22 | 41 | 6 |
+| **Total** | **339** | **54** | **113** | **151** | **21** |
 
 A further **17 rows are not in the counts above**: the 10 `Y-###` rows Pi ships outside its interactive mode (out of
 scope by design) and the 7 `AA-###` rows recording what was never inventoried. Both are listed in full near the end
@@ -674,7 +674,7 @@ the per-selector ones.
 | P-244 | The header shows `Loading n/total` while sessions are read, and a stale load cannot overwrite a fast one | `packages/coding-agent/src/modes/interactive/components/session-selector.ts:142`, `:956`, `:955` | missing | none | — |
 | P-245 | A failed load is shown for 4000 ms with an empty list | `packages/coding-agent/src/modes/interactive/components/session-selector.ts:1003-1004` | missing | none | — |
 | P-246 | Each row ends with a message count and a relative age (`now` / `5m` / `3h` / `2d` / `2w`), with the active session accent-coloured | `packages/coding-agent/src/modes/interactive/components/session-selector.ts:35`, `:494`, `:515` | partial | `crates/epsilon-tui/src/picker.rs:751` — `age · size · [task child] · [in use] · <file name>`; there is no message count | `session_rows_list_newest_first_and_mark_the_current_file` |
-| P-247 | `Ctrl+L` or `/model <text>` opens the model selector with the argument already in its search box | `packages/coding-agent/src/modes/interactive/components/model-selector.ts:117`, `:118`, `:155` | partial | `crates/epsilon-tui/src/app/keys.rs:1429` — a chord opens the picker and typing filters it; `/model <text>` applies immediately instead of opening a pre-filled selector | `ctrl_m_opens_picker_without_typing_slash`, `slash_model_direct_applies_instantly` |
+| P-247 | `Ctrl+L` or `/model <text>` opens the model selector with the argument already in its search box | `packages/coding-agent/src/modes/interactive/components/model-selector.ts:117`, `:118`, `:155` | done | `crates/epsilon-tui/src/app/keys.rs` — hybrid: one candidate applies instantly, zero or many open the picker pre-filled (same resolution a run uses, so apply and run never disagree); `ctrl+l` joins `app.model.select` | `slash_model_direct_applies_instantly` (exact; retargeted to a test-catalog id when blind apply was removed), `model_partial_opens_the_picker_prefilled` (ambiguous family; old-arm RED), `ctrl_l_opens_the_model_picker` (chord-removal control) |
 | P-248 | Tab switches between all models and the cycling scope, with a warning in place of the line when nothing is scoped | `packages/coding-agent/src/modes/interactive/components/model-selector.ts:248`, `:364`, `:94` | missing | none — the picker has two stages, providers then models, and no scope toggle (`crates/epsilon-tui/src/app/keys.rs:1176`) | — |
 | P-249 | The list puts the current model first, the default second, then sorts by provider, marking `✓` and ` · default` | `packages/coding-agent/src/modes/interactive/components/model-selector.ts:231`, `:323`, `:329` | done | `crates/epsilon-tui/src/picker.rs` — empty-filter comparator is current → default → favorites → score → id (`None` provably order-preserving); the default row carries `is_default` and both front ends mark it (`· default` TUI, `(default)` window) | `saved_default_orders_second_and_is_flagged` (decoy control), `saved_default_orders_second_and_reads_as_default` (window; label-removal control) |
 | P-250 | The model selector ranks over `provider provider/id provider id name`; the scoped selector uses the opposite order, id first | `packages/coding-agent/src/modes/interactive/model-search.ts:17`, `:7-11`, `packages/coding-agent/src/modes/interactive/components/scoped-models-selector.ts:222` | missing | none — Epsilon has one picker over one haystack (`crates/epsilon-tui/src/picker.rs:1083`) | — |
@@ -779,8 +779,8 @@ row says so — that is a gap in the inventory, and closing it is cheap.
 | 15. Markdown, mermaid and truncation | 22 | 5 | 8 | 9 | 0 |
 | 16. Status indicators | 13 | 2 | 5 | 5 | 1 |
 | 17. Footer | 12 | 3 | 4 | 3 | 2 |
-| 18. Selector and overlay components | 79 | 9 | 23 | 41 | 6 |
-| **Total** | **339** | **53** | **114** | **151** | **21** |
+| 18. Selector and overlay components | 79 | 10 | 22 | 41 | 6 |
+| **Total** | **339** | **54** | **113** | **151** | **21** |
 
 ### The `missing` rows — 161
 
@@ -829,7 +829,7 @@ An `E-` row covers these and something is not finished. The reason column is the
 | Markdown, mermaid and truncation (8) | P-176, T-002, T-003, T-004, T-005, T-006, T-008, T-011 | hint placement has no keep-last mode; tab width matches with no test; stripping established at two boundaries, not one central measure; hyperlink/reset closing held by a different mechanism with a re-measure backstop; span-dropping, not column slicing; style is per-`Span`, so no reset ladder; row caching, but no ASCII fast path or bounded width cache; CJK as a word character unestablished for completion |
 | Status indicators (5) | P-018, P-186, P-188, P-189, P-190 | a drawn spinner rather than the terminal's progress state; one run-state slot rather than four kinds; whole-gauge dropping rather than a four-step border ladder; a retry notice and elapsed seconds rather than a cancelable countdown; one compaction wording rather than three |
 | Footer (4) | P-200, P-203, P-205, P-206 | no `~` substitution and no `• session-name` segment; no routed-model `→ id`; the footer's own recompute trigger unestablished; the no-spawn `.git/HEAD` read unestablished |
-| Selector and overlay components (23) | P-226, P-228, P-231, P-233, P-236, P-238, P-241, P-246, P-247, P-282, P-288, P-291, P-292, P-293, P-295, P-299, P-301, P-302, P-303, P-305, P-309, P-313, P-315 | per-overlay focus targets; no overlay-scoped id space; fixed sort, path always shown, current session marked not protected, rename outside the picker, no phrase/regex search, no message count, no pre-filled picker, no resource overlay, capacity derived, per-tool entry detail, active-path marker, five filter modes, no `n/total`, one-stage Esc in the tree, no fold glyph, wrap not clip, ordering guarantee unestablished, tree drop rules unestablished, no tree-specific key list, no provider-selector empty state, provider badges in this window's visual language rather than Pi's literals |
+| Selector and overlay components (22) | P-226, P-228, P-231, P-233, P-236, P-238, P-241, P-246, P-282, P-288, P-291, P-292, P-293, P-295, P-299, P-301, P-302, P-303, P-305, P-309, P-313, P-315 | per-overlay focus targets; no overlay-scoped id space; fixed sort, path always shown, current session marked not protected, rename outside the picker, no phrase/regex search, no message count, no resource overlay, capacity derived, per-tool entry detail, active-path marker, five filter modes, no `n/total`, one-stage Esc in the tree, no fold glyph, wrap not clip, ordering guarantee unestablished, tree drop rules unestablished, no tree-specific key list, no provider-selector empty state, provider badges in this window's visual language rather than Pi's literals |
 
 ### Four gaps that are not about features at all
 

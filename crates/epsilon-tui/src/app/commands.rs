@@ -539,7 +539,28 @@ impl App {
                 // time the user descends into it the rows are current.
                 self.request_live(false);
             }
-            crate::picker::Command::Model(id) => self.apply_model(agent, id),
+            crate::picker::Command::Model(id) => {
+                // Hybrid (P-247): one candidate applies instantly; zero or
+                // many open the picker with the text pre-filled (pi's
+                // selector) instead of switching to — and saving — a typo or
+                // a guess. Candidates are the same resolution a run uses, so
+                // "applies" and "runs" can never disagree on what names a
+                // model — and "deepseek" (a family, not a model) was the
+                // case that used to pick a winner silently.
+                if epsilon_llm::catalog::resolve_model_candidates(id.trim()).len() == 1 {
+                    self.apply_model(agent, id)
+                } else {
+                    self.picker_open = true;
+                    self.picker_provider = None;
+                    self.picker_index = 0;
+                    self.input = id.trim().to_string();
+                    self.cursor_chars = self.input.chars().count();
+                    self.invalidate_picker();
+                    self.ui.push_notice(format!(
+                        "no single model '{id}' — picker opened; refine or pick",
+                    ));
+                }
+            }
             crate::picker::Command::Think(arg) => {
                 match arg.as_deref().map(str::trim) {
                     None => {

@@ -1402,18 +1402,23 @@ async fn login_oauth_never_falls_through_to_the_key_store() {
 async fn slash_model_direct_applies_instantly() {
     let (mut app, agent, (_f, _n)) = test_app();
     let before = app.ui.lines().len();
-    assert!(!type_and_enter(&mut app, &agent, "/model deepseek-chat"));
+    // deepseek-v4-pro: resolvable in the test catalog (exactly one
+    // candidate). Unresolvable text opens the picker instead — see
+    // model_partial_opens_the_picker_prefilled. A name that resolves in
+    // production but not here (e.g. deepseek-chat) would test blind apply,
+    // which no longer exists by design.
+    assert!(!type_and_enter(&mut app, &agent, "/model deepseek-v4-pro"));
     assert_eq!(
-        app.model_id, "deepseek-chat",
+        app.model_id, "deepseek-v4-pro",
         "direct /model applies instantly"
     );
     let line = &app.ui.lines()[before];
-    assert!(line.text.contains("deepseek-chat"), "{:?}", line.text);
+    assert!(line.text.contains("deepseek-v4-pro"), "{:?}", line.text);
     // Recents refresh in-memory through apply_model (the persisted side is
     // covered by config-layer round-trip tests; asserting the real global
     // file here races every other TUI test's writes — lesson 16b again).
     assert!(
-        app.recents.first().map(String::as_str) == Some("deepseek-chat"),
+        app.recents.first().map(String::as_str) == Some("deepseek-v4-pro"),
         "in-memory recents updated with the applied model"
     );
 }
@@ -6917,4 +6922,31 @@ fn finished_refresh_reports_success_and_failure() {
         said.is_some_and(|s| s.contains("live listing failed") && s.contains("timeout")),
         "failure must name the error"
     );
+}
+
+/// `/model <text>` that names no one model opens the picker pre-filled
+/// instead of switching to a typo (P-247). Exact ids still apply instantly
+/// (pinned beside this); a family name — ambiguous by design — opens the
+/// selector with the text ready to refine or pick.
+#[test]
+fn model_partial_opens_the_picker_prefilled() {
+    let (mut app, agent, _rx) = test_app();
+    assert!(!type_and_enter(&mut app, &agent, "/model deepseek"));
+    assert!(
+        app.picker_open,
+        "an ambiguous name must open the picker, not switch"
+    );
+    assert_eq!(app.input, "deepseek", "with the typed text as the filter");
+    assert_eq!(
+        app.model_id, "faux-1",
+        "and switch nothing (no typo in the session, none saved)"
+    );
+}
+
+/// Ctrl+L opens the model picker like Ctrl+M (P-247).
+#[test]
+fn ctrl_l_opens_the_model_picker() {
+    let (mut app, agent, _rx) = test_app();
+    handle_key(&mut app, &agent, ctrl(KeyCode::Char('l')));
+    assert!(app.picker_open, "ctrl+l must open the picker");
 }
