@@ -236,6 +236,14 @@ pub(crate) struct App {
     /// Favorite (starred) model ids, persisted in config `[picker] favorite`
     /// (M23; opencode favorites / pi scoped-models hybrid).
     favorites: Vec<String>,
+    /// Saved default model id, loaded once at startup (P-254; Ctrl+S writes
+    /// it back and refreshes this). `None` means none saved. Kept in memory
+    /// so the picker never hits disk mid-keypress (and tests inject without
+    /// touching global state) — the favorites pattern, one field over.
+    default_model: Option<String>,
+    /// Config dir override for tests (Ctrl+S writes here instead of the
+    /// global dir). `None` in production — always.
+    pub(crate) config_dir_override: Option<std::path::PathBuf>,
     /// M26: per-favorite thinking levels `[picker.favorite_thinking]`
     /// (pi scoped-models' optional per-entry level), loaded at startup and
     /// refreshed by toggle_favorite. Kept in memory so cycling never hits
@@ -622,6 +630,7 @@ impl App {
             &self.model_id,
             &self.recents,
             &self.favorites,
+            self.default_model.as_deref(),
             &self.live_cache,
             &self.customs,
         );
@@ -665,6 +674,33 @@ impl App {
             }
             Err(e) => {
                 self.ui.push_notice(format!("favorite not saved: {e}"));
+            }
+        }
+    }
+
+    /// Save a model id as the default (P-254): persisted immediately and
+    /// reflected in memory, so the picker orders and marks it without a
+    /// restart. Writes to the override dir in tests, else the global dir —
+    /// a global write the tests must never make, hence the override.
+    fn save_default_model(&mut self, id: &str) {
+        let dir = self
+            .config_dir_override
+            .clone()
+            .or_else(epsilon_core::config::global_dir);
+        let Some(dir) = dir else {
+            self.ui
+                .push_notice("default not saved: no home directory resolved");
+            return;
+        };
+        match epsilon_core::config::save_model_id_in(&dir, id) {
+            Ok(_) => {
+                self.default_model = Some(id.to_string());
+                self.invalidate_picker();
+                self.ui
+                    .push_notice(format!("default model: {id} (opens second in the picker)"));
+            }
+            Err(e) => {
+                self.ui.push_notice(format!("default not saved: {e}"));
             }
         }
     }

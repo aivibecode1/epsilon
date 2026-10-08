@@ -66,6 +66,8 @@ impl App {
             osc_pending: None,
             recents: epsilon_core::config::load_recent_models(),
             favorites: epsilon_core::config::load_favorite_models(),
+            default_model: epsilon_core::config::load_model_id(),
+            config_dir_override: None,
             favorite_thinking: epsilon_core::config::load_favorite_thinking(),
             live_cache: Vec::new(),
             customs: epsilon_llm::custom::custom_providers(),

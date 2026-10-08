@@ -252,6 +252,10 @@ pub const TERMINAL: &[(&str, &[&str])] = &[
     ("app.exit", &["ctrl+q"]),
     ("app.clear", &["ctrl+c"]),
     ("app.model.select", &["ctrl+m"]),
+    // Save the highlighted model as the default (P-254): receivable because
+    // crossterm raw mode disables XON/XOFF flow control; rebindable like the
+    // rest of this table.
+    ("app.model.saveDefault", &["ctrl+s"]),
     ("app.palette", &["ctrl+p"]),
     ("app.thinking.cycle", &["ctrl+t"]),
     // Hide thinking blocks from the transcript (P-040), persisted globally.

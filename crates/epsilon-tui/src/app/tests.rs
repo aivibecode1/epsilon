@@ -2240,6 +2240,7 @@ async fn typing_a_query_resets_the_picker_selection_to_row_zero() {
         &app.model_id,
         // No favorites in the drilldown (preserves current rows).
         &[],
+        None,
         &app.live_cache,
         &app.customs,
     );
@@ -2548,6 +2549,7 @@ async fn favorites_section_orders_above_recents_and_marks_stars() {
         "faux-1",
         &["deepseek-chat".to_string()],
         &["kimi-k2.6".to_string()],
+        None,
         &[],
         &[],
     );
@@ -6839,5 +6841,33 @@ fn streaming_text_is_separated_from_the_previous_block() {
     assert!(
         rows[tail - 1].trim().is_empty(),
         "a blank row separates the tail from the card:\n{frame}"
+    );
+}
+
+/// Ctrl+S in the model picker saves the highlighted row as the default.
+///
+/// Written to an override dir, never global — then ordered second and
+/// marked on the next open. Driven through the real key path, because the
+/// defect class here is chords that parse and never fire (P-254).
+#[test]
+fn ctrl_s_in_the_picker_saves_the_default() {
+    let (mut app, agent, _rx) = test_app();
+    let dir = tempfile::tempdir().expect("a config dir");
+    app.config_dir_override = Some(dir.path().to_path_buf());
+    app.picker_open = true;
+    app.picker_provider = Some("deepseek".to_string());
+    app.picker_index = 1;
+
+    handle_key(&mut app, &agent, ctrl(KeyCode::Char('s')));
+
+    let saved = epsilon_core::config::load_model_id_in(dir.path());
+    assert!(
+        saved.is_some(),
+        "must persist somewhere readable: {saved:?}"
+    );
+    assert_eq!(
+        app.default_model.as_deref(),
+        saved.as_deref(),
+        "and memory must follow the file"
     );
 }

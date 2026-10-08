@@ -55,6 +55,9 @@ pub struct PickerRow {
     pub is_recent: bool,
     /// True when the id is starred in the persisted favorites list (M23).
     pub is_favorite: bool,
+    /// True when the id is the saved default model (P-249): ordered second,
+    /// marked `· default`.
+    pub is_default: bool,
 }
 
 fn row_from_info(info: &epsilon_llm::ModelInfo) -> PickerRow {
@@ -68,6 +71,7 @@ fn row_from_info(info: &epsilon_llm::ModelInfo) -> PickerRow {
         is_live: false,
         is_recent: false,
         is_favorite: false,
+        is_default: false,
     }
 }
 
@@ -87,6 +91,7 @@ fn synthetic_row(
         is_live,
         is_recent,
         is_favorite: false,
+        is_default: false,
     }
 }
 
@@ -103,7 +108,7 @@ pub fn build_rows(
     recents: &[String],
     live: &[(String, Vec<String>)],
 ) -> Vec<PickerRow> {
-    build_rows_with(filter, current, recents, &[], live, &[])
+    build_rows_with(filter, current, recents, &[], None, live, &[])
 }
 
 /// [`build_rows`] with an explicit favorites list (M23; kept as a separate
@@ -113,6 +118,7 @@ pub fn build_rows_with(
     current: &str,
     recents: &[String],
     favorites: &[String],
+    default: Option<&str>,
     live: &[(String, Vec<String>)],
     customs: &[CustomProvider],
 ) -> Vec<PickerRow> {
@@ -170,6 +176,7 @@ pub fn build_rows_with(
                 if let Some(info) = catalog::lookup_model(id) {
                     let mut row = row_from_info(info);
                     row.is_favorite = true;
+                    row.is_default = default.is_some_and(|d| d.eq_ignore_ascii_case(&row.id));
                     row.provider = "favorite".into();
                     fav_cands.push((sc, row));
                 } else {
@@ -238,6 +245,7 @@ pub fn build_rows_with(
             {
                 let mut row = row_from_info(info);
                 row.is_favorite = favorites.iter().any(|f| f.eq_ignore_ascii_case(&row.id));
+                row.is_default = default.is_some_and(|d| d.eq_ignore_ascii_case(&row.id));
                 cat_cands.push((sc, row));
             }
         }
@@ -468,6 +476,7 @@ pub fn build_models_for_provider(
     filter: &str,
     current: &str,
     favorites: &[String],
+    default: Option<&str>,
     live: &[(String, Vec<String>)],
     customs: &[CustomProvider],
 ) -> Vec<PickerRow> {
@@ -524,20 +533,27 @@ pub fn build_models_for_provider(
     }
     // Starred rows carry the flag the pickers draw, whichever front end
     // asked. Empty favorites: no flag ever set, and the comparator below
-    // falls through to the old order — byte-identical rows.
+    // falls through to the old order — byte-identical rows. The default
+    // rides the same loop (one pass, two flags).
     for (_, row) in scored.iter_mut() {
         row.is_favorite = favorites.iter().any(|f| f.eq_ignore_ascii_case(&row.id));
+        row.is_default = default.is_some_and(|d| d.eq_ignore_ascii_case(&row.id));
     }
     if needle.is_empty() {
-        // No filter: current floats to top, then favorites (stable, pi's
-        // sortModels semantics with the starred set next).
+        // No filter: current floats to top, then the default, then
+        // favorites (stable, pi's sortModels semantics with the starred
+        // set next). `None` default: the middle term never fires, and the
+        // order is the old one — byte-identical rows.
         scored.sort_by(|a, b| {
             let a_cur = a.1.id == current;
             let b_cur = b.1.id == current;
+            let a_def = a.1.is_default;
+            let b_def = b.1.is_default;
             let a_fav = a.1.is_favorite;
             let b_fav = b.1.is_favorite;
             b_cur
                 .cmp(&a_cur)
+                .then(b_def.cmp(&a_def))
                 .then(b_fav.cmp(&a_fav))
                 .then(a.0.cmp(&b.0))
                 .then(a.1.id.cmp(&b.1.id))
@@ -1008,7 +1024,7 @@ mod tests {
             "deepseek".to_string(),
             vec!["deepseek-v4-pro".to_string(), "brand-new-model".to_string()],
         )];
-        let rows = build_models_for_provider("deepseek", "", "", &[], &live, &[]);
+        let rows = build_models_for_provider("deepseek", "", "", &[], None, &live, &[]);
         assert!(
             rows.iter().any(|r| r.id == "brand-new-model" && r.is_live),
             "unknown live id must surface in stage 2"
@@ -1025,6 +1041,7 @@ mod tests {
             "",
             "",
             &[],
+            None,
             &[("openai".to_string(), vec!["gpt-fake-live".to_string()])],
             &[],
         );
@@ -1046,7 +1063,7 @@ mod tests {
         assert!(lm.is_some(), "custom provider visible in stage 1");
         assert_eq!(lm.unwrap().model_count, 0);
 
-        let stage2 = build_models_for_provider("lmstudio", "", "", &[], &[], &customs);
+        let stage2 = build_models_for_provider("lmstudio", "", "", &[], None, &[], &customs);
         assert!(
             stage2
                 .iter()
@@ -1054,7 +1071,8 @@ mod tests {
         );
 
         // Typing past the prefix offers the full id directly.
-        let typed = build_models_for_provider("lmstudio", "lmstudio/qwen", "", &[], &[], &customs);
+        let typed =
+            build_models_for_provider("lmstudio", "lmstudio/qwen", "", &[], None, &[], &customs);
         assert!(
             typed.iter().any(|r| r.id == "lmstudio/qwen"),
             "filter text becomes an applicable custom id row"
@@ -1091,8 +1109,8 @@ mod tests {
         let b = build_rows("deep", "", &[], &[]);
         assert_eq!(a, b, "same filter must produce identical row order");
 
-        let s1 = build_models_for_provider("deepseek", "pro", "", &[], &[], &[]);
-        let s2 = build_models_for_provider("deepseek", "pro", "", &[], &[], &[]);
+        let s1 = build_models_for_provider("deepseek", "pro", "", &[], None, &[], &[]);
+        let s2 = build_models_for_provider("deepseek", "pro", "", &[], None, &[], &[]);
         assert_eq!(s1, s2, "stage2 deterministic too");
     }
 
@@ -1107,7 +1125,7 @@ mod tests {
             );
         }
         // Stage2 also token-aware
-        let s2 = build_models_for_provider("deepseek", "deep pro", "", &[], &[], &[]);
+        let s2 = build_models_for_provider("deepseek", "deep pro", "", &[], None, &[], &[]);
         assert!(
             s2.iter().any(|r| r.id == "deepseek-v4-pro"),
             "stage2 multi-token must find deepseek-v4-pro"
@@ -1141,7 +1159,7 @@ mod tests {
         }
         // Empty filter still deterministic (already covered), but stage2 with filter
         // must also be scored — "pro" within deepseek provider should win.
-        let s2 = build_models_for_provider("deepseek", "pro", "", &[], &[], &[]);
+        let s2 = build_models_for_provider("deepseek", "pro", "", &[], None, &[], &[]);
         assert_eq!(
             s2.first().map(|r| r.id.as_str()),
             Some("deepseek-v4-pro"),
@@ -1149,14 +1167,51 @@ mod tests {
         );
         // Empty stage2 still puts current first (stable when no query).
         let s2_empty_a =
-            build_models_for_provider("deepseek", "", "deepseek-v4-pro", &[], &[], &[]);
+            build_models_for_provider("deepseek", "", "deepseek-v4-pro", &[], None, &[], &[]);
         let s2_empty_b =
-            build_models_for_provider("deepseek", "", "deepseek-v4-pro", &[], &[], &[]);
+            build_models_for_provider("deepseek", "", "deepseek-v4-pro", &[], None, &[], &[]);
         assert_eq!(s2_empty_a, s2_empty_b);
         assert_eq!(
             s2_empty_a.first().map(|r| r.id.as_str()),
             Some("deepseek-v4-pro")
         );
+    }
+
+    /// The saved default orders second and is flagged (P-249).
+    ///
+    /// Current first, default second, then the rest — pi's order with the
+    /// default where pi puts it. `None` default keeps the old order
+    /// (byte-identical rows, asserted by every existing caller passing it).
+    /// Live rows stand in for catalog siblings (deterministic ids, same
+    /// comparator). The `deepseek-a` decoy sorts before `deepseek-b` by id,
+    /// so second place proves the default term fired — without it the decoy
+    /// wins second.
+    #[test]
+    fn saved_default_orders_second_and_is_flagged() {
+        let live = vec![(
+            "deepseek".to_string(),
+            vec!["deepseek-a".to_string(), "deepseek-b".to_string()],
+        )];
+        let rows = build_models_for_provider(
+            "deepseek",
+            "",
+            "deepseek-v4-pro",
+            &[],
+            Some("deepseek-b"),
+            &live,
+            &[],
+        );
+        assert_eq!(
+            rows.first().map(|r| r.id.as_str()),
+            Some("deepseek-v4-pro"),
+            "current stays first"
+        );
+        let pos = rows
+            .iter()
+            .position(|r| r.id == "deepseek-b")
+            .expect("the default is listed");
+        assert_eq!(pos, 1, "default second, not scored: {rows:?}");
+        assert!(rows[pos].is_default, "and flagged for the mark: {rows:?}");
     }
 
     #[test]

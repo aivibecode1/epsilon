@@ -121,6 +121,7 @@ Rule: a working, verified product beats breadth. Anything cut goes in the
 | (10-08) | 86. **Full-port round 72 — the live tail separates while streaming** | Third presentation slice: the streaming tail glued to the previous block until commit (committed lines separate in `push_line`; the tail is not a line). Same rule at draw time in `draw_transcript`, inside the tail rows so scroll math counts it. Verified no interop test was missing first (both sides pin the shared store; a cross test would duplicate). One test with control; no golden fallout. No matrix row (original design). Battery `port-r72b` (2,233), green on the second attempt (LNK1104, preserved). |
 | (10-08) | 87. **Full-port round 73 — preview install verified, scope written down** | The decided vehicle (round 65): both binaries installed isolated from source (`epsilon` + `epsilon-desktop`, hashes recorded), `--help`/`--demo`/`doctor` transcribed, honest scope section in `install.md`, presets documented in `permissions.md`. Desktop installed but not launched (headless session; window covered by frame tests). Evidence in `audit/evidence/preview-install-2026-10-08.txt`. No product change: battery `port-r73` (2,233), green first time. |
 | (10-08) | 88. **Full-port round 74 — goal Clear driven end to end (D-084)** | The behavior matched and only the test was missing: create → band cached → clear → cache empty + band gone from frame, with a skip-clear control. D-084 done (DSH 18 / 94). Battery `port-r74b` (2,234), green on the second attempt (LNK1104, preserved). |
+| (10-08) | 89. **Full-port round 75 — saved default model (P-249, P-254)** | `is_default` flag + current → default → favorites comparator (`None` provably order-preserving at every old site); TUI `app.model.saveDefault` (`ctrl+s`) saves via override-or-global and refreshes memory, `· default` mark in the picker; window memory-loads and words `(default)`. Three tests (ordering with decoy, key-driven save, window mark) with comparator/arm/label controls. Window Ctrl+S deferred. Pi now 52 / 115. Battery `port-r75` (2,237), green first time. |
 
 > **A machine fault worth naming, because it nearly made me "fix" working code.** Restoring a
 > file from a `Copy-Item` backup preserved its **old timestamp**, so `cargo` decided nothing had
@@ -212,7 +213,7 @@ inventories are inventories.
 
 | Matrix | Rows | done | partial | missing | deliberately different |
 |---|---|---|---|---|---|
-| [`parity/pi-tui.md`](parity/pi-tui.md) | **339** | 50 | 117 | 151 | 21 |
+| [`parity/pi-tui.md`](parity/pi-tui.md) | **339** | 52 | 115 | 151 | 21 |
 | [`parity/dsh-desktop.md`](parity/dsh-desktop.md) | **433** | 18 | 94 | 279 | 42 |
 
 > **Corrected 2026-10-06 by [an independent review](reviews/2026-10-06-objective-review.md).** The
@@ -268,14 +269,12 @@ instead of newlining, and the sessions sidebar being a keyboard trap. What remai
 
 ## Verification (what is actually true)
 
-**Latest green battery: [`gate-port-r74b-2026-10-08.txt`](../audit/evidence/gate-port-r74b-2026-10-08.txt),
+**Latest green battery: [`gate-port-r75-2026-10-08.txt`](../audit/evidence/gate-port-r75-2026-10-08.txt),
 2026-10-08 — the tree this file describes.** Thirteen legs, all `[exit=0]`, `GATE PASS`.
-**2,234 passed / 0 failed / 13 ignored across 78 binaries**, summed from that one log's
-`test result:` lines — one more than `gate-port-r73b`: the goal-clear test.
-The first attempt failed on an LNK1104 link fault (machine fault, Avira-class);
-preserved as
-[`gate-port-r74-attempt1-FAILED-2026-10-08.txt`](../audit/evidence/gate-port-r74-attempt1-FAILED-2026-10-08.txt),
-rebuilt with `CARGO_PROFILE_TEST_DEBUG=1` per `AGENTS.md`.
+**2,237 passed / 0 failed / 13 ignored across 78 binaries**, summed from that one log's
+`test result:` lines — three more than `gate-port-r74b`: the default-model tests.
+`CARGO_PROFILE_TEST_DEBUG=1` set preemptively (four LNK1104s in five rounds);
+no link fault this time.
 (`cargo fmt --check` ran before launching.) The first `port-r55` attempt failed its test leg
 on an integration test driving `/timeline` as refused; preserved as
 [`gate-port-r55-attempt1-FAILED-2026-10-07.txt`](../audit/evidence/gate-port-r55-attempt1-FAILED-2026-10-07.txt).

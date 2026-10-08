@@ -1061,6 +1061,9 @@ impl IdeApp {
                 &picker.query,
                 &current,
                 &self.favorites,
+                // Memory, not global (seeded in tests; same pattern as
+                // favorites above).
+                self.default_model.as_deref(),
                 &self.live_cache,
                 &customs,
             )
@@ -1077,6 +1080,10 @@ impl IdeApp {
                 // the same to a screen reader either way.
                 if r.is_favorite {
                     label.push_str(" (favorite)");
+                }
+                // Words, not `·`: same audited-set reason as above.
+                if r.is_default {
+                    label.push_str(" (default)");
                 }
                 ModelPickerEntry {
                     label,
@@ -2466,6 +2473,10 @@ pub struct IdeApp {
     /// either front end reads in both. `pub(crate)` for tests that seed it
     /// without touching the global file.
     pub(crate) favorites: Vec<String>,
+    /// Saved default model id, loaded once at startup like the terminal's
+    /// (P-249). `None` means none saved. `pub(crate)` for tests that seed it
+    /// without touching the global file.
+    pub(crate) default_model: Option<String>,
     /// Show full tool output instead of the tail (round 54).
     ///
     /// `/expand` flips it; the rows retain everything either way (the
@@ -2981,6 +2992,7 @@ impl IdeApp {
             goal_round_pending: false,
             hide_thinking,
             favorites: epsilon_core::config::load_favorite_models(),
+            default_model: epsilon_core::config::load_model_id(),
             expand_tool_output: false,
             live,
             live_cache: Vec::new(),
@@ -3083,6 +3095,7 @@ impl IdeApp {
             goal_round_pending: false,
             hide_thinking,
             favorites: epsilon_core::config::load_favorite_models(),
+            default_model: epsilon_core::config::load_model_id(),
             expand_tool_output: false,
             live,
             live_cache: Vec::new(),
@@ -17399,6 +17412,40 @@ mod tests {
             !frame.region("agent").join("\n").contains("Goal band"),
             "and the band must be gone from the frame.\n{}",
             frame.describe()
+        );
+    }
+
+    /// The saved default orders second and reads as such (round 75, P-249).
+    ///
+    /// Seeded in memory like favorites; the builder does the ordering, the
+    /// window only words it. Live rows stand in (deterministic ids); the
+    /// `deepseek-a` decoy sorts first by id, so second place proves the
+    /// default term. RED first: an unmarked third place.
+    #[test]
+    fn saved_default_orders_second_and_reads_as_default() {
+        let (ws, _keep) = scratch_workspace("picker-default");
+        let mut h = Harness::new(ws);
+        h.app.default_model = Some("deepseek-b".to_string());
+        h.app.live_cache = vec![(
+            "deepseek".to_string(),
+            vec!["deepseek-a".to_string(), "deepseek-b".to_string()],
+        )];
+        h.app.open_model_picker();
+        h.app.model_picker.as_mut().expect("open").provider = Some("deepseek".to_string());
+
+        let entries = h.app.model_picker_entries();
+        let ids: Vec<_> = entries.iter().map(|e| e.id.as_str()).collect();
+        let pos = entries
+            .iter()
+            .position(|e| e.id == "deepseek-b")
+            .expect("the default is listed");
+        // No current in this provider (faux-1 lives elsewhere), so the
+        // default leads — ahead of the decoy that sorts first by id.
+        assert_eq!(pos, 0, "default first when no current: {ids:?}");
+        assert!(
+            entries[pos].label.contains("(default)"),
+            "and read as one in words: {:?}",
+            entries[pos].label
         );
     }
 }

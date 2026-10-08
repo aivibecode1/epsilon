@@ -51,7 +51,13 @@ pub fn test_app() -> (App, Arc<Agent>, TestReceivers) {
         gate,
         std::env::temp_dir(),
     );
-    (App::new("faux-1".into(), ftx, ntx, otx), agent, (frx, nrx))
+    let mut app = App::new("faux-1".into(), ftx, ntx, otx);
+    // Pinned, not loaded: `App::new` reads the saved default from global
+    // config, which is the developer's own on a dev machine — a test that
+    // inherited it would order and mark rows by whoever ran it. Tests that
+    // want a default set `app.default_model` explicitly.
+    app.default_model = None;
+    (app, agent, (frx, nrx))
 }
 
 /// An app whose agent has a **durable session file**, plus the `TempDir` that owns it.

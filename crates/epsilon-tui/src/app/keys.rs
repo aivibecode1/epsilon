@@ -1159,6 +1159,7 @@ pub(crate) fn handle_key(app: &mut App, agent: &Arc<Agent>, key: KeyEvent) -> bo
                         &app.model_id,
                         // No favorites in the drilldown (preserves current rows).
                         &[],
+                        app.default_model.as_deref(),
                         &app.live_cache,
                         &app.customs,
                     );
@@ -1218,6 +1219,7 @@ pub(crate) fn handle_key(app: &mut App, agent: &Arc<Agent>, key: KeyEvent) -> bo
                     &app.model_id,
                     // No favorites in the drilldown (preserves current rows).
                     &[],
+                    app.default_model.as_deref(),
                     &app.live_cache,
                     &app.customs,
                 )
@@ -1263,6 +1265,7 @@ pub(crate) fn handle_key(app: &mut App, agent: &Arc<Agent>, key: KeyEvent) -> bo
                     &app.model_id,
                     // No favorites in the drilldown (preserves current rows).
                     &[],
+                    app.default_model.as_deref(),
                     &app.live_cache,
                     &app.customs,
                 )
@@ -1295,6 +1298,7 @@ pub(crate) fn handle_key(app: &mut App, agent: &Arc<Agent>, key: KeyEvent) -> bo
                                         &app.model_id,
                                         // No favorites in the drilldown (preserves current rows).
                                         &[],
+                                        app.default_model.as_deref(),
                                         &app.live_cache,
                                         &app.customs,
                                     )
@@ -1314,6 +1318,7 @@ pub(crate) fn handle_key(app: &mut App, agent: &Arc<Agent>, key: KeyEvent) -> bo
                             &app.model_id,
                             // No favorites in the drilldown (preserves current rows).
                             &[],
+                            app.default_model.as_deref(),
                             &app.live_cache,
                             &app.customs,
                         );
@@ -1322,6 +1327,31 @@ pub(crate) fn handle_key(app: &mut App, agent: &Arc<Agent>, key: KeyEvent) -> bo
                             app.toggle_favorite(agent, &id);
                         }
                     }
+                }
+            }
+            _ if app.keybindings.matches("app.model.saveDefault", &key) => {
+                // Ctrl+S: save the highlighted model as the default (P-254).
+                // Stage 2 only — the model list pi saves from. Stage 1 lists
+                // providers, which have no default to save.
+                if let Some(provider) = &stage2 {
+                    let rows = crate::picker::build_models_for_provider(
+                        provider,
+                        &app.input,
+                        &app.model_id,
+                        // No favorites in the drilldown (preserves current rows).
+                        &[],
+                        app.default_model.as_deref(),
+                        &app.live_cache,
+                        &app.customs,
+                    );
+                    if let Some(row) = rows.get(app.picker_index) {
+                        let id = row.id.clone();
+                        app.save_default_model(&id);
+                    }
+                } else {
+                    app.ui.push_notice(
+                        "open a provider first — the default is a model, not a provider",
+                    );
                 }
             }
             _ if app.keybindings.matches("app.live.refresh", &key) => {

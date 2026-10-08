@@ -236,8 +236,10 @@ fn draw_picker_stage2(f: &mut Frame<'_>, app: &App, outer: Rect, provider: &str)
         &app.input,
         &app.model_id,
         // No favorites in the drilldown (preserves current rows; the
-        // starred section lives in the flat picker).
+        // starred section lives in the flat picker). The default rides
+        // along: second place is about the model list, not the picker.
         &[],
+        app.default_model.as_deref(),
         &app.live_cache,
         &app.customs,
     );
@@ -299,12 +301,18 @@ fn draw_picker_stage2(f: &mut Frame<'_>, app: &App, outer: Rect, provider: &str)
         } else {
             " "
         };
+        // P-249: the saved default is marked, like pi's `· default`.
+        let label = if row.is_default {
+            format!("{} · default", row.label)
+        } else {
+            row.label.clone()
+        };
         lines.push(overlay::list_row(
             &app.theme,
             selected,
             // A **live** model's label and id come from a third-party endpoint, so they are
             // remote text in a row the reader chooses by reading. See `safe_to_show`.
-            &safe_to_show(&format!("{marker}{auth} {star} {}", row.label)),
+            &safe_to_show(&format!("{marker}{auth} {star} {}", label)),
             Some(safe_to_show(row.id.as_str()).as_str()),
             inner.width as usize,
         ));
@@ -316,6 +324,7 @@ fn draw_picker_stage2(f: &mut Frame<'_>, app: &App, outer: Rect, provider: &str)
         &[
             ("type", "filters (fuzzy)"),
             ("enter", "apply"),
+            ("ctrl+s", "save default"),
             ("backspace/esc", "back"),
         ],
     ));
