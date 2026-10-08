@@ -139,6 +139,7 @@ Rule: a working, verified product beats breadth. Anything cut goes in the
 | (10-08) | 105. **Full-port round 90 — the `todo` card settles instead of doubling (P-050's one hole)** | The top item from last round's queue, and it was worth taking first: `todo` is a built-in the model is told to reach for on any 3+ step task, and its result arm returned *before* the in-place settle every other tool goes through, so **every multi-step turn** drew `▸ todo · pending` directly above `✓ todo …` — a pending row that never retires, a raw JSON dump for a body, and a checklist that carried neither the continuation gutter nor the `… N more lines (ctrl+x to open)` affordance because it was an expandable, not a card. The checklist is now the card body and the settle path supplies the rest. One decision came out of it: the headline **counts** (`(1/3 done)`) and names no items, because a title that repeats its own body is the M153 defect in miniature — and the tool's name is left off too, since `card::title` prints it ahead of the headline. Negative control run by restoring the old early return: three tests fail, the frame test naming *"one row names todo — a second is the double-draw"*. |
 | (10-08) | 106. **Full-port round 91 — the picker answers a provider's name (P-250)** | The queue's #4, and the RED was the starkest finding of the five investigations: the query `openai` ranked **`groq`'s `openai/gpt-oss-120b`** above every OpenAI row, because a proxy provider names its upstream *inside its id* and the haystack put the id first. Worse, stage 2's haystack was `id label` with the provider **absent entirely**, so descending into `groq` and typing `groq` drew *no matches — Backspace to widen*. One provider-first haystack, three sites, Pi's selector order (`model-search.ts:17-21`, whose doc comment names this exact defect); the scoped overlay's opposite order is recorded as deliberately not built — one picker, one order. **Two things this round cost that are worth more than the change:** a longer haystack gives fuzzy subsequence matching more subsequences to find, so a `zzz-nope` "miss" test that had passed for months went red (it is a subsequence of `…nova-premier…`); the test was restated with a genuinely unmatchable token rather than left passing by luck. And restoring the defect with `git checkout` **destroyed the uncommitted work** — the negative control must be run on a copy, never on the tree. |
 | (10-08) | 107. **Full-port round 92 — a capped card keeps the end that matters (P-156, P-142's and P-177's halves)** | The queue's #2, and the decision the record asked for: the cap kept the **first** `BODY_ROWS` rows, so `cargo test`'s verdict — `test result: FAILED` — was exactly what a twelve-row cap hid. Pi is deliberately non-uniform here (first ten generic, last twenty bash); Epsilon has one card, so it takes the bash card's rule, and now keeps the **tail** of a text body and the **head** of a diff, per body kind. The affordance learned to say which end: `… 17 earlier lines (ctrl+x to open)`, because a reader told only "N more lines" assumes the missing ones are below. The diff control test is what stops the rule being widened — a change reads from its first hunk down. **Stated limit, not papered over:** the tool's own truncation marker sits *between* the head and tail halves of a spilled body, so it stays hidden under any twelve-row cap either way; only P-159's spill-file name is a visible statement that output was cut. Battery `port-r92`, green. |
+| (10-08) | 108. **Full-port round 93 — a `!!` names its exclusion while it runs (P-153)** | The queue's #3, and the matrix row was **stale in three places at once**: it claimed "nothing marks the card", cited `app.rs:856` (the real site is `:1313`), and said "no test types `!!`" — when a test had typed one since M52. What was genuinely missing: the **running** row (`run_shell` printed a bare `running: <command>`, the one row a reader looks at for the whole time the command takes) and the **error** path (a bare `shell: <error>`, so a `!!` that failed lost the marker exactly when it mattered most). Both fixed and both pinned on the frame — the running-row test answers no gate, so the command cannot have finished and the running row is the only one that can carry the marker. **Two test-design lessons, both recorded in the tests:** a frame poll that stops on the command's own text passes against the running line while asserting nothing, and the first version of the failure test matched the running row's newly-added phrase instead of the result label. |
 | (10-08) | 104. **A fifth read-only sweep — and the four ranked findings it produced** | Four investigators ran against the matrix while the round-88 battery ran: session deletion (P-237), the model picker (P-250/P-260), the transcript filter cycle (P-294), the tool cards (§12/§13, 27 rows ranked), and the transcript's presentation. They are recorded in the next-round note below rather than acted on — two of them were verified against the vendored reference by hand before being believed. One of their own "missing" rows (`P-153`'s "nothing marks the card") turned out to be **stale twice over**, which is the scoreboard earning its keep. |
 
 > **A machine fault worth naming, because it nearly made me "fix" working code.** Restoring a
@@ -150,6 +151,15 @@ Rule: a working, verified product beats breadth. Anything cut goes in the
 > produced it, not about the source**, and a file restored from a backup is the case where those
 > two part company. This is the same family as the m290 finding that a check which cannot see a
 > thing reads as a check that found nothing.
+
+> **Re-hit in round 93, through the negative control itself.** The control was run by copying the
+> file aside, editing the tree, testing, and copying it back — and the copy-back `Copy-Item`
+> carries the **backup's** timestamp, which predates the edit. So the tree held correct source and
+> `cargo` ran the previous binary: the test failed printing the *old* string while a grep of the
+> file said the opposite. `(Get-Item <file>).LastWriteTime = Get-Date` before re-testing settled
+> it. **The lesson is not "touch the file"**; it is that a restore-based negative control has a
+> failure mode the tree does not, and the first check on an inexplicable red is whether the bytes on
+> disk are the bytes being compiled.
 
 > **Two writers, one workspace.** This objective is being worked by two agents at once in this
 > repository, which is why `epsilon-runtime/src/lib.rs` and `epsilon-ext/src/host.rs` changed at
@@ -295,6 +305,20 @@ that one log's `test result:` lines — two more than `gate-port-r91`: the two c
 (`cargo fmt --check` ran before launching.) The first `port-r55` attempt failed its test leg
 on an integration test driving `/timeline` as refused; preserved as
 [`gate-port-r55-attempt1-FAILED-2026-10-07.txt`](../audit/evidence/gate-port-r55-attempt1-FAILED-2026-10-07.txt).
+
+> **Round 93's first battery failed the test leg on the machine, and the probe is the proof.**
+> `gate-port-r93` died at `error: test failed, to rerun pass -p epsilon-core --lib` with
+> `could not execute process … epsilon_core-a037f2a5119ff8f3.exe (never executed)` and
+> `Access is denied. (os error 5)`. **"Never executed" is the whole diagnosis** — no test ran and
+> none failed, so there is nothing in the log about a defect. Probed the documented way rather
+> than guessed: writing at the blocked name is denied, `epsilon_core-probeA.exe` in the same
+> directory writes fine. The filename-bound block again, and **the blocked name is a moving
+> target** — it changes with the profile metadata hash, which is why `CARGO_PROFILE_TEST_DEBUG=1`
+> was green for rounds 90–92 and blocked this round. Re-run under `=2` (a value this machine had
+> not used) as `gate-port-r93b`; the failed log is preserved as
+> [`gate-port-r93-attempt1-FAILED-2026-10-08.txt`](../audit/evidence/gate-port-r93-attempt1-FAILED-2026-10-08.txt).
+> `CARGO_PROFILE_TEST_DEBUG` has now used 0, 1 and 2 on this machine; the next blocked name needs
+> a fourth.
 
 > **Two writers, one repository, again — and this time the battery had to cover both.** While
 > this session was mid-round, a second session committed

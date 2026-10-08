@@ -1310,8 +1310,27 @@ impl App {
     ///
     /// The command goes through [`Agent::run_local_tool`], so it is confined,
     /// validated and gated exactly as a model-issued one is.
+    ///
+    /// **The exclusion is named on the running row too, not only on the result.**
+    /// The running notice is the one row a reader looks at for the whole time the
+    /// command takes, and a bare `running: <command>` said nothing about whether
+    /// the output was about to be kept out of context. Pi marks the state on the
+    /// card itself — a dimmed border for `!!` (`bash-execution.ts:36-38`) — and
+    /// Epsilon's `!`/`!!` output is a system line rather than a card by design
+    /// (output that never entered model context is not a tool result), so the
+    /// label is where the equivalent fact lives. It is carried on the **error**
+    /// path as well: a `!!` that failed lost its marker exactly when a reader
+    /// most needs it, which is the failure half of `AGENTS.md` §2.7.
     fn run_shell(&mut self, agent: &Arc<Agent>, command: String, excluded: bool) {
-        self.notice(format!("running: {command}"));
+        // Why the word, and which one: `kept out of context` is the same phrase
+        // the result row has used since M52, so the two rows read as the same
+        // fact rather than as two spellings of it.
+        let state = if excluded {
+            " (kept out of context)"
+        } else {
+            ""
+        };
+        self.notice(format!("running{state}: {command}"));
         let notices = self.notices_tx.clone();
         let agent = Arc::clone(agent);
         tokio::spawn(async move {
@@ -1331,7 +1350,9 @@ impl App {
                     notices.send(format!("{label}{text}")).ok();
                 }
                 Err(e) => {
-                    notices.send(format!("shell: {e}")).ok();
+                    // The excluded label on the failure path as well, so a
+                    // failed `!!` still says its output never reached the model.
+                    notices.send(format!("{label}{e}")).ok();
                 }
             }
         });

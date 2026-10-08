@@ -5726,6 +5726,107 @@ async fn a_double_bang_says_the_output_stays_out_of_the_context() {
     );
 }
 
+/// A `!!` run is marked on the **frame**, from the moment it starts.
+/// A failing `!!` keeps its exclusion marker (the failure half of §2.7).
+///
+/// The success path has carried the label since M52 and the running row since
+/// this round. The error path printed a bare `shell: <error>`, so a `!!` that
+/// *failed* lost the marker exactly when a reader most needs it — the question
+/// "did that output reach the model" matters most when the command did not work.
+///
+/// The gate is answered **Deny**, so `run_local` returns `Err` and the notice is
+/// the failure one. Leaving it unanswered would block instead of failing, which
+/// is the correct product behaviour and the wrong test.
+#[tokio::test]
+async fn a_failing_double_bang_keeps_its_exclusion_label() {
+    let (mut app, agent, (_frames, mut notices), approvals) = test_app_with_bash();
+    let _answerer = tokio::spawn({
+        let channel = approvals.clone();
+        async move {
+            channel
+                .next_ask()
+                .await
+                .expect("a gated bash call asks")
+                .reply(PermissionDecision::Deny)
+        }
+    });
+    type_and_enter(&mut app, &agent, "!!false");
+
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    let frame = loop {
+        while let Ok(n) = notices.try_recv() {
+            app.ui.push_notice(n);
+        }
+        let frame = render_rows(&mut app, 80, 24).join("\n");
+        // The needle is the result label, not the phrase: the running row now
+        // carries the same phrase ("running (kept out of context): …"), so a
+        // looser match would pass against the wrong row — which is what this
+        // test's first version did.
+        if frame.contains("shell (kept out of context): ") || std::time::Instant::now() > deadline {
+            break frame;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    };
+    assert!(
+        frame.contains("shell (kept out of context): "),
+        "the failure row must carry the label: {frame}"
+    );
+}
+
+/// A `!!` run names its exclusion on the **running** row, not only on the result.
+///
+/// The sibling test above drains the notices channel and pins the *result*
+/// label, which already exists. What nothing pinned is the row a reader looks at
+/// during the seconds the command takes: `run_shell` printed a bare
+/// `running: <command>`, and on the failure path the label reverted to a bare
+/// `shell:`, so a `!!` that failed lost its marker exactly when a reader most
+/// needs it.
+///
+/// This asserts the drawn frame **before the gate is answered**, so the command
+/// cannot have finished — the only row that can carry the marker is the running
+/// one. The control is the single-bang form, which must run and must not be
+/// marked: a marker on every shell line is not a distinction.
+#[tokio::test]
+async fn a_double_bang_names_its_exclusion_on_the_running_row() {
+    for (typed, marked) in [("!!echo shellmark", true), ("!echo shellmark", false)] {
+        // No approver is spawned: with the gate unanswered the command cannot
+        // start, so the frame is the running state and nothing else.
+        let (mut app, agent, (_frames, mut notices), _approvals) = test_app_with_bash();
+        type_and_enter(&mut app, &agent, typed);
+
+        // Drain what the synchronous `running:` notice produced and draw. A
+        // bounded poll rather than a sleep, so a missing notice fails loudly
+        // instead of asserting against a frame that never had one.
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        let frame = loop {
+            while let Ok(n) = notices.try_recv() {
+                app.ui.push_notice(n);
+            }
+            let frame = render_rows(&mut app, 80, 24).join("\n");
+            if frame.contains("shellmark") || std::time::Instant::now() > deadline {
+                break frame;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        };
+
+        let running_row = frame
+            .lines()
+            .find(|l| l.contains("shellmark"))
+            .unwrap_or_else(|| panic!("the running row must name the command: {frame}"));
+        if marked {
+            assert!(
+                running_row.contains("kept out of context"),
+                "a !! run must name the exclusion while it runs: {running_row:?}"
+            );
+        } else {
+            assert!(
+                !running_row.contains("kept out of context"),
+                "a ! run must not be marked excluded: {running_row:?}"
+            );
+        }
+    }
+}
+
 /// A page key moves by the screenful that was actually drawn.
 ///
 /// pi pages by `maxVisible` (`session-selector.ts:612-617`), so the property is
