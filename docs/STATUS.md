@@ -284,13 +284,12 @@ instead of newlining, and the sessions sidebar being a keyboard trap. What remai
 
 ## Verification (what is actually true)
 
-**Latest green battery: [`gate-port-r88-2026-10-08.txt`](../audit/evidence/gate-port-r88-2026-10-08.txt),
-2026-10-08 — the tree this file describes.** Thirteen legs, all `[exit=0]`, `GATE PASS`.
-**2,256 passed / 0 failed / 13 ignored across 78 binaries**, summed from that one log's
-`test result:` lines — five more than `gate-port-r87`: two exit-code units, one exit-code
-frame, the reasoning/answer separation test, and the footer mode test another session landed
-in the same tree.
-`CARGO_PROFILE_TEST_DEBUG=1` set preemptively (LNK1104 pattern); no fault.
+**Latest green battery: [`gate-port-r89-2026-10-08.txt`](../audit/evidence/gate-port-r89-2026-10-08.txt),
+2026-10-08 — the tree this file describes, and it is the one HEAD holds.** Thirteen legs, all
+`[exit=0]`, `GATE PASS`. **2,256 passed / 0 failed / 13 ignored across 78 binaries**, summed from
+that one log's `test result:` lines — identical to `gate-port-r88`, which is the point: that run
+validated this tree *plus* another session's commit, and this one confirms the committed tree on
+its own. `CARGO_PROFILE_TEST_DEBUG=1` set preemptively (LNK1104 pattern); no fault.
 (`cargo fmt --check` ran before launching.) The first `port-r55` attempt failed its test leg
 on an integration test driving `/timeline` as refused; preserved as
 [`gate-port-r55-attempt1-FAILED-2026-10-07.txt`](../audit/evidence/gate-port-r55-attempt1-FAILED-2026-10-07.txt).
