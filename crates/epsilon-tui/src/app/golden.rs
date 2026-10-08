@@ -1910,6 +1910,89 @@ fn a_failed_shell_card_shows_its_exit_code_on_the_frame() {
     }
 }
 
+/// A `todo` result settles its call's card instead of drawing a second row.
+///
+/// The composite, on the frame, because each half alone passes while the defect
+/// stands: the call card's title must stop saying `pending`, no second row may
+/// appear, and the checklist must nest under a continuation gutter. Before the
+/// fix the frame carried `▸ todo · pending` above `✓ todo [x] …` with a raw JSON
+/// body, on every multi-step turn.
+#[test]
+fn a_todo_result_settles_its_call_and_nests_its_checklist() {
+    let mut app = bench_app(UiState::new());
+    pin_theme(&mut app, ThemeColorMode::Ansi16);
+    let items = serde_json::json!({"todo": [
+        {"content": "refactor the parser", "status": "completed"},
+        {"content": "run the tests", "status": "in_progress"},
+        {"content": "write the changelog", "status": "pending"}
+    ]});
+    // The order a real turn emits: the call is committed with the assistant
+    // message, it starts, then the result lands.
+    app.ui.apply(&AgentEvent::MessageEnd {
+        message: Box::new(Message::Assistant(crate::state::assistant_calling(
+            "planning the work",
+            "tc_todo",
+            "todo",
+            items.clone(),
+        ))),
+    });
+    app.ui.apply(&AgentEvent::ToolExecutionStart {
+        tool_call_id: "tc_todo".into(),
+        tool_name: "todo".into(),
+        args: items,
+    });
+    app.ui.apply(&AgentEvent::MessageEnd {
+        message: Box::new(Message::ToolResult(
+            epsilon_contracts::message::ToolResultMessage {
+                id: epsilon_contracts::ids::new_id("msg"),
+                timestamp_ms: 0,
+                tool_call_id: "tc_todo".into(),
+                tool_name: "todo".into(),
+                content: vec![epsilon_contracts::content::ContentBlock::text(
+                    "[x] refactor the parser\n[~] run the tests\n[ ] write the changelog",
+                )],
+                details: serde_json::json!({"todo": [
+                    {"content": "refactor the parser", "status": "completed"},
+                    {"content": "run the tests", "status": "in_progress"},
+                    {"content": "write the changelog", "status": "pending"}
+                ]}),
+                usage: None,
+                is_error: false,
+            },
+        )),
+    });
+
+    for width in [80u16, 100] {
+        let rows = render_rows(&mut app, width, 24);
+        let screen = rows.join("\n");
+        let todo_rows: Vec<&String> = rows.iter().filter(|r| r.contains("todo")).collect();
+        assert_eq!(
+            todo_rows.len(),
+            1,
+            "one row names todo — a second is the double-draw:\n{screen}"
+        );
+        let title = &rows[row_of(&rows, "✓ todo (1/3 done) · ok · ")];
+        assert!(
+            title.starts_with("✓ todo (1/3 done) · ok · "),
+            "the call's own card is settled, not still pending: {title:?}"
+        );
+        assert!(
+            !screen.contains("pending"),
+            "no pending row survives the result:\n{screen}"
+        );
+        // The checklist nests under a continuation gutter, and no row is raw JSON.
+        let item_row = &rows[row_of(&rows, "[x] refactor the parser")];
+        assert!(
+            item_row.starts_with('│') || item_row.starts_with('|'),
+            "the checklist nests under the gutter: {item_row:?}"
+        );
+        assert!(
+            !screen.contains("{\"todo\""),
+            "a JSON dump must not reach the screen:\n{screen}"
+        );
+    }
+}
+
 #[test]
 fn an_edits_diff_is_drawn_with_a_coloured_gutter_not_as_prose() {
     // The heart of the slice. Each of these assertions fails on the old code for a

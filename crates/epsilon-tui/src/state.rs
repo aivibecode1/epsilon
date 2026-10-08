@@ -6,6 +6,13 @@
 use epsilon_contracts::agent_event::AgentEvent;
 use epsilon_contracts::message::{AssistantMessage, Message, StopReason};
 
+/// Test-only switch that restores the pre-fix `todo` double-draw.
+///
+/// Kept as a module-level `const` rather than deleted so the negative control can
+/// flip it and be flipped back. **Never true in a committed tree**: the tests
+/// that depend on it read as red on purpose, and `false` is what ships.
+const CONTROL_RESTORE_TODO_DOUBLE_DRAW: bool = false;
+
 /// Visual class of one transcript line.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum LineKind {
@@ -872,9 +879,29 @@ impl UiState {
         // honestly reports no elapsed time rather than inventing one.
         let settled = self.settle_call(&t.tool_call_id, status, now);
         let started_at_ms = settled.unwrap_or(now);
+        // A `todo` result is a checklist, and it goes through the normal card
+        // path rather than an `expandable` line beside it. This used to return
+        // early, so the call's own card was never settled: the frame carried
+        // `▸ todo · pending` for ever directly above `✓ todo [x] …`, the pending
+        // body was a raw JSON dump (no renderer knew the argument, so
+        // `summarize_args` truncated `args.to_string()`), and because the
+        // checklist was an expandable rather than a card, `card::cap` never ran
+        // on it — a seven-item list silently showed five, with no
+        // `… N more lines (ctrl+x to open)` affordance and no continuation
+        // gutter. `todo` is a built-in the model is told to reach for on any
+        // 3+ step task (`crates/epsilon-tools/descriptions/todo.txt:7-8`), so
+        // this was every multi-step turn.
+        let todo_items = if self::CONTROL_RESTORE_TODO_DOUBLE_DRAW {
+            None
+        } else {
+            todo_items(&t.details)
+        };
         let card_body = match edit_diff(t) {
             Some(diff) => CardBody::Diff(parse_diff(&diff)),
-            None => CardBody::Text(body.clone()),
+            None => match &todo_items {
+                Some(items) => CardBody::Text(items.join("\n")),
+                None => CardBody::Text(body.clone()),
+            },
         };
         // A result carries no arguments — only the call did. Recover them from the call's own
         // card so the headline can name the file or the command; without this the renderer
@@ -896,13 +923,20 @@ impl UiState {
         // with 400 characters of the file the user was already looking at, and never named
         // the file or the line range — both of which the tool had already reported. The
         // renderer says what the tool did, using only facts the tool stated.
-        let head = crate::renderers::result_head(
-            &t.tool_name,
-            &args,
-            &t.details,
-            &body,
-            self.glyphs.ellipsis,
-        );
+        //
+        // `todo` keeps the checklist summary: the body directly below carries the items
+        // with their markers, so a title repeating them would be the M153 defect in
+        // miniature. Malformed todo details fall back to the generic renderer, which names
+        // the tool and its first output line rather than guessing at a list.
+        let head = todo_summary(&t.details).unwrap_or_else(|| {
+            crate::renderers::result_head(
+                &t.tool_name,
+                &args,
+                &t.details,
+                &body,
+                self.glyphs.ellipsis,
+            )
+        });
         // M155: the call card was settled above. *Finishing* it is the other half of that,
         // and this used to be skipped: the call's status was updated and a **second** card
         // was pushed beside it carrying the same headline and the same body. Painted, that
@@ -1161,16 +1195,6 @@ impl UiState {
                     // `record_tool_usage` for why this was missing.
                     self.record_tool_usage(t);
                     let body = tool_result_text(t);
-                    if t.tool_name == "todo"
-                        && let Some(head) = todo_head(&t.details)
-                    {
-                        self.push_line(TranscriptLine::expandable(
-                            LineKind::ToolResultOk,
-                            head,
-                            format!("todo\n{body}"),
-                        ));
-                        continue;
-                    }
                     if let Some(img) = summarize_image_blob(&body) {
                         self.push_line(TranscriptLine::expandable(
                             if t.is_error {
@@ -1334,10 +1358,9 @@ impl UiState {
                     // hydration arm above has to do the same thing.
                     self.record_tool_usage(t);
                     let body = tool_result_text(t);
-                    // M30: todo results render their checklist (opencode's todo
-                    // block) — short lists fully visible, long ones summarized.
-                    if t.tool_name == "todo"
-                        && let Some(head) = todo_head(&t.details)
+                    if self::CONTROL_RESTORE_TODO_DOUBLE_DRAW
+                        && t.tool_name == "todo"
+                        && let Some(head) = todo_summary(&t.details)
                     {
                         self.push_line(TranscriptLine::expandable(
                             LineKind::ToolResultOk,
@@ -1779,11 +1802,12 @@ fn thinking_of(a: &AssistantMessage) -> String {
         .collect()
 }
 
-/// Glanceable head for todo results (opencode's todo block): up to five items
-/// render fully with their markers; longer lists summarize to counts.
-/// Returns None when the details payload isn't the expected shape (then the
-/// generic tool-result rendering takes over).
-fn todo_head(details: &serde_json::Value) -> Option<String> {
+/// One rendered line per todo item, with opencode's three markers.
+///
+/// Returns `None` when the details payload is not the expected shape, which is
+/// what sends a `todo` result down the generic tool-result path rather than
+/// through a checklist that lost items on the way.
+fn todo_items(details: &serde_json::Value) -> Option<Vec<String>> {
     let items = details.get("todo")?.as_array()?;
     let marker = |status: &str| match status {
         "completed" => "[x]",
@@ -1803,16 +1827,27 @@ fn todo_head(details: &serde_json::Value) -> Option<String> {
     if rendered.len() != items.len() {
         return None;
     }
-    if rendered.len() <= 5 {
-        Some(format!("todo {}", rendered.join(" · ")))
-    } else {
-        let done = rendered.iter().filter(|r| r.starts_with("[x]")).count();
-        Some(format!(
-            "todo ({done}/{} done) {}…",
-            rendered.len(),
-            rendered.first().unwrap_or(&String::new())
-        ))
-    }
+    Some(rendered)
+}
+
+/// Glanceable head for todo results (opencode's todo block).
+///
+/// **Counts only, and that is a decision.** This used to join up to five items
+/// into the headline and summarise longer lists to counts — which meant the
+/// short list's title repeated, item for item, the body sitting directly under
+/// it. That is the M153 defect in miniature: a headline that is a copy of its
+/// own card. The body carries the items with their markers, so the title says
+/// how the list stands and stops there, under one rule at every length.
+fn todo_summary(details: &serde_json::Value) -> Option<String> {
+    let items = todo_items(details)?;
+    let done = items.iter().filter(|r| r.starts_with("[x]")).count();
+    // The tool's name is deliberately absent: `card::title` prints the name
+    // ahead of whatever the headline says, so a headline that carried it drew
+    // `✓ todo todo (1/3 done) · ok`. `result_head`'s own fallback leads with
+    // the name for the collapse of the transcript line — the title strips that
+    // form (`ui/card.rs:112`) — but a summary is not that form, and the honest
+    // fix is not to write the name in the first place.
+    Some(format!("({done}/{} done)", items.len()))
 }
 
 /// The detail line a pending card shows: what this call is about to do.
@@ -2373,8 +2408,15 @@ mod tests {
 
     // ---- M30: todo results render their checklist --------------------------------------
 
+    /// A `todo` result's checklist is the **card body**, not a line beside a card.
+    ///
+    /// This fixture once asserted `line.text == "todo [x] one · [ ] two"`, which is
+    /// what the second row of the double-drawn pair carried. It now asserts the
+    /// shape the settle path produces: a card whose body is one marked line per
+    /// item, so the continuation gutter, the twelve-row cap and the
+    /// `… N more lines (ctrl+x to open)` affordance all apply to it.
     #[test]
-    fn todo_results_render_as_a_checklist_head() {
+    fn todo_results_render_as_a_checklist_card_body() {
         let mut st = UiState::new();
         st.apply(&AgentEvent::MessageEnd {
             message: Box::new(Message::ToolResult(ToolResultMessage {
@@ -2392,12 +2434,18 @@ mod tests {
             })),
         });
         let line = &st.lines()[0];
+        let card = line.card.as_ref().expect("a todo result is a card");
+        assert_eq!(card.name, "todo");
         assert_eq!(
-            line.text, "todo [x] one · [ ] two",
-            "short lists render fully: {:?}",
-            line.text
+            card.head, "(1/2 done)",
+            "the title counts, and names no tool the title already prints: {card:?}"
         );
-        assert!(line.full.as_deref().is_some_and(|f| f.contains("[x] one")));
+        match &card.body {
+            CardBody::Text(text) => {
+                assert_eq!(text, "[x] one\n[ ] two", "one marked line per item");
+            }
+            other => panic!("the checklist is a text body, got {other:?}"),
+        }
     }
 
     #[test]
@@ -2425,7 +2473,14 @@ mod tests {
             })),
         });
         let line = &st.lines()[0];
-        assert!(line.text.starts_with("todo (3/7 done)"), "{:?}", line.text);
+        let card = line.card.as_ref().expect("a todo result is a card");
+        assert!(
+            line.text.contains("(3/7 done)"),
+            "long lists count, under the same rule as short ones: {:?}",
+            line.text
+        );
+        assert_eq!(card.name, "todo");
+        assert_eq!(card.head, "(3/7 done)");
     }
 
     #[test]
