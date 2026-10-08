@@ -95,12 +95,21 @@ pub fn result_head(
             (Some(true), None) => " · truncated".into(),
             _ => String::new(),
         },
-        "shell" | "bash" | "run" => match details.get("output_complete").and_then(Value::as_bool) {
-            // M148: the command exited successfully but a descendant held the pipe, so what
-            // is on the card is not everything the command produced. The card must say so.
-            Some(false) => " · output incomplete".into(),
-            _ => String::new(),
-        },
+        "shell" | "bash" | "run" => {
+            let mut extra = match details.get("output_complete").and_then(Value::as_bool) {
+                // M148: the command exited successfully but a descendant held the pipe, so what
+                // is on the card is not everything the command produced. The card must say so.
+                Some(false) => " · output incomplete".to_string(),
+                _ => String::new(),
+            };
+            // P-159: truncated output was spilled whole; the card names the
+            // file so the rest is retrievable. Only present when truncation
+            // actually spilled (small outputs carry no key).
+            if let Some(path) = details.get("full_output_path").and_then(Value::as_str) {
+                extra.push_str(&format!(" · full output: {path}"));
+            }
+            extra
+        }
         _ => String::new(),
     };
 

@@ -220,3 +220,34 @@ fn the_title_does_not_print_the_tools_name_twice() {
     assert!(!line.contains("bash bash"), "{line}");
     assert!(line.contains("boom"), "{line}");
 }
+
+/// A truncated shell result names its spill file (P-159).
+///
+/// The path arrives in `details.full_output_path` (set only when truncation
+/// actually spilled); the headline carries it so the rest is retrievable.
+/// No key, no name — small outputs must not grow one.
+#[test]
+fn truncated_shell_result_names_its_spill_file() {
+    let spilled = super::result_head(
+        "bash",
+        &json!({ "command": "make big" }),
+        &json!({ "full_output_path": "/tmp/spill/bash-1.txt" }),
+        "head…",
+        "…",
+    );
+    assert!(
+        spilled.contains("/tmp/spill/bash-1.txt"),
+        "must name the file: {spilled}"
+    );
+    let small = super::result_head(
+        "bash",
+        &json!({ "command": "echo hi" }),
+        &json!({}),
+        "hi",
+        "…",
+    );
+    assert!(
+        !small.contains("full output"),
+        "must not invent one: {small}"
+    );
+}

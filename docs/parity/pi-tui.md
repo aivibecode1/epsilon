@@ -83,13 +83,13 @@ this document**, tallied from its own tables — not a projection.
 | 10. Settings | 22 | 1 | 9 | 11 | 1 |
 | 11. Project trust | 4 | 1 | 2 | 0 | 1 |
 | 12. Tool cards | 16 | 3 | 6 | 6 | 1 |
-| 13. Bash cards | 11 | 2 | 6 | 3 | 0 |
+| 13. Bash cards | 11 | 3 | 6 | 2 | 0 |
 | 14. Diffs | 6 | 4 | 0 | 2 | 0 |
 | 15. Markdown, mermaid and truncation | 22 | 5 | 8 | 9 | 0 |
 | 16. Status indicators | 13 | 2 | 5 | 5 | 1 |
 | 17. Footer | 12 | 3 | 4 | 3 | 2 |
 | 18. Selector and overlay components | 79 | 11 | 22 | 40 | 6 |
-| **Total** | **339** | **56** | **113** | **149** | **21** |
+| **Total** | **339** | **57** | **113** | **148** | **21** |
 
 A further **17 rows are not in the counts above**: the 10 `Y-###` rows Pi ships outside its interactive mode (out of
 scope by design) and the 7 `AA-###` rows recording what was never inventoried. Both are listed in full near the end
@@ -528,7 +528,7 @@ is required of both programs, and Epsilon's evidence does not yet show a full-ou
 | P-156 | Collapsed bash output keeps the **last** 20 wrapped visual lines, recomputed when the width changes | `packages/coding-agent/src/modes/interactive/components/bash-execution.ts:131`, `:156` | partial | `crates/epsilon-tui/src/ui/card.rs:246`, `:70` — twelve visible rows; which end is kept is not established by an `E-` row | `a_long_diff_is_capped_and_says_which_key_opens_it` (frame) |
 | P-157 | The hidden-lines hint names the expansion key live and flips wording between expand and collapse | `packages/coding-agent/src/modes/interactive/components/bash-execution.ts:177`, `:184` | done | `crates/epsilon-tui/src/ui/card.rs:290` — `… 29 more lines (ctrl+x to open)`, carrying the true count and the live text of the binding; an expanded card prints no affordance | `a_long_diff_is_capped_and_says_which_key_opens_it` (frame) |
 | P-158 | A cancelled command shows `(cancelled)` and a failed one `(exit N)` | `packages/coding-agent/src/modes/interactive/components/bash-execution.ts:189`, `:192` | partial | `crates/epsilon-tui/src/ui/card.rs:213` — status is a word in the title; the exit **number** is not on the card | `a_tool_result_is_a_card_whose_title_carries_name_status_and_duration` (frame) |
-| P-159 | When output was truncated for context but a full copy was saved, the card names the file | `packages/coding-agent/src/modes/interactive/components/bash-execution.ts:196`, `packages/coding-agent/src/modes/interactive/interactive-mode.ts:6991-6997` | missing | none — [`../../AGENTS.md`](../../AGENTS.md) §6 requires the recoverable copy, so this is a gap on our side and not a licence | — |
+| P-159 | When output was truncated for context but a full copy was saved, the card names the file | `packages/coding-agent/src/modes/interactive/components/bash-execution.ts:196`, `packages/coding-agent/src/modes/interactive/interactive-mode.ts:6991-6997` | done | `crates/epsilon-tui/src/renderers/mod.rs` — `result_head` appends `· full output: <path>` from `details.full_output_path` (set only when truncation actually spilled; small outputs carry no key) | `truncated_shell_result_names_its_spill_file` (names it; small outputs grow none; append-removal control) |
 | P-160 | The card shows at most what the model saw, truncated to the bash tool's own limits | `packages/coding-agent/src/modes/interactive/components/bash-execution.ts:122-124` | missing | none | — |
 | P-024 | Bash output started while the agent is streaming is deferred above the composer and moved into the transcript on the next submission | `packages/coding-agent/src/modes/interactive/interactive-mode.ts:6966-6976`, `:4774-4780`, `:3330` | missing | none | — |
 | P-177 | The bash **tool** prints an elapsed/duration line and its own truncation warning with `... (N earlier lines, KEY to expand)` | `packages/coding-agent/src/core/tools/renderers/bash.ts:98`, `:104`, `:18`, `:72` | partial | `crates/epsilon-tui/src/state.rs:265` — a duration appears on a finished card as `ended - started`, and sub-second work reads as `412ms` rather than `0s`; there is no byte- or line-limit warning | `only_a_finished_card_carries_a_duration`, `a_running_call_shows_its_time_in_the_header_not_on_the_card` (frame) |
@@ -774,13 +774,13 @@ row says so — that is a gap in the inventory, and closing it is cheap.
 | 10. Settings | 22 | 1 | 9 | 11 | 1 |
 | 11. Project trust | 4 | 1 | 2 | 0 | 1 |
 | 12. Tool cards | 16 | 3 | 6 | 6 | 1 |
-| 13. Bash cards | 11 | 2 | 6 | 3 | 0 |
+| 13. Bash cards | 11 | 3 | 6 | 2 | 0 |
 | 14. Diffs | 6 | 4 | 0 | 2 | 0 |
 | 15. Markdown, mermaid and truncation | 22 | 5 | 8 | 9 | 0 |
 | 16. Status indicators | 13 | 2 | 5 | 5 | 1 |
 | 17. Footer | 12 | 3 | 4 | 3 | 2 |
 | 18. Selector and overlay components | 79 | 11 | 22 | 40 | 6 |
-| **Total** | **339** | **56** | **113** | **149** | **21** |
+| **Total** | **339** | **57** | **113** | **148** | **21** |
 
 ### The `missing` rows — 161
 
@@ -800,7 +800,7 @@ nothing here is a claim that the behaviour cannot be built.
 | Themes (8) | P-092, P-094, P-095, P-096, P-098, P-101, P-270, P-271 |
 | Settings (11) | P-103, P-105, P-106, P-111, P-112, P-113, P-114, P-267, P-268, P-275, P-277 |
 | Tool cards (6) | P-139, P-141, P-145, P-149, P-150, P-151 |
-| Bash cards (3) | P-024, P-159, P-160 |
+| Bash cards (2) | P-024, P-160 |
 | Diffs (2) | P-162, P-163 |
 | Markdown, mermaid and truncation (9) | P-167, P-168, P-169, P-170, P-171, P-172, P-173, T-010, T-012 |
 | Status indicators (5) | P-019, P-191, P-192, P-193, P-194 |
