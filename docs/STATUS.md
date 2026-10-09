@@ -298,15 +298,13 @@ instead of newlining, and the sessions sidebar being a keyboard trap. What remai
 
 ## Verification (what is actually true)
 
-**Latest green battery: [`gate-port-r93b-2026-10-08.txt`](../audit/evidence/gate-port-r93b-2026-10-08.txt),
+**Latest green battery: [`gate-port-r94b-2026-10-08.txt`](../audit/evidence/gate-port-r94b-2026-10-08.txt),
 2026-10-08 — the tree this file describes, and it is the one HEAD holds.** Thirteen legs, all
-`[exit=0]`, `GATE PASS`. **2,263 passed / 0 failed / 13 ignored across 78 binaries**, summed from
-that one log's `test result:` lines — two more than `gate-port-r92`: the two `!!` tests.
-`CARGO_PROFILE_TEST_DEBUG=2`, **not** `=1`: `=1`'s binary name was blocked this round (see the
-note below), and the knob is now at its third distinct value on this machine.
-(`cargo fmt --check` ran before launching.) The first `port-r55` attempt failed its test leg
-on an integration test driving `/timeline` as refused; preserved as
-[`gate-port-r55-attempt1-FAILED-2026-10-07.txt`](../audit/evidence/gate-port-r55-attempt1-FAILED-2026-10-07.txt).
+`[exit=0]`, `GATE PASS`. **2,269 passed / 0 failed / 13 ignored across 78 binaries**, summed from
+that one log's `test result:` lines — six more than `gate-port-r93b`: the three filter frames and
+two filter units are new, and the sixth is the rewritten card-openness assertion inside a test
+that already existed. `CARGO_PROFILE_TEST_DEBUG=2`. (`cargo fmt --check` ran before launching.)
+The first `port-r94` attempt failed **clippy**, not a test — see the note below.
 
 > **Round 93's first battery failed the test leg on the machine, and the probe is the proof.**
 > `gate-port-r93` died at `error: test failed, to rerun pass -p epsilon-core --lib` with
