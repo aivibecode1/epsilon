@@ -5699,7 +5699,7 @@ impl IdeApp {
         let theme = self.theme;
         {
             let painter = ui.painter();
-            painter.rect_filled(rect, 4.0, theme.background);
+            painter.rect_filled(rect, 4.0, theme.panel);
             painter.rect_stroke(
                 rect,
                 4.0,
@@ -5845,7 +5845,7 @@ impl IdeApp {
         let theme = self.theme;
         {
             let painter = ui.painter();
-            painter.rect_filled(rect, 4.0, theme.background);
+            painter.rect_filled(rect, 4.0, theme.panel);
             painter.rect_stroke(
                 rect,
                 4.0,
@@ -6156,7 +6156,7 @@ impl IdeApp {
         let theme = self.theme;
         {
             let painter = ui.painter();
-            painter.rect_filled(rect, 4.0, theme.background);
+            painter.rect_filled(rect, 4.0, theme.panel);
             painter.rect_stroke(
                 rect,
                 4.0,
@@ -6346,7 +6346,7 @@ impl IdeApp {
                     egui::accesskit::Role::Region,
                 );
                 let painter = ui.painter();
-                painter.rect_filled(body, 4.0, theme.background);
+                painter.rect_filled(body, 4.0, theme.panel);
                 painter.rect_stroke(
                     body,
                     4.0,
@@ -7150,7 +7150,7 @@ impl IdeApp {
         // mutably. Holding the painter across that is the classic egui borrow conflict.
         {
             let painter = ui.painter();
-            painter.rect_filled(rect, 4.0, theme.background);
+            painter.rect_filled(rect, 4.0, theme.panel);
             painter.rect_stroke(
                 rect,
                 4.0,
@@ -10323,6 +10323,55 @@ mod tests {
                 .any(|t| t.contains("Cannot delete the currently active session")),
             "the refusal names the case, in the terminal's words.\n{}",
             frame.describe()
+        );
+    }
+
+    /// **The panes are a raised surface, not the page.**
+    ///
+    /// The whole of the design problem the owner named, in one frame: three regions
+    /// of *identical* near-black separated by hairlines, with no depth — the window
+    /// read as three black rectangles rather than as a layout. DSH-Desktop solves it
+    /// the way its CSS does: sidebar and content sit on a raised surface while the
+    /// page behind them is the darkest layer (`design-platform.css`: base
+    /// `#0F1115`, sidebar `#1B1B1C`). This theme already encodes that pair —
+    /// `background` and `panel` — and the panes simply were not using it.
+    ///
+    /// Asserted on the **shapes a renderer would be handed**, not on a string: a
+    /// pane's fill is a pixel fact and `FrameSummary` records words.
+    #[test]
+    fn the_panes_are_a_raised_surface_over_the_page() {
+        let theme = crate::theme::IdeTheme::from(epsilon_tui::ui::theme::ThemeMode::Dark);
+        assert_ne!(
+            theme.panel, theme.background,
+            "the design system must define two distinct surfaces, or this test \
+             would pass against a window with no depth at all"
+        );
+
+        let (ws, _keep) = scratch_workspace("pane-surfaces");
+        let mut h = Harness::new(ws);
+        let full = h.full_frame();
+        // Past the activity bar is where the panes begin; find the filled rect
+        // that covers that region and read its fill.
+        let body_left = crate::layout::ACTIVITY_BAR;
+        let fills = |want: egui::Color32| {
+            full.shapes
+                .iter()
+                .filter_map(move |clipped| match &clipped.shape {
+                    egui::Shape::Rect(r) if r.fill == want => Some(r.rect),
+                    _ => None,
+                })
+                .filter(|rect| rect.left() >= body_left - 0.5 && rect.width() > 100.0)
+                .collect::<Vec<_>>()
+        };
+        assert!(
+            !fills(theme.panel).is_empty(),
+            "a pane must paint the raised surface.\n{}",
+            h.paint().describe()
+        );
+        assert!(
+            fills(theme.background).is_empty(),
+            "and must not paint the flat page colour where a pane belongs: {:?}",
+            fills(theme.background)
         );
     }
 

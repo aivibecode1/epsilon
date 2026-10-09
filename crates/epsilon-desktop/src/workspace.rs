@@ -479,7 +479,7 @@ pub fn draw_diff(
     expanded: &mut bool,
 ) {
     let painter = ui.painter().with_clip_rect(rect);
-    painter.rect_filled(rect, 4.0, theme.background);
+    painter.rect_filled(rect, 4.0, theme.panel);
     painter.rect_stroke(
         rect,
         4.0,
@@ -620,7 +620,7 @@ pub fn draw_editor(
     scale: f32,
 ) {
     let painter = ui.painter().with_clip_rect(rect);
-    painter.rect_filled(rect, 4.0, theme.background);
+    painter.rect_filled(rect, 4.0, theme.panel);
     painter.rect_stroke(
         rect,
         4.0,
