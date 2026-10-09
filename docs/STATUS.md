@@ -300,13 +300,12 @@ instead of newlining, and the sessions sidebar being a keyboard trap. What remai
 
 ## Verification (what is actually true)
 
-**Latest green battery: [`gate-port-r95b-2026-10-08.txt`](../audit/evidence/gate-port-r95b-2026-10-08.txt),
+**Latest green battery: [`gate-port-r96-2026-10-08.txt`](../audit/evidence/gate-port-r96-2026-10-08.txt),
 2026-10-08 — the tree this file describes, and it is the one HEAD holds.** Thirteen legs, all
-`[exit=0]`, `GATE PASS`. **2,273 passed / 0 failed / 13 ignored across 78 binaries**, summed from
-that one log's `test result:` lines — four more than `gate-port-r94b`: three new picker tests and
-the frame test. `CARGO_PROFILE_TEST_DEBUG=2`. (`cargo fmt --check` ran before launching.) The
-first `port-r95` attempt failed the **desktop** leg — see the note below, and preserved as
-[`gate-port-r95-attempt1-FAILED-2026-10-08.txt`](../audit/evidence/gate-port-r95-attempt1-FAILED-2026-10-08.txt).
+`[exit=0]`, `GATE PASS`. **2,280 passed / 0 failed / 13 ignored across 78 binaries**, summed from
+that one log's `test result:` lines — seven more than `gate-port-r95b`: three session-delete units
+and four browser frames. `CARGO_PROFILE_TEST_DEBUG=2`. (`cargo fmt --check` ran before launching.)
+Green first time — no machine fault and no clippy finding, for the first round in three.
 
 > **Round 93's first battery failed the test leg on the machine, and the probe is the proof.**
 > `gate-port-r93` died at `error: test failed, to rerun pass -p epsilon-core --lib` with
