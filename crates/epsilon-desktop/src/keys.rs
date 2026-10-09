@@ -21,7 +21,7 @@
 //! **priority** the drawing order already states.
 
 use std::collections::HashMap;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use epsilon_contracts::keybind::{Chord, Mods, WINDOW};
 
@@ -76,6 +76,103 @@ impl KeyBindings {
             user,
             load_warning: None,
         }
+    }
+
+    /// Write `id`'s chords into `<dir>/keybindings.json`, and re-read them.
+    ///
+    /// **The write half of S-125, and the prerequisite S-122's recorder has nothing
+    /// to save into.** The window has read the user's file since M315 — a binding
+    /// written by hand survives, and a binding set in a window would not, because
+    /// nothing wrote it. That asymmetry is the whole of the row.
+    ///
+    /// **Through a scratch name and a rename, because `fs::write` is not atomic.**
+    /// The same discipline `layout::save_in` already uses for the two settings
+    /// files this window writes, and the same reason `keep_original_beside` uses
+    /// in `epsilon-session`: a file interrupted mid-write is not a preferences
+    /// file, it is a *corrupt* one, and the next launch then reports it as
+    /// unreadable — losing every other rebind in it with it. A rename is atomic
+    /// on the same volume, so the reader either sees the old file or the new
+    /// one, never half of either.
+    ///
+    /// **Ids this build does not know about survive**, exactly as
+    /// `layout::save_in` preserves unknown keys: the file is read back as a
+    /// `serde_json::Map` and one entry is replaced, so a forward-compatible
+    /// binding written by a later build is not destroyed by an earlier one.
+    ///
+    /// **A chord that does not parse is refused rather than written**, and an
+    /// empty list clears the entry: an unparseable binding is one the product
+    /// cannot read back, and writing it would make the file *look* like it holds
+    /// a rebind while every launch silently falls back to the default.
+    pub fn set_in(&mut self, dir: &Path, id: &str, chords: &[String]) -> Result<PathBuf, String> {
+        let path = dir.join("keybindings.json");
+        let mut table: serde_json::Map<String, serde_json::Value> = std::fs::read_to_string(&path)
+            .ok()
+            .and_then(|raw| serde_json::from_str(&raw).ok())
+            .unwrap_or_default();
+        let mut kept: Vec<String> = Vec::new();
+        for c in chords {
+            let c = c.trim();
+            if c.is_empty() {
+                continue;
+            }
+            if epsilon_contracts::keybind::Chord::parse(c).is_none() {
+                return Err(format!("`{c}` is not a chord this build can parse"));
+            }
+            kept.push(c.to_string());
+        }
+        if kept.is_empty() {
+            table.remove(id);
+        } else if kept.len() == 1 {
+            // **A single chord stays a string.** The reader accepts both spellings,
+            // so the test passed either way — but a file a person hand-wrote as
+            // `"window.palette": "ctrl+alt+p"` would come back as
+            // `["ctrl+alt+p"]` after one save, and a diff of a preferences file
+            // should show the change the user made and not a re-spelling of every
+            // line they did not.
+            table.insert(id.to_string(), serde_json::Value::String(kept.remove(0)));
+        } else {
+            table.insert(
+                id.to_string(),
+                serde_json::Value::Array(
+                    kept.iter()
+                        .map(|c| serde_json::Value::String(c.clone()))
+                        .collect(),
+                ),
+            );
+        }
+        // Scratch-then-rename, so a reader never sees half a file.
+        let scratch = dir.join(format!(".keybindings.{}.tmp", std::process::id()));
+        let text = serde_json::to_string_pretty(&serde_json::Value::Object(table.clone()))
+            .map_err(|e| format!("serialize keybindings: {e}"))?;
+        std::fs::write(&scratch, text).map_err(|e| format!("write {}: {e}", scratch.display()))?;
+        if let Err(e) = std::fs::rename(&scratch, &path) {
+            let _ = std::fs::remove_file(&scratch);
+            return Err(format!("write {}: {e}", path.display()));
+        }
+        self.user = Self::read_table(&table).0;
+        self.load_warning = None;
+        Ok(path)
+    }
+
+    /// The user map inside a parsed file, ignoring ids that do not parse.
+    fn read_table(
+        table: &serde_json::Map<String, serde_json::Value>,
+    ) -> (HashMap<String, Vec<String>>, Option<String>) {
+        let mut out = HashMap::new();
+        for (id, value) in table {
+            if let Some(s) = value.as_str() {
+                out.insert(id.clone(), vec![s.to_string()]);
+            } else if let Some(array) = value.as_array() {
+                let vs: Vec<String> = array
+                    .iter()
+                    .filter_map(|x| x.as_str().map(str::to_string))
+                    .collect();
+                if !vs.is_empty() {
+                    out.insert(id.clone(), vs);
+                }
+            }
+        }
+        (out, None)
     }
 
     /// The chords bound to `id`, parsed. An unknown id yields nothing, and a chord that does
@@ -289,6 +386,153 @@ pub fn neutral_mods(mods: egui::Modifiers) -> Mods {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A rebind set in a window survives a reopen (S-125's write half).
+    ///
+    /// The whole asymmetry the row names: the window has *read* the user's file
+    /// since M315, so a binding written by hand survives and a binding set in a
+    /// window would not, because nothing wrote it. This asserts the round trip —
+    /// set, close, load again — rather than the field, because a `user` map that
+    /// holds the chord and a file that does not is exactly the defect.
+    ///
+    /// **The load is a fresh `KeyBindings`, not the same instance.** Reading back
+    /// the same object would prove only that the method assigned to itself.
+    #[test]
+    fn a_rebind_set_in_a_window_survives_a_reopen() {
+        let tmp = tempfile::tempdir().expect("tmp");
+        let dir = tmp.path();
+
+        let mut kb = KeyBindings::defaults();
+        assert_eq!(
+            kb.label("window.palette").as_deref(),
+            Some("ctrl+p"),
+            "the default the table declares"
+        );
+        kb.set_in(dir, "window.palette", &["ctrl+alt+p".to_string()])
+            .expect("a chord that parses is written");
+
+        // A fresh read sees it — which is what a reopen does.
+        let reopened = KeyBindings::load(dir);
+        assert_eq!(
+            reopened.label("window.palette").as_deref(),
+            Some("ctrl+alt+p"),
+            "the rebind must survive being read back from disk"
+        );
+        assert_eq!(reopened.user_count(), 1, "one id overridden");
+        assert!(
+            reopened.load_warning().is_none(),
+            "and the file we just wrote is not reported as unreadable"
+        );
+        // No scratch file is left behind: the rename consumed it.
+        let leftovers: Vec<_> = std::fs::read_dir(dir)
+            .expect("the config directory")
+            .filter_map(Result::ok)
+            .map(|e| e.file_name())
+            .filter(|n| n.to_string_lossy().contains(".tmp"))
+            .collect();
+        assert!(
+            leftovers.is_empty(),
+            "the scratch name must not survive a successful write: {leftovers:?}"
+        );
+    }
+
+    /// **A rebind leaves every other entry in the file alone.**
+    ///
+    /// The file is shared with the terminal — same path, same grammar — so a
+    /// window that rewrote it from its own table would silently drop the
+    /// terminal's bindings, which is the two-worlds failure `AGENTS.md` §2.4
+    /// exists to prevent. It also takes an id it does not know: a file written by
+    /// a later build must survive an earlier one's save.
+    #[test]
+    fn a_rebind_preserves_every_other_entry_in_the_shared_file() {
+        let tmp = tempfile::tempdir().expect("tmp");
+        let dir = tmp.path();
+        std::fs::write(
+            dir.join("keybindings.json"),
+            r#"{"app.palette": "f1", "window.palette": "ctrl+alt+q"}"#,
+        )
+        .unwrap();
+
+        let mut kb = KeyBindings::load(dir);
+        kb.set_in(dir, "window.palette", &["ctrl+alt+p".to_string()])
+            .expect("the rebind lands");
+
+        // The other entry is still there — and it is the *terminal's* id, so
+        // this is the assertion that the two front ends are not two worlds.
+        let raw: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(dir.join("keybindings.json")).unwrap())
+                .unwrap();
+        assert_eq!(
+            raw.get("app.palette").and_then(|v| v.as_str()),
+            Some("f1"),
+            "the terminal's own binding must survive the window's save: {raw}"
+        );
+        assert_eq!(
+            raw.get("window.palette").and_then(|v| v.as_str()),
+            Some("ctrl+alt+p"),
+            "and the one that was set is the one that was set: {raw}"
+        );
+    }
+
+    /// **A chord that does not parse is refused, and nothing is written.**
+    ///
+    /// An unparseable binding is one the product cannot read back, so writing
+    /// it would make the file *look* like it holds a rebind while every launch
+    /// silently falls back to the default — the M199 class, a value that
+    /// appears to exist because it parses as something else.
+    #[test]
+    fn a_chord_that_does_not_parse_is_refused_and_not_written() {
+        let tmp = tempfile::tempdir().expect("tmp");
+        let dir = tmp.path();
+        let mut kb = KeyBindings::defaults();
+
+        let err = kb
+            .set_in(dir, "window.palette", &["ctrl+notakey".to_string()])
+            .expect_err("a chord this build cannot parse must be refused");
+        assert!(
+            err.contains("ctrl+notakey"),
+            "the refusal names the chord: {err}"
+        );
+        assert!(
+            !dir.join("keybindings.json").exists(),
+            "and nothing was written — a refusal must leave the file alone"
+        );
+        // The in-memory table is untouched too: the refused chord did not
+        // half-apply.
+        assert_eq!(
+            kb.label("window.palette").as_deref(),
+            Some("ctrl+p"),
+            "the refused rebind did not take effect in memory either"
+        );
+    }
+
+    /// **An empty list clears the entry rather than writing an unusable one.**
+    ///
+    /// The recorder's Cancel path needs this: leaving a binding bound to
+    /// nothing is worse than leaving it at the default, because a chord list
+    /// with no chord is a binding that can never fire.
+    #[test]
+    fn clearing_a_binding_removes_the_entry() {
+        let tmp = tempfile::tempdir().expect("tmp");
+        let dir = tmp.path();
+        std::fs::write(
+            dir.join("keybindings.json"),
+            r#"{"window.palette": "ctrl+alt+q"}"#,
+        )
+        .unwrap();
+        let mut kb = KeyBindings::load(dir);
+
+        kb.set_in(dir, "window.palette", &[])
+            .expect("clearing is a write");
+
+        let reopened = KeyBindings::load(dir);
+        assert_eq!(
+            reopened.label("window.palette").as_deref(),
+            Some("ctrl+p"),
+            "cleared means back to the shared default, not unbound"
+        );
+        assert_eq!(reopened.user_count(), 0, "and the entry is gone");
+    }
 
     /// A present-but-unusable keybindings file names itself (S-126).
     ///
