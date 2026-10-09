@@ -307,6 +307,19 @@ that one log's `test result:` lines — seven more than `gate-port-r95b`: three 
 and four browser frames. `CARGO_PROFILE_TEST_DEBUG=2`. (`cargo fmt --check` ran before launching.)
 Green first time — no machine fault and no clippy finding, for the first round in three.
 
+> **A CRLF working copy rode through a green battery, because the file was untracked.**
+> `delete.rs` was created with PowerShell's `Set-Content`, which writes CRLF on Windows, and
+> `cargo fmt` does not rewrite line endings. `gate-port-r96` passed all thirteen legs anyway —
+> not because the check is wrong, but because **it reads `git ls-files`**, and the file was
+> untracked when the battery ran, so the leg checked 1,268 files and none of them was this one.
+> It was caught by running the same check by hand afterwards. **The repository was never wrong**
+> (`.gitattributes` normalises on commit, so the committed blob was always LF) — but the
+> working copy was, and the working copy is what the check reads. The lesson is the same shape as
+> the round-1 booby trap in the other direction: **a new file is invisible to every
+> tracked-file gate until it is committed.** A round that adds a file must run the tracked-file
+> gates once the file is staged, or by hand, because a green log taken before the commit
+> describes a tree that never existed.
+
 > **Round 93's first battery failed the test leg on the machine, and the probe is the proof.**
 > `gate-port-r93` died at `error: test failed, to rerun pass -p epsilon-core --lib` with
 > `could not execute process … epsilon_core-a037f2a5119ff8f3.exe (never executed)` and
