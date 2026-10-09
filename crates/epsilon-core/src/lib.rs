@@ -3200,6 +3200,8 @@ impl Agent {
         self.emit(AgentEvent::CompactionFinished {
             usage: Some(answer.usage),
             model_id: Some(model.id.clone()),
+            summary: summary.clone(),
+            tokens_before: estimate_messages_before as u64,
         });
         Ok(CompactionOutcome::Committed)
     }

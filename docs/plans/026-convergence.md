@@ -103,6 +103,17 @@ summary.
 **Done-when.** Each row is `done` with a frame test at 80×24 and 100×30, or `deliberately
 different` with both sides cited.
 
+**Round 106, landed in two halves.** The prefix convention is **decided — deliberately
+different**, with both sides cited in the rows (severity already carried four proven ways;
+a fifth channel for one fact). The compaction card landed on the **live** path: the wire now
+carries the summary and the pre-compaction token count, the row is one expandable-event row
+through the card machinery's own selection/nesting/affordance, and the collapsed form hides
+the digest whole behind `… N more line (ctrl+x to open)` — the affordance's direction and
+singular were wrong on the first look and were fixed by looking. P-054 and P-183 stay
+`partial`: **the replay half and the markdown half are named in the row as open** — a resumed
+session hydrates from messages while the digest lives in the store's compaction entry. The
+chord was the shared `ctrl+x` (the trap's worry resolved: no new binding was needed).
+
 **Trap.** The prefix decision is a *design* decision with a wording cost across nine command
 paths — write the convention down before touching the path count. And a card that expands needs
 a chord that is not already taken (`/expand` exists; Ctrl+X is cut in text fields).

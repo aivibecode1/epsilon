@@ -112,12 +112,16 @@ impl RenderedLine {
         // `CardBody` (presentation pass: a title and its output must not
         // share a gutter). Wrapped pieces inherit their logical row's kind.
         // Every other line is one kind throughout (today's behavior).
-        let is_card = line.card.is_some();
+        //
+        // The expandable **event** row nests the same way and for the same
+        // reason — the digest is the row's body, so its rows draw the
+        // continuation gutter and the title keeps the notice's own.
+        let has_body = line.card.is_some() || line.is_expandable_event_row();
         for (i, logical) in logical_lines(line, state, theme, width)
             .into_iter()
             .enumerate()
         {
-            let kind = if is_card && i > 0 {
+            let kind = if has_body && i > 0 {
                 crate::state::LineKind::CardBody
             } else {
                 line.kind
@@ -173,6 +177,22 @@ fn logical_lines(
             theme,
             state.more_key,
         );
+    }
+    // An expandable event row (today: the compaction digest). The row keeps
+    // its own kind and gutter; its body nests under it through the card
+    // machinery's own cap and affordance — one convention for "this row opens",
+    // not one per row kind.
+    if line.is_expandable_event_row() {
+        let full = line.full.as_deref().unwrap_or("");
+        let open = state.is_open(line.id, true);
+        let mut rows = vec![vec![(line.text.clone(), style_for(line.kind, theme))]];
+        rows.extend(crate::ui::card::event_body(
+            full,
+            open,
+            theme,
+            state.more_key,
+        ));
+        return rows;
     }
     // Expandable rows show their full payload when toggled (M13 behavior preserved).
     if state.expand_all

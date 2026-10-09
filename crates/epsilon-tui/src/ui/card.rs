@@ -165,14 +165,14 @@ pub fn ms_text(ms: u64) -> String {
 /// sentence reads `N earlier lines` — see [`body_keeps_tail`] for why a card
 /// would keep its tail at all.
 pub fn more_lines(remaining: usize, key: Option<&str>, hidden_below: bool) -> String {
-    let direction = if hidden_below {
-        "more lines"
-    } else {
-        "earlier lines"
-    };
+    // The singular is not pedantry: an expandable **event** row hides its whole
+    // digest, and a one-line digest is the common case — "… 1 more lines" was
+    // the row's own text every time a compaction summary fit one line.
+    let unit = if remaining == 1 { "line" } else { "lines" };
+    let direction = if hidden_below { "more" } else { "earlier" };
     match key {
-        Some(key) => format!("… {remaining} {direction} ({key} to open)"),
-        None => format!("… {remaining} {direction}"),
+        Some(key) => format!("… {remaining} {direction} {unit} ({key} to open)"),
+        None => format!("… {remaining} {direction} {unit}"),
     }
 }
 
@@ -306,6 +306,46 @@ fn prompt_rows(text: &str, expanded: bool, theme: &Theme) -> Vec<CardRow> {
     // cap says the rest is there.
     let first = body.lines().next().unwrap_or("").to_string();
     vec![vec![(first, theme.text())]]
+}
+
+/// Body rows for an expandable **event** row — today the compaction digest.
+///
+/// The card machinery owns the convention (cap, affordance wording, the chord's
+/// resolved text), so the event row borrows it here rather than growing a second
+/// copy in the renderer — with one deliberate difference from a tool card's body:
+///
+/// **A digest is hidden whole, not sampled.** A tool result is output you want a
+/// taste of, so its collapsed form keeps twelve rows behind the affordance. A
+/// compaction summary is prose about prose: its first lines are the oldest
+/// context, its last are the current state, and a head of it reads as a
+/// truncated thought rather than as a preview. Pi hides it the same way — the
+/// collapsed row is the token count and the chord
+/// (`compaction-summary-message.ts:49-51`) — so the closed form names how much
+/// is behind the key and shows none of it.
+pub(crate) fn event_body(
+    full: &str,
+    open: bool,
+    theme: &Theme,
+    more_key: Option<&str>,
+) -> Vec<CardRow> {
+    let body: Vec<CardRow> = full
+        .lines()
+        .map(|l| vec![(l.to_string(), theme.text())])
+        .collect();
+    if open {
+        return body;
+    }
+    vec![vec![(
+        format!(
+            "{}{}",
+            " ".repeat(crate::ui::transcript::GUTTER),
+            // The digest hides **below**, so the affordance says "more", never
+            // "earlier": the reader is looking at the end of the transcript and
+            // the key opens what is under the row.
+            more_lines(body.len(), more_key, true)
+        ),
+        theme.faint(),
+    )]]
 }
 
 /// Cap a body at `budget` rows, appending the "how much is left" affordance.

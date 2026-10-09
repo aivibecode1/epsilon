@@ -614,6 +614,19 @@ impl TranscriptLine {
         let text = text.into();
         Self::new(LineKind::Assistant, text.clone(), None, false, Some(text))
     }
+
+    /// Whether this row is an **expandable event row**: a notice carrying a
+    /// readable body behind the expand chord.
+    ///
+    /// One row today — the compaction digest. A `System` line with a `full`
+    /// payload is this row and only this row: every other expandable is a tool
+    /// result (`ToolResultOk`/`ToolResultErr`), and no other notice carries a
+    /// body. The predicate is the honest separator between "a notice" and "a
+    /// notice that opens", and it is what the selection, the nesting and the
+    /// cache all read so the three cannot disagree about which rows expand.
+    pub fn is_expandable_event_row(&self) -> bool {
+        self.kind == LineKind::System && self.full.is_some()
+    }
 }
 
 /// Long tool outputs collapse to a head + ellipsis so one bash call cannot flood the pane.
@@ -1623,7 +1636,12 @@ impl UiState {
                 self.status = "compacting context…".into();
                 self.push_system("── compaction started ──");
             }
-            AgentEvent::CompactionFinished { usage, model_id } => {
+            AgentEvent::CompactionFinished {
+                usage,
+                model_id,
+                summary,
+                tokens_before,
+            } => {
                 self.status = "context compacted".into();
                 // **Say what it cost, in the row itself.** M196: this printed
                 // "── compaction finished ──" and nothing else, while the same
@@ -1639,16 +1657,39 @@ impl UiState {
                 // none) still prints the line, saying "?" rather than a number
                 // that was never reported.
                 let f = epsilon_core::cache_stats::fmt_tokens;
+                // **The collapsed row names what the context held before the pass.**
+                // Pi's collapsed line is `Compacted from N tokens (KEY to expand)`
+                // (`compaction-summary-message.ts:49-51`); ours carried the
+                // summariser's bill and dropped the figure the row exists to
+                // explain — what the context was, and therefore how much the
+                // compaction saved. Both facts ride one row now.
                 let cost = match usage {
                     Some(u) => format!(
-                        "── context compacted · ↑{} ↓{} · {} re-read ──",
+                        "── context compacted · from {} tokens · ↑{} ↓{} · {} re-read ──",
+                        f(*tokens_before),
                         f(u.input),
                         f(u.output),
                         f(u.input.saturating_add(u.cache_read))
                     ),
-                    None => "── context compacted · no usage reported ──".to_string(),
+                    None => format!(
+                        "── context compacted · from {} tokens · no usage reported ──",
+                        f(*tokens_before)
+                    ),
                 };
-                self.push_system(cost);
+                // **The summary rides the row as its expandable payload.** It was
+                // appended to the durable entry and never emitted, so the live
+                // transcript showed the cost and withheld the digest — the one
+                // readable record of the range the compaction removed. A
+                // `System` row carrying a `full` payload is this row and only
+                // this row: every other expandable is a tool result, and no
+                // other notice carries a body. The expand affordance, the
+                // nesting and the chord are the card machinery's, shared rather
+                // than copied (P-054, P-183).
+                self.push_line(TranscriptLine::expandable(
+                    LineKind::System,
+                    cost,
+                    summary.clone(),
+                ));
                 // The summariser resends the whole history, so it is billed like any
                 // other provider call. Folding it in HERE rather than only on
                 // `/resume` is what stops the cost from appearing to rise when a user
@@ -3480,6 +3521,8 @@ mod tests {
                 cache_reported: true,
             }),
             model_id: Some("deepseek/deepseek-chat-v3.1".into()),
+            summary: "a digest for the finish line".into(),
+            tokens_before: 41_000,
         });
 
         assert_eq!(
@@ -3503,6 +3546,8 @@ mod tests {
         st.apply(&AgentEvent::CompactionFinished {
             usage: None,
             model_id: None,
+            summary: "a digest nobody billed".into(),
+            tokens_before: 41_000,
         });
         assert_eq!(st.tokens_in, 0);
         assert_eq!(st.tokens_out, 0);

@@ -205,6 +205,21 @@ pub enum AgentEvent {
         usage: Option<crate::message::Usage>,
         /// The model that answered, so the bill can be priced at the right rates.
         model_id: Option<String>,
+        /// The summary the compaction produced — the digest that replaced the
+        /// compacted range of history.
+        ///
+        /// Carried on the live event because the summary is the one thing the
+        /// live transcript cannot otherwise reach: it was appended to the durable
+        /// entry and never emitted, so a reader watching the compaction happen
+        /// saw the cost line and had no way to learn what the new context
+        /// actually says. The compacted range is gone from the transcript by
+        /// design; the summary is the only record of it that is still short
+        /// enough to read (P-054, P-183).
+        summary: String,
+        /// How many tokens the history held before the compaction, the number
+        /// the collapsed row names. An estimate by the same measure the gauge
+        /// uses — the honest kind of number for a figure nobody billed.
+        tokens_before: u64,
     },
 }
 

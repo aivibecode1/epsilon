@@ -77,18 +77,24 @@ impl App {
         .is_open(id, has_body)
     }
 
-    /// The card `Ctrl+X` acts on when it is not the global toggle's turn.
+    /// The row `Ctrl+X` acts on when it is not the global toggle's turn.
     ///
-    /// The **newest** card with a body: the reader is at the bottom of a live
-    /// transcript, so the most recent tool call is the one they just watched run.
-    /// `None` when no card has a body, and then the key is purely the global
-    /// toggle it always was.
+    /// The **newest** expandable row: the reader is at the bottom of a live
+    /// transcript, so the most recent expansion is the one they just watched
+    /// happen. `None` when no expandable row exists, and then the key is purely
+    /// the global toggle it always was.
+    ///
+    /// Two shapes of expandable, one rule: a tool card with a body, and an
+    /// expandable **event** row (the compaction digest —
+    /// [`crate::state::TranscriptLine::is_expandable_event_row`]). Both nest
+    /// their body under the continuation gutter and both name the same chord, so
+    /// the chord picks the newest of either rather than owning a second rule.
     pub(super) fn selected_card_id(&self) -> Option<u64> {
         self.ui
             .lines()
             .iter()
             .rev()
-            .find(|l| l.card.as_ref().is_some_and(|c| c.has_body()))
+            .find(|l| l.is_expandable_event_row() || l.card.as_ref().is_some_and(|c| c.has_body()))
             .map(|l| l.id)
     }
 

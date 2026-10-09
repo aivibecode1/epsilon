@@ -5510,6 +5510,11 @@ fn a_compaction_row_reports_the_same_tokens_it_records() {
             // free correctness check on the fixture.
             usage: Some(usage),
             model_id: Some("test-model".into()),
+            // The digest and the pre-compaction estimate the collapsed row now
+            // also names; this test's property is the agreement of the cost
+            // figures, so the payload is the boring kind.
+            summary: "a digest nobody in this test reads".into(),
+            tokens_before: 96_000,
         },
     );
 
@@ -5531,6 +5536,82 @@ fn a_compaction_row_reports_the_same_tokens_it_records() {
     // "re-read" is the word that explains the size. Without it a user reads the
     // input figure as an ordinary turn rather than a whole history sent again.
     assert!(row.contains("re-read"), "and names WHY it is large: {row}");
+}
+
+/// The compaction row opens to the summary the event carried (P-054, P-183).
+///
+/// **The live digest was unreachable.** The summary was appended to the durable
+/// entry and never emitted, so a reader watching a compaction happen saw the cost
+/// line and had no way to learn what the surviving context says — and the row
+/// advertised no way to look. Pi's row collapses to the token count with the
+/// expand chord and opens to the summary markdown
+/// (`compaction-summary-message.ts:49-51`); ours now does the same through the
+/// card machinery's own affordance, cap and continuation gutter rather than a
+/// second copy of them.
+///
+/// Asserted through the real key path and the real draw: the affordance names the
+/// **resolved** chord (a rebind shows rebound), and the summary's rows nest
+/// under the row that introduced them.
+#[test]
+fn a_compaction_row_opens_to_the_summary_it_carried() {
+    use epsilon_contracts::agent_event::AgentEvent;
+
+    let (mut app, agent, _rx) = test_app();
+    let usage = epsilon_contracts::message::Usage {
+        input: 12_400,
+        output: 310,
+        cache_read: 8_900,
+        cache_write: 0,
+        total_tokens: 21_610,
+        cache_reported: true,
+    };
+    let summary = "The reader is porting the desktop's approval gate. \
+                   The Enter routing defect is fixed and the honesty half is pinned. \
+                   Nothing else is in flight.";
+
+    apply_with_scroll(
+        &mut app,
+        &AgentEvent::CompactionFinished {
+            usage: Some(usage),
+            model_id: Some("test-model".into()),
+            summary: summary.into(),
+            tokens_before: 96_000,
+        },
+    );
+
+    // Collapsed: the cost row is on screen, the summary is not, and the row
+    // names the chord — the one the binding table resolves, so a rebind shows
+    // rebound rather than a stale literal.
+    let collapsed = render_rows(&mut app, 80, 24).join("\n");
+    let key = app
+        .keybindings
+        .key_text("app.tools.expand")
+        .expect("the expand chord resolves");
+    assert!(
+        collapsed.contains("context compacted"),
+        "the row is on screen: {collapsed}"
+    );
+    assert!(
+        !collapsed.contains("porting the desktop"),
+        "collapsed, the summary stays behind its affordance: {collapsed}"
+    );
+    assert!(
+        collapsed.contains(&format!("… 1 more line ({key} to open)")),
+        "the affordance names the resolved chord and the hidden count, and says          \"more\" because the digest hides BELOW the row: {collapsed}"
+    );
+
+    // The chord, through the real key path.
+    handle_key(&mut app, &agent, ctrl(KeyCode::Char('x')));
+
+    let opened = render_rows(&mut app, 80, 24).join("\n");
+    assert!(
+        opened.contains("porting the desktop"),
+        "the summary opens: {opened}"
+    );
+    assert!(
+        opened.contains("Nothing else is in flight"),
+        "and it opens whole, not to a head: {opened}"
+    );
 }
 
 #[test]
