@@ -507,6 +507,17 @@ pub const WINDOW: &[(&str, &[&str])] = &[
     // dispatch. Rebindable like every other row in this table.
     ("window.session.new", &["ctrl+n"]),
     ("window.session.fork", &["ctrl+alt+f"]),
+    // Ask to delete the highlighted session (S-106 to S-108, and the asymmetry
+    // round 96 left behind). The terminal's browser grew a delete in round 96
+    // over `epsilon_session::delete_session_file`; this is the *same* primitive
+    // reached through the other front end, which is what `AGENTS.md` invariant 1
+    // asks for — the window is not a second agent implementation, and a
+    // capability the smaller front end has is one the window should not lack.
+    //
+    // Only read while the sessions pane holds the keyboard, for the same reason
+    // the other session chords are: outside the pane `ctrl+d` is not this
+    // window's chord at all.
+    ("window.session.delete", &["ctrl+d"]),
 ];
 
 /// The default chords for `id` in `table`, or an empty slice.

@@ -343,7 +343,7 @@ chords, all literals.** See **ED-001**.
 | S-103 | Mod+N starts a new session. | `ui-workspace/src/client/shortcuts.ts:88` | done | `crates/epsilon-contracts/src/keybind.rs` (`window.session.new` = `ctrl+n`) read in `app.rs` pane keys, running the same `run_new_session` the `/new` head runs — rebindable like every table row, no literal chord anywhere | `control_n_starts_a_new_session` (real Ctrl+N through the real draw: path moves, file exists, list grows by one) |
 | S-104 | Mod+K opens session search. | `ui-workspace/src/client/shortcuts.ts:90` | missing | — | The palette filters files and commands (`app.rs:846-871`), not sessions. The sessions pane lists stored sessions but cannot search them (L-122). |
 | S-105 | Mod+O opens the add-workspace directory flow, and returns **blocked** with a reason when no picker is mounted. | `ui-workspace/src/client/shortcuts.ts:92` | missing | — | As D-046. |
-| S-106 | Mod+Alt+G renames the current session. | `ui-workspace/src/client/shortcuts.ts:97` | missing | — | No rename. |
+| S-106 | Mod+Alt+G renames the current session. | `ui-workspace/src/client/shortcuts.ts:97` | missing | — | Rename is still only the composer's `/name`. **Delete, the sibling verb, landed in round 99** over the shared `epsilon_session::delete_session_file` — which narrowed this group by one row and made the remaining one more visible rather than less: a window that can delete a session and cannot rename one is a stranger asymmetry than a window that can do neither. |
 | S-107 | Mod+Alt+F forks the session. | `ui-workspace/src/client/shortcuts.ts:103` | done | `window.session.fork` = `ctrl+alt+f`, same dispatch as `/fork` (the grammar already parsed `alt`; only the row was missing) | `control_alt_f_forks_the_session` (real Ctrl+Alt+F: one branch file added, current file untouched) |
 | S-108 | Mod+Shift+A archives the session. | `ui-workspace/src/client/shortcuts.ts:117` | missing | — | No archive. |
 | S-109 | Mod+B toggles the left sidebar. | `ui-layout/src/client/index.ts:194` | partial | `crates/epsilon-desktop/src/app.rs:759`, `crates/epsilon-desktop/src/app.rs:1748` | The fold is bound, works, persists and is named on screen — the constant carries the chord, the title-bar button carries the verb and the chord in its accessible name (`app.rs:3301-3306`), and the status bar prints it. The chord is **`Ctrl`+`B`**, not the platform `Mod`: on Windows and Linux that is the same key, on macOS it is not. Covered by `the_sidebar_folds_and_unfolds_from_the_keyboard` and `dragging_the_sidebar_handle_resizes_it_and_stops_at_both_ends`. |
@@ -871,17 +871,19 @@ nothing would deliver.
    privilege-raising control lands, `AGENTS.md` §6 and the reference's `RiskConfirmation` shape
    both demand that it cannot be taken by a reflexive Enter. The same applies to any destructive
    action, which is the pattern behind I-121 and I-131.
-5. **S-103, S-106 to S-108 — no session-management verbs in the window.** A reader cannot start a
-   new session, rename, fork or archive one from here; every one of those heads is refused by name
-   (`commands.rs:446-451`, which says why `/new` in particular is not mapped onto the nearest thing
-   that exists). The sessions pane can *resume* a stored session (`app.rs:3679-3697`) and nothing
-   else, so the window is a reader of sessions rather than an editor of them. **The terminal's
-   browser can now delete one (round 96), which makes this asymmetry sharper rather than smaller: a
-   capability the smaller front end has is one the window is named for lacking.**
+5. **S-106 and S-108 — rename and archive, the two session verbs left.** Delete
+    landed in round 99 over the shared `epsilon_session::delete_session_file`, and
+    with it the one thing this entry complained about: *a capability the smaller
+    front end has is one the window is named for lacking*. The window can now
+    start, fork, resume and delete a session; rename and archive remain. Both are
+    smaller than the recorder below and both need a decision rather than a
+    surface — archive has no storage in this window's model, and rename exists in
+    the composer as `/name`, so what is missing is the door and not the
+    capability.
 6. **A sixth entry, added after round 98, and it is the one that most resembles a bug.** The
-   window's quit dialog now names queued work, which was the third explanation it lacked. What the
-   entries above have in common is that each is a *surface*; the recorder (entry 2) is the one with
-   the largest count of rows behind it, and it is the natural next round.
+    window's quit dialog now names queued work, which was the third explanation it lacked. What the
+    entries above have in common is that each is a *surface*; the recorder (entry 2) is the one with
+    the largest count of rows behind it, and it is the natural next round.
 
 ---
 

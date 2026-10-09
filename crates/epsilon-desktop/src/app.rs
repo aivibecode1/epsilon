@@ -2604,6 +2604,16 @@ pub struct IdeApp {
     /// disk on every frame and a session can be deleted between two of them, so an index
     /// would name a different row than the one it meant.
     session_cursor: Option<std::path::PathBuf>,
+    /// A session awaiting deletion confirmation in the sessions pane (S-106).
+    ///
+    /// `Some(path)` means the next key is an answer, not a command — the same
+    /// interception the terminal's browser uses (round 96), and for the same
+    /// reason: `epsilon_session::delete_session_file` is **unrecoverable** on this
+    /// platform, because Windows has no `trash` binary and every delete is the
+    /// unlink fallback. A one-keystroke guard is the only undo there is.
+    ///
+    /// `None` is the common case and means nothing is being asked.
+    pending_delete: Option<std::path::PathBuf>,
     /// Geometry of the most recent frame, kept for hit-testing and for tests.
     layout: IdeLayout,
     /// The window's keyboard, read from the shared table
@@ -3063,6 +3073,7 @@ impl IdeApp {
             focus: FocusTarget::Agent,
             tree_cursor: None,
             session_cursor: None,
+            pending_delete: None,
             layout,
             keys,
             quit_confirm: None,
@@ -3167,6 +3178,7 @@ impl IdeApp {
             focus: FocusTarget::Agent,
             tree_cursor: None,
             session_cursor: None,
+            pending_delete: None,
             keys: window_keys(),
             quit_confirm: None,
             layout: IdeLayout::new(
@@ -3389,6 +3401,16 @@ impl IdeApp {
         // rows. The Sessions view is here because excluding it made a keyboard trap:
         // `F6` into that pane produced a focus ring over a list where no key did
         // anything, which is WCAG 2.1.2.
+        // **Whether any key was pressed this frame, captured before anything
+        // consumes one.** `KeyBindings::take` removes the event it matches from
+        // the stream, so a count taken later in the function is a count of what
+        // is *left* — and a confirmation waiting for an answer would see an
+        // empty stream and read "no key" on the very frame a key was pressed.
+        let any_key = ctx.input(|i| {
+            i.events
+                .iter()
+                .any(|e| matches!(e, egui::Event::Key { .. }))
+        });
         let sidebar_has_keyboard =
             self.focus == FocusTarget::Sidebar && self.layout.sidebar_visible;
         let tree_is_here = sidebar_has_keyboard && self.sidebar == SidebarView::Files;
@@ -3420,7 +3442,33 @@ impl IdeApp {
             } else if self.keys.take(ctx, "window.tree.previous") {
                 step = -1;
             }
+            // While a delete is being confirmed, **every** key is an answer — the
+            // terminal's rule (round 96), and the reason is the same: the delete
+            // is unrecoverable here, so a confirmation that lets navigation
+            // through is not a confirmation. `Enter` deletes; anything else
+            // cancels, and cancelling is what a stray key does.
+            //
+            // **Before** the resume read below, and that ordering is the fix for
+            // a real defect: `window.tree.open` was consumed by `resume` first,
+            // so the confirm block always saw "not pressed" and cancelled.
+            //
+            // **And gated on `any_key`, captured at the top of this function.**
+            // Without the gate a plain paint — no events, no keys — reads as an
+            // answer and cancels the confirmation on the very next frame, which
+            // is a question that dismisses itself before anyone can read it.
+            if any_key && let Some(pending) = self.pending_delete.clone() {
+                if self.keys.take(ctx, "window.tree.open") {
+                    self.delete_session(&pending);
+                } else {
+                    self.pending_delete = None;
+                    self.transcript.push_notice("delete cancelled");
+                }
+                return;
+            }
             let resume = self.keys.take(ctx, "window.tree.open");
+            if self.keys.take(ctx, "window.session.delete") {
+                self.ask_delete_session();
+            }
             if step != 0 {
                 self.move_session_cursor(step);
             }
@@ -3538,6 +3586,77 @@ impl IdeApp {
             Err(reason) => self
                 .transcript
                 .push_notice(&format!("cannot resume that session: {reason}")),
+        }
+    }
+
+    /// Arm the delete confirmation for the session under the cursor (S-106).
+    ///
+    /// **Refusing the attached session is not politeness.** This window is
+    /// writing to that file: removing it would leave a live store pointing at a
+    /// path that no longer exists. The terminal's browser refuses the same case
+    /// with the same words (round 96), and one sentence shared by both front ends
+    /// is the point — this is the same rule reached through a different draw call.
+    ///
+    /// The refusal lands in the **transcript**, which is a real screen here; the
+    /// pane's own confirmation strip is for the case that is actually being asked.
+    fn ask_delete_session(&mut self) {
+        let Some(path) = self.session_cursor.clone() else {
+            return;
+        };
+        if self
+            .session
+            .as_ref()
+            .and_then(|s| s.session_path())
+            .as_deref()
+            == Some(path.as_path())
+        {
+            self.transcript
+                .push_notice("Cannot delete the currently active session");
+            return;
+        }
+        self.pending_delete = Some(path);
+    }
+
+    /// Delete `path` through the **shared** primitive and report what happened.
+    ///
+    /// `epsilon_session::delete_session_file` is the function the terminal's
+    /// browser calls. Calling the same one here is `AGENTS.md` invariant 1 in the
+    /// place it is easiest to violate: a second front end with its own delete
+    /// would be two behaviours, and the second one is the one nobody tests.
+    ///
+    /// **`DeleteOutcome::message` carries the wording**, so a session deleted in
+    /// either front end is reported by the same sentence — the terminal says
+    /// "Session deleted", the window says "Session deleted", and a reader who
+    /// switches between them is not switching vocabularies.
+    fn delete_session(&mut self, path: &std::path::Path) {
+        self.pending_delete = None;
+        // A cursor left behind by a session deleted since is not a row.
+        let still_listed = self
+            .session
+            .as_ref()
+            .map(|s| {
+                s.sessions(&self.opts.workspace)
+                    .iter()
+                    .any(|e| e.path == path)
+            })
+            .unwrap_or(false);
+        if !still_listed {
+            self.transcript
+                .push_notice("that session is no longer listed");
+            return;
+        }
+        match epsilon_session::delete_session_file(path) {
+            Ok(how) => {
+                self.transcript.push_notice(how.message());
+                // Drop the cursor if it named the row that just went, so the next
+                // arrow press does not aim at a path nobody has.
+                if self.session_cursor.as_deref() == Some(path) {
+                    self.session_cursor = None;
+                }
+            }
+            Err(reason) => self
+                .transcript
+                .push_notice(&format!("Failed to delete: {reason}")),
         }
     }
 
@@ -5745,6 +5864,19 @@ impl IdeApp {
             );
         }
         summary.rows.push(("sessions".into(), "Sessions".into()));
+        // **The delete confirmation is drawn in the pane, not pushed as a notice.**
+        // Round 96 learned this on the terminal's browser: the transcript sits
+        // *behind* this overlay, so a refusal or a question pushed there is
+        // invisible to the reader who just asked. The same rule applies here.
+        //
+        // The `add_space` comes first, for the reason the empty state's does
+        // (M312): the header is painted absolutely and the cursor is still at the
+        // pane's top, so without it the question prints over the title.
+        ui.add_space(PANE_HEADER_H * scale);
+        if let Some(pending) = self.pending_delete.clone() {
+            self.draw_delete_confirm(ui, summary, rect, scale, &pending);
+            return;
+        }
         // **Under the header, not over it (M312)** — see the same line in `tasks_pane`. The
         // header is painted absolutely and the cursor is still at the pane's top, so the empty
         // state printed above the pane's own title.
@@ -5904,6 +6036,89 @@ impl IdeApp {
             }
         }
     }
+    /// The delete confirmation: what would be removed, and the two answers.
+    ///
+    /// **"Keep it" is the first control**, so the leftmost button and the default
+    /// tab stop are both the answer that loses nothing — the same arrangement as
+    /// the quit dialog, for the same reason (`AGENTS.md` §6: a dialog a reflexive
+    /// Enter dismisses destructively is not a guard).
+    ///
+    /// Real widgets, not painted text: `Tab` reaches them and a screen reader
+    /// names them. The pane is not a second overlay mechanism — it is a strip
+    /// inside the one pane that owns the list.
+    fn draw_delete_confirm(
+        &mut self,
+        ui: &mut egui::Ui,
+        summary: &mut FrameSummary,
+        rect: egui::Rect,
+        scale: f32,
+        pending: &std::path::Path,
+    ) {
+        let theme = self.theme;
+        // The title, not the stem: stems are timestamps nobody recognises, and
+        // the sessions pane already learned to show the name (round 46). A
+        // reader should decide against the words they just read.
+        let title = self
+            .session
+            .as_ref()
+            .map(|s| s.sessions(&self.opts.workspace))
+            .unwrap_or_default()
+            .into_iter()
+            .find(|e| e.path == pending)
+            .map(|e| e.title())
+            .unwrap_or_else(|| pending.display().to_string());
+        let question = format!("Delete session {title}?");
+        paint_text(
+            ui.painter(),
+            summary,
+            "sessions",
+            rect.left_top() + egui::vec2(12.0, 28.0 * scale),
+            egui::Align2::LEFT_TOP,
+            fit(&question, rect.width() - 16.0, 13.0 * scale),
+            egui::FontId::proportional(13.0 * scale),
+            theme.title,
+        );
+        // Named, and named as a dialog: an unnamed question is a group a reader
+        // arrives at with no idea what it is. One node for the whole strip.
+        name_region(
+            ui,
+            rect,
+            "sessions-delete",
+            &format!("Delete this session? {title}"),
+            egui::accesskit::Role::Dialog,
+        );
+        summary
+            .rows
+            .push(("sessions".into(), format!("Delete session {title}?")));
+        // **No undo is stated, because there is none on this platform.** Windows
+        // has no `trash` binary, so `delete_session_file` takes the unlink
+        // fallback and the file is gone. Saying so is what makes this a guard
+        // rather than a speed bump.
+        let warn = fit(
+            "This cannot be undone.",
+            rect.width() - 16.0,
+            ROW_FONT * scale,
+        );
+        ui.colored_label(theme.dim, warn.clone());
+        summary.rows.push(("sessions".into(), warn));
+        let keep = ui.button("Keep it");
+        let remove = ui.button("Delete it");
+        name_node(&keep, "Keep this session");
+        name_node(&remove, "Delete this session");
+        summary.row_rects.push(("sessions-keep".into(), keep.rect));
+        summary
+            .row_rects
+            .push(("sessions-delete".into(), remove.rect));
+        keep.request_focus();
+        if keep.clicked() {
+            self.pending_delete = None;
+            self.transcript.push_notice("delete cancelled");
+        }
+        if remove.clicked() {
+            self.delete_session(pending);
+        }
+    }
+
     /// Resume `path` and rebuild the transcript from what came back.
     ///
     /// The rebuild is not optional. `live_resume` restores history onto the agent and
@@ -9947,6 +10162,170 @@ mod tests {
         );
     }
 
+    /// **The window can delete a session, through the primitive the terminal uses.**
+    ///
+    /// S-106 to S-108: a reader could not start, rename, fork or archive a
+    /// session from this window — every such head was refused by name. Round 96
+    /// gave the *terminal's* browser a delete over
+    /// `epsilon_session::delete_session_file`, and that made the asymmetry
+    /// sharper rather than smaller: the smaller front end had a capability the
+    /// window is named for lacking.
+    ///
+    /// `AGENTS.md` invariant 1 is the point. Calling the same function here is
+    /// one agent with two draw calls; a second implementation would be two
+    /// behaviours, and the second is the one nobody tests.
+    ///
+    /// Driven through the real key path — the sessions pane holding the
+    /// keyboard, the real chord, the real draw — because the defect class is a
+    /// control that is advertised and does not act.
+    #[test]
+    fn the_window_deletes_a_session_through_the_shared_primitive() {
+        let (ws, _keep) = scratch_workspace("sessions-delete");
+        let sessions_root = epsilon_runtime::sessions_root(&ws);
+        std::fs::create_dir_all(&sessions_root).expect("sessions root");
+        let other = sessions_root.join("doomed.jsonl");
+        epsilon_session::SessionStore::open_in(other.clone(), &ws).expect("a store opens");
+        let (session, notices) = faux_session(&ws);
+        let mut h = Harness::with_session(ws.clone(), session, notices);
+        h.app.set_sidebar_view(SidebarView::Sessions);
+        h.app.set_focus(FocusTarget::Sidebar);
+        // Aim the cursor at the session to delete. Found by identity, because the
+        // list is read from disk and an index would name a different row than the
+        // one it meant — the reason `session_cursor` is a path.
+        let target = h
+            .app
+            .session
+            .as_ref()
+            .expect("a session")
+            .sessions(&ws)
+            .into_iter()
+            .find(|s| s.path == other)
+            .expect("the planted session is listed")
+            .path
+            .clone();
+        h.app.session_cursor = Some(target.clone());
+        let frame = h.chord(egui::Modifiers::CTRL, egui::Key::D);
+        assert!(
+            h.app.pending_delete.as_deref() == Some(target.as_path()),
+            "the first press must arm a confirmation, not delete.\n{}",
+            frame.describe()
+        );
+        assert!(
+            other.exists(),
+            "and the file must still be there — the delete is unrecoverable here."
+        );
+        let frame = h.paint();
+        // Two separate rows, not one: the question and the warning are drawn as
+        // two lines, which is what a reader needs — a single run-together line
+        // would be the defect M312 recorded for this crate.
+        let asked = frame.region("sessions");
+        assert!(
+            asked.iter().any(|t| t.contains("Delete session")),
+            "the pane must ask, on screen.\n{}",
+            frame.describe()
+        );
+        assert!(
+            asked.iter().any(|t| t.contains("This cannot be undone")),
+            "and say there is no undo — which is what makes it a guard.\n{}",
+            frame.describe()
+        );
+
+        // Confirm: the file goes, and the shared sentence names what happened.
+        let frame = h.press(egui::Key::Enter);
+        assert!(!other.exists(), "confirming removes the file");
+        assert!(
+            frame
+                .region("agent")
+                .iter()
+                .any(|t| t.contains("Session deleted")),
+            "reported with the shared wording the terminal uses too.\n{}",
+            frame.describe()
+        );
+        assert!(
+            h.app.pending_delete.is_none(),
+            "the question is closed once answered"
+        );
+    }
+
+    /// **Cancelling the delete leaves the file alone**, and any key cancels.
+    ///
+    /// The other half of the guard: a confirmation only one key can leave is a
+    /// trap. `Escape` is what a reader reaches for to leave a pane, so it is what
+    /// this drives.
+    #[test]
+    fn cancelling_the_delete_keeps_the_file() {
+        let (ws, _keep) = scratch_workspace("sessions-delete-cancel");
+        let sessions_root = epsilon_runtime::sessions_root(&ws);
+        std::fs::create_dir_all(&sessions_root).expect("sessions root");
+        let other = sessions_root.join("kept.jsonl");
+        epsilon_session::SessionStore::open_in(other.clone(), &ws).expect("a store opens");
+        let (session, notices) = faux_session(&ws);
+        let mut h = Harness::with_session(ws.clone(), session, notices);
+        h.app.set_sidebar_view(SidebarView::Sessions);
+        h.app.set_focus(FocusTarget::Sidebar);
+        let target = h
+            .app
+            .session
+            .as_ref()
+            .expect("a session")
+            .sessions(&ws)
+            .into_iter()
+            .find(|s| s.path == other)
+            .expect("the planted session is listed")
+            .path
+            .clone();
+        h.app.session_cursor = Some(target.clone());
+
+        let _ = h.chord(egui::Modifiers::CTRL, egui::Key::D);
+        let frame = h.press(egui::Key::Escape);
+        assert!(
+            other.exists(),
+            "cancelling must leave the file — there is no undo to fall back on"
+        );
+        assert!(h.app.pending_delete.is_none(), "the question is closed.");
+        assert!(
+            frame
+                .region("agent")
+                .iter()
+                .any(|t| t.contains("delete cancelled")),
+            "and the cancellation is reported.\n{}",
+            frame.describe()
+        );
+    }
+
+    /// **Deleting the attached session is refused, with the terminal's words.**
+    ///
+    /// The same sentence the terminal's browser prints (round 96), because it is
+    /// the same rule: this window is writing to that file, so removing it would
+    /// leave a live store pointing at a path that no longer exists. One wording
+    /// shared by both front ends is the point — this is one rule reached through a
+    /// different draw call, not two.
+    #[test]
+    fn deleting_the_attached_session_is_refused_by_name() {
+        let (ws, _keep) = scratch_workspace("sessions-delete-active");
+        let (session, notices) = faux_session(&ws);
+        let attached = session.session_path().expect("a path");
+        let mut h = Harness::with_session(ws.clone(), session, notices);
+        h.app.set_sidebar_view(SidebarView::Sessions);
+        h.app.set_focus(FocusTarget::Sidebar);
+        h.app.session_cursor = Some(attached.clone());
+
+        let frame = h.chord(egui::Modifiers::CTRL, egui::Key::D);
+        assert!(
+            h.app.pending_delete.is_none(),
+            "no confirmation is armed for the session this window is in."
+        );
+        assert!(attached.exists(), "and the file is untouched");
+        assert!(
+            frame
+                .region("agent")
+                .iter()
+                .any(|t| t.contains("Cannot delete the currently active session")),
+            "the refusal names the case, in the terminal's words.\n{}",
+            frame.describe()
+        );
+    }
+
     /// `/resume <path>` switches to that session file.
     ///
     /// Same act as the terminal's path form: refuse while busy, name a path
@@ -12553,6 +12932,19 @@ mod tests {
         let dir = tempfile::tempdir().expect("a settings directory");
         app.prefs_dir = Some(dir.path().to_path_buf());
         app.prefs = Preferences::load_from(app.workspace(), app.prefs_dir.as_deref());
+        // **Pinned, not loaded.** `load_model_id` reads the developer's own
+        // `~/.config/epsilon/config.toml`, so the picker's second place belongs to
+        // whoever last saved a default on this machine — and the suite would order
+        // and mark rows by them. That is not hypothetical: it is exactly what
+        // `starred_models_float_first_and_read_as_favorites` does now, because a
+        // test that saves a default wrote `deepseek-flash` into the machine's
+        // config, and a later run of this suite then orders it **above** the
+        // favourite it means to float. The terminal's `test_app` pins the same
+        // field for the same reason; this is the desktop's half of that, and it is
+        // two lines for a defect that only reproduces on a machine a person has
+        // actually used.
+        app.default_model = None;
+        app.favorites = Vec::new();
         dir
     }
 
