@@ -52,6 +52,11 @@ pub struct RenderState<'a> {
     /// visible and served while hidden is the stale-cache failure this key
     /// exists to make impossible.
     pub hide_thinking: bool,
+    /// Which rows the transcript filter shows. Part of the key for the same
+    /// reason, and the reason it is *not* simply folded into `hide_thinking` is
+    /// that they answer different questions: one hides a content role, the
+    /// other selects a subset of the conversation to read.
+    pub filter: crate::state::TranscriptFilter,
     /// Ids of cards the user opened individually; ids the user closed individually
     /// while [`Self::expand_all`] was on live in [`Self::collapsed`].
     pub expanded: &'a [(u64, bool)],
@@ -286,6 +291,7 @@ fn style_for(kind: LineKind, theme: &Theme) -> Style {
 struct CacheKey {
     expand_all: bool,
     hide_thinking: bool,
+    filter: crate::state::TranscriptFilter,
     open_cards: Vec<(u64, bool)>,
     more_key: Option<String>,
     /// The palette every cached row was rendered under.
@@ -307,6 +313,7 @@ impl CacheKey {
         Self {
             expand_all: state.expand_all,
             hide_thinking: state.hide_thinking,
+            filter: state.filter,
             open_cards: state.expanded.to_vec(),
             more_key: state.more_key.map(str::to_string),
             palette: theme.palette(),
@@ -411,11 +418,20 @@ impl RenderCache {
         // filtered sequence — and unhiding rebuilds from the full one. The
         // caller's lines are untouched: hiding drops no data, so unhiding
         // restores every block.
+        //
+        // The transcript filter composes on top, in the same place and for the
+        // same reason: both are *selections* of what to show rather than
+        // transformations of it, so neither can be applied to a cached row after
+        // the fact. Folding them here means one rebuild serves both.
         let owned: Vec<TranscriptLine>;
-        let lines: &[TranscriptLine] = if state.hide_thinking {
+        let lines: &[TranscriptLine] = if state.hide_thinking || state.filter != Default::default()
+        {
             owned = lines
                 .iter()
-                .filter(|l| l.kind != crate::state::LineKind::Thinking)
+                .filter(|l| {
+                    (!state.hide_thinking || l.kind != crate::state::LineKind::Thinking)
+                        && state.filter.admits(l.kind)
+                })
                 .cloned()
                 .collect();
             &owned
@@ -629,6 +645,7 @@ pub fn snapshot_rows_with_kinds(
     let state = RenderState {
         expand_all: expand_outputs,
         hide_thinking: false,
+        filter: crate::state::TranscriptFilter::default(),
         expanded: &[],
         more_key: None,
     };
@@ -660,6 +677,7 @@ mod tests {
         RenderState {
             expand_all,
             hide_thinking: false,
+            filter: crate::state::TranscriptFilter::default(),
             expanded: &[],
             more_key: Some("ctrl+x"),
         }
@@ -677,6 +695,7 @@ mod tests {
             RenderState {
                 expand_all: false,
                 hide_thinking: false,
+                filter: crate::state::TranscriptFilter::default(),
                 expanded: open,
                 more_key: Some("ctrl+x"),
             },
@@ -838,6 +857,7 @@ mod tests {
             &RenderState {
                 expand_all: false,
                 hide_thinking: false,
+                filter: crate::state::TranscriptFilter::default(),
                 expanded: &[(id, true)],
                 more_key: Some("ctrl+x"),
             },

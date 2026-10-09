@@ -2101,6 +2101,196 @@ fn a_capped_diff_still_keeps_its_head() {
     );
 }
 
+/// Filtering round-trips through the cache without serving stale rows.
+///
+/// The trap the filter's own design warns about, and the reason the filter is in
+/// `RenderState` and `CacheKey` rather than applied at draw time: a row cached
+/// under one filter and served under another is the exact failure the cache key
+/// exists to prevent.
+///
+/// **The comparison is on the cached row, not the whole frame.** Every press
+/// writes `transcript filter: …`, so the frame's row count changes with the
+/// number of presses and two frames taken at different press counts can never be
+/// equal. The first two versions of this test asserted `assert_eq!` on frames
+/// and on filtered frames, and both failed for that reason alone — test bugs,
+/// not the defect they were looking for. The card row is the row whose rendering
+/// depends on the filter, so it is the row to compare.
+#[test]
+fn a_filter_round_trip_through_the_cache_restores_every_row() {
+    let (mut app, agent, _receivers) = test_app();
+    app.ui.push_local_input("the user's question");
+    app.ui.apply(&crate::state::agent_event_tool_result(
+        "bash",
+        "the tool's output",
+        false,
+    ));
+    let ctrl_o = KeyEvent::new(KeyCode::Char('o'), KeyModifiers::CONTROL);
+    let shift_ctrl_o = KeyEvent::new(
+        KeyCode::Char('O'),
+        KeyModifiers::CONTROL | KeyModifiers::SHIFT,
+    );
+
+    /// The rows the card occupies, which is what the filter decides about.
+    fn card_rows(app: &mut App) -> Vec<String> {
+        render_rows(app, 80, 24)
+            .into_iter()
+            .filter(|r| r.contains("bash") || r.contains("the tool's output"))
+            .collect()
+    }
+
+    let original = card_rows(&mut app);
+    assert_eq!(original.len(), 2, "title plus one body row: {original:?}");
+
+    // Away: two forwards (no-tools → user-only), then back two (no-tools →
+    // default). Every press changes the cache key, so every one invalidates.
+    assert!(!super::keys::handle_key(&mut app, &agent, ctrl_o));
+    assert!(!super::keys::handle_key(&mut app, &agent, ctrl_o));
+    assert!(card_rows(&mut app).is_empty(), "the card is really gone");
+    assert!(!super::keys::handle_key(&mut app, &agent, shift_ctrl_o));
+    assert!(!super::keys::handle_key(&mut app, &agent, shift_ctrl_o));
+    let restored = card_rows(&mut app);
+
+    assert_eq!(
+        restored, original,
+        "a filter that comes back must bring the card back byte for byte — a \
+         stale cache would serve rows rendered under the filter, or lose the \
+         ones it dropped"
+    );
+}
+
+/// `ctrl+o` filters the transcript on a real frame (P-293).
+///
+/// The whole chain through the real key path: a seeded transcript of user rows,
+/// prose and a tool card; one `ctrl+o` press; the frame redrawn. Asserted on the
+/// screen because a filter that changed a field and not the frame is the defect
+/// class this repository has already been bitten by twice.
+///
+/// **Why three states and not Pi's five** is written in `TranscriptFilter`: two of
+/// Pi's modes need an entry id and a label the live transcript does not carry.
+#[test]
+fn ctrl_o_filters_the_transcript_on_a_real_frame() {
+    let (mut app, agent, _receivers) = test_app();
+    app.ui.push_local_input("the user's question");
+    app.ui.apply(&AgentEvent::MessageEnd {
+        message: Box::new(Message::Assistant(crate::state::assistant_calling(
+            "checking",
+            "tc_filter",
+            "bash",
+            serde_json::json!({"command": "echo hi"}),
+        ))),
+    });
+    app.ui.apply(&AgentEvent::ToolExecutionStart {
+        tool_call_id: "tc_filter".into(),
+        tool_name: "bash".into(),
+        args: serde_json::json!({"command": "echo hi"}),
+    });
+    app.ui.apply(&crate::state::agent_event_tool_result_named(
+        "tc_filter",
+        "bash",
+        "the tool's output",
+        false,
+    ));
+    app.ui
+        .push_notice("a notice that is neither prose nor a user turn".to_string());
+
+    let before = render_rows(&mut app, 80, 24).join("\n");
+    assert!(before.contains("the tool's output"), "seeded: {before}");
+    assert!(before.contains("a notice"), "seeded: {before}");
+
+    // Press 1: no tools. Pi's mode keeps tool **calls** and drops results
+    // (`tree-selector.ts:372-375`), and Epsilon's `NoTools` does the same — but
+    // the observable difference is smaller than the rule sounds, for a reason
+    // worth stating: a call and its result are ONE line here. The result
+    // settles the call's own card in place (M155/P-050), so there is no separate
+    // call row for the mode to keep. What `no-tools` therefore shows is prose,
+    // user turns and notices without any card at all.
+    let ctrl_o = KeyEvent::new(KeyCode::Char('o'), KeyModifiers::CONTROL);
+    assert!(!super::keys::handle_key(&mut app, &agent, ctrl_o));
+    let after = render_rows(&mut app, 80, 24).join("\n");
+    assert!(
+        !after.contains("the tool's output"),
+        "no-tools hides tool results: {after}"
+    );
+    assert!(
+        after.contains("the user's question"),
+        "and keeps the user's turn: {after}"
+    );
+    assert!(
+        after.contains("a notice"),
+        "a notice is not a tool result and must survive: {after}"
+    );
+
+    // Press 2: user only. Everything but user rows goes.
+    assert!(!super::keys::handle_key(&mut app, &agent, ctrl_o));
+    let after = render_rows(&mut app, 80, 24).join("\n");
+    assert!(
+        after.contains("the user's question"),
+        "user-only keeps user rows: {after}"
+    );
+    assert!(
+        !after.contains("a notice"),
+        "user-only drops notices: {after}"
+    );
+
+    // Press 3: wraps to the start, and the frame is the original again.
+    assert!(!super::keys::handle_key(&mut app, &agent, ctrl_o));
+    let wrapped = render_rows(&mut app, 80, 24).join("\n");
+    assert!(
+        wrapped.contains("the tool's output") && wrapped.contains("a notice"),
+        "the third press must restore everything, not stop at a dead state: {wrapped}"
+    );
+}
+
+/// `shift+ctrl+o` steps back, and a filter that is set is not lost by Escape.
+///
+/// Two halves, both parity: Pi's backward cycle
+/// (`tree-selector.ts:1072-1078`) and its rule that Escape clears the search and
+/// the folds but **not** the filter mode (`:1039-1046`). A filter that silently
+/// reset would make Esc an unpredictable destructive key.
+#[test]
+fn shift_ctrl_o_steps_back_and_escape_keeps_the_filter() {
+    let (mut app, agent, _receivers) = test_app();
+    app.ui.push_local_input("the user's question");
+    app.ui.apply(&crate::state::agent_event_tool_result(
+        "bash",
+        "the tool's output",
+        false,
+    ));
+
+    let ctrl_o = KeyEvent::new(KeyCode::Char('o'), KeyModifiers::CONTROL);
+    let shift_ctrl_o = KeyEvent::new(
+        KeyCode::Char('O'),
+        KeyModifiers::CONTROL | KeyModifiers::SHIFT,
+    );
+    // Forward once, back once: the frame must be the unfiltered one.
+    assert!(!super::keys::handle_key(&mut app, &agent, ctrl_o));
+    let filtered = render_rows(&mut app, 80, 24).join("\n");
+    assert!(
+        !filtered.contains("the tool's output"),
+        "forward filtered: {filtered}"
+    );
+    assert!(!super::keys::handle_key(&mut app, &agent, shift_ctrl_o));
+    let back = render_rows(&mut app, 80, 24).join("\n");
+    assert!(
+        back.contains("the tool's output"),
+        "one press back must restore: {back}"
+    );
+
+    // Forward again, then Escape — which is the app's interrupt, and must not
+    // quietly change what the transcript shows.
+    assert!(!super::keys::handle_key(&mut app, &agent, ctrl_o));
+    super::keys::handle_key(
+        &mut app,
+        &agent,
+        KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE),
+    );
+    let after_esc = render_rows(&mut app, 80, 24).join("\n");
+    assert!(
+        !after_esc.contains("the tool's output"),
+        "Escape must not reset the filter: {after_esc}"
+    );
+}
+
 #[test]
 fn an_edits_diff_is_drawn_with_a_coloured_gutter_not_as_prose() {
     // The heart of the slice. Each of these assertions fails on the old code for a

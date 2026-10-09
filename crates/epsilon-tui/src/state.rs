@@ -13,6 +13,86 @@ use epsilon_contracts::message::{AssistantMessage, Message, StopReason};
 /// that depend on it read as red on purpose, and `false` is what ships.
 const CONTROL_RESTORE_TODO_DOUBLE_DRAW: bool = false;
 
+/// Which transcript rows a filter shows.
+///
+/// Pi cycles five (`default → no-tools → user-only → labeled-only → all`,
+/// `tree-selector.ts:95`, cycle at `:1079`). **Three are representable on the live
+/// transcript and two are not**, and the omissions are named rather than shipped
+/// as states that do nothing:
+///
+/// - `labeled-only` needs an entry id and a label on each row. `TranscriptLine`
+///   carries neither, and hydration takes `&[Message]`
+///   (`UiState::hydrate`), so no entry identity reaches the transcript at all.
+/// - `all` is identical to `default` here: Epsilon's transcript carries none of
+///   the bookkeeping kinds Pi's selector also lists (`usage`, `model_change`,
+///   `label`, `custom`…). Those live in the session file, and the `/timeline`
+///   overlay already filters them with its own richer set.
+///
+/// A state that changes nothing on screen is worse than a missing one — it is
+/// advertised, it cycles, and it lies (`AGENTS.md` §2.7).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum TranscriptFilter {
+    /// Everything: no filtering applied.
+    #[default]
+    Default,
+    /// Hide tool results; tool **calls** stay, so the reader still sees what ran.
+    ///
+    /// Pi's `no-tools` hides tool *results* and keeps calls
+    /// (`tree-selector.ts:372-375`). Epsilon's `TreeFilter::NoTools` — the
+    /// `/timeline` overlay's own set — hides both, which is a different question
+    /// on a different surface and is deliberately left alone.
+    NoTools,
+    /// Only user turns.
+    UserOnly,
+}
+
+impl TranscriptFilter {
+    /// Advance through Pi's order. `Default` is where the cycle starts and
+    /// returns to, so it is first and last.
+    pub fn next(self) -> Self {
+        match self {
+            TranscriptFilter::Default => TranscriptFilter::NoTools,
+            TranscriptFilter::NoTools => TranscriptFilter::UserOnly,
+            TranscriptFilter::UserOnly => TranscriptFilter::Default,
+        }
+    }
+
+    /// Step back through the same order.
+    pub fn prev(self) -> Self {
+        match self {
+            TranscriptFilter::Default => TranscriptFilter::UserOnly,
+            TranscriptFilter::NoTools => TranscriptFilter::Default,
+            TranscriptFilter::UserOnly => TranscriptFilter::NoTools,
+        }
+    }
+
+    /// Whether a row of `kind` survives this filter.
+    ///
+    /// `Blank` is always dropped by a filter: it exists to separate blocks, and a
+    /// separator with nothing on either side is a doubled gap. That is also what
+    /// keeps the frame from growing blank runs as rows disappear around it.
+    pub fn admits(self, kind: LineKind) -> bool {
+        match self {
+            TranscriptFilter::Default => true,
+            TranscriptFilter::NoTools => !matches!(
+                kind,
+                LineKind::ToolResultOk | LineKind::ToolResultErr | LineKind::Blank
+            ),
+            TranscriptFilter::UserOnly => kind == LineKind::User,
+        }
+    }
+
+    /// The label a notice and the footer badge show. `None` for the default,
+    /// because a badge reading "default" is a badge saying nothing.
+    pub fn label(self) -> Option<&'static str> {
+        match self {
+            TranscriptFilter::Default => None,
+            TranscriptFilter::NoTools => Some("no tools"),
+            TranscriptFilter::UserOnly => Some("user only"),
+        }
+    }
+}
+
 /// Visual class of one transcript line.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum LineKind {
@@ -1912,6 +1992,79 @@ pub struct RenderPrefs {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The filter cycles Pi's order and wraps at both ends.
+    ///
+    /// `default → no-tools → user-only → default` forward, and the same loop in
+    /// reverse. A cycle that did not wrap would make the fourth press a dead key,
+    /// and a cycle in a different order would not be Pi's
+    /// (`tree-selector.ts:95`).
+    #[test]
+    fn the_transcript_filter_cycles_in_pis_order_and_wraps() {
+        let f = TranscriptFilter::default();
+        assert_eq!(f, TranscriptFilter::Default);
+        assert_eq!(f.next(), TranscriptFilter::NoTools);
+        assert_eq!(f.next().next(), TranscriptFilter::UserOnly);
+        assert_eq!(
+            f.next().next().next(),
+            TranscriptFilter::Default,
+            "the third press must wrap to the start"
+        );
+        // And back the same loop: `prev` from the start is the last state, which
+        // is what makes shift+ctrl+o the inverse rather than a separate cycle.
+        assert_eq!(f.prev(), TranscriptFilter::UserOnly);
+        assert_eq!(f.prev().prev(), TranscriptFilter::NoTools);
+        assert_eq!(f.prev().prev().prev(), TranscriptFilter::Default);
+    }
+
+    /// What each mode hides, and the two rows that survive everything.
+    ///
+    /// `no-tools` keeps tool **calls** and drops results — Pi's rule
+    /// (`tree-selector.ts:372-375`), and the reason a call and its result are
+    /// different kinds in this enum at all. `Blank` is dropped by every filter:
+    /// a separator with nothing on either side is a doubled gap.
+    #[test]
+    fn each_filter_mode_hides_what_it_names() {
+        use LineKind::*;
+        assert!(
+            TranscriptFilter::Default.admits(ToolCall)
+                && TranscriptFilter::Default.admits(ToolResultOk)
+                && TranscriptFilter::Default.admits(User)
+                && TranscriptFilter::Default.admits(Blank),
+            "the default shows everything"
+        );
+        assert!(
+            TranscriptFilter::NoTools.admits(ToolCall)
+                && TranscriptFilter::NoTools.admits(User)
+                && TranscriptFilter::NoTools.admits(Assistant),
+            "no-tools keeps calls and prose"
+        );
+        assert!(
+            !TranscriptFilter::NoTools.admits(ToolResultOk)
+                && !TranscriptFilter::NoTools.admits(ToolResultErr),
+            "no-tools drops results"
+        );
+        assert!(
+            !TranscriptFilter::NoTools.admits(Blank),
+            "a filter never keeps a separator"
+        );
+        assert!(
+            TranscriptFilter::UserOnly.admits(User)
+                && !TranscriptFilter::UserOnly.admits(Assistant)
+                && !TranscriptFilter::UserOnly.admits(ToolCall)
+                && !TranscriptFilter::UserOnly.admits(System),
+            "user-only is user rows, and nothing else"
+        );
+    }
+
+    /// Only non-default modes carry a label, because a badge reading "default"
+    /// is a badge saying nothing.
+    #[test]
+    fn only_a_filtered_mode_has_a_label() {
+        assert_eq!(TranscriptFilter::Default.label(), None);
+        assert_eq!(TranscriptFilter::NoTools.label(), Some("no tools"));
+        assert_eq!(TranscriptFilter::UserOnly.label(), Some("user only"));
+    }
     use epsilon_contracts::agent_event::TurnEndReason;
     use epsilon_contracts::content::ContentBlock;
     use epsilon_contracts::ids::new_id;

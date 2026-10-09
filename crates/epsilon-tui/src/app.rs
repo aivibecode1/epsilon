@@ -187,6 +187,19 @@ pub(crate) struct App {
     guidance_mode: bool,
     scroll_from_bottom: usize,
 
+    /// Which rows the transcript shows.
+    ///
+    /// A *view* choice, not session state: Pi keeps its own `filterMode` in
+    /// memory on the selector instance (`tree-selector.ts:112`), and there is no
+    /// reason for a filter to outlive the process that set it. Deliberately not
+    /// persisted, unlike `hide_thinking`, which is a preference the reader sets
+    /// once.
+    ///
+    /// Applied in `RenderCache::reconcile` beside `hide_thinking` and carried in
+    /// the cache key with it — a row cached under one filter and served under
+    /// another is the stale-cache failure that key exists to prevent.
+    pub(crate) filter: crate::state::TranscriptFilter,
+
     /// An open transcript search, or `None`.
     ///
     /// `None` is the common case and is the whole point: this is state, not a mode, so

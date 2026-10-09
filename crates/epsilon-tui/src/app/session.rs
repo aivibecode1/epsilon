@@ -48,6 +48,7 @@ impl App {
             pending_preset: None,
             guidance_mode: false,
             scroll_from_bottom: 0,
+            filter: crate::state::TranscriptFilter::default(),
             search: None,
             pending_jump: None,
             viewport_rows: 0,

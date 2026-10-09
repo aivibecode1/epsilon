@@ -65,6 +65,9 @@ impl App {
             // Unread by `is_open`: this decides card openness, not row
             // visibility.
             hide_thinking: false,
+            // Likewise unread: the filter selects rows, and this decides one
+            // card's body.
+            filter: crate::state::TranscriptFilter::default(),
             expanded: &self.card_open,
             // The key text is the renderer's business, not the rule's: it is
             // `None` here because nothing in this decision reads it, and a
@@ -515,6 +518,7 @@ impl App {
         let state = crate::render_cache::RenderState {
             expand_all: self.prefs.expand_outputs,
             hide_thinking: self.ui.hide_thinking,
+            filter: self.filter,
             expanded: &self.card_open,
             more_key: more_key.as_deref(),
         };

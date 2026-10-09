@@ -346,6 +346,19 @@ pub const TERMINAL: &[(&str, &[&str])] = &[
     // that cannot be had here.
     ("app.transcript.top", &["ctrl+home", "ctrl+shift+home"]),
     ("app.transcript.bottom", &["ctrl+end", "ctrl+shift+end"]),
+    // Cycle the transcript filter forward and back (P-293/P-294). Pi binds
+    // `app.tree.filter.cycleForward` to ctrl+o and cycleBackward to
+    // shift+ctrl+o (`core/keybindings.ts:230-237`) over five modes; Epsilon
+    // cycles the three that mean something on a live transcript — see
+    // `TranscriptFilter` for which two are not representable and why.
+    //
+    // **ctrl+o was taken**, by `app.editor.external` (M59, pi's
+    // `app.editor.external`). That binding already lists `alt+e` as a second
+    // default "so either habit works", so narrowing it costs nothing a reader
+    // was promised, and leaving both would fail the table's own
+    // `no_chord_is_bound_to_two_ids` test — which is the point of that test.
+    ("app.transcript.filter.cycle", &["ctrl+o"]),
+    ("app.transcript.filter.cycleBack", &["shift+ctrl+o"]),
     // Copy the last assistant message. pi binds this to `ctrl+x`
     // (`core/keybindings.ts:130-133`) -- but `ctrl+x` is `app.tools.expand` here,
     // and the two are not the same gesture: one shows more of a tool result, the
@@ -386,8 +399,11 @@ pub const TERMINAL: &[(&str, &[&str])] = &[
     ("tui.input.submit", &["enter"]),
     ("app.clipboard.paste", &["ctrl+v", "shift+insert"]),
     // M59: pi's `app.editor.external` (pi defaults to ctrl+g, which this TUI
-    // already uses for `app.live.refresh`) -- two defaults so either habit works.
-    ("app.editor.external", &["ctrl+o", "alt+e"]),
+    // already uses for `app.live.refresh`). Two defaults so either habit works —
+    // and `ctrl+o` is deliberately NOT one of them: it became
+    // `app.transcript.filter.cycle` at P-293. `alt+e` alone is what the row
+    // prints, and it is the alt-prefixed spelling pi's own users reach for.
+    ("app.editor.external", &["alt+e"]),
 ];
 
 /// The desktop window's default bindings.

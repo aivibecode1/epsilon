@@ -1837,6 +1837,39 @@ pub(crate) fn handle_key(app: &mut App, agent: &Arc<Agent>, key: KeyEvent) -> bo
             }
             false
         }
+        // Cycle the transcript filter (P-293). Pi's ctrl+o / shift+ctrl+o over
+        // five modes (`tree-selector.ts:1079`, `:1072`); the three that mean
+        // something on a live transcript are what `TranscriptFilter` cycles, and
+        // its own doc names the two that are not representable.
+        //
+        // A notice names the new mode, because a filter that changes the frame
+        // without saying so is the §2.7 failure: the reader counts rows and
+        // finds fewer. Returning `false` lets Esc stay the interrupt it is —
+        // Pi does not reset the filter on Escape either (`:1039-1046`: Escape
+        // clears the search and the folds, not the mode).
+        _ if app.keybindings.matches("app.transcript.filter.cycle", &key) => {
+            app.filter = app.filter.next();
+            match app.filter.label() {
+                Some(label) => app.ui.push_notice(format!("transcript filter: {label}")),
+                None => app
+                    .ui
+                    .push_notice("transcript filter: everything".to_string()),
+            }
+            false
+        }
+        _ if app
+            .keybindings
+            .matches("app.transcript.filter.cycleBack", &key) =>
+        {
+            app.filter = app.filter.prev();
+            match app.filter.label() {
+                Some(label) => app.ui.push_notice(format!("transcript filter: {label}")),
+                None => app
+                    .ui
+                    .push_notice("transcript filter: everything".to_string()),
+            }
+            false
+        }
         KeyCode::Tab => {
             if app.at_open {
                 app.apply_at_selection(false);
