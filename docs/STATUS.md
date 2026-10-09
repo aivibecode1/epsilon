@@ -298,13 +298,13 @@ instead of newlining, and the sessions sidebar being a keyboard trap. What remai
 
 ## Verification (what is actually true)
 
-**Latest green battery: [`gate-port-r94b-2026-10-08.txt`](../audit/evidence/gate-port-r94b-2026-10-08.txt),
+**Latest green battery: [`gate-port-r95b-2026-10-08.txt`](../audit/evidence/gate-port-r95b-2026-10-08.txt),
 2026-10-08 — the tree this file describes, and it is the one HEAD holds.** Thirteen legs, all
-`[exit=0]`, `GATE PASS`. **2,269 passed / 0 failed / 13 ignored across 78 binaries**, summed from
-that one log's `test result:` lines — six more than `gate-port-r93b`: the three filter frames and
-two filter units are new, and the sixth is the rewritten card-openness assertion inside a test
-that already existed. `CARGO_PROFILE_TEST_DEBUG=2`. (`cargo fmt --check` ran before launching.)
-The first `port-r94` attempt failed **clippy**, not a test — see the note below.
+`[exit=0]`, `GATE PASS`. **2,273 passed / 0 failed / 13 ignored across 78 binaries**, summed from
+that one log's `test result:` lines — four more than `gate-port-r94b`: three new picker tests and
+the frame test. `CARGO_PROFILE_TEST_DEBUG=2`. (`cargo fmt --check` ran before launching.) The
+first `port-r95` attempt failed the **desktop** leg — see the note below, and preserved as
+[`gate-port-r95-attempt1-FAILED-2026-10-08.txt`](../audit/evidence/gate-port-r95-attempt1-FAILED-2026-10-08.txt).
 
 > **Round 93's first battery failed the test leg on the machine, and the probe is the proof.**
 > `gate-port-r93` died at `error: test failed, to rerun pass -p epsilon-core --lib` with
@@ -329,6 +329,19 @@ The first `port-r94` attempt failed **clippy**, not a test — see the note belo
 > `(!flag || expr) && other`, which is also what the closure already did for the second half.
 > Preserved as
 > [`gate-port-r94-attempt1-FAILED-2026-10-08.txt`](../audit/evidence/gate-port-r94-attempt1-FAILED-2026-10-08.txt).
+> `CARGO_PROFILE_TEST_DEBUG` has used 0, 1 and 2 on this machine.
+
+> **Round 95's first battery failed the *desktop* leg on a change that had only been tested in
+> the terminal.** P-260 synthesizes a row for an unknown configured id, and the first cut let the
+> existing comparator place it — so a row for the **current** model floated `current` to the top,
+> above a **starred** one, and broke `starred_models_float_first_and_read_as_favorites`, which
+> round 57 wrote. The terminal suite was green throughout: it has no such test, because
+> favourites in stage 2 are a desktop-only affordance (the terminal passes `&[]`). **The whole
+> value of that leg is that it is the only thing that ran both front ends**, and a shared-builder
+> change is exactly the case where the two disagree. Fixed by sorting unavailable rows last in
+> both comparator branches, with `an_unavailable_row_sorts_below_every_available_one` pinning it
+> in the crate the desktop also compiles. **A shared builder is tested by the suite that uses it
+> least obviously.**
 
 > **Two writers, one repository, again — and this time the battery had to cover both.** While
 > this session was mid-round, a second session committed
