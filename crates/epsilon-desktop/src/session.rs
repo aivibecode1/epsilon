@@ -135,6 +135,21 @@ pub enum RowKind {
     },
     /// A harness notice, including a lost-event warning.
     Notice,
+    /// A failure the harness is reporting — the `SystemErr` row's window half.
+    ///
+    /// **The severity dimension the window's notices did not have.** Every notice
+    /// drew `theme.dim` with a blank marker, so `error: 500 from provider` and
+    /// `favorited deepseek-flash` were the same quietness — the terminal had the
+    /// same defect (its `System` rows shared a bullet and `theme.faint()`) and
+    /// fixed it at round 97 with a dedicated row kind. The window now has its
+    /// own: a failure carries the cross the failed tool row already owns — same
+    /// glyph, same meaning — and the danger colour.
+    ///
+    /// A variant rather than a flag on `Notice` for the same reason the terminal
+    /// gives: "how a row looks" is `RowKind` already (the marker table and the
+    /// accessible name both switch on it), and a second column beside it would be
+    /// a second thing those functions consult.
+    NoticeFail,
     /// A file changed, as one summary line: path, additions, removals.
     Changed,
     /// One changed line inside a `RowKind::Changed` block.
@@ -435,6 +450,17 @@ impl Transcript {
         self.push(RowKind::Notice, text.to_string());
     }
 
+    /// A failure, as a row of its own kind — the terminal's `SystemErr` half.
+    ///
+    /// Every caller reporting something that went wrong routes through here, so
+    /// the failure's emphasis is decided once (the cross the failed tool owns,
+    /// the danger colour, the accessible name) rather than per call site. The
+    /// wording stays the caller's: this decides how a failure *looks*, never
+    /// what it says.
+    pub fn push_failure(&mut self, text: impl Into<String>) {
+        self.push(RowKind::NoticeFail, text.into());
+    }
+
     /// Add a row the user produced themselves.
     ///
     /// The prompt is an **input**, so no `AgentEvent` carries it — and a frontend that
@@ -519,6 +545,31 @@ impl Transcript {
                         RowKind::Notice,
                         "Response was stopped before completion.".to_string(),
                     );
+                }
+                // M62, window half: the reducer read the stop reasons and never
+                // the error field, so a provider failure produced a silent,
+                // complete-looking answer. The failure is a row of its own kind
+                // (the cross the failed tool owns, the danger colour), and it
+                // says the reply above is partial when text did arrive — a
+                // cut-off answer must never read as a whole one.
+                if let Message::Assistant(a) = &**message
+                    && let Some(err) = a.error_message.as_deref()
+                {
+                    let label = if message_text(message).is_none_or(|t| t.trim().is_empty()) {
+                        format!("error: {err}")
+                    } else {
+                        format!("error: {err} — the reply above is partial")
+                    };
+                    self.push_failure(label);
+                    // The auth sibling, on the terminal's predicate so the two
+                    // front ends cannot disagree about which failures earn it.
+                    if epsilon_core::looks_like_auth_failure(err) {
+                        self.push_failure(
+                            "the configured model was never reached — no reply was \
+                             generated. Run `/login <provider>` or set the provider's \
+                             API key, then send this again",
+                        );
+                    }
                 }
             }
 
@@ -1660,6 +1711,67 @@ mod tests {
             notices.len(),
             1,
             "exactly one truncation notice for one truncated reply: {:?}",
+            t.rows()
+        );
+    }
+
+    /// A reply that ended in an error says so, as a failure (M62, window half).
+    ///
+    /// The terminal's M62 marker stops a cut-off answer from reading as a
+    /// complete one, and says the failure out loud. This window dropped the
+    /// assistant's `error_message` entirely: the reducer's `MessageEnd` arm
+    /// read the stop reasons and never the error field, so a provider failure
+    /// produced a silent, complete-looking answer — the owner's 2026-10-04
+    /// report ("the output of the model is not shown") was this shape one layer
+    /// down.
+    ///
+    /// The EndTurn message is the control: one reply, one failure row.
+    #[test]
+    fn a_failed_reply_marks_the_transcript_as_a_failure() {
+        let mut t = transcript();
+        let mut m = assistant("the answer that never arrived");
+        if let Message::Assistant(a) = &mut m {
+            a.error_message = Some("HTTP 401 (Auth): api key invalid".into());
+        }
+        t.apply(&AgentEvent::MessageEnd {
+            message: Box::new(m),
+        });
+        t.apply(&AgentEvent::MessageEnd {
+            message: Box::new(assistant("a whole answer")),
+        });
+        let failures: Vec<&Row> = t
+            .rows()
+            .iter()
+            .filter(|r| r.text.contains("HTTP 401"))
+            .collect();
+        assert_eq!(
+            failures.len(),
+            1,
+            "the provider's failure must reach the transcript: {:?}",
+            t.rows()
+        );
+    }
+
+    /// An auth rejection says the configured model was never reached.
+    ///
+    /// The terminal's sibling note (M62): the provider's body says "invalid api
+    /// key" and a reader has no way to tell the model named in their status bar
+    /// was never reached at all — the confusion behind the owner's report. One
+    /// shared predicate (`epsilon_core::looks_like_auth_failure`) so the two
+    /// front ends cannot disagree about which failures get it.
+    #[test]
+    fn an_auth_failure_says_the_model_was_never_reached() {
+        let mut t = transcript();
+        let mut m = assistant("");
+        if let Message::Assistant(a) = &mut m {
+            a.error_message = Some("HTTP 401 Authentication Fails, Your api key is invalid".into());
+        }
+        t.apply(&AgentEvent::MessageEnd {
+            message: Box::new(m),
+        });
+        assert!(
+            t.rows().iter().any(|r| r.text.contains("never reached")),
+            "an auth failure must say the model was never reached: {:?}",
             t.rows()
         );
     }

@@ -388,6 +388,7 @@ fn row_kind_name(kind: &RowKind) -> String {
         RowKind::Changed => "File changed".to_string(),
         RowKind::Diff => "Changed line".to_string(),
         RowKind::Notice => "Notice".to_string(),
+        RowKind::NoticeFail => "Failure".to_string(),
     }
 }
 
@@ -585,6 +586,7 @@ fn row_seen(row: &crate::session::Row) -> u64 {
         RowKind::Changed => 6,
         RowKind::Diff => 7,
         RowKind::Notice => 8,
+        RowKind::NoticeFail => 8,
     };
     fold(&mut h, &row.text);
     h
@@ -1159,7 +1161,7 @@ impl IdeApp {
                 );
                 if let Err(e) = level {
                     self.transcript
-                        .push_notice(&format!("thinking memory not saved: {e}"));
+                        .push_failure(format!("thinking memory not saved: {e}"));
                 }
                 self.favorites = epsilon_core::config::load_favorite_models();
                 if now_favorite {
@@ -1173,7 +1175,7 @@ impl IdeApp {
             }
             Err(e) => self
                 .transcript
-                .push_notice(&format!("favorite not saved: {e}")),
+                .push_failure(format!("favorite not saved: {e}")),
         }
     }
 
@@ -1919,7 +1921,7 @@ impl IdeApp {
         };
         if !navigated {
             self.transcript
-                .push_notice(&format!("{label}: could not jump to #{}", row.1));
+                .push_failure(format!("{label}: could not jump to #{}", row.1));
             self.close_timeline();
             return;
         }
@@ -1943,7 +1945,7 @@ impl IdeApp {
                         row.1
                     ));
                 }
-                Err(e) => self.transcript.push_notice(&format!(
+                Err(e) => self.transcript.push_failure(format!(
                     "{label}: jumped, but the transcript did not follow: {e}"
                 )),
             },
@@ -2220,7 +2222,7 @@ impl IdeApp {
                 self.transcript
                     .push_notice(&format!("{said} — there is no goal to change"));
             }
-            Err(e) => self.transcript.push_notice(&format!("{said} refused: {e}")),
+            Err(e) => self.transcript.push_failure(format!("{said} refused: {e}")),
         }
     }
 }
@@ -3620,7 +3622,7 @@ impl IdeApp {
                 .push_notice(&format!("resumed — {restored} message(s)")),
             Err(reason) => self
                 .transcript
-                .push_notice(&format!("cannot resume that session: {reason}")),
+                .push_failure(format!("cannot resume that session: {reason}")),
         }
     }
 
@@ -3691,7 +3693,7 @@ impl IdeApp {
             }
             Err(reason) => self
                 .transcript
-                .push_notice(&format!("Failed to delete: {reason}")),
+                .push_failure(format!("Failed to delete: {reason}")),
         }
     }
 
@@ -3820,7 +3822,7 @@ impl IdeApp {
             } else {
                 "thinking shown (saved)"
             }),
-            Err(e) => self.transcript.push_notice(&format!(
+            Err(e) => self.transcript.push_failure(format!(
                 "thinking {} for this run, but not saved: {e}",
                 if self.hide_thinking {
                     "hidden"
@@ -4447,7 +4449,7 @@ impl IdeApp {
             && let Err(reason) = session.submit(&prompt)
         {
             self.transcript
-                .push_notice(&format!("goal round could not start: {reason}"));
+                .push_failure(format!("goal round could not start: {reason}"));
             return false;
         }
         true
@@ -4529,7 +4531,7 @@ impl IdeApp {
         match crate::workspace::OpenFile::read(&self.opts.workspace, &open) {
             Ok(file) => self.open = Some(file),
             Err(reason) => {
-                self.transcript.push_notice(&format!(
+                self.transcript.push_failure(format!(
                     "{open} was changed and is now unreadable: {reason}"
                 ));
                 self.open = None;
@@ -6850,7 +6852,7 @@ impl IdeApp {
             }
             Err(reason) => self
                 .transcript
-                .push_notice(&format!("cannot open {reason}")),
+                .push_failure(format!("cannot open {reason}")),
         }
     }
 
@@ -8134,6 +8136,9 @@ impl IdeApp {
             RowKind::Changed => ("± ", theme.accent),
             RowKind::Diff => ("  ", theme.dim),
             RowKind::Notice => ("  ", theme.dim),
+            // The failure shares the cross with the failed tool row -- same glyph,
+            // same meaning (the terminal's SystemErr rule, round 97).
+            RowKind::NoticeFail => ("x ", theme.danger),
         };
         // A tool row with no arguments yet still has to say which tool it is: an
         // empty row with a marker is a mark the reader has to decode.
@@ -8867,6 +8872,47 @@ mod tests {
         assert!(
             !screen.contains("ls-R /tmp"),
             "and the gap an unstripped override leaves behind must not be on screen.\n{screen}"
+        );
+    }
+
+    /// A failure is not the quietest row on the page.
+    ///
+    /// The window's notices all drew `theme.dim` with a blank marker, so
+    /// `error: 500 from provider` and `favorited deepseek-flash` were the same
+    /// pixels — the terminal had the same defect and fixed it at round 97 with a
+    /// dedicated failure row kind. The window now has its own, and the acid test
+    /// is the same one the terminal's is: **the pair**, a failure against a plain
+    /// notice, asserted on the frame through the real draw path.
+    ///
+    /// The failure carries the cross the failed tool row already owns — same
+    /// glyph, same meaning — so the channel that separates them is a *character*
+    /// and not a colour: it survives every theme this window ships (light, dark,
+    /// high-contrast) without a per-theme test, which is what `AGENTS.md` §1.4.1
+    /// asks for.
+    #[test]
+    fn a_failure_row_is_not_the_quietest_row_in_the_window() {
+        let mut transcript = crate::session::Transcript::new(std::path::Path::new("."));
+        transcript.push_notice("a harness notice");
+        transcript.push_failure("error: 500 from provider");
+        let mut harness = Harness::sized(std::env::temp_dir(), 1440.0, 900.0);
+        harness.app.seed_transcript(transcript);
+
+        let screen = harness.paint().describe();
+        let failure = screen
+            .lines()
+            .find(|l| l.contains("error: 500"))
+            .unwrap_or_else(|| panic!("the failure is on screen:\n{screen}"));
+        let notice = screen
+            .lines()
+            .find(|l| l.contains("a harness notice"))
+            .unwrap_or_else(|| panic!("the notice is on screen:\n{screen}"));
+        assert!(
+            failure.contains("x error"),
+            "the failure carries the cross the failed tool owns:\n{failure}"
+        );
+        assert!(
+            !notice.contains("x "),
+            "and the ordinary notice carries nothing — the pair is the assertion:\n{notice}"
         );
     }
 

@@ -132,6 +132,16 @@ surfaces the frames do not cover, then land them one round at a time, RED-first,
 **Done-when.** Each landed slice has a frame a person read and a STATUS row; the program ends
 when a ranked pass finds no finding that is not a recorded deliberate difference.
 
+**Round 107 — the first slice, landed.** The ranked pass read the window's draw code against the
+objective's own question (*what requires user attention*) and the top finding was the round-97
+defect alive in the other front end: every notice drew `theme.dim` with a blank marker, and the
+reducer never read the assistant's `error_message`. Fixed as `RowKind::NoticeFail` — the
+`SystemErr` row's window half, the cross the failed tool already owns, the danger colour, the
+accessible name — with eleven failure sites routed and the M62/auth-note parity on the terminal's
+own predicate. Frame read; pair pinned; control run. **The pass continues:** the next findings are
+ranked from the same read (the composer's send affordance and the settings/shortcuts overlays are
+the surfaces the twelve frames do not cover).
+
 **Trap.** Decoration is not design. The test for each slice is the information-hierarchy
 question from the objective — *what did the agent say, what is it doing, what needs attention* —
 never "prettier".
