@@ -228,6 +228,10 @@ fn row_marker(kind: LineKind, theme: &Theme) -> String {
         // A notice is not the same event as a tool call and must not share its
         // marker: with `NO_COLOR` or 16 colours the two would be the same pixels.
         LineKind::System => glyphs.bullet,
+        // A failure notice takes the same cross as a failed tool result: same
+        // glyph for the same meaning, and the marker logic below already keeps
+        // it out of the body when the gutter carries it.
+        LineKind::SystemErr => glyphs.cross,
         // Card bodies carry no marker (the title introduced them); like
         // prose, they read better undecorated.
         LineKind::CardBody => return String::new(),
@@ -273,6 +277,10 @@ fn style_for(kind: LineKind, theme: &Theme) -> Style {
         LineKind::ToolResultOk => theme.dim(),
         LineKind::ToolResultErr => theme.danger(),
         LineKind::System => theme.system(),
+        // A failure notice reads in the danger colour, for the same reason the
+        // failed tool result does: emphasis is information, and the faintest
+        // style on the page is the wrong one for `error: …`.
+        LineKind::SystemErr => theme.danger(),
         // No text to style; the assistant's prose style keeps it out of
         // every role's color.
         LineKind::Blank => theme.assistant(),

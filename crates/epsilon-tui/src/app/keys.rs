@@ -1088,12 +1088,16 @@ pub(crate) fn handle_key(app: &mut App, agent: &Arc<Agent>, key: KeyEvent) -> bo
                     app.session_browser = None;
                     app.input.clear();
                     app.cursor_chars = 0;
-                    app.ui.push_notice(match outcome {
+                    match outcome {
                         // The shared sentence, so this front end and any other
                         // name the same outcome the same way.
-                        Ok(how) => how.message().to_string(),
-                        Err(e) => format!("Failed to delete: {e}"),
-                    });
+                        Ok(how) => app.ui.push_notice(how.message()),
+                        // A failed delete is a failure, so it draws as one
+                        // (P-058) — the same emphasis rule the M62 error
+                        // marker follows. A confirmation that reported its own
+                        // collapse quietly would be a silent failure.
+                        Err(e) => app.ui.push_error(format!("Failed to delete: {e}")),
+                    }
                 }
                 _ => {
                     app.session_browser = None;
@@ -1126,7 +1130,7 @@ pub(crate) fn handle_key(app: &mut App, agent: &Arc<Agent>, key: KeyEvent) -> bo
                             count,
                             path.display()
                         )),
-                        Err(e) => app.ui.push_notice(format!("resume failed: {e}")),
+                        Err(e) => app.ui.push_error(format!("resume failed: {e}")),
                     }
                 }
             }

@@ -110,6 +110,22 @@ pub enum LineKind {
     ToolResultErr,
     /// Lifecycle/system notice.
     System,
+    /// A failure the harness is reporting (P-058, P-128).
+    ///
+    /// **A severity dimension the transcript did not have.** Every `System`
+    /// row drew `glyphs.bullet` and `theme.faint()`, so `error: 500 from
+    /// provider` and `the configured model was never reached` were the
+    /// *faintest* things on the page — exactly the rows a reader must not miss,
+    /// drawn with less emphasis than a command echo. That is `AGENTS.md` §8
+    /// ("what requires user attention") failing on its own terms, and it is
+    /// invisible on a truecolor terminal where a band carries the difference
+    /// for tool cards but nothing carries it for notices.
+    ///
+    /// A variant rather than a field on `TranscriptLine` because the whole
+    /// vocabulary of "how a row looks" is `LineKind` already: `row_style` and
+    /// `row_marker` both switch on it, and a severity column beside it would be
+    /// a second thing those functions have to consult.
+    SystemErr,
     /// Block separator (P-136): an empty row between blocks, pushed by
     /// `push_line`, never by content. Empty text never matches a search,
     /// and the kind keeps it out of every role's styling.
@@ -1115,6 +1131,17 @@ impl UiState {
         self.push_line(TranscriptLine::plain(LineKind::System, text));
     }
 
+    /// A runtime **failure**, drawn as an error rather than as a quiet notice.
+    ///
+    /// `push_notice` is the door most call sites already use, and before this
+    /// every one of them drew with `theme.faint()` — so a run failure, an OAuth
+    /// outcome and a shell-kept-out-of-context line were the same pixels. A
+    /// caller that is reporting something that *went wrong* uses this instead;
+    /// anything informational keeps `push_notice`.
+    pub fn push_error(&mut self, text: impl Into<String>) {
+        self.push_line(TranscriptLine::plain(LineKind::SystemErr, text));
+    }
+
     /// A row holding text the agent did not write, exactly as it arrived.
     ///
     /// **The seam the sanitiser is tested through.** `push_notice` and `push_local_input`
@@ -1380,7 +1407,12 @@ impl UiState {
                         } else {
                             format!("error: {err} — the reply above is partial")
                         };
-                        self.push_line(TranscriptLine::plain(LineKind::System, label));
+                        // P-058/P-128: a failure is not a quiet notice. This
+                        // used to be a `System` row, so `error: 500 from
+                        // provider` was drawn with the faintest style on the
+                        // page — the emphasis of something skippable, on the
+                        // row a reader most needs to see.
+                        self.push_line(TranscriptLine::plain(LineKind::SystemErr, label));
                         // An auth rejection is the one failure a reader cannot diagnose from
                         // the sentence above it. The provider's body says "invalid api key",
                         // and a reader has no way to tell that the model named in their status
@@ -1390,7 +1422,7 @@ impl UiState {
                         // error raises.
                         if epsilon_core::looks_like_auth_failure(err) {
                             self.push_line(TranscriptLine::plain(
-                                LineKind::System,
+                                LineKind::SystemErr,
                                 "the configured model was never reached — no reply was \
                                  generated. Run `/login <provider>` or set the provider's \
                                  API key, then send this again",

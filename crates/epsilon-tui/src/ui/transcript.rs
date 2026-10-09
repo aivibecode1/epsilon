@@ -113,6 +113,20 @@ pub fn row_style(theme: &Theme, kind: LineKind) -> (String, Style, Style, Style)
             theme.faint(),
             Style::default(),
         ),
+        // A failure is the one notice that must not be quiet. It takes the
+        // cross the tool-error row already owns — the same glyph for the same
+        // meaning, which is the point — with the danger colour and the error
+        // band. On a terminal with no surfaces, the glyph alone carries it, so
+        // the distinction survives `NO_COLOR` and a 16-colour palette alike.
+        //
+        // Without this, `error: 500 from provider` was drawn with the faintest
+        // style on the page, which is the emphasis of something skippable.
+        LineKind::SystemErr => (
+            glyphs.cross.to_string(),
+            theme.danger(),
+            theme.danger(),
+            theme.surface_err(),
+        ),
         // A separator is not content: no glyph (a gutter mark on an empty
         // row is noise), no band, no body style to inherit.
         LineKind::Blank => (
@@ -294,6 +308,11 @@ mod tests {
             LineKind::ToolResultOk,
             LineKind::ToolResultErr,
             LineKind::System,
+            // P-058: a failure notice. It shares the cross with the failed tool
+            // result **on purpose** — same glyph, same meaning — so the pair this
+            // loop must now catch is failure-notice against plain notice, which
+            // is the pair that was indistinguishable before this row existed.
+            LineKind::SystemErr,
             LineKind::Blank,
             LineKind::CardBody,
         ] {
@@ -312,8 +331,14 @@ mod tests {
         assert_eq!(gutters[4].1, "+"); // ok
         assert_eq!(gutters[5].1, "x"); // error
         assert_eq!(gutters[6].1, "*"); // system notice
-        assert_eq!(gutters[7].1, ""); // blank separator: no gutter mark
-        assert_eq!(gutters[8].1, "|"); // card body: the continuation rule
+        assert_eq!(gutters[7].1, "x"); // failure notice
+        assert_ne!(
+            gutters[7].1, gutters[6].1,
+            "a failure and an ordinary notice must not be the same pixels: the \
+             failure is the one that needs the emphasis"
+        );
+        assert_eq!(gutters[8].1, ""); // blank separator: no gutter mark
+        assert_eq!(gutters[9].1, "|"); // card body: the continuation rule
         // The pair the presentation pass is about: a title and its output
         // must never share a gutter again.
         assert_ne!(gutters[3].1, gutters[8].1);

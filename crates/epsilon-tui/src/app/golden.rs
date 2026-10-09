@@ -2392,6 +2392,85 @@ fn modifier_on_row(
     panic!("{anchor:?} never reached the screen: {rows}");
 }
 
+/// A run failure draws as a failure, not as a quiet notice (P-058, P-128).
+///
+/// The transcript had one `System` row style for everything harness-authored, so
+/// `error: 500 from provider` and `the configured model was never reached` were
+/// the **faintest** things on the page — less emphasised than a command echo.
+/// On a truecolor terminal a band carries the difference for tool cards and
+/// nothing carries it for notices, so this was invisible there and wrong
+/// everywhere.
+///
+/// The assertion is on the frame under `NO_COLOR` with ASCII glyphs, which is
+/// where emphasis is the only channel left. `x` against `*` is the whole test: a
+/// row drawn with the bullet would be the defect, and it would look deliberate.
+#[test]
+fn a_run_failure_draws_with_the_cross_and_not_the_bullet() {
+    let mut app = bench_app(UiState::new());
+    pin_theme(&mut app, ThemeColorMode::None);
+    app.ui.push_error("error: HTTP 500 from provider");
+
+    let rows = render_rows(&mut app, 80, 24);
+    let error_row = &rows[row_of(&rows, "error: HTTP 500")];
+    assert!(
+        error_row.starts_with('x') || error_row.starts_with('✗'),
+        "a failure must carry the cross, not the notice bullet: {error_row:?}"
+    );
+    // And a plain notice keeps its own bullet, so the two are distinguishable
+    // without colour.
+    app.ui.push_notice("shell (kept out of context): hi");
+    let rows = render_rows(&mut app, 80, 24);
+    let notice_row = &rows[row_of(&rows, "kept out of context")];
+    assert!(
+        notice_row.starts_with('*') || notice_row.starts_with('•'),
+        "a notice keeps the bullet: {notice_row:?}"
+    );
+}
+
+/// The M62 error marker and the auth note both draw as failures.
+///
+/// Driven through the real reducer with an assistant message carrying
+/// `StopReason::Error`, because the *wiring* is the thing worth pinning: the
+/// variant existing in the enum proves nothing about which rows use it, and this
+/// row is the one a reader who hit a rejected key looks for.
+#[test]
+fn the_error_marker_and_the_auth_note_draw_as_failures() {
+    use epsilon_contracts::message::{AssistantMessage, StopReason};
+    let mut app = bench_app(UiState::new());
+    pin_theme(&mut app, ThemeColorMode::None);
+    let mut msg = AssistantMessage {
+        id: "m1".into(),
+        timestamp_ms: 0,
+        provider: "faux".into(),
+        model_id: "faux-1".into(),
+        content: vec![],
+        stop_reason: StopReason::Error,
+        error_message: Some(
+            "HTTP 401 (Auth): Authentication Fails, Your api key is invalid".into(),
+        ),
+        usage: epsilon_contracts::message::Usage::default(),
+    };
+    // The auth classifier reads the provider body; an explicit error message
+    // with the 401 spelling is what it keys on.
+    let _ = &mut msg;
+    app.ui.apply(&AgentEvent::MessageEnd {
+        message: Box::new(Message::Assistant(msg)),
+    });
+
+    let rows = render_rows(&mut app, 80, 24);
+    let marker = &rows[row_of(&rows, "error: HTTP 401")];
+    assert!(
+        marker.starts_with('x') || marker.starts_with('✗'),
+        "the error marker carries the cross: {marker:?}"
+    );
+    // The auth note is a second row, and it must be drawn the same way.
+    let auth = &rows[row_of(&rows, "the configured model was never reached")];
+    assert!(
+        auth.starts_with('x') || auth.starts_with('✗'),
+        "and so is the auth note: {auth:?}"
+    );
+}
+
 #[test]
 fn an_edits_diff_is_drawn_with_a_coloured_gutter_not_as_prose() {
     // The heart of the slice. Each of these assertions fails on the old code for a

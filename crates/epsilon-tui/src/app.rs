@@ -947,7 +947,7 @@ impl App {
                             "imported {count} messages from {} (store swapped)",
                             abs.display()
                         )),
-                        Err(e) => self.ui.push_notice(format!("import failed: {e}")),
+                        Err(e) => self.ui.push_error(format!("import failed: {e}")),
                     }
                 }
                 "no" | "n" => {

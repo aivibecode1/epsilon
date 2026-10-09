@@ -1238,7 +1238,7 @@ impl App {
                         dest.display(),
                         dest.display()
                     )),
-                    Err(e) => self.ui.push_notice(format!("fork failed: {e}")),
+                    Err(e) => self.ui.push_error(format!("fork failed: {e}")),
                 }
             }
             crate::picker::Command::Clone => {
@@ -1285,7 +1285,7 @@ impl App {
                         dest.display(),
                         dest.display()
                     )),
-                    Err(e) => self.ui.push_notice(format!("clone failed: {e}")),
+                    Err(e) => self.ui.push_error(format!("clone failed: {e}")),
                 }
             }
             crate::picker::Command::Name(arg) => {
@@ -1418,7 +1418,7 @@ impl App {
                             .unwrap_or(&path)
                             .display()
                     )),
-                    Err(e) => self.ui.push_notice(format!("new session failed: {e}")),
+                    Err(e) => self.ui.push_error(format!("new session failed: {e}")),
                 }
             }
             crate::picker::Command::Resume(path) => {
@@ -1450,7 +1450,7 @@ impl App {
                                 count,
                                 abs.display()
                             )),
-                            Err(e) => self.ui.push_notice(format!("resume failed: {e}")),
+                            Err(e) => self.ui.push_error(format!("resume failed: {e}")),
                         }
                     }
                 }
@@ -2226,7 +2226,7 @@ impl App {
                                     &hash[..8.min(hash.len())],
                                     path.display()
                                 )),
-                                Err(e) => self.ui.push_notice(format!("trust accept failed: {e}")),
+                                Err(e) => self.ui.push_error(format!("trust accept failed: {e}")),
                             }
                         }
                         None => self.ui.push_notice("trust: no config file to accept"),
@@ -2273,7 +2273,7 @@ impl App {
                             dest.display(),
                             n
                         )),
-                        Err(e) => self.ui.push_notice(format!("export failed: {e}")),
+                        Err(e) => self.ui.push_error(format!("export failed: {e}")),
                     }
                 } else {
                     let result = (|| -> Result<usize, String> {
@@ -2287,7 +2287,7 @@ impl App {
                             dest.display(),
                             n
                         )),
-                        Err(e) => self.ui.push_notice(format!("export failed: {e}")),
+                        Err(e) => self.ui.push_error(format!("export failed: {e}")),
                     }
                 }
             }
@@ -2399,7 +2399,7 @@ impl App {
                             }
                         }
                     }
-                    Err(e) => self.ui.push_notice(format!("share failed: {e}")),
+                    Err(e) => self.ui.push_error(format!("share failed: {e}")),
                 }
             }
             crate::picker::Command::Copy => {
