@@ -305,9 +305,19 @@ instead of newlining, and the sessions sidebar being a keyboard trap. What remai
 
 **Latest green battery: [`gate-port-r99b-2026-10-08.txt`](../audit/evidence/gate-port-r99b-2026-10-08.txt),
 2026-10-08 — the tree this file describes, and it is the one HEAD holds.** Thirteen legs, all
-`[exit=0]`, `GATE PASS`. **2,284 passed / 0 failed / 13 ignored across 78 binaries**, summed from
-that one log's `test result:` lines — two more than `gate-port-r98`: the two queued-work quit
-tests. `CARGO_PROFILE_TEST_DEBUG=2`. Green first time.
+`[exit=0]`, `GATE PASS`. **2,287 passed / 0 failed / 13 ignored across 78 binaries**, summed from
+that one log's `test result:` lines — three more than `gate-port-r98`: the two queued-work quit
+tests and the three desktop session-delete tests, less the two their own fixtures replaced.
+`CARGO_PROFILE_TEST_DEBUG=2`.
+
+> **Its first attempt failed the desktop leg, on the machine rather than in the code.**
+> `starred_models_float_first_and_read_as_favorites` failed with `left: "deepseek-flash"` — the
+> machine's own saved default, written by a test that saves one. It reproduces on the clean tree, so
+> it is a pre-existing hermeticity hole and not this round's regression; `bounded` now pins
+> `default_model` and `favorites` the way the terminal's `test_app` already did, and the suite was
+> re-run green with the polluted config still in place to prove the harness no longer reads it.
+> Preserved as
+> [`gate-port-r99-attempt1-FAILED-2026-10-08.txt`](../audit/evidence/gate-port-r99-attempt1-FAILED-2026-10-08.txt).
 
 > **A CRLF working copy rode through a green battery, because the file was untracked.**
 > `delete.rs` was created with PowerShell's `Set-Content`, which writes CRLF on Windows, and
