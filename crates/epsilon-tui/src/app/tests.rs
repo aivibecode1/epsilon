@@ -5828,6 +5828,191 @@ async fn a_double_bang_names_its_exclusion_on_the_running_row() {
     }
 }
 
+/// Plant a second session beside the attached one, in the directory a launch
+/// actually uses: the sessions root, then this workspace's per-cwd directory
+/// (M217). A file in the sessions *root* would not be listed for this workspace.
+fn plant_second_session(dir: &tempfile::TempDir, name: &str, text: &str) -> std::path::PathBuf {
+    let workspace = dir.path();
+    let sessions = workspace.join(".epsilon").join("sessions");
+    let per_cwd = epsilon_session::time::session_dir_for(&sessions, workspace);
+    std::fs::create_dir_all(&per_cwd).expect("the per-workspace session directory");
+    let path = per_cwd.join(name);
+    write_session_fixture(&path, workspace, text);
+    path
+}
+
+/// Highlight the one row that is **not** the attached session.
+///
+/// Chosen by identity rather than by index: the list is sorted by file name, and
+/// a timestamp-prefixed name sorts before the bare `session.jsonl` the fixture
+/// attaches — so "the second row" is the attached file, and a test that assumed
+/// otherwise would drive the *refusal* path while believing it was driving the
+/// delete.
+fn highlight_a_deletable_row(app: &mut App) {
+    let current = app.session_browser.as_ref().and_then(|b| b.current.clone());
+    let index = app
+        .session_browser
+        .as_ref()
+        .map(|b| {
+            b.rows
+                .iter()
+                .position(|r| Some(&r.path) != current.as_ref())
+                .expect("a session other than the attached one")
+        })
+        .expect("the browser is open");
+    if let Some(b) = app.session_browser.as_mut() {
+        b.index = index;
+    }
+}
+
+/// `Ctrl+D` in the sessions browser asks before it deletes (P-237).
+///
+/// The first press must not touch the disk: the unlink fallback is
+/// unrecoverable (there is no `trash` binary on this platform, so every delete
+/// here is permanent), and `AGENTS.md` §6 requires a confirmation. Pi arms the
+/// same chord and guards it the same way (`session-selector.ts:402-413`,
+/// `:543-557`); this asserts the guard, the drawn confirmation, and that the file
+/// is still there.
+#[test]
+fn ctrl_d_in_the_browser_asks_before_it_deletes() {
+    let (mut app, agent, _rx, dir) = test_app_with_store();
+    let other = plant_second_session(&dir, "2026-10-08T00-00-00_ses_other.jsonl", "the other one");
+    app.open_session_browser(&agent);
+    let before: Vec<_> = walk_jsonl(dir.path());
+    assert!(
+        before.len() >= 2,
+        "the fixture has two sessions: {before:?}"
+    );
+
+    // Highlight a deletable row, then press the delete chord.
+    highlight_a_deletable_row(&mut app);
+    handle_key(&mut app, &agent, ctrl(KeyCode::Char('d')));
+
+    let frame = render_rows(&mut app, 80, 24).join("\n");
+    assert!(
+        frame.contains("Delete session?"),
+        "the first press must ask, on the frame: {frame}"
+    );
+    assert!(
+        !frame.contains("Session deleted"),
+        "and must not report a delete that has not happened: {frame}"
+    );
+    // The file is untouched.
+    assert!(
+        walk_jsonl(dir.path()).len() == before.len(),
+        "asking must not delete anything"
+    );
+    assert!(other.exists(), "and the named file is still there");
+}
+
+/// Confirming the delete removes the file and says which happened.
+///
+/// The whole round trip through the real key path, asserted on both the frame
+/// and the directory. The wording comes from
+/// [`epsilon_session::DeleteOutcome::message`], which is where Pi's
+/// `session-selector.ts:857` sentence lives — so the front end cannot invent a
+/// second spelling of it.
+#[test]
+fn confirming_the_delete_removes_the_file_and_says_which_happened() {
+    let (mut app, agent, _rx, dir) = test_app_with_store();
+    let other = plant_second_session(&dir, "2026-10-08T00-00-00_ses_other.jsonl", "the other one");
+    app.open_session_browser(&agent);
+    highlight_a_deletable_row(&mut app);
+    let before = walk_jsonl(dir.path()).len();
+
+    handle_key(&mut app, &agent, ctrl(KeyCode::Char('d')));
+    handle_key(&mut app, &agent, key(KeyCode::Enter));
+
+    let frame = render_rows(&mut app, 80, 24).join("\n");
+    assert!(
+        frame.contains("Session deleted"),
+        "the outcome is reported: {frame}"
+    );
+    assert!(!other.exists(), "and the file is gone");
+    assert_eq!(
+        walk_jsonl(dir.path()).len(),
+        before - 1,
+        "exactly one file went"
+    );
+}
+
+/// Anything but Enter cancels, and the file survives.
+///
+/// The other half of the guard: a confirmation that only one key can leave is
+/// a trap. Esc is the key a reader reaches for, so it is what this drives.
+#[test]
+fn escape_cancels_the_delete_and_keeps_the_file() {
+    let (mut app, agent, _rx, dir) = test_app_with_store();
+    let other = plant_second_session(&dir, "2026-10-08T00-00-00_ses_other.jsonl", "the other one");
+    app.open_session_browser(&agent);
+    highlight_a_deletable_row(&mut app);
+    let before = walk_jsonl(dir.path()).len();
+
+    handle_key(&mut app, &agent, ctrl(KeyCode::Char('d')));
+    handle_key(&mut app, &agent, key(KeyCode::Esc));
+
+    let frame = render_rows(&mut app, 80, 24).join("\n");
+    assert!(
+        frame.contains("delete cancelled"),
+        "the cancellation is reported: {frame}"
+    );
+    assert_eq!(
+        walk_jsonl(dir.path()).len(),
+        before,
+        "and nothing was deleted"
+    );
+    assert!(other.exists(), "the named file is still there");
+}
+
+/// Deleting the **currently attached** session is refused, with Pi's words.
+///
+/// `session-selector.ts:408`: *"Cannot delete the currently active session"*.
+/// The reason is not politeness — this app is writing to that file, so removing
+/// it would leave a live store pointing at a path that no longer exists. The
+/// refusal is asserted against the frame, because a refusal nobody sees is a
+/// key that does nothing (§2.7).
+#[test]
+fn deleting_the_active_session_is_refused_by_name() {
+    let (mut app, agent, _rx, dir) = test_app_with_store();
+    let attached = agent
+        .store_handle_for_tests()
+        .lock()
+        .unwrap()
+        .path()
+        .to_path_buf();
+    app.open_session_browser(&agent);
+    // Highlight the attached row itself, found by path rather than assumed at
+    // row 0: the list is name-sorted, so the attached `session.jsonl` is not
+    // first.
+    let attached_index = app
+        .session_browser
+        .as_ref()
+        .and_then(|b| b.rows.iter().position(|r| r.path == attached))
+        .expect("the attached session is listed");
+    if let Some(b) = app.session_browser.as_mut() {
+        b.index = attached_index;
+    }
+    let before = walk_jsonl(dir.path()).len();
+
+    handle_key(&mut app, &agent, ctrl(KeyCode::Char('d')));
+
+    let frame = render_rows(&mut app, 80, 24).join("\n");
+    assert!(
+        frame.contains("Cannot delete the currently active session"),
+        "the refusal names the case, in pi's words: {frame}"
+    );
+    assert!(
+        !frame.contains("Delete session?"),
+        "and no confirmation is armed: {frame}"
+    );
+    assert_eq!(
+        walk_jsonl(dir.path()).len(),
+        before,
+        "and the file is untouched"
+    );
+    assert!(attached.exists(), "the attached file is still there");
+}
+
 /// A page key moves by the screenful that was actually drawn.
 ///
 /// pi pages by `maxVisible` (`session-selector.ts:612-617`), so the property is

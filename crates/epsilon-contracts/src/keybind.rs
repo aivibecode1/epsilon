@@ -378,6 +378,14 @@ pub const TERMINAL: &[(&str, &[&str])] = &[
     // New session file (P-243; pi names Ctrl+N in its empty-list message,
     // and the window already binds it — one gesture in both front ends).
     ("app.session.new", &["ctrl+n"]),
+    // Ask to delete the highlighted session (P-237). Pi binds
+    // `app.session.delete` to ctrl+d too (`core/keybindings.ts:178-181`).
+    //
+    // Safe against the composer's `ctrl+d` delete-forward because this id is
+    // only read inside the session browser's own key block, which owns the
+    // keyboard while it is open — the same arrangement that lets the browser
+    // read a bare `up` as a list move rather than the editor's history recall.
+    ("app.session.delete", &["ctrl+d"]),
     // Restore queued steering messages to the composer (P-033, pi's
     // app.message.dequeue: alt+q on Windows, alt+up elsewhere — both free
     // here, so both work everywhere).

@@ -11,7 +11,76 @@ use epsilon_contracts::session_entry::{
     CURRENT_SESSION_VERSION, EntryKind, SessionEntry, SessionHeader, SessionHeaderKind,
 };
 use epsilon_session::repair::{RepairKind, repair_on_open};
-use epsilon_session::{LineDiagnosis, ModelViewEntry, SessionLease, SessionStore, StoreError};
+use epsilon_session::{
+    DeleteOutcome, LineDiagnosis, ModelViewEntry, SessionLease, SessionStore, StoreError,
+    delete_session_file,
+};
+
+// ---- deletion (P-237) -----------------------------------------------------------
+
+/// A session file is really deleted, and the outcome says which happened.
+///
+/// Pi prefers the `trash` CLI and falls back to `unlink`
+/// (`session-selector.ts:654-689`). **This machine has no `trash` binary** — verified by
+/// `Get-Command trash` — so the preferred branch cannot fire here and the outcome is the
+/// permanent one. That is stated rather than mocked: a test that put a stub `trash` on `PATH`
+/// would be testing its own fixture, and the branch it purports to prove would still never run
+/// for a real user on this platform.
+#[test]
+fn deleting_a_session_file_removes_it_and_says_which_happened() {
+    let tmp = tempfile::tempdir().expect("tmp");
+    let path = tmp.path().join("2026-10-08T00-00-00_ses_gone.jsonl");
+    std::fs::write(&path, "{}\n").expect("a session file");
+    assert!(path.exists(), "the fixture exists");
+
+    let outcome = delete_session_file(&path).expect("a present file deletes");
+    assert_eq!(
+        outcome,
+        DeleteOutcome::Unlink,
+        "no `trash` binary here, so the fallback is what runs"
+    );
+    assert!(!path.exists(), "the file is gone");
+    assert_eq!(outcome.message(), "Session deleted");
+}
+
+/// A session that is already gone is an **error**, not a silent success.
+///
+/// Pi's `:675` answers `{ok: true}` when the file has merely vanished, and the caller then
+/// prints *"Session moved to trash"* — a claim about a recoverable copy that was never made,
+/// which no caller on the outside can detect. This is the first of the module's two deliberate
+/// divergences and the reason the existence check comes first.
+#[test]
+fn deleting_a_missing_session_file_is_an_error_not_a_success() {
+    let tmp = tempfile::tempdir().expect("tmp");
+    let path = tmp.path().join("never-existed.jsonl");
+    let err = delete_session_file(&path).expect_err("a missing file is not a delete");
+    assert!(
+        err.contains("no such session file"),
+        "the error must name the case, not blame the unlink: {err}"
+    );
+    // And it must not report the trash path as having been taken.
+    assert!(
+        !err.contains("moved to trash"),
+        "a vanished file must not be reported as trashed: {err}"
+    );
+}
+
+/// A path that looks like a CLI option is still deleted, not swallowed as one.
+///
+/// Pi guards this at `:658` with a `--` separator. A session path is generated
+/// (`<iso>_<id>.jsonl`) so it cannot start with `-` **today**, but the guard is one arm and a
+/// future naming change must not turn a delete into a `trash` usage error.
+#[test]
+fn a_path_that_looks_like_an_option_is_still_deleted() {
+    let tmp = tempfile::tempdir().expect("tmp");
+    let path = tmp.path().join("-leading-dash.jsonl");
+    std::fs::write(&path, "{}\n").expect("a session file");
+    assert!(
+        delete_session_file(&path).is_ok(),
+        "a leading dash must not be read as a trash option"
+    );
+    assert!(!path.exists(), "and the file is gone");
+}
 
 #[test]
 fn child_sessions_record_their_parent_link() {

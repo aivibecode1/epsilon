@@ -546,6 +546,22 @@ struct SessionBrowser {
     /// reader can predict from the screen. One until the first paint, so a key
     /// before the first frame still moves.
     capacity: usize,
+    /// The session awaiting deletion confirmation (P-237).
+    ///
+    /// `Some(path)` means every key is intercepted until the reader answers —
+    /// pi's `confirmingDeletePath` (`session-selector.ts:64`, interception at
+    /// `:543-557`). The alternative, deleting on the first press, is the defect
+    /// `AGENTS.md` §6 exists for: the unlink fallback is unrecoverable, so a
+    /// one-keystroke guard is the *only* undo there is.
+    confirming_delete: Option<std::path::PathBuf>,
+    /// A refusal to explain, shown in the panel itself (P-237).
+    ///
+    /// A notice pushed to the transcript would sit **behind** this overlay,
+    /// where the reader who just pressed the key cannot see it — which is
+    /// exactly the "a bound key the UI does not act on" failure `AGENTS.md`
+    /// §2.7 forbids. Pi writes its refusal into its own header
+    /// (`session-selector.ts:408`); this is the same idea in the panel.
+    delete_refusal: Option<String>,
 }
 
 impl SessionBrowser {
@@ -564,6 +580,8 @@ impl SessionBrowser {
             rows,
             index: 0,
             capacity: 1,
+            confirming_delete: None,
+            delete_refusal: None,
         }
     }
 
@@ -577,8 +595,22 @@ impl SessionBrowser {
             now_ms(),
         );
         if self.index >= self.rows.len() {
-            self.index = self.rows.len().saturating_sub(1);
+            self.index = self.index.min(self.rows.len().saturating_sub(1));
         }
+    }
+
+    /// The path a delete key press names, or `None` when it must not delete.
+    ///
+    /// Two refusals, both pi's (`session-selector.ts:402-413`): a row that does
+    /// not exist, and the **currently attached** session. Deleting the file the
+    /// agent is writing to would leave a live store pointing at a path that no
+    /// longer exists, which is a worse failure than not offering the key.
+    fn delete_target(&self) -> Option<std::path::PathBuf> {
+        let path = self.rows.get(self.index)?.path.clone();
+        if self.current.as_ref().is_some_and(|c| c == &path) {
+            return None;
+        }
+        Some(path)
     }
 }
 

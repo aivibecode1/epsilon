@@ -1061,6 +1061,49 @@ pub(crate) fn handle_key(app: &mut App, agent: &Arc<Agent>, key: KeyEvent) -> bo
     // input buffer (same as the model picker), so typing/backspace reuse the
     // editor's own grapheme-safe paths.
     if app.session_browser.is_some() {
+        // P-237: while a delete is being confirmed, **every** key is intercepted —
+        // pi's rule (`session-selector.ts:543-557`), and the reason is that a
+        // confirmation that lets navigation through is not a confirmation: the
+        // cursor moves, the reader answers the wrong row, and the file they meant
+        // to keep is gone. The unlink fallback is unrecoverable, so this is the
+        // only guard there is.
+        if app
+            .session_browser
+            .as_ref()
+            .is_some_and(|b| b.delete_refusal.is_some())
+        {
+            // A refusal is dismissed by any key, and only by that: the reader has
+            // seen it, and the next press belongs to them again.
+            if let Some(b) = app.session_browser.as_mut() {
+                b.delete_refusal = None;
+            }
+            return false;
+        }
+        if let Some(browser) = app.session_browser.as_ref()
+            && let Some(pending) = browser.confirming_delete.clone()
+        {
+            match key.code {
+                KeyCode::Enter => {
+                    let outcome = epsilon_session::delete_session_file(&pending);
+                    app.session_browser = None;
+                    app.input.clear();
+                    app.cursor_chars = 0;
+                    app.ui.push_notice(match outcome {
+                        // The shared sentence, so this front end and any other
+                        // name the same outcome the same way.
+                        Ok(how) => how.message().to_string(),
+                        Err(e) => format!("Failed to delete: {e}"),
+                    });
+                }
+                _ => {
+                    app.session_browser = None;
+                    app.input.clear();
+                    app.cursor_chars = 0;
+                    app.ui.push_notice("delete cancelled");
+                }
+            }
+            return false;
+        }
         match key.code {
             KeyCode::Esc => {
                 app.session_browser = None;
@@ -1135,6 +1178,40 @@ pub(crate) fn handle_key(app: &mut App, agent: &Arc<Agent>, key: KeyEvent) -> bo
                 app.input.clear();
                 app.cursor_chars = 0;
                 let _ = app.run_command(agent, crate::picker::Command::New);
+            }
+            // Ctrl+D asks to delete the highlighted session (P-237). Pi arms the
+            // same chord (`core/keybindings.ts:178-181`), and — like pi — this only
+            // *starts* a confirmation: the unlink fallback is unrecoverable, so a
+            // first press must not be able to destroy anything.
+            //
+            // It is safe here even though `ctrl+d` is the composer's
+            // delete-forward: this arm is inside the browser's own block, which
+            // runs before the composer handler, and the browser owns the keyboard
+            // while it is open (M57).
+            _ if app.keybindings.matches("app.session.delete", &key) => {
+                if let Some(path) = app
+                    .session_browser
+                    .as_ref()
+                    .and_then(SessionBrowser::delete_target)
+                {
+                    if let Some(b) = app.session_browser.as_mut() {
+                        b.confirming_delete = Some(path);
+                        b.delete_refusal = None;
+                    }
+                } else {
+                    // Pi's refusal, word for word (`session-selector.ts:408`):
+                    // the attached session is the one file this app is writing to.
+                    //
+                    // It is shown **in the panel** as well as pushed as a notice:
+                    // the transcript is behind this overlay, so a notice alone
+                    // would be a refusal the reader who pressed the key cannot
+                    // see — §2.7.
+                    let why = "Cannot delete the currently active session".to_string();
+                    if let Some(b) = app.session_browser.as_mut() {
+                        b.delete_refusal = Some(why.clone());
+                    }
+                    app.ui.push_notice(why);
+                }
             }
             _ => {}
         }

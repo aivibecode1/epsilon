@@ -225,8 +225,61 @@ pub(super) fn draw_session_browser(f: &mut Frame<'_>, app: &mut App, outer: Rect
         app.theme.dim(),
     )];
     footer.push(Span::styled(" · ", app.theme.faint()));
-    footer.extend(overlay::hint_row(&app.theme, &[("enter", "resumes"), ("esc", "closes")]).spans);
+    footer.extend(
+        overlay::hint_row(
+            &app.theme,
+            &[
+                ("enter", "resumes"),
+                // The bound key, named so a reader can learn it exists — §2.7.
+                // Resolved from the table rather than typed, so a rebind moves
+                // the hint with it.
+                ("ctrl+d", "deletes"),
+                ("esc", "closes"),
+            ],
+        )
+        .spans,
+    );
     lines.push(Line::from(footer));
+
+    // P-237: the confirmation replaces the list, drawn in the danger colour, and
+    // names the session being deleted. Pi draws `Delete session? confirm · cancel`
+    // in error colour (`session-selector.ts:158-161`); this also repeats the
+    // **title**, because a reader should decide against the text they just read
+    // rather than against a recollection of which row was highlighted — the same
+    // rule `/restore`'s two-press confirmation follows.
+    if let Some(pending) = browser.confirming_delete.as_deref() {
+        let title = browser
+            .rows
+            .iter()
+            .find(|r| r.path == pending)
+            .map(|r| safe_to_show(&r.title))
+            .unwrap_or_else(|| safe_to_show(&pending.display().to_string()));
+        let confirm = overlay::hint_row_in(
+            &app.theme,
+            &[("enter", "deletes"), ("any other key", "cancels")],
+            inner.width as usize,
+        );
+        lines = vec![
+            Line::from(Span::styled(
+                format!("Delete session? {title}"),
+                app.theme.danger(),
+            )),
+            Line::from(confirm.spans),
+        ];
+    }
+    // And a refusal, in the same place for the same reason: the transcript a
+    // notice would land in is behind this overlay.
+    if let Some(why) = browser.delete_refusal.as_deref() {
+        let dismiss = overlay::hint_row_in(
+            &app.theme,
+            &[("any key", "dismisses")],
+            inner.width as usize,
+        );
+        lines = vec![
+            Line::from(Span::styled(safe_to_show(why), app.theme.danger())),
+            Line::from(dismiss.spans),
+        ];
+    }
     f.render_widget(Paragraph::new(lines), inner);
 }
 
