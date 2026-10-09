@@ -302,12 +302,11 @@ instead of newlining, and the sessions sidebar being a keyboard trap. What remai
 
 ## Verification (what is actually true)
 
-**Latest green battery: [`gate-port-r97-2026-10-08.txt`](../audit/evidence/gate-port-r97-2026-10-08.txt),
+**Latest green battery: [`gate-port-r98-2026-10-08.txt`](../audit/evidence/gate-port-r98-2026-10-08.txt),
 2026-10-08 — the tree this file describes, and it is the one HEAD holds.** Thirteen legs, all
-`[exit=0]`, `GATE PASS`. **2,282 passed / 0 failed / 13 ignored across 78 binaries**, summed from
-that one log's `test result:` lines — two more than `gate-port-r96`: the two severity frames.
-`CARGO_PROFILE_TEST_DEBUG=2`. Green first time. The line-endings leg now sees the new code as
-tracked, which is the round-96 lesson applied: the gates ran after staging, not before.
+`[exit=0]`, `GATE PASS`. **2,284 passed / 0 failed / 13 ignored across 78 binaries**, summed from
+that one log's `test result:` lines — two more than `gate-port-r97`: the two queued-work quit
+tests. `CARGO_PROFILE_TEST_DEBUG=2`. Green first time.
 
 > **A CRLF working copy rode through a green battery, because the file was untracked.**
 > `delete.rs` was created with PowerShell's `Set-Content`, which writes CRLF on Windows, and
