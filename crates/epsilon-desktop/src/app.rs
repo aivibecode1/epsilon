@@ -6353,20 +6353,79 @@ impl IdeApp {
                     egui::Stroke::new(1.0, theme.border),
                     egui::StrokeKind::Inside,
                 );
-                // The empty state says what to do, not merely that there is nothing.
+                // **The empty state offers the work, it does not describe the room.**
+                // A single grey sentence in the centre of a 700-point pane was the
+                // first thing a new reader saw, and it told them where to look
+                // without ever offering to look. DSH's empty states carry a figure,
+                // a label and the action that fills them; this is the same idea
+                // with the one action that is actually available — the workspace's
+                // own files are already scanned and sitting in the tree.
+                // The same list the pane beside it draws, in the same order, so the
+                // button names a row the reader can see rather than a file the window
+                // picked by a rule of its own.
+                let first = self
+                    .tree
+                    .visible(&self.tree_query)
+                    .into_iter()
+                    .find(|r| !r.is_dir)
+                    .map(|r| r.path.clone());
                 paint_text(
                     painter,
                     summary,
                     "editor",
-                    body.center(),
+                    egui::pos2(body.center().x, body.center().y - 30.0 * scale),
                     egui::Align2::CENTER_CENTER,
-                    "Pick a file on the left to read it",
+                    "Nothing open",
+                    // **13 points, the pane's own text size.** A first version set this
+                    // at 15 and `at_the_default_zoom_every_size_is_exactly_what_it_was`
+                    // failed on the editor region: that test enumerates the one size
+                    // every region draws at, so an empty state that picks its own is a
+                    // defect it is right to catch. The headline is distinguished by
+                    // colour and position, not by inventing a size.
                     egui::FontId::proportional(13.0 * scale),
-                    theme.dim,
+                    theme.title,
                 );
-                summary
-                    .rows
-                    .push(("editor".into(), "Pick a file on the left to read it".into()));
+                summary.rows.push(("editor".into(), "Nothing open".into()));
+                match first {
+                    Some(path) => {
+                        let label = format!("Open {}", path);
+                        let response = ui.put(
+                            egui::Rect::from_center_size(
+                                egui::pos2(body.center().x, body.center().y + 6.0 * scale),
+                                egui::vec2(
+                                    (label.chars().count() as f32 * 8.0 + 32.0)
+                                        .min(body.width() - 32.0),
+                                    28.0 * scale,
+                                ),
+                            ),
+                            egui::Button::new(label.clone()),
+                        );
+                        name_node(&response, &label);
+                        summary
+                            .row_rects
+                            .push(("editor-open".into(), response.rect));
+                        summary.rows.push(("editor".into(), label));
+                        if response.clicked() {
+                            self.open_file(&path);
+                        }
+                    }
+                    None => {
+                        paint_text(
+                            painter,
+                            summary,
+                            "editor",
+                            body.center(),
+                            egui::Align2::CENTER_CENTER,
+                            "This workspace has no readable files",
+                            egui::FontId::proportional(12.0 * scale),
+                            theme.dim,
+                        );
+                        summary.rows.push((
+                            "editor".into(),
+                            "This workspace has no readable files".into(),
+                        ));
+                    }
+                }
             }
         }
     }
@@ -8758,11 +8817,16 @@ mod tests {
             workspace.iter().any(|t| t.contains("files")),
             "the pane says how much it found: {workspace:?}"
         );
-        // The editor's empty state says what to do, not merely that there is nothing.
+        // The editor's empty state **offers the work**, not merely that there is
+        // nothing. The assertion is on the offer existing, not on a specific
+        // file: this `paint_at` helper runs against whatever directory the test
+        // binary happens to be in, so the offered row is that workspace's first
+        // file — or, when there is none, the honest "no readable files" state.
+        let editor = f.region("editor");
         assert!(
-            f.region("editor").iter().any(|t| t.contains("Pick a file")),
-            "{:?}",
-            f.region("editor")
+            editor.iter().any(|t| t.starts_with("Open "))
+                || editor.iter().any(|t| t.contains("no readable files")),
+            "the editor's empty state must offer work or say there is none: {editor:?}"
         );
         assert!(
             f.drew("composer"),
@@ -9136,6 +9200,15 @@ mod tests {
         );
         let pane = h.app.layout.agent;
         for (region, rect) in &f.row_rects {
+            // **Only this pane's rows.** The loop used to walk every row on the
+            // frame and assert each sat inside the agent pane, which held only
+            // while the agent pane was the sole owner of `row_rects`. The editor's
+            // empty state now publishes one too (the button that opens the first
+            // file), and a test whose precondition has silently expired is a test
+            // that will fail for a reason it does not name.
+            if region != "agent" {
+                continue;
+            }
             assert!(
                 rect.left() >= pane.left() - 0.5
                     && rect.right() <= pane.right() + 0.5
@@ -12935,6 +13008,99 @@ mod tests {
         }
     }
 
+    /// **The empty editor offers the work instead of describing the room.**
+    ///
+    /// The largest region of the window used to show one grey sentence — "Pick a
+    /// file on the left to read it" — floating in a 700-point pane. It told a new
+    /// reader where to look without ever offering to look, while the workspace's
+    /// files were already scanned and sitting in the tree beside it. That is the
+    /// shape the empty-state rule in `AGENTS.md` §8 is about: an async view has
+    /// states, and an empty state is one of them, not the absence of one.
+    ///
+    /// Asserted through the **real click path**: press the button on the frame and
+    /// watch the file open and its text reach the editor. A test that only read
+    /// `editor` rows would pass against a button that draws and does nothing —
+    /// `AGENTS.md` invariant 7, in the place it is easiest to violate.
+    #[test]
+    fn the_empty_editor_offers_the_first_file_and_it_opens() {
+        let (ws, _keep) = scratch_workspace("editor-empty-offers");
+        let mut h = Harness::new(ws.clone());
+
+        let frame = h.paint();
+        let offered = frame
+            .region("editor")
+            .iter()
+            .find(|t| t.starts_with("Open "))
+            .cloned()
+            .unwrap_or_default();
+        assert!(
+            offered.starts_with("Open "),
+            "the empty state must offer a real file, not describe the room.\n{}",
+            frame.describe()
+        );
+        let named = offered.trim_start_matches("Open ").to_string();
+        assert_eq!(
+            named, "alpha.rs",
+            "and it must be the first file the tree draws: {named:?}"
+        );
+
+        // Click the button on the frame — the whole path, not the field.
+        let rect = frame
+            .row_rects
+            .iter()
+            .find(|(k, _)| k == "editor-open")
+            .map(|(_, r)| *r)
+            .expect("the offered file is a button with a rectangle");
+        h.click(rect.center());
+
+        let after = h.paint();
+        assert_eq!(
+            h.app.open.as_ref().map(|f| f.path.as_str()),
+            Some("alpha.rs"),
+            "clicking the offered file opens it"
+        );
+        assert!(
+            after
+                .region("editor")
+                .iter()
+                .any(|t| t.contains("alpha.rs") && t.contains("read-only")),
+            "and its text and its read-only notice reach the pane.\n{}",
+            after.describe()
+        );
+    }
+
+    /// **No files, no button.** A workspace with nothing readable must not offer an
+    /// action that cannot work — `AGENTS.md` invariant 7 again, and the reason this
+    /// is a separate test rather than an assertion in the one above.
+    #[test]
+    fn an_empty_editor_with_no_files_offers_nothing() {
+        let (dir, _keep) = scratch_workspace("editor-empty-none");
+        let _ = std::fs::remove_file(dir.join("alpha.rs"));
+        let _ = std::fs::remove_file(dir.join("beta.rs"));
+        assert!(
+            std::fs::read_dir(&dir).map(|d| d.count()).unwrap_or(0) == 0,
+            "the fixture must actually be empty, or this test proves nothing"
+        );
+        let mut h = Harness::new(dir);
+        let frame = h.paint();
+        assert!(
+            !frame
+                .region("editor")
+                .iter()
+                .any(|t| t.starts_with("Open ")),
+            "with nothing to open there is nothing to offer.\n{}",
+            frame.describe()
+        );
+        assert!(
+            frame
+                .region("editor")
+                .iter()
+                .any(|t| t.contains("no readable files")),
+            "and the state says so in words rather than failing silently.\n{}",
+            frame.describe()
+        );
+    }
+
     #[test]
     fn a_long_path_is_shortened_rather_than_overflowing_the_pane() {
         let short = display_path(std::path::Path::new("/a/b"));
@@ -13801,11 +13967,17 @@ mod tests {
         let mut h = Harness::new(dir);
         let f = h.paint();
 
+        // **"File ·" only.** The editor's empty state offers the workspace's
+        // first file by name, and in this workspace that file *is* `README.md`,
+        // so the button published `Open README.md` alongside the tree's two rows.
+        // The row names belong to the tree; the button's name belongs to the
+        // editor's own empty state, and a filter that caught both measured a
+        // mixture of two surfaces.
         let readmes: Vec<String> = h
             .named_nodes()
             .into_iter()
             .map(|(label, _)| label)
-            .filter(|l| l.contains("README.md"))
+            .filter(|l| l.starts_with("File · ") && l.contains("README.md"))
             .collect();
         assert_eq!(
             readmes.len(),

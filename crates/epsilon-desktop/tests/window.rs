@@ -410,11 +410,21 @@ fn an_unopened_editor_says_what_to_do() {
     let ctx = egui::Context::default();
     let mut app = IdeApp::without_agent(Options::for_workspace(ws.path()));
     let frame = paint_once(&ctx, &mut app, 1440.0, 900.0);
+    // The empty state **offers the work**. It used to say "Pick a file on the left
+    // to read it" — a sentence describing the room. It now names the workspace's
+    // first file and opens it when pressed, which is the same information plus the
+    // action that resolves it. The `read-only` half of the assertion is unchanged
+    // and still means what it meant: an empty editor must not claim to be showing
+    // a file it is not showing.
+    // Either state is correct and which one appears is a fact about the
+    // workspace: a non-empty one offers its first file, an empty one says there is
+    // none. What must never happen is the state that says nothing at all — a pane
+    // that is on screen with no explanation of why.
     assert!(
         frame
             .region("editor")
             .iter()
-            .any(|t| t.contains("Pick a file")),
+            .any(|t| t.starts_with("Open ") || t.contains("no readable files")),
         "{}",
         frame.describe()
     );
