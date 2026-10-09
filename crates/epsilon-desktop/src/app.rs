@@ -7695,8 +7695,18 @@ impl IdeApp {
             rows
         };
         if rows.is_empty() && pending.is_empty() {
+            // **What would fill this pane, not what is missing from it.**
+            // The no-agent fact was stated four times in one pane — the notice band,
+            // here, the composer's placeholder and the status bar — and only the
+            // composer and the status bar earn it, because each is an affordance
+            // that is genuinely unusable and `AGENTS.md` invariant 7 forbids either
+            // from advertising otherwise. **This line had no such excuse:** it sat in
+            // the middle of the pane repeating a fact the reader had already been
+            // told twice, and said nothing about the conversation it was standing in
+            // for. An empty state is a state (`AGENTS.md` §8), so it names what this
+            // pane holds when it holds something.
             let line = match self.session {
-                None => "no agent attached",
+                None => "a conversation will appear here once an agent is attached",
                 Some(_) => "nothing yet — type below to start",
             };
             let response = ui.colored_label(theme.dim, line);
@@ -15796,11 +15806,68 @@ mod tests {
         );
     }
 
+    /// **One pane states a fact once, in the place that acts on it.**
+    ///
+    /// The no-agent fact was stated four times in one pane: the notice band, the
+    /// empty transcript, the composer's placeholder and the status bar. Only the
+    /// last two earn it — each is an affordance that is genuinely unusable, and
+    /// `AGENTS.md` invariant 7 forbids either from advertising otherwise. The empty
+    /// transcript had no such excuse: it sat in the middle of the pane repeating a
+    /// fact the reader had already been told twice, and said nothing about the
+    /// conversation it was standing in for.
+    ///
+    /// Asserted on the **frame**, because the defect was arrangement and the frame is
+    /// the only surface that shows it — `status_line` legitimately returns the same
+    /// three words, and a test that counted string occurrences in the source would
+    /// call that a defect.
+    #[test]
+    fn the_empty_transcript_does_not_restate_the_fact_the_composer_already_states() {
+        let (dir, _keep) = scratch_workspace("no-restate");
+        let mut h = Harness::new(dir);
+        let frame = h.paint();
+
+        let agent = frame.region("agent").join(" ");
+        let composer = frame.region("composer").join(" ");
+        let notices = frame.region("notices").join(" ");
+        let status = frame.region("status").join(" ");
+
+        // The two places that must still say it, and do.
+        assert!(
+            composer.contains("no agent attached"),
+            "the composer is an affordance that cannot work, so it says so: {composer:?}"
+        );
+        assert!(
+            status.contains("no agent attached"),
+            "the status bar reports the state it is in: {status:?}"
+        );
+        // The transcript does not. This is the assertion the round exists for.
+        assert!(
+            !agent.contains("no agent attached"),
+            "the empty transcript must not be a third statement of a fact the reader has \
+             already been told twice: {agent:?}"
+        );
+        // And it says what it is for instead.
+        assert!(
+            agent.contains("a conversation will appear here"),
+            "an empty state names what the pane holds: {agent:?}"
+        );
+        // The band is the one place it belongs, and it is still there.
+        assert!(
+            notices.contains("not connected to an agent"),
+            "the notice band is where a launch-level fact belongs: {notices:?}"
+        );
+    }
+
     /// **An empty transcript names its empty state, and does not pretend to be content.**
     ///
     /// The empty state is a `Label` like any other, so egui has already built it a node —
-    /// unnamed. And it is **not a row**: a name of `Transcript row · no agent attached`
-    /// would tell a reader the conversation contains a row that says it has none.
+    /// unnamed. And it is **not a row**: a name of `Transcript row · …` would tell a reader
+    /// the conversation contains a row that says it has none.
+    ///
+    /// The wording the name carries moved in round 103: the no-agent fact was stated four
+    /// times in one pane and only two of those earn it, so this line now says what the pane
+    /// *holds* rather than what is missing from it. **The property under test is unchanged**
+    /// — a name, bounded, and not a row — which is why only the expected string moved.
     #[test]
     fn an_empty_transcript_names_its_empty_state_rather_than_a_row() {
         let (dir, _keep) = scratch_workspace("a11y-row-empty");
@@ -15808,10 +15875,9 @@ mod tests {
 
         let named = h.named_nodes();
         assert!(
-            named
-                .iter()
-                .any(|(l, _)| l == "Transcript empty · no agent attached"),
-            "the window with no agent says so on screen; its node must say it too.\nthe tree \
+            named.iter().any(|(l, _)| l
+                == "Transcript empty · a conversation will appear here once an agent is attached"),
+            "the pane with nothing in it says what it is for; its node must say it too.\nthe tree \
              held {named:?}"
         );
         assert!(
