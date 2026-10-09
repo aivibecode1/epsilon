@@ -2350,6 +2350,11 @@ pub struct IdeApp {
     pub(crate) session: Option<Arc<IdeSession>>,
     /// What the launch said, in order. Shown before anything runs.
     notices: Vec<String>,
+    /// Whether the startup notices are expanded. **`false` by default** so a
+    /// launch that emits six diagnostics does not lead with a wall of them; the
+    /// collapsed band names the count and shows the last, which is where the
+    /// actionable warnings are pushed.
+    notices_open: bool,
     /// The transcript, reduced from the agent's events.
     pub(crate) transcript: Transcript,
     /// The composer's draft.
@@ -3018,6 +3023,7 @@ impl IdeApp {
             prefs_save_error: None,
             session: Some(Arc::new(session)),
             notices,
+            notices_open: false,
             transcript,
             draft: String::new(),
             placeholder: "ask anything  ·  enter sends  ·  shift+enter for a new line",
@@ -3123,6 +3129,7 @@ impl IdeApp {
             prefs_save_error: None,
             session: None,
             notices,
+            notices_open: false,
             transcript,
             draft: String::new(),
             placeholder: "no agent attached",
@@ -7228,46 +7235,133 @@ impl IdeApp {
             );
         }
         summary.rows.push(("agent".into(), "Agent".into()));
-        // ---- header: what the launch said ------------------------------------
+        // Where the next thing in this pane goes: past the header, and past the
+        // notice band if there was one. The goal band below consumes this as its top.
         let mut y = rect.top() + HEADER_H * scale;
-        {
-            let painter = ui.painter();
-            for notice in &self.notices {
-                if y > rect.bottom() - COMPOSER_H * scale {
-                    break;
+        // ---- what the launch said, as one band --------------------------------
+        // **The launch's own diagnostics used to be six loose lines of dim text at the
+        // top of the conversation**, in the position a reader reads first, styled
+        // exactly like a message. Looking at a frame is the only way it shows: the
+        // words were all correct, the `fit` was right, and the *arrangement* was
+        // the defect — a wall of launch diagnostics is the "scattered, mixed
+        // together" problem in its clearest form, because none of it is
+        // conversation and all of it sits where conversation goes.
+        //
+        // One band with a label, a count, and a way to put it away. **Collapsed to
+        // the last notice when there is more than one**, because the notices are
+        // pushed in the order they happened — the launch's, then composition's,
+        // then the actionable warnings (a keybindings file that could not be used)
+        // — so the last is the one a reader can act on and the first six are the
+        // ones they have already lived through.
+        if !self.notices.is_empty() {
+            let collapsed = !self.notices_open && self.notices.len() > 1;
+            let shown: Vec<String> = if collapsed {
+                self.notices.last().cloned().into_iter().collect()
+            } else {
+                self.notices.clone()
+            };
+            let mut height = 18.0 * scale + shown.len() as f32 * 16.0 * scale;
+            if self.notices.len() > 1 {
+                height += 16.0 * scale;
+            }
+            let band = egui::Rect::from_min_size(
+                egui::pos2(rect.left() + 8.0, y),
+                egui::vec2(rect.width() - 16.0, height),
+            );
+            let painter = ui.painter().with_clip_rect(band);
+            // **Not a fill.** A first version painted `theme.background` here, and
+            // `the_panes_are_a_raised_surface_over_the_page` caught it: that test
+            // asserts no pane-shaped rect paints the page colour, and the band is
+            // pane-shaped. The band is distinguished by its border and its label
+            // instead, which is the same convention the goal band below uses on the
+            // same surface — one rule for both, rather than a second one here.
+            painter.rect_stroke(
+                band,
+                4.0,
+                egui::Stroke::new(1.0, theme.border),
+                egui::StrokeKind::Inside,
+            );
+            name_region(
+                ui,
+                band,
+                "notices",
+                &format!(
+                    "Notices · {} · {}",
+                    self.notices.len(),
+                    if collapsed { "collapsed" } else { "expanded" }
+                ),
+                egui::accesskit::Role::Group,
+            );
+            summary.rows.push((
+                "notices".into(),
+                format!(
+                    "Notices · {} · {}",
+                    self.notices.len(),
+                    if collapsed { "collapsed" } else { "expanded" }
+                ),
+            ));
+            let mut ny = band.top() + 13.0 * scale;
+            if self.notices.len() > 1 {
+                let label = if collapsed {
+                    format!("{} notices · show", self.notices.len())
+                } else {
+                    format!("{} notices · hide", self.notices.len())
+                };
+                let toggle = ui.put(
+                    egui::Rect::from_min_size(
+                        egui::pos2(band.left() + 8.0, ny - 10.0 * scale),
+                        egui::vec2(
+                            (label.chars().count() as f32 * 7.0 + 24.0).min(band.width() - 16.0),
+                            20.0 * scale,
+                        ),
+                    ),
+                    egui::Button::new(label.clone()).fill(theme.background),
+                );
+                name_node(&toggle, &format!("{label} the startup notices"));
+                summary
+                    .row_rects
+                    .push(("notices-toggle".into(), toggle.rect));
+                summary.rows.push(("notices".into(), label));
+                if toggle.clicked() {
+                    self.notices_open = collapsed;
                 }
-                // **Budgeted, and the summary carries the fitted text, not the raw one.**
-                // This notice stack was the last unbounded string in the window, and
-                // looking at a rendered frame is the only way it shows: a real launch
-                // notice — `no credentials for provider "openrouter" — set
-                // OPENROUTER_API_KEY or run: epsilon auth login openrouter` — ran off
-                // the right edge of the pane and stopped mid-word with **no marker**,
-                // while every test still passed, because they assert on `summary.rows`
-                // and this pushed the *unclipped* text.
-                //
-                // That is the trap this repository has been caught by repeatedly: code
-                // that draws can be deleted while the row it pushed stays. `fit`
-                // appends `…` and the summary records what was actually drawn, so the
-                // two cannot disagree.
-                let shown = fit(notice, rect.width() - 24.0, 12.0 * scale);
+                ny += 16.0 * scale;
+            }
+            for notice in &shown {
+                let text = fit(notice, band.width() - 16.0, 12.0 * scale);
                 paint_text(
-                    painter,
+                    &painter,
                     summary,
-                    "agent",
-                    egui::pos2(rect.left() + 12.0, y),
-                    egui::Align2::LEFT_TOP,
-                    &shown,
+                    "notices",
+                    egui::pos2(band.left() + 8.0, ny),
+                    egui::Align2::LEFT_CENTER,
+                    &text,
                     egui::FontId::proportional(12.0 * scale),
                     theme.dim,
                 );
-                y += 17.0 * scale;
-                // **The row is recorded here, not by `paint_text`** — which only pushes a
-                // text *size* (`app.rs:1391`). A first version of this fix dropped this
-                // line while replacing it with the fitted text, and the test failed with
-                // an agent pane that had drawn nothing at all: the drawing and the record
-                // are two separate acts, and this one is the record.
-                summary.rows.push(("agent".into(), shown));
+                summary.rows.push(("notices".into(), text));
+                ny += 16.0 * scale;
             }
+            // **Dismiss.** Diagnosing is what these are for; once read they are noise
+            // sitting in the reading position. A reader who has read them must be able
+            // to move them, and a notice that cannot be moved is a notice that is
+            // eventually ignored by everyone.
+            let dismiss = ui.put(
+                egui::Rect::from_min_size(
+                    egui::pos2(band.right() - 60.0, ny + 2.0 * scale),
+                    egui::vec2(52.0, 18.0 * scale),
+                ),
+                egui::Button::new("dismiss").fill(theme.background),
+            );
+            name_node(&dismiss, "Dismiss the startup notices");
+            summary
+                .row_rects
+                .push(("notices-dismiss".into(), dismiss.rect));
+            summary.rows.push(("notices".into(), "dismiss".into()));
+            if dismiss.clicked() {
+                self.notices.clear();
+            }
+            y = band.bottom() + 6.0;
         }
         // ---- goal banner ----------------------------------------------------
         // **A goal the window cannot see is a goal the window cannot serve.** Until this,
@@ -10408,6 +10502,108 @@ mod tests {
     /// page behind them is the darkest layer (`design-platform.css`: base
     /// `#0F1115`, sidebar `#1B1B1C`). This theme already encodes that pair —
     /// `background` and `panel` — and the panes simply were not using it.
+    /// **The launch's diagnostics are one band, not six loose lines.**
+    ///
+    /// The defect was arrangement, not content: every word was correct and the
+    /// `fit` was right, and a wall of raw launch output still sat in the position a
+    /// reader reads first, styled exactly like a message. This is the objective's
+    /// own description of the desktop's problem — output "scattered, mixed
+    /// together" — in its clearest form, because none of it is conversation and all
+    /// of it sits where conversation goes.
+    ///
+    /// Driven with the launch's **real** notices rather than a fixture string,
+    /// because the count is what the band is about: six notices must read as one
+    /// thing with a way to put it away, and one notice must read as itself.
+    #[test]
+    fn the_launch_diagnostics_are_one_band_not_six_loose_lines() {
+        let (ws, _keep) = scratch_workspace("notice-band");
+        // A launch like the one a real desktop gets: several diagnostics, the last
+        // of which is the actionable one.
+        let (session, _n) = faux_session(&ws);
+        let launch = session
+            .launch()
+            .notices
+            .clone()
+            .into_iter()
+            .chain([
+                r#"model "deepseek-chat" matched catalog entry "deepseek/deepseek-chat-v3.1""#
+                    .into(),
+                r#"no credentials for provider "openrouter" — set OPENROUTER_API_KEY"#.into(),
+                "try: --model deepseek-flash (deepseek)".into(),
+            ])
+            .collect::<Vec<_>>();
+        let mut h = Harness::with_session(ws, session, launch);
+
+        let frame = h.paint();
+        let band = frame.region("notices");
+        assert!(
+            band.iter().any(|t| t.starts_with("Notices · ")),
+            "the notices are one labelled thing.\n{}",
+            frame.describe()
+        );
+        assert!(
+            band.iter().any(|t| t.contains("collapsed")),
+            "and collapsed by default when there is more than one: {band:?}"
+        );
+        // The count is on screen, and the actionable last line is the one shown.
+        assert!(
+            band.iter()
+                .any(|t| t.contains("try: --model deepseek-flash")),
+            "the collapsed band keeps the notice a reader can act on: {band:?}"
+        );
+        assert!(
+            !band
+                .iter()
+                .any(|t| t.contains("no credentials for provider")),
+            "and does not lead with the raw diagnostics: {band:?}"
+        );
+
+        // The dismiss is real: it clears them, not just the rows.
+        let rect = frame
+            .row_rects
+            .iter()
+            .find(|(k, _)| k == "notices-dismiss")
+            .map(|(_, r)| *r)
+            .expect("dismiss is a button with a rectangle");
+        h.click(rect.center());
+        let after = h.paint();
+        assert!(
+            after.region("notices").is_empty(),
+            "dismissing removes them from the pane entirely: {:?}",
+            after.region("notices")
+        );
+        assert!(
+            h.app.notices.is_empty(),
+            "and from the state, so a later frame does not bring them back"
+        );
+    }
+
+    /// **One notice is not a band to hide behind.**
+    ///
+    /// `AGENTS.md` invariant 7: a control that does nothing is worse than no
+    /// control. With a single notice — the common case, `not connected to an
+    /// agent` — there is nothing to collapse and nothing to count, and the notice
+    /// itself must be on screen.
+    #[test]
+    fn a_single_notice_shows_itself_without_a_collapse_control() {
+        let (ws, _keep) = scratch_workspace("notice-single");
+        let mut h = Harness::new(ws);
+        let frame = h.paint();
+        assert!(
+            frame
+                .region("notices")
+                .iter()
+                .any(|t| t.contains("not connected to an agent")),
+            "a single notice is shown, not counted: {:?}",
+            frame.region("notices")
+        );
+        assert!(
+            !frame.region("notices").iter().any(|t| t.contains("show")),
+            "and offers no collapse there is nothing to collapse: {:?}",
+            frame.region("notices")
+        );
+    }
+
     ///
     /// Asserted on the **shapes a renderer would be handed**, not on a string: a
     /// pane's fill is a pixel fact and `FrameSummary` records words.
@@ -14198,13 +14394,50 @@ mod tests {
 
         let mut h = Harness::with_session(ws.path().to_path_buf(), session, launch_notices);
         let frame = h.paint();
-        let agent = frame.region("agent").join("\n");
+        let notices = frame.region("notices").join("\n");
+
+        // **Collapsed first, and that is the assertion before the one that matters.**
+        // A launch that emits eight notices must not lead with a wall of them, so the
+        // band names the count and offers the rest. `resumed 1 entries` is one of
+        // those eight and is genuinely behind the fold — which is why the reader's
+        // own action to open it is what this test drives below, rather than the test
+        // asserting on text a real reader would not see either.
+        assert!(
+            notices.contains("collapsed"),
+            "a launch with several notices leads with a count, not a wall.\n{}",
+            frame.describe()
+        );
+        let toggle = frame
+            .row_rects
+            .iter()
+            .find(|(k, _)| k == "notices-toggle")
+            .map(|(_, r)| *r)
+            .expect("the band offers a way to open it");
+        // **Paint again after the click.** A click's effect is applied by the widget
+        // that received it, which happens *inside* the frame the click landed on —
+        // after the band's own heading was already drawn. So the frame `click`
+        // returns legitimately still says `collapsed`, and the opened band is on the
+        // next one. Reading the returned frame instead would assert on the state
+        // before the reader's own action took effect.
+        h.click(toggle.center());
+        let opened = h.paint();
+        assert!(
+            opened
+                .region("notices")
+                .iter()
+                .any(|t| t.contains("expanded")),
+            "the control opens the band.\n{}",
+            opened.describe()
+        );
 
         assert!(
-            agent.contains("resumed 1 entries"),
+            opened
+                .region("notices")
+                .join("\n")
+                .contains("resumed 1 entries"),
             "a session that restored entries announced it, and the window is the only surface \
              that can show it.\n{}",
-            frame.describe()
+            opened.describe()
         );
     }
 
@@ -14234,22 +14467,22 @@ mod tests {
         // below must therefore contain this sentence and no other notice is relevant.
         h.app.notices = vec![long.to_string()];
         let frame = h.paint();
-        let agent = frame.region("agent").join("\n");
+        let notices = frame.region("notices").join("\n");
 
         assert!(
-            agent.contains('…'),
+            notices.contains('…'),
             "a notice that cannot fit must end in the marker, so a reader can tell a cut \
              sentence from a whole one.\n{}",
             frame.describe()
         );
         assert!(
-            !agent.contains("which is a deliberately long sentence"),
+            !notices.contains("which is a deliberately long sentence"),
             "and the text past the budget must not still be reported as drawn — the summary \
              and the pixels are the same string now.\n{}",
             frame.describe()
         );
         assert!(
-            agent.contains("no credentials for provider"),
+            notices.contains("no credentials for provider"),
             "the beginning still reads, or the budget ate the sentence instead of cutting it.\n{}",
             frame.describe()
         );
@@ -15897,13 +16130,24 @@ mod tests {
         assert_eq!(sizes_of("workspace"), vec![12.0, 11.0], "{sizes:?}");
         assert_eq!(sizes_of("editor"), vec![13.0], "{sizes:?}");
         assert_eq!(sizes_of("tree"), vec![13.0, 13.0], "{sizes:?}");
-        // Every painter string the agent pane drew, whatever they are: two at 12 points,
-        // because the pane's own heading and the notice stack below it are both 12 and
-        // both were 12 before this change.
+        // **One, not two.** The notice stack used to live in this region and was
+        // counted here; it is its own region now, so the pane paints its heading and
+        // the band paints its own. The floor is 1 and the band's is 1, because an
+        // exact count would be a count of the fixture rather than of the window —
+        // a launch can emit any number of notices.
         assert!(sizes_of("agent").iter().all(|s| *s == 12.0), "{sizes:?}");
         assert!(
-            sizes_of("agent").len() >= 2,
-            "the agent pane paints its heading and its notices: {sizes:?}"
+            !sizes_of("agent").is_empty(),
+            "the agent pane paints its heading: {sizes:?}"
+        );
+        // The band is its own region, and it keeps the same rule: one size, whatever
+        // it is painting.
+        assert!(
+            sizes_of("notices")
+                .iter()
+                .all(|s| *s == sizes_of("notices").first().copied().unwrap_or(12.0)),
+            "the notice band keeps one text size across a count line and its rows: {:?}",
+            sizes_of("notices")
         );
     }
 
