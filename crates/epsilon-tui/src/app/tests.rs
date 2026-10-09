@@ -7045,8 +7045,16 @@ fn tool_cards_are_separated_by_blank_rows() {
 
 /// A card's body nests under its title with a continuation gutter.
 ///
-/// The title keeps the line's gutter; body rows draw `│` (unicode) so a
+/// The title keeps the line's gutter; body rows draw the continuation glyph so a
 /// title and its output never share a gutter. Asserted on the frame.
+///
+/// **The glyphs come from the app's theme, not from this test's alphabet.** The
+/// first version asserted the ASCII repertoire's literals (`\` for the call, `|`
+/// for the body) and passed for months on a machine whose detection defaulted to
+/// ASCII; round 105's battery ran with `TERM=xterm-256color`, the detection
+/// flipped to the unicode repertoire, and the frame drew `▸` and `│` — the test
+/// failed on a correct product. A repertoire-relative assertion is the fix: it
+/// reads the glyphs the draw itself used and stays true in both.
 #[test]
 fn card_bodies_nest_under_a_continuation_gutter() {
     use epsilon_contracts::agent_event::AgentEvent;
@@ -7082,11 +7090,11 @@ fn card_bodies_nest_under_a_continuation_gutter() {
         .position(|r| r.contains("bash"))
         .expect("the title is on screen");
     assert!(
-        rows[title].starts_with('\\'),
+        rows[title].starts_with(app.theme.glyphs.tool_call),
         "the title keeps the call gutter:\n{frame}"
     );
     assert!(
-        rows[title + 1].starts_with('│') || rows[title + 1].starts_with('|'),
+        rows[title + 1].starts_with(app.theme.glyphs.vertical),
         "the body nests under a continuation gutter:\n{frame}"
     );
 }

@@ -426,7 +426,12 @@ impl App {
         // the environment only to collapse the home prefix, and the workspace root
         // is captured in `App::new` and never reassigned — so the result cannot
         // change and is computed once.
-        hints.location = Some(self.location_label.clone());
+        // The location label is picked per repertoire, not baked at construction: the
+        // draw's theme decides the ellipsis mark, and `…` is one a CP437 console cannot
+        // draw (round 105's battery found twelve rows carrying it).
+        let location =
+            &self.location_labels[usize::from(self.theme.glyphs == crate::ui::theme::ASCII)];
+        hints.location = Some(location.clone());
         if let Some(branch) = self.cached_branch() {
             hints.branch = Some(branch);
         }

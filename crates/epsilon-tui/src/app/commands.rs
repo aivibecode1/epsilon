@@ -2507,7 +2507,16 @@ mod tests {
     fn frame(app: &mut App, width: u16, height: u16) -> String {
         render_rows(app, width, height)
             .iter()
-            .map(|row| row.trim_start_matches(|c: char| c.is_whitespace() || "*│┃".contains(c)))
+            // `•` is the unicode repertoire's System-row gutter — the same leading gutter
+            // `*` is in the ASCII one. Stripping `*` and not `•` made every wrapped-notice
+            // assertion repertoire-dependent: under ASCII the continuation's bullet went and
+            // `contains` saw the sentence; under unicode it stayed and the squeezed screen
+            // read `wrote•it` where the test looked for `wroteit`. Round 105's battery found
+            // this when the harness's own `TERM=xterm-256color` flipped the suite from ASCII
+            // to unicode with no source change — the tests had been green against the wrong
+            // repertoire. `·` (the in-row field separator) stays: stripping it would invent
+            // word boundaries that are not on screen.
+            .map(|row| row.trim_start_matches(|c: char| c.is_whitespace() || "*•│┃".contains(c)))
             .collect::<String>()
             .chars()
             .filter(|c| !c.is_whitespace())

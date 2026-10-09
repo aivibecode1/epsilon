@@ -315,14 +315,22 @@ pub(crate) struct App {
     /// reconcile and then cleared, so a busy run re-renders the one card that
     /// changed rather than the conversation.
     card_restale: std::collections::HashSet<u64>,
-    /// The workspace path, already shortened for the footer.
+    /// The workspace path, already shortened for the footer — **one label per repertoire**.
     ///
-    /// Fixed for the life of the process: `workspace_root` is read once in
-    /// `App::new` and never reassigned, and the shortening depends only on that
-    /// root and the user's home directory. It used to be recomputed on every
-    /// drawn frame — two environment lookups and a path walk, thirty times a
-    /// second — so it is now derived once, where the field is declared.
-    location_label: String,
+    /// The original cache keyed on (root, home) alone and took its ellipsis from
+    /// `Glyphs::detect()` at construction. That baked the *machine's* default into every
+    /// frame any other repertoire drew: `…` is not in CP437 at all
+    /// (`Glyphs::ASCII` uses `...`), so a window that detected Unicode and drew an ASCII
+    /// frame — a golden sweep, or an `EPSILON_ASCII=1` process whose theme outlived its
+    /// construction — printed the one character the ASCII repertoire exists to remove.
+    /// `an_ascii_frame_draws_no_character_a_legacy_console_cannot` found it in round 105's
+    /// battery: twelve rows carrying a literal `…`.
+    ///
+    /// Both variants are derived once, where the field is declared — the environment
+    /// lookups and the path walk still happen once per repertoire, never per frame — and
+    /// the draw picks by the theme's own glyphs, like every other character on screen.
+    /// Index 0 is the Unicode ellipsis, index 1 the ASCII one.
+    location_labels: [String; 2],
     /// The session goal as the footer shows it (`● goal 2/256`), or `None` when there is none.
     ///
     /// Cached rather than read from the store per frame: a goal changes when a person or the

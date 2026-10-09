@@ -29,6 +29,29 @@ impl App {
     ) -> Self {
         let workspace_root =
             std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
+        // The footer's location label, one per repertoire: the shortening reads the
+        // environment (the home prefix) and the ellipsis mark, and the mark is the one
+        // thing the draw's own theme decides. Both are derived here, once — see the
+        // field's doc for the round-105 defect the second variant fixes.
+        let location_labels = {
+            let home = std::env::var_os("HOME")
+                .or_else(|| std::env::var_os("USERPROFILE"))
+                .map(std::path::PathBuf::from);
+            [
+                crate::ui::format::format_path(
+                    &workspace_root,
+                    home.as_deref(),
+                    28,
+                    crate::ui::theme::UNICODE.ellipsis,
+                ),
+                crate::ui::format::format_path(
+                    &workspace_root,
+                    home.as_deref(),
+                    28,
+                    crate::ui::theme::ASCII.ellipsis,
+                ),
+            ]
+        };
         // Thinking visibility is UI state, not app state: the push sites that
         // must skip are `UiState` methods, and a flag anywhere else would be a
         // second source of truth to keep in sync. Loaded once here like the
@@ -133,17 +156,7 @@ impl App {
             // A quarter of the row is the most the location may take before the
             // hints stop being readable; past that the tail of the path is what
             // matters. Derived once — see the field's doc.
-            location_label: {
-                let home = std::env::var_os("HOME")
-                    .or_else(|| std::env::var_os("USERPROFILE"))
-                    .map(std::path::PathBuf::from);
-                crate::ui::format::format_path(
-                    &workspace_root,
-                    home.as_deref(),
-                    28,
-                    crate::ui::theme::Glyphs::detect().ellipsis,
-                )
-            },
+            location_labels,
             workspace_root,
             // Nothing has read the session's goal yet, and a fresh process has not armed one:
             // the badge appears the first time something looks, which is a `/goal` command or

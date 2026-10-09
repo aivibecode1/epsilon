@@ -11,8 +11,9 @@ Read in this order:
 2. **This file** — what is true right now, what is verified, and what has bitten.
 3. [`STATUS.md`](STATUS.md) — the living record: every milestone, every measurement, every open
    item. It is long; the **Known-broken** and **Next** sections are the ones you need.
-4. [`plans/024-finishing-the-objective.md`](plans/024-finishing-the-objective.md) — the prioritised
-   plan for what is left, with the evidence for each item.
+4. [`plans/026-convergence.md`](plans/026-convergence.md) — the current plan: the 2026-10-09 audit's re-rank (R1–R8), with plan 025 dispositioned inside it.
+5. [`plans/024-finishing-the-objective.md`](plans/024-finishing-the-objective.md) — the
+   historical plan; several of its items are already landed and the rest are carried by 026.
 
 ---
 
@@ -170,7 +171,7 @@ Each of these caught something real; the evidence is in `STATUS.md`.
 |---|---|
 | The rules | [`../AGENTS.md`](../AGENTS.md) |
 | What is true now, and what is broken | [`STATUS.md`](STATUS.md) |
-| What is left to do, prioritised | [`plans/024-finishing-the-objective.md`](plans/024-finishing-the-objective.md) |
+| What is left to do, prioritised | [`plans/026-convergence.md`](plans/026-convergence.md) (024 and 025 are history, dispositioned inside 026) |
 | A human's tour of the project | [`START-HERE.md`](START-HERE.md) · [Arabic](START-HERE.ar.md) |
 | Architecture and dependency graph | [`design/epsilon-architecture.md`](design/epsilon-architecture.md) |
 | Why a decision was made | [`design/epsilon-decisions.md`](design/epsilon-decisions.md) |

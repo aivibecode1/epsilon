@@ -2363,6 +2363,21 @@ pub struct IdeApp {
     placeholder: &'static str,
     /// Set when the last submit was refused, so the pane can say why.
     refusal: Option<String>,
+    /// Every approval button the last frame drew, in draw order — per parked ask,
+    /// `Allow` (only when the ask is honest) then `Refuse`.
+    ///
+    /// **Why the ids are saved as they are drawn.** The gate's keyboard answer runs at the
+    /// top of the frame, before any widget exists, and the reference rule it now follows is
+    /// focus-relative: Enter keeps its native action when the focused element is a button
+    /// (`packages/client/ui-approval/src/client/ApprovalPanel.tsx:51`, rows D-073 / I-104).
+    /// egui turns Enter on a focused click-sensed widget into a primary click
+    /// (`egui-0.36.2/src/context.rs:1466-1472`), so the global read must stand aside when
+    /// one of these holds focus — which means the top-of-frame handler needs to know the
+    /// ids a widget drawn later in the same frame will have. Ids are stable for as long as
+    /// the ask is parked (the strip draws every frame while it is), and an emptied vec
+    /// restores the global answer for an unparked ask. Cleared by redrawing, which is also
+    /// what makes it safe to consult one frame late.
+    approval_button_ids: Vec<egui::Id>,
     /// Agent events this window lost to lag, as of the last frame (M312).
     ///
     /// **A copy, refreshed in `pump`, because the count is born on the bridge task** and the
@@ -3028,6 +3043,7 @@ impl IdeApp {
             draft: String::new(),
             placeholder: "ask anything  ·  enter sends  ·  shift+enter for a new line",
             refusal: None,
+            approval_button_ids: Vec::new(),
             dropped_events: 0,
             tree,
             tree_query: String::new(),
@@ -3134,6 +3150,7 @@ impl IdeApp {
             draft: String::new(),
             placeholder: "no agent attached",
             refusal: None,
+            approval_button_ids: Vec::new(),
             dropped_events: 0,
             tree,
             tree_query: String::new(),
@@ -3214,6 +3231,17 @@ impl IdeApp {
     /// a test that has to go through a frame to submit a prompt is a test of the frame.
     pub fn session(&self) -> Option<&Arc<IdeSession>> {
         self.session.as_ref()
+    }
+    /// The ids of the last frame's approval buttons, in draw order: per parked ask,
+    /// `Allow` when the ask was honest, then `Refuse`.
+    ///
+    /// A seam for the draw-path tests, and nothing else reads it: the keyboard ownership
+    /// rule it serves (a focused approval button owns Enter) is otherwise invisible from
+    /// outside the draw, which is how a feature is correct at every level and never
+    /// reached. Nothing about the ids is secret — it exists so a test can press the key
+    /// against the real focused widget instead of asserting on state.
+    pub fn approval_button_ids(&self) -> &[egui::Id] {
+        &self.approval_button_ids
     }
     /// What the composer currently holds.
     pub fn draft(&self) -> &str {
@@ -4601,8 +4629,9 @@ impl IdeApp {
         // meant — and the ask was painted with `[enter] allow [esc] refuse` while the
         // composer consumed both. `approve_pending` existed, was correct, had a test, and
         // **had no caller in the crate**: the window drew a gate it could not open.
+        let approval_buttons = self.approval_button_ids.clone();
         if let Some(s) = self.session.clone() {
-            approve_pending(&s, &self.keys, ui.ctx());
+            approve_pending(&s, &self.keys, ui.ctx(), &approval_buttons);
         }
         // Live-fetch results land here, before any overlay draws: merged
         // rows must reach the screen on the frame they arrive, not the one
@@ -7780,6 +7809,11 @@ impl IdeApp {
             }
         }
         ui.add_space(offsets.total() - offsets.at(span.end));
+        // **End the layout borrow at its last use.** `row_offsets` returns a `Ref` into a
+        // cache that lives in `self`, and the registration below writes to a field of
+        // `self`; holding both is a borrow error, and the borrow is dead here rather than
+        // at the end of the function.
+        drop(offsets);
         // The pending approvals are drawn after the rows, where they cannot scroll out of
         // reach behind a long answer — the composer-adjacent placement opencode and DSH
         // both converged on, and the reason is not aesthetic.
@@ -7789,6 +7823,7 @@ impl IdeApp {
         // message has produced no rows at all. A reader in that state must still be told
         // the run is blocked on *them*.
         let mut decided = None;
+        let mut approval_buttons: Vec<egui::Id> = Vec::new();
         let ask_budget = (ui.available_width() - 240.0).max(120.0);
         for ask in pending {
             let (text, honest) = Self::ask_line(&ask, ask_budget, scale);
@@ -7806,19 +7841,20 @@ impl IdeApp {
             // unblock it is the window's worst state, so the buttons are not a
             // convenience.
             ui.horizontal(|ui| {
-                if honest
-                    && ui
+                if honest {
+                    let allow = ui
                         .button("Allow")
-                        .on_hover_text("Run this now. Enter does the same.")
-                        .clicked()
-                {
-                    decided = Some((ask.request_id.clone(), PermissionDecision::AllowOnce));
+                        .on_hover_text("Run this now. Enter does the same.");
+                    approval_buttons.push(allow.id);
+                    if allow.clicked() {
+                        decided = Some((ask.request_id.clone(), PermissionDecision::AllowOnce));
+                    }
                 }
-                if ui
+                let refuse = ui
                     .button("Refuse")
-                    .on_hover_text("Decline it. Escape does the same.")
-                    .clicked()
-                {
+                    .on_hover_text("Decline it. Escape does the same.");
+                approval_buttons.push(refuse.id);
+                if refuse.clicked() {
                     decided = Some((ask.request_id.clone(), PermissionDecision::Deny));
                 }
             });
@@ -7826,6 +7862,10 @@ impl IdeApp {
                 .hotspots
                 .push((format!("approval:allow:{}", ask.request_id), ui.min_rect()));
         }
+        // **Republish the button ids for the next frame's key handler.** The loop empties
+        // the vec when nothing is parked (no button drawn, no id to stand aside for), so an
+        // ask that resolves restores the global answer on the frame after it closes.
+        self.approval_button_ids = approval_buttons;
         clicks.decision = decided;
         clicks
     }
@@ -8699,32 +8739,80 @@ impl eframe::App for IdeApp {
 }
 /// Answer a pending approval from the keyboard, if one is waiting.
 ///
-/// Split out from [`IdeApp::paint`] because it is the part with a policy — Enter allows,
-/// Escape refuses — and a policy is worth one test that names it rather than one that
-/// pokes at pixels.
+/// Split out from [`IdeApp::paint`] because it is the part with a policy — and the policy
+/// now has three rules, each of which used to be wrong in a different way:
+///
+/// 1. **Escape refuses, everywhere, and is always taken.** It is the door that stays open in
+///    every state, including the dishonest one below.
+/// 2. **A dishonest ask cannot be approved as shown.** The rule that takes the `Allow`
+///    button away in [`IdeApp::ask_line`] (`epsilon_runtime::ask_is_display_honest`, M272)
+///    takes the Enter away here: a `U+202E` in the request means the screen shows one
+///    command and the gate would authorise another. The terminal has refused these since
+///    M261; this window's *keyboard* was the hole in that parity, because the honesty
+///    check lived only in the draw path.
+/// 3. **A focused approval button owns Enter.** egui turns Enter on a focused click-sensed
+///    widget into a primary click (`egui-0.36.2/src/context.rs:1466-1472`), which is the
+///    reference behaviour rows D-073 / I-104 name: Enter keeps its native action when the
+///    focused element is a button. `KeyBindings::take` *removes* the event, so taking it
+///    before the widget was drawn meant Enter aimed at **Refuse** answered "allow".
+///    Standing aside leaves the event in the stream for the button, which registers
+///    earlier in `agent_panel` than the composer's own Enter.
 ///
 /// **`keys` is a parameter rather than read from the app** because this is a free function and
 /// because the two ids it consults — `window.approval.allow` and `window.approval.deny` — are
 /// **deliberately different ids from the composer's `Enter`/`Escape`.** The same chord answers a
 /// different action depending on which surface holds the keyboard, and which one that is is
 /// decided by the drawing order above, not by the table.
+///
+/// `approval_buttons` holds the ids the last frame drew (see the field on [`IdeApp`]);
+/// empty when no ask is parked, which restores the global answer for the common case.
 pub fn approve_pending(
     session: &IdeSession,
     keys: &crate::keys::KeyBindings,
     ctx: &egui::Context,
+    approval_buttons: &[egui::Id],
 ) -> Option<(String, bool)> {
     let ask = session.pending_approvals().into_iter().next()?;
-    if keys.take(ctx, "window.approval.allow") {
-        let decision = PermissionDecision::AllowOnce;
-        let resolved = session.resolve(&ask.request_id, decision);
-        return Some((ask.request_id, resolved));
-    }
     if keys.take(ctx, "window.approval.deny") {
         let decision = PermissionDecision::Deny;
         let resolved = session.resolve(&ask.request_id, decision);
         return Some((ask.request_id, resolved));
     }
+    let focused = approval_buttons
+        .iter()
+        .any(|id| ctx.memory(|m| m.has_focus(*id)));
+    if !enter_still_allows(&ask, focused) {
+        return None;
+    }
+    if keys.take(ctx, "window.approval.allow") {
+        let decision = PermissionDecision::AllowOnce;
+        let resolved = session.resolve(&ask.request_id, decision);
+        return Some((ask.request_id, resolved));
+    }
     None
+}
+
+/// Whether the keyboard's Enter still means "allow" for this ask this frame.
+///
+/// A pure function of the two rules because both halves are safety-relevant and neither is
+/// reachable through a painted frame: a dishonest ask cannot be produced by the product's
+/// own tools (see [`IdeApp::ask_line`]), and a *focused* button is a focus state the frame
+/// tests can only reach by driving the real key path — which one of them now does. The
+/// function is where both rules are named; the tests above and below pin them.
+fn enter_still_allows(
+    ask: &epsilon_contracts::agent_event::PermissionRequest,
+    approve_button_focused: bool,
+) -> bool {
+    // A dishonest ask cannot be approved as shown — the draw path takes the button away,
+    // and the keyboard must not authorise what the button path refuses (M261's rule, M272's
+    // predicate).
+    if !epsilon_runtime::ask_is_display_honest(ask) {
+        return false;
+    }
+    // A focused approval button owns Enter: egui activates it
+    // (`egui-0.36.2/src/context.rs:1466-1477`), which is the reference behaviour D-073 /
+    // I-104 name.
+    !approve_button_focused
 }
 #[cfg(test)]
 mod tests {
@@ -8825,6 +8913,46 @@ mod tests {
         assert!(
             text.contains("[esc] refuse"),
             "refusing must stay available on the line itself: refusing is not a wedge: {text}"
+        );
+    }
+
+    /// The two rules the gate's keyboard follows, pinned where they are written.
+    ///
+    /// Both halves are unreachable through a painted frame — a dishonest ask cannot be
+    /// produced by the product's own tools, and a focused button is a focus state — so the
+    /// rule is a pure function and this is its test. The focused-button half is **also**
+    /// pinned end-to-end in `tests/window.rs`
+    /// (`enter_aimed_at_the_focused_refuse_button_refuses_the_ask`), which drives the real
+    /// key path; this pins the honest ask and the dishonest one here, where both can be
+    /// constructed.
+    #[test]
+    fn enter_still_allows_only_for_an_honest_ask_no_button_owns() {
+        use epsilon_contracts::agent_event::PermissionRequest;
+
+        let hostile = PermissionRequest {
+            request_id: "ask-hostile".into(),
+            capability: "bash".into(),
+            pattern: "ls".into(),
+            detail: serde_json::json!({ "command": "ls\u{202E} -R /" }),
+        };
+        let ordinary = PermissionRequest {
+            request_id: "ask-fine".into(),
+            capability: "bash".into(),
+            pattern: "echo".into(),
+            detail: serde_json::json!({ "command": "echo epsilon-ready" }),
+        };
+
+        // The common case: nothing focused, ask honest — Enter allows, as the ask strip says.
+        assert!(enter_still_allows(&ordinary, false));
+        // The M261/M272 parity: a dishonest ask takes the Enter away with the button.
+        assert!(
+            !enter_still_allows(&hostile, false),
+            "a dishonest ask must not be approvable from the keyboard either"
+        );
+        // The D-073/I-104 rule: a focused approval button owns Enter, honest ask or not.
+        assert!(
+            !enter_still_allows(&ordinary, true),
+            "a focused approval button owns Enter — the global take would answer before it"
         );
     }
 

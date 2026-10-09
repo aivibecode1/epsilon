@@ -113,14 +113,14 @@ measurements taken here at all.
 | area | rows | done | partial | missing | deliberately different |
 |---|---|---|---|---|---|
 | Electron shell (`apps/desktop/**`) | 70 | 0 | 10 | 44 | 16 |
-| Approvals and permission presets | 14 | 4 | 8 | 2 | 0 |
+| Approvals and permission presets | 14 | 5 | 7 | 2 | 0 |
 | Transcript, streaming and tool cards | 82 | 4 | 16 | 56 | 6 |
 | Keyboard, settings, themes, locale, account, models, plugins | 68 | 4 | 9 | 50 | 5 |
 | Palette, quick open, composer, connection, design system | 54 | 2 | 14 | 33 | 5 |
 | Layout, sidebars, files tree, terminal, browser, preview, sessions | 65 | 2 | 21 | 37 | 5 |
-| Approvals, questions, schedule, jobs, goal, plan, subagents, models | 50 | 3 | 11 | 36 | 0 |
+| Approvals, questions, schedule, jobs, goal, plan, subagents, models | 50 | 4 | 10 | 36 | 0 |
 | Un-numbered reference rows | 30 | 1 | 3 | 21 | 5 |
-| **Total** | **433** | **20** | **93** | **278** | **42** |
+| **Total** | **433** | **22** | **91** | **278** | **42** |
 
 ---
 
@@ -214,7 +214,7 @@ approval path is exercised end to end by a real faux agent in `tests/window.rs`.
 |---|---|---|---|---|---|
 | D-071 | The interactive approval prompt has exactly **two** outcomes: `allowed-once` and `rejected`. There is no "always allow" in the client presentation. | `packages/client/ui-approval/src/client/contract/slots.ts:66` | done | `crates/epsilon-desktop/src/app.rs:4890-4906`, `crates/epsilon-desktop/src/app.rs:5528-5537` | The row draws exactly two buttons, "Allow" and "Refuse", mapping to `PermissionDecision::AllowOnce` and `PermissionDecision::Deny`; the keyboard path produces the same two. Covered by `a_permission_gate_is_answered_by_pressing_enter_in_the_window` and `escape_refuses_a_waiting_gate`. |
 | D-072 | In the focused approval panel, **Enter grants once and Escape rejects**; both are registered as *fixed* shortcuts so no user binding can steal them. | `packages/client/ui-approval/src/client/ApprovalPanel.tsx:57`, `packages/client/ui-approval/src/client/index.ts:82`, `:85` | done | `crates/epsilon-desktop/src/app.rs:5528-5537` | Enter resolves `AllowOnce`, Escape resolves `Deny`, and both are consumed by `approve_pending` **before** any pane or the composer is read (`app.rs:2705-2713`), which is what makes them unstealable here as well. Covered by the same two tests. |
-| D-073 | Enter keeps its **native** action when the focused element is a button, link or `[role=button]`. | `packages/client/ui-approval/src/client/ApprovalPanel.tsx:51` | partial | `crates/epsilon-desktop/src/app.rs:2705-2713`, `crates/epsilon-desktop/src/app.rs:5530` | The two outcomes match, but the disambiguation does not: the window resolves the gate from a global unmodified-Enter read that runs before any widget is drawn, so Enter always means "allow" — Enter aimed at the **Refuse** button still allows. That is the divergence the reference's row exists to prevent, stated plainly. The buttons themselves work by click. |
+| D-073 | Enter keeps its **native** action when the focused element is a button, link or `[role=button]`. | `packages/client/ui-approval/src/client/ApprovalPanel.tsx:51` | done | `crates/epsilon-desktop/src/app.rs:8769` (`approve_pending` stands aside when a saved approval button holds focus — the ids recorded at `app.rs:7848-7856`), `crates/epsilon-desktop/src/app.rs:8802` (`enter_still_allows`), `crates/epsilon-desktop/src/keys.rs:225` (the take that used to strip the event) | Fixed round 105 of the convergence plan (plan 026 R1). The gate's global Enter read ran before any widget and `take` *removes* the event, so a focused Refuse button never saw its own key. Now the global read stands aside and egui activates the focused button itself (`egui-0.36.2/src/context.rs:1466-1477`). Pinned by `enter_aimed_at_the_focused_refuse_button_refuses_the_ask` (draw-path, real Enter, asserts *refused* and not *allowed*), with the negative control run: the guard stubbed to `false` showed `allowed` and the run completing. The ask strip's `[enter] allow [esc] refuse` line names the global chords and stays truthful (the no-focus path is unchanged). |
 | D-074 | Modifier combinations, auto-repeat and IME composition all cancel the Enter/Escape handling. | `packages/client/ui-approval/src/client/ApprovalPanel.tsx:52`, `:56` | partial | `crates/epsilon-desktop/src/app.rs:5530`, `:5358` | Both reads require `egui::Modifiers::NONE`, so a modified press does not match. The window adds **no** IME guard and no repeat guard of its own; those would have to come from egui and were not verified here. |
 | D-075 | A double answer is closed synchronously: the panel returns early if a press is in flight or the request is no longer answerable. | `packages/client/ui-approval/src/client/ApprovalPanel.tsx:37`, `:40-44` | partial | `crates/epsilon-desktop/src/app.rs:5528-5534` | One press resolves the ask and the key is consumed once, so a double press cannot answer twice; the second press finds no pending ask. What is missing is the reference's other half — buttons that re-enable when an answer *fails* and the request is still open. Ours does not re-enable at all; a failed answer leaves the ask resolved from the window's point of view. |
 | D-076 | A second answer on a settled request throws `pending approval … is already settled`. Deny is one-shot in the client; monotonicity of a denial is a **host** guarantee. | `packages/client/ui-approval/src/client/contract/slots.ts:169` | partial | `crates/epsilon-desktop/src/session.rs:168-174`, `crates/epsilon-desktop/src/app.rs:5532` | The client-side half is real: an answered request id is recorded in a set so it stops being offered (`session.rs:168-174`), and `session.resolve` returns a `bool` rather than throwing. The monotonicity of a denial is a core guarantee this window does not implement and does not duplicate — see D-078. |
@@ -566,7 +566,7 @@ opinion.
 | I-101 | A pending approval **takes over the chat input seat** and shows a warning dot with the strip "Waiting for approval". | `ui-approval/src/client/index.ts:91-95` | partial | `crates/epsilon-desktop/src/app.rs:2705-2713`, `crates/epsilon-desktop/src/app.rs:4890-4906` | The ask is drawn **in the transcript** with its two answer buttons beside it, and it is painted before anything else can want a key — the comment at `app.rs:2705-2710` records that this ordering was a defect once (`approve_pending` existed, was correct, had a test, and had no caller). The composer is not replaced; it stays available and the status bar counts what is waiting (`app.rs:4105-4115`). Covered by `a_pending_permission_ask_is_drawn_once`, which also pins that the same ask is drawn **once**, not as a bare row plus a prompt. |
 | I-102 | The prompt offers **exactly two buttons, "Reject" and "Allow once"** — no "always allow", no remember-choice. | `ui-approval/src/client/contract/slots.ts:66` | done | `crates/epsilon-desktop/src/app.rs:4890-4906` | The row draws exactly `Allow` and `Refuse`, mapping to `AllowOnce` and `Deny`. The evidence file is explicit that adding an "allow always" checkbox would be a parity defect; this window does not have one. Covered by `a_permission_gate_is_answered_by_pressing_enter_in_the_window`. |
 | I-103 | **Enter grants, Escape denies**, with the detail region focused. | `ui-approval/src/client/ApprovalPanel.tsx:57`, `ui-approval/src/client/index.ts:82` | done | `crates/epsilon-desktop/src/app.rs:5528-5537` | Same code path as D-072 and S-120. Covered by the two gate tests. |
-| I-104 | Enter on the focused **Reject** button keeps its native reject action. | `ui-approval/src/client/ApprovalPanel.tsx:51` | partial | `crates/epsilon-desktop/src/app.rs:2705-2713` | As D-073: the window answers the gate from a global unmodified-Enter read that runs before any widget, so Enter means "allow" wherever focus happens to be. Recorded as a divergence, not smoothed over. |
+| I-104 | Enter on the focused **Reject** button keeps its native reject action. | `ui-approval/src/client/ApprovalPanel.tsx:51` | done | `crates/epsilon-desktop/src/app.rs:8769` (`approve_pending`), `crates/epsilon-desktop/src/app.rs:7848-7856` (the buttons whose ids are recorded) | Closed with D-073, round 105 (plan 026 R1): the same global take used to answer every Enter as "allow" wherever focus happened to be; the gate now stands aside for a focused approval button, and egui's own focused-widget Enter handling (`egui-0.36.2/src/context.rs:1466-1477`) activates it. Pinned by the same test — `enter_aimed_at_the_focused_refuse_button_refuses_the_ask` — whose negative control printed `allowed` and a completed run before the guard existed. |
 | I-105 | Both buttons disable **synchronously** on press and re-enable only if the answer failed and the request is still answerable. | `ui-approval/src/client/ApprovalPanel.tsx:37-44` | partial | `crates/epsilon-desktop/src/app.rs:5528-5534` | As D-075: one press resolves the ask and consumes the key, so a double press cannot answer twice. The re-enable-on-failure half is not implemented. |
 | I-106 | With no reason supplied the headline falls back to **"Tool {toolName} requests privileged execution"**; the detail region is a focusable group. | `ui-approval/src/client/ApprovalPanel.tsx:74`, `:70-72` | partial | `crates/epsilon-desktop/src/app.rs:4364-4391` | The window shows the capability and the **whole request**, not the rule's pattern — `allow bash echo epsilon-ready?` rather than `allow bash echo?` — because `request.pattern` is the first whitespace token, which is what a *rule* matches on (`app.rs:4349-4351`; covered by `a_pending_permission_ask_is_drawn_once`, which asserts the second word appears). It also **refuses outright** to offer approval for an ask carrying a display-steering character, saying so in words rather than cleaning the string and asking the reader to agree to something not fully seen (`app.rs:4352-4359`, `:4263-4270`). |
 | I-107 | **A dropped responder resolves to deny.** No composed answerer, a throwing answerer and a rogue non-vocabulary return all normalise to `unavailable`; the `never` policy rejects before dispatch. | `packages/interaction/user-approval/src/index.ts:283`, `:291`, `:288`, `:275` | done | `crates/epsilon-safety/src/channel_ui.rs:120`, `:128` | The same resolution as **D-078**, and for the same reason: the writing pass had opened `crates/epsilon-desktop` only and would not infer a security row. The engine resolves a dropped responder to `Deny` and pins it with `dropped_ask_denies_fail_closed` (`channel_ui.rs:186-195`). |
@@ -784,21 +784,30 @@ of the document**, so it lists ids rather than paraphrasing cells — the cell i
 | area | partial rows |
 |---|---|
 | Electron shell | D-001, D-021, D-030, D-031, D-032, D-045, D-058, D-061, D-062, D-064, D-066 |
-| Approvals and presets | D-073, D-074, D-075, D-076, D-080, D-081, D-082, D-083 |
+| Approvals and presets | D-074, D-075, D-076, D-080, D-081, D-082, D-083 |
 | Transcript and tool cards | C-107, C-109, C-121, C-123, C-126, C-132, C-141, C-143, C-145, C-147, C-157, C-160, C-162, C-163, C-168, C-169 |
 | Keyboard and settings | S-109, S-113, S-115, S-117, S-119, S-125, S-126, S-159, S-164 |
 | Palette and composer | P-102, P-106, P-108, P-117, P-121, P-122, P-126, P-128, P-132, P-136, P-140, P-146, P-148, P-150 |
 | Layout and panes | L-101, L-102, L-103, L-105, L-108, L-113, L-128, L-129, L-130, L-131, L-132, L-143, L-146, L-151, L-152, L-155, L-158, L-159, L-160, L-161, L-164 |
-| Approvals through models | I-101, I-104, I-105, I-106, I-133, I-134, I-137, I-139, I-141, I-142, I-149 |
+| Approvals through models | I-101, I-105, I-106, I-133, I-134, I-137, I-139, I-141, I-142, I-149 |
 | Un-numbered reference rows | U-003, U-006, U-017 |
 
 **The four partials worth acting on first**, because each is a place where a reader could be misled
 rather than merely underserved:
 
-- **D-073 / I-104 — Enter means "allow" wherever focus is.** The window answers the permission
-  gate from a global unmodified-Enter read that runs before any widget, so Enter aimed at the
-  **Refuse** button still allows. The reference's whole row exists to prevent exactly that. The
-  two outcomes are right and the disambiguation is wrong.
+- **D-074 / I-105 — Enter means "allow" wherever focus is — CLOSED (round 105, plan 026 R1).** It used to
+  be first here: the window resolved the gate from a global unmodified-Enter read that ran before
+  any widget, so Enter aimed at the **Refuse** button allowed. The gate now stands aside when an
+  approval button holds focus and egui activates the focused button itself
+  (`egui-0.36.2/src/context.rs:1466-1477`), pinned by
+  `enter_aimed_at_the_focused_refuse_button_refuses_the_ask` with the guard-stubbed control
+  printing `allowed` before it. **The honest ask is preserved**: Enter still allows when nothing
+  is focused, which the pre-existing
+  `a_permission_gate_is_answered_by_pressing_enter_in_the_window` pins. The round also took the
+  dishonest-ask half with it — the keyboard path now honours the same
+  `ask_is_display_honest` rule the button does (`enter_still_allows`), so a `U+202E` ask can no
+  longer be approved by Enter either (round 105, unit-pinned in
+  `enter_still_allows_only_for_an_honest_ask_no_button_owns`).
 - **P-133 — a held Enter, now closed.** It was the second bullet here while the row was `partial`
   and the question was open. It is `done`: the window adds no `repeat` guard, so the question was
   whether a repeat can send twice, and it cannot — `send_draft` returns early on a running session

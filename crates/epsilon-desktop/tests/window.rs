@@ -255,6 +255,85 @@ fn a_permission_gate_is_answered_by_pressing_enter_in_the_window() {
     );
 }
 
+/// Enter aimed at the focused **Refuse** button refuses (D-073, I-104).
+///
+/// The gate was answered from a global Enter read at the top of the frame, and
+/// `KeyBindings::take` *removes* the event — so Enter aimed at the Refuse button **allowed**
+/// the run: the two outcomes were right and the disambiguation was wrong, which is the
+/// exact thing the reference's row exists to prevent
+/// (`packages/client/ui-approval/src/client/ApprovalPanel.tsx:51`, cited by
+/// `docs/parity/dsh-desktop.md:217` and `:569`).
+///
+/// egui supplies the shape of the fix: a focused click-sensed widget turns Enter into a
+/// primary click itself (`egui-0.36.2/src/context.rs:1466-1472`), so the global read stands
+/// aside when an approval button holds focus. This presses the key through the real draw
+/// path, at the real focused button, and asserts the **decision** — allow and deny both
+/// close the gate, so "the gate closed" would prove nothing.
+#[test]
+fn enter_aimed_at_the_focused_refuse_button_refuses_the_ask() {
+    let ws = tempfile::tempdir().expect("a workspace");
+    let (ctx, mut app) = wire(ws.path());
+    let session = app.session().expect("this window has a session").clone();
+
+    paint_once(&ctx, &mut app, 1440.0, 900.0);
+    paint_with(&ctx, &mut app, 1440.0, 900.0, type_and_enter("say hello"));
+
+    // Wait for the gate to be on screen and waiting — check, then park.
+    let deadline = Instant::now() + Duration::from_secs(20);
+    while Instant::now() < deadline && session.pending_approvals().is_empty() {
+        paint_once(&ctx, &mut app, 1440.0, 900.0);
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    assert!(
+        !session.pending_approvals().is_empty(),
+        "the run never parked on a gate."
+    );
+
+    // One paint so the ask strip draws its buttons and republishes their ids.
+    paint_once(&ctx, &mut app, 1440.0, 900.0);
+    let ids = app.approval_button_ids().to_vec();
+    assert_eq!(
+        ids.len(),
+        2,
+        "Allow then Refuse are drawn for an honest ask: {ids:?}"
+    );
+    let refuse = ids[1];
+
+    // The reader's focus is on Refuse — as if they had clicked it, or tabbed to it.
+    ctx.memory_mut(|m| m.request_focus(refuse));
+
+    paint_with(&ctx, &mut app, 1440.0, 900.0, press(egui::Key::Enter));
+
+    // The gate closes *and the transcript records the refusal*: the ask row keeps its
+    // place and is marked by what followed it (`session.rs`'s `PermissionDecided` arm —
+    // "allowed" / "refused"), which is the decision made visible rather than merely the
+    // gate closing. Both outcomes close the gate, so the wording is the claim.
+    let deadline = Instant::now() + Duration::from_secs(20);
+    let mut refused = false;
+    while Instant::now() < deadline && !refused {
+        let frame = paint_once(&ctx, &mut app, 1440.0, 900.0);
+        let agent = frame.region("agent").join("\n");
+        refused = agent.contains("refused");
+        if !refused {
+            std::thread::sleep(Duration::from_millis(20));
+        }
+    }
+    assert!(
+        refused,
+        "Enter aimed at the focused Refuse button must refuse, and the transcript must say \
+         so. With the global take in front of the widget it allowed instead.\n{}",
+        paint_once(&ctx, &mut app, 1440.0, 900.0).describe()
+    );
+    let agent = paint_once(&ctx, &mut app, 1440.0, 900.0)
+        .region("agent")
+        .join("\n");
+    assert!(
+        !agent.contains("allowed"),
+        "and it must not read as allowed — both words close the gate, so only the right one \
+         proves the key went to the button the reader aimed it at.\n{agent}"
+    );
+}
+
 /// Escape refuses, and refuses *only* the gate.
 ///
 /// Enter sends a prompt and Escape aborts a run; both keys are also how a permission gate
