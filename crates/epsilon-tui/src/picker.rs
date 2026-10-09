@@ -58,6 +58,21 @@ pub struct PickerRow {
     /// True when the id is the saved default model (P-249): ordered second,
     /// marked `· default`.
     pub is_default: bool,
+    /// True when the id is not in the catalog and was not live-listed (P-260).
+    ///
+    /// Config stores raw unvalidated ids, so a model saved once and later
+    /// retired from the catalog is a real state — and the reader deserves to
+    /// *see* what is configured rather than have it silently dropped. Pi keeps
+    /// the row, strikes its id, and badges it ` [unavailable]`
+    /// (`scoped-models-selector.ts:252-257`). A struck row here is
+    /// `Modifier::CROSSED_OUT`, which the terminal draw already uses elsewhere
+    /// (`markdown.rs`), and the badge is a word rather than a glyph so it
+    /// survives `NO_COLOR` (`AGENTS.md` §8).
+    ///
+    /// Only a **bare or self-prefixed** unknown id carries this: a
+    /// `groq/foo-x` cannot be attributed to `deepseek`, because its provider
+    /// prefix no longer identifies a live provider.
+    pub is_unavailable: bool,
 }
 
 fn row_from_info(info: &epsilon_llm::ModelInfo) -> PickerRow {
@@ -72,6 +87,7 @@ fn row_from_info(info: &epsilon_llm::ModelInfo) -> PickerRow {
         is_recent: false,
         is_favorite: false,
         is_default: false,
+        is_unavailable: false,
     }
 }
 
@@ -92,6 +108,26 @@ fn synthetic_row(
         is_recent,
         is_favorite: false,
         is_default: false,
+        is_unavailable: false,
+    }
+}
+
+/// Whether an unknown id can honestly be shown under `provider`.
+///
+/// Bare ids can: a catalog entry with no `/` is this provider's, which is how
+/// `deepseek-chat` reads. Ids prefixed with this provider's own name can:
+/// `deepseek/deepseek-chat` is the same row spelled the long way. Anything else
+/// — `groq/foo-x` under `deepseek`, or a bare id belonging to a *different*
+/// provider — cannot, because the prefix is the only evidence there is and it
+/// points elsewhere.
+///
+/// Without this, an unknown id would surface under every provider it was
+/// searched with, and the reader would be shown a model attributed to a
+/// provider that never published it.
+fn id_belongs_to_provider(id: &str, provider: &str) -> bool {
+    match id.split_once('/') {
+        None => true,
+        Some((prefix, _)) => prefix.eq_ignore_ascii_case(provider),
     }
 }
 
@@ -562,6 +598,30 @@ pub fn build_models_for_provider(
             }
         }
     }
+    // P-260: a configured id the catalog does not know stays offered, marked
+    // unavailable. This is the row a reader most needs when it appears — the
+    // model that is actually configured is one the picker used to hide, so the
+    // running state was invisible in the surface that changes it.
+    //
+    // Two guards, both cheap and both necessary. `push_unique` dedupes
+    // case-insensitively, so a synthesized row can never shadow a catalog or
+    // live one. And the id must be bare or prefixed with *this* provider: a
+    // `groq/foo-x` is not attributable to `deepseek`, and inventing an
+    // attribution would show another provider's model under the wrong name.
+    for id in [Some(current), default.unwrap_or_default().into()]
+        .into_iter()
+        .flatten()
+        .filter(|id| !id.is_empty())
+    {
+        if catalog::lookup_model(id).is_none()
+            && !scored.iter().any(|(_, r)| r.id.eq_ignore_ascii_case(id))
+            && id_belongs_to_provider(id, provider)
+        {
+            let mut row = synthetic_row(id, provider, false, false, false);
+            row.is_unavailable = true;
+            scored.push((i64::MAX, row));
+        }
+    }
     // Starred rows carry the flag the pickers draw, whichever front end
     // asked. Empty favorites: no flag ever set, and the comparator below
     // falls through to the old order — byte-identical rows. The default
@@ -575,22 +635,42 @@ pub fn build_models_for_provider(
         // favorites (stable, pi's sortModels semantics with the starred
         // set next). `None` default: the middle term never fires, and the
         // order is the old one — byte-identical rows.
+        //
+        // **Unavailable rows sort last, and this is a measured constraint, not
+        // a preference.** The first version let the comparator's existing terms
+        // place them, and a synthesized row for the *current* model then floated
+        // `current` to the top — above a starred model, which broke
+        // `starred_models_float_first_and_read_as_favorites` in the desktop
+        // suite. An unavailable row is a **report** that something is
+        // configured, not a candidate to select: it must never displace a model
+        // that can actually be applied.
         scored.sort_by(|a, b| {
+            let a_un = a.1.is_unavailable;
+            let b_un = b.1.is_unavailable;
             let a_cur = a.1.id == current;
             let b_cur = b.1.id == current;
             let a_def = a.1.is_default;
             let b_def = b.1.is_default;
             let a_fav = a.1.is_favorite;
             let b_fav = b.1.is_favorite;
-            b_cur
-                .cmp(&a_cur)
+            a_un.cmp(&b_un)
+                .then(b_cur.cmp(&a_cur))
                 .then(b_def.cmp(&a_def))
                 .then(b_fav.cmp(&a_fav))
                 .then(a.0.cmp(&b.0))
                 .then(a.1.id.cmp(&b.1.id))
         });
     } else {
-        scored.sort_by(|a, b| a.0.cmp(&b.0).then(a.1.id.cmp(&b.1.id)));
+        // Under a filter, score wins — and an unavailable row still sorts last,
+        // because `i64::MAX` alone would put it behind every match but a filter
+        // that matches nothing but the unavailable id would promote it above a
+        // real match's neighbours. Same rule, both branches.
+        scored.sort_by(|a, b| {
+            a.1.is_unavailable
+                .cmp(&b.1.is_unavailable)
+                .then(a.0.cmp(&b.0))
+                .then(a.1.id.cmp(&b.1.id))
+        });
     }
     scored.into_iter().map(|(_, r)| r).collect()
 }
@@ -1040,6 +1120,118 @@ mod tests {
     /// RED before the fix, and printed verbatim: `got openai/gpt-oss-120b`,
     /// `left: "groq"`, `right: "openai"` — a proxy provider naming its upstream
     /// inside its own id outranked the provider being asked about.
+    /// A configured id absent from the catalog renders `[unavailable]` (P-260).
+    ///
+    /// Config stores raw unvalidated ids, so a model that was saved once and
+    /// later retired from the catalog is representable — and Pi's answer is to
+    /// **keep** the row, strike it, and badge it ` [unavailable]`
+    /// (`scoped-models-selector.ts:252-257`, with a regression test pinning the
+    /// whole feature at `6949-unavailable-scoped-model.test.ts`). Epsilon's stage
+    /// 2 dropped those ids entirely, so the running model vanished from the
+    /// picker and the reader had no way to see what was actually configured.
+    ///
+    /// Only a bare or self-prefixed id can be attributed: an unknown
+    /// `groq/foo-x` cannot be shown under `deepseek`, because the provider came
+    /// from a prefix that no longer identifies a live provider.
+    #[test]
+    fn an_uncatalogued_configured_model_marked_unavailable() {
+        let gone = "deepseek-v4-pro-vanished";
+        let rows = build_models_for_provider("deepseek", "", gone, &[], None, &[], &[]);
+        let row = rows
+            .iter()
+            .find(|r| r.id.eq_ignore_ascii_case(gone))
+            .expect("a configured id absent from the catalog must still be offered");
+        assert!(
+            row.is_unavailable,
+            "and marked unavailable, so the reader is told it cannot be selected: {row:?}"
+        );
+        // A real catalog row is never marked — the control.
+        let live =
+            build_models_for_provider("deepseek", "", "deepseek-v4-pro", &[], None, &[], &[]);
+        let known = live
+            .iter()
+            .find(|r| r.id == "deepseek-v4-pro")
+            .expect("a catalog row is offered");
+        assert!(
+            !known.is_unavailable,
+            "a model the catalog knows is available: {known:?}"
+        );
+        // A live-listed id is available too, even though it is also absent from
+        // the bundled catalog — the cache is the authority for those.
+        let fetched = build_models_for_provider(
+            "deepseek",
+            "",
+            "",
+            &[],
+            None,
+            &[("deepseek".into(), vec!["deepseek-new-thing".into()])],
+            &[],
+        );
+        let listed = fetched
+            .iter()
+            .find(|r| r.id == "deepseek-new-thing")
+            .expect("a live id is offered");
+        assert!(
+            !listed.is_unavailable,
+            "a live listing is available: {listed:?}"
+        );
+    }
+
+    /// The control is really the control: an ordinary filtered stage-2 call
+    /// gains no unavailable rows, because every row it lists is known.
+    /// An unavailable row sorts **last**, and that is what keeps favourites intact.
+    ///
+    /// The desktop suite caught this one: the first version let the existing
+    /// comparator place the synthesized row, so a row for the *current* model
+    /// floated `current` to the top — above a starred model, which broke
+    /// `starred_models_float_first_and_read_as_favorites`. An unavailable row is
+    /// a report that something is configured, not a candidate to select, so it
+    /// must never displace a model that can actually be applied.
+    #[test]
+    fn an_unavailable_row_sorts_below_every_available_one() {
+        let gone = "deepseek-v4-pro-vanished";
+        let rows = build_models_for_provider(
+            "deepseek",
+            "",
+            gone,
+            &["deepseek-v4-pro".to_string()],
+            None,
+            &[],
+            &[],
+        );
+        // The starred model is first, exactly as before this feature existed.
+        assert_eq!(
+            rows.first().map(|r| r.id.as_str()),
+            Some("deepseek-v4-pro"),
+            "a favourite must still lead: {:?}",
+            rows.iter()
+                .take(4)
+                .map(|r| r.id.clone())
+                .collect::<Vec<_>>()
+        );
+        // And the unavailable row is at the end.
+        let position = rows
+            .iter()
+            .position(|r| r.is_unavailable)
+            .expect("the unavailable row is offered");
+        assert_eq!(
+            position,
+            rows.len() - 1,
+            "an unavailable row must sort last, not displace a real model"
+        );
+    }
+
+    #[test]
+    fn an_ordinary_stage_two_call_has_no_unavailable_rows() {
+        let rows = build_models_for_provider("deepseek", "pro", "", &[], None, &[], &[]);
+        assert!(!rows.is_empty(), "the filter matched something");
+        assert!(
+            rows.iter().all(|r| !r.is_unavailable),
+            "nothing here is unknown to the catalog: {:?}",
+            rows.iter().filter(|r| r.is_unavailable).collect::<Vec<_>>()
+        );
+    }
+
     #[test]
     fn a_provider_query_ranks_that_providers_own_models_first() {
         let rows = build_rows("openai", "", &[], &[]);

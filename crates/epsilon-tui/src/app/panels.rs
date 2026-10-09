@@ -307,14 +307,29 @@ fn draw_picker_stage2(f: &mut Frame<'_>, app: &App, outer: Rect, provider: &str)
             " "
         };
         // P-249: the saved default is marked, like pi's `· default`.
-        let label = if row.is_default {
+        //
+        // P-260: a configured id the catalog does not know keeps its row, gets
+        // `[unavailable]` as a word and is struck through. The badge is a word
+        // rather than another glyph because `AGENTS.md` §8 forbids meaning by
+        // colour or shape alone, and `Modifier::CROSSED_OUT` is the terminal's
+        // standard "exists, not usable" mark — the same one Pi reaches for
+        // (`scoped-models-selector.ts:255`).
+        //
+        // The row is left dim as well: the strike is invisible on a terminal
+        // that ignores SGR 9 and the dim is invisible on one that ignores
+        // colour, so between them at least one channel always carries the fact.
+        let label = if row.is_unavailable {
+            format!("{} [unavailable]", row.label)
+        } else if row.is_default {
             format!("{} · default", row.label)
         } else {
             row.label.clone()
         };
-        lines.push(overlay::list_row(
+        lines.push(overlay::list_row_marked(
             &app.theme,
             selected,
+            row.is_unavailable
+                .then_some(ratatui::style::Modifier::CROSSED_OUT),
             // A **live** model's label and id come from a third-party endpoint, so they are
             // remote text in a row the reader chooses by reading. See `safe_to_show`.
             &safe_to_show(&format!("{marker}{auth} {star} {}", label)),
@@ -324,15 +339,19 @@ fn draw_picker_stage2(f: &mut Frame<'_>, app: &App, outer: Rect, provider: &str)
     }
 
     lines.push(Line::from(""));
-    lines.push(overlay::hint_row(
-        &app.theme,
-        &[
-            ("type", "filters (fuzzy)"),
-            ("enter", "apply"),
-            ("ctrl+s", "save default"),
-            ("backspace/esc", "back"),
-        ],
-    ));
+    // P-260: the count of unavailable rows, like Pi's
+    // `${enabledCount}/${allIds.length} enabled${unavailableCount ? ` · ${unavailableCount} unavailable` : ""}`
+    // (`scoped-models-selector.ts:196-201`). Shown only when there are any: a
+    // count of zero is noise on every ordinary stage-2 screen.
+    let unavailable = rows.iter().filter(|r| r.is_unavailable).count();
+    let count = format!("{unavailable} unavailable");
+    let mut hints = vec![("type", "filters (fuzzy)"), ("enter", "apply")];
+    if unavailable > 0 {
+        hints.push(("", count.as_str()));
+    }
+    hints.push(("ctrl+s", "save default"));
+    hints.push(("backspace/esc", "back"));
+    lines.push(overlay::hint_row(&app.theme, &hints));
     f.render_widget(Paragraph::new(lines), inner);
 }
 

@@ -215,16 +215,50 @@ pub fn list_row(
     meta: Option<&str>,
     width: usize,
 ) -> Line<'static> {
+    list_row_marked(theme, selected, None, label, meta, width)
+}
+
+/// [`list_row`] with an optional modifier carried across the whole row.
+///
+/// The sibling exists so a row can be drawn **struck through** — the terminal's
+/// way of saying "this exists and is not usable", which is how Pi marks a model
+/// absent from its catalog (`scoped-models-selector.ts:255`:
+/// `theme.strikethrough(id)`, ANSI SGR 9). `Modifier::CROSSED_OUT` is the same
+/// statement in ratatui.
+///
+/// **A modifier rather than a `Style`, deliberately.** `Style::patch` is
+/// self-wins, so passing a whole style and letting each column merge it
+/// individually is how the first version of this struck the *label* and left
+/// the *id* — the meta column, which is the thing Pi strikes — looking normal.
+/// A `Modifier` composes with `add_modifier`, which unions, so there is exactly
+/// one rule and no column can be missed.
+///
+/// Selection still wins: a selected row is drawn selected, because losing the
+/// cursor's row on a monochrome terminal is worse than losing the strike. The
+/// existing seven call sites keep their exact behaviour through `list_row`, so
+/// adding this cannot move them.
+pub fn list_row_marked(
+    theme: &Theme,
+    selected: bool,
+    mark: Option<ratatui::style::Modifier>,
+    label: &str,
+    meta: Option<&str>,
+    width: usize,
+) -> Line<'static> {
     let bar = if selected {
         theme.glyphs.cursor_bar
     } else {
         " "
     };
-    let label_style = if selected {
-        theme.selected()
-    } else {
-        theme.text()
-    };
+    let mut label_style = theme.text();
+    let mut meta_style = theme.faint();
+    if let Some(mark) = mark {
+        label_style = label_style.add_modifier(mark);
+        meta_style = meta_style.add_modifier(mark);
+    }
+    if selected {
+        label_style = theme.selected();
+    }
     let mut spans = vec![
         Span::styled(
             format!("{bar}{}", " ".repeat(GUTTER_AFTER_BAR)),
@@ -264,7 +298,7 @@ pub fn list_row(
         if meta_width > 0 && used + MIN_META_GAP + meta_width <= width {
             let pad = width - used - meta_width;
             spans.push(Span::raw(" ".repeat(pad)));
-            spans.push(Span::styled(meta, theme.faint()));
+            spans.push(Span::styled(meta, meta_style));
         }
     }
     Line::from(spans)

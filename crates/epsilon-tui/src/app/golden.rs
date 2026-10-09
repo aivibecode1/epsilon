@@ -2291,6 +2291,107 @@ fn shift_ctrl_o_steps_back_and_escape_keeps_the_filter() {
     );
 }
 
+/// An unavailable model renders struck through, and the badge is a word (P-260).
+///
+/// The pixels half of the feature, and the reason it needs `render_buffer`
+/// rather than `render_rows`: `Modifier::CROSSED_OUT` is a *style*, and a test
+/// that reads text back cannot tell a struck row from a plain one. That is how
+/// this repository shipped two features asserted on state and never drawn.
+///
+/// Both halves are asserted: the strike on the id, and the `[unavailable]` word
+/// on the label — a strike alone is invisible on a terminal that ignores SGR 9,
+/// and `AGENTS.md` §8 forbids meaning carried by style alone.
+#[test]
+fn an_unavailable_model_draws_struck_through_and_says_so() {
+    let mut app = bench_app(UiState::new());
+    pin_theme(&mut app, ThemeColorMode::Ansi16);
+    // A configured id the catalog does not know, built through the picker's own
+    // stage-2 builder so the row is the one production draws.
+    let gone = "deepseek-v4-pro-vanished";
+    let rows = crate::picker::build_models_for_provider("deepseek", "", gone, &[], None, &[], &[]);
+    assert!(
+        rows.iter().any(|r| r.id == gone && r.is_unavailable),
+        "the fixture must actually be unavailable: {rows:?}"
+    );
+
+    app.picker_open = true;
+    app.picker_provider = Some("deepseek".into());
+    // The row a draw synthesizes comes from `current`, which is `app.model_id`
+    // — the *configured* model — not from the filter text. A filter past the
+    // id is what the trailing custom row is for.
+    //
+    // `picker_index = 1`, and that is not cosmetic: the unavailable row is the
+    // current model, so it floats to index 0, and at index 0 it is *selected* —
+    // and `list_row_styled` deliberately lets selection win over the strike,
+    // because losing the cursor's row matters more on a monochrome terminal.
+    // Asserting on the struck style therefore requires the cursor elsewhere.
+    app.model_id = gone.to_string();
+    app.picker_index = 1;
+    let (buffer, screen_rows) = render_buffer(&mut app, 100, 40);
+    let screen = screen_rows.join("\n");
+    assert!(screen.contains(gone), "the row is offered: {screen}");
+    assert!(
+        screen.contains("[unavailable]"),
+        "the badge is a word, so it survives NO_COLOR: {screen}"
+    );
+
+    // And the strike reaches the cells, on the badge row. Both columns are
+    // checked: the label and the id, because the id is the thing Pi strikes and
+    // leaving it plain would strike the description and not the subject.
+    let label_modifier = modifier_on_row(&buffer, "[unavailable]", "[unavailable]");
+    assert!(
+        label_modifier.contains(ratatui::style::Modifier::CROSSED_OUT),
+        "the row's label must be struck through: {label_modifier:?}"
+    );
+    let id_modifier = modifier_on_row(&buffer, "[unavailable]", gone);
+    assert!(
+        id_modifier.contains(ratatui::style::Modifier::CROSSED_OUT),
+        "the row's id must be struck through: {id_modifier:?}"
+    );
+}
+
+/// The modifier of the cell a `needle` starts in, anywhere on the screen.
+///
+/// The column is found through [`row_cells`], not through a byte offset into
+/// the printed row: `●` is one cell and three bytes, so `row.find()` lands two
+/// columns to the right of the cell it names — the exact trap `row_cells`' own
+/// doc records, and the reason the first version of this helper measured a
+/// blank padding cell instead of the row.
+/// The modifier of the cell a `needle` starts in on the row `anchor` names.
+///
+/// Anchoring on a row is not optional: the configured model id also appears in
+/// the **status bar**, and a search over the whole screen finds that first —
+/// which is how the first version of this test measured the header and called
+/// it a failure. The badge row is the one the reader is looking at.
+///
+/// The column is found through [`row_cells`], not through a byte offset into the
+/// printed row: `●` is one cell and three bytes, so `row.find()` lands two
+/// columns to the right of the cell it names — the exact trap `row_cells`' own
+/// doc records.
+fn modifier_on_row(
+    buffer: &ratatui::buffer::Buffer,
+    anchor: &str,
+    needle: &str,
+) -> ratatui::style::Modifier {
+    let rows = crate::ui::layout::screen_text(buffer);
+    for (y, row) in rows.split('\n').enumerate() {
+        if !row.contains(anchor) {
+            continue;
+        }
+        let cells = row_cells(buffer, y as u16, 100);
+        let text: String = cells.iter().map(|(_, ch)| *ch).collect();
+        let byte = text
+            .find(needle)
+            .unwrap_or_else(|| panic!("{needle:?} is not on the row {anchor:?} names: {row}"));
+        let column = cells[text[..byte].chars().count()].0;
+        return buffer[(column as u16, y as u16)]
+            .style()
+            .add_modifier
+            .union(buffer[(column as u16, y as u16)].style().sub_modifier);
+    }
+    panic!("{anchor:?} never reached the screen: {rows}");
+}
+
 #[test]
 fn an_edits_diff_is_drawn_with_a_coloured_gutter_not_as_prose() {
     // The heart of the slice. Each of these assertions fails on the old code for a

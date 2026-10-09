@@ -88,8 +88,8 @@ this document**, tallied from its own tables — not a projection.
 | 15. Markdown, mermaid and truncation | 22 | 6 | 7 | 9 | 0 |
 | 16. Status indicators | 13 | 2 | 5 | 5 | 1 |
 | 17. Footer | 12 | 3 | 4 | 3 | 2 |
-| 18. Selector and overlay components | 79 | 11 | 24 | 38 | 6 |
-| **Total** | **339** | **61** | **112** | **143** | **23** |
+| 18. Selector and overlay components | 79 | 11 | 25 | 37 | 6 |
+| **Total** | **339** | **61** | **113** | **142** | **23** |
 
 A further **17 rows are not in the counts above**: the 10 `Y-###` rows Pi ships outside its interactive mode (out of
 scope by design) and the 7 `AA-###` rows recording what was never inventoried. Both are listed in full near the end
@@ -687,7 +687,7 @@ the per-selector ones.
 | P-257 | `Ctrl+A` and `Ctrl+X` act only on the filtered rows when the search box has text | `packages/coding-agent/src/modes/interactive/components/scoped-models-selector.ts:332`, `:342`, `:48` | missing | none | — |
 | P-258 | `Ctrl+P` enables every model of the highlighted row's provider, or clears them if already enabled | `packages/coding-agent/src/modes/interactive/components/scoped-models-selector.ts:352`, `:357` | missing | none | — |
 | P-259 | `Alt+Up` / `Alt+Down` reorder the enabled list, disabled until the selection is an explicit list | `packages/coding-agent/src/modes/interactive/components/scoped-models-selector.ts:298`, `:309`, `:301` | missing | none | — |
-| P-260 | Unsaved state is marked, a model absent from the catalog renders struck through with `[unavailable]`, and the footer counts them | `packages/coding-agent/src/modes/interactive/components/scoped-models-selector.ts:211`, `:369`, `:253`, `:272`, `:201` | missing | none | — |
+| P-260 | Unsaved state is marked, a model absent from the catalog renders struck through with `[unavailable]`, and the footer counts them | `packages/coding-agent/src/modes/interactive/components/scoped-models-selector.ts:211`, `:369`, `:253`, `:272`, `:201` | partial | `crates/epsilon-tui/src/picker.rs` — a configured id the catalog does not know is **kept and marked**, not dropped: `is_unavailable` synthesizes a row for the current/default id when neither the catalog nor a live listing has it, drawn with the word `[unavailable]` and `Modifier::CROSSED_OUT` across label *and* id (the id is what Pi strikes, and it is the meta column here). Only a bare or self-prefixed id can be attributed — a `groq/foo-x` cannot be shown under `deepseek`, because the prefix is the only evidence and it points elsewhere. The **count** rides the hint row (`N unavailable`, shown only when N > 0, like Pi's `:196-201`). **Unsaved state has no target here**: Ctrl+S and Ctrl+F write through immediately, so there is no dirty flag to mark — recorded rather than invented | `an_uncatalogued_configured_model_marked_unavailable` (with a catalog-row and a live-row control), `an_ordinary_stage_two_call_has_no_unavailable_rows`, `an_unavailable_model_draws_struck_through_and_says_so` (frame: the strike on both columns, read from the buffer because a text-only assertion cannot see a modifier) |
 | P-261 | `Ctrl+C` in the scoped-models overlay clears the search box first and exits only when it is empty — matched past the keybinding table | `packages/coding-agent/src/modes/interactive/components/scoped-models-selector.ts:377`, `:388` | missing | none — and invariant 4 would require routing such keys through the registry rather than hard-coding them | — |
 | P-281 | `pi config` is a three-level resource hierarchy over Global Resources, with per-type subheaders | `packages/coding-agent/src/modes/interactive/components/config-selector.ts:209`, `:299`, `:166` | missing | none — and note this is a **CLI command in Pi, not a slash command**; adding it to the composer would change the command surface | — |
 | P-282 | Space or Enter writes a `+pattern` / `-pattern` entry into the settings array for that resource type | `packages/coding-agent/src/modes/interactive/components/config-selector.ts:505`, `:557`, `:552` | partial | `crates/epsilon-tui/src/app/commands.rs:693` — one skill at a time by name; there is no resource-hierarchy overlay and no settings-array rewriting | `none found` per E-099 |
@@ -779,8 +779,8 @@ row says so — that is a gap in the inventory, and closing it is cheap.
 | 15. Markdown, mermaid and truncation | 22 | 6 | 7 | 9 | 0 |
 | 16. Status indicators | 13 | 2 | 5 | 5 | 1 |
 | 17. Footer | 12 | 3 | 4 | 3 | 2 |
-| 18. Selector and overlay components | 79 | 11 | 24 | 38 | 6 |
-| **Total** | **339** | **61** | **112** | **143** | **23** |
+| 18. Selector and overlay components | 79 | 11 | 25 | 37 | 6 |
+| **Total** | **339** | **61** | **113** | **142** | **23** |
 
 ### The `missing` rows — 161
 
@@ -805,7 +805,7 @@ nothing here is a claim that the behaviour cannot be built.
 | Markdown, mermaid and truncation (9) | P-167, P-168, P-169, P-170, P-171, P-172, P-173, T-010, T-012 |
 | Status indicators (5) | P-019, P-191, P-192, P-193, P-194 |
 | Footer (3) | P-197, P-207, P-208 |
-| Selector and overlay components (38) | P-230, P-232, P-234, P-235, P-237, P-239, P-242, P-244, P-245, P-248, P-251, P-255, P-256, P-257, P-258, P-259, P-260, P-261, P-281, P-283, P-284, P-285, P-286, P-296, P-297, P-300, P-304, P-306, P-307, P-308, P-310, P-311, P-314, P-316, P-317, P-318, P-319, P-323 |
+| Selector and overlay components (37) | P-230, P-232, P-234, P-235, P-237, P-239, P-242, P-244, P-245, P-248, P-251, P-255, P-256, P-257, P-258, P-259, P-261, P-281, P-283, P-284, P-285, P-286, P-296, P-297, P-300, P-304, P-306, P-307, P-308, P-310, P-311, P-314, P-316, P-317, P-318, P-319, P-323 |
 
 ### The `partial` rows — 121
 
@@ -829,7 +829,7 @@ An `E-` row covers these and something is not finished. The reason column is the
 | Markdown, mermaid and truncation (7) | P-176, T-003, T-004, T-005, T-006, T-008, T-011 | hint placement has no keep-last mode; stripping established at two boundaries, not one central measure; hyperlink/reset closing held by a different mechanism with a re-measure backstop; span-dropping, not column slicing; style is per-`Span`, so no reset ladder; row caching, but no ASCII fast path or bounded width cache; CJK as a word character unestablished for completion |
 | Status indicators (5) | P-018, P-186, P-188, P-189, P-190 | a drawn spinner rather than the terminal's progress state; one run-state slot rather than four kinds; whole-gauge dropping rather than a four-step border ladder; a retry notice and elapsed seconds rather than a cancelable countdown; one compaction wording rather than three |
 | Footer (4) | P-200, P-203, P-205, P-206 | no `~` substitution and no `• session-name` segment; no routed-model `→ id`; the footer's own recompute trigger unestablished; the no-spawn `.git/HEAD` read unestablished |
-| Selector and overlay components (24) | P-226, P-228, P-231, P-233, P-236, P-238, P-241, P-246, P-250, P-282, P-288, P-291, P-292, P-293, P-294, P-295, P-299, P-301, P-302, P-303, P-305, P-309, P-313, P-315 | per-overlay focus targets; no overlay-scoped id space; fixed sort, path always shown, current session marked not protected, rename outside the picker, no phrase/regex search, no message count, no resource overlay, capacity derived, per-tool entry detail, active-path marker, five filter modes, no `n/total`, one-stage Esc in the tree, no fold glyph, wrap not clip, ordering guarantee unestablished, tree drop rules unestablished, no tree-specific key list, no provider-selector empty state, provider badges in this window's visual language rather than Pi's literals; the picker's provider-first order is built and pinned, the scoped overlay's opposite order is not (one picker, one order); the transcript filter cycles three of five modes (`ctrl+o`/`shift+ctrl+o`), the other two not being representable on a live transcript |
+| Selector and overlay components (25) | P-226, P-228, P-231, P-233, P-236, P-238, P-241, P-246, P-250, P-260, P-282, P-288, P-291, P-292, P-293, P-294, P-295, P-299, P-301, P-302, P-303, P-305, P-309, P-313, P-315 | per-overlay focus targets; no overlay-scoped id space; fixed sort, path always shown, current session marked not protected, rename outside the picker, no phrase/regex search, no message count, no resource overlay, capacity derived, per-tool entry detail, active-path marker, five filter modes, no `n/total`, one-stage Esc in the tree, no fold glyph, wrap not clip, ordering guarantee unestablished, tree drop rules unestablished, no tree-specific key list, no provider-selector empty state, provider badges in this window's visual language rather than Pi's literals; the picker's provider-first order is built and pinned, the scoped overlay's opposite order is not (one picker, one order); the transcript filter cycles three of five modes (`ctrl+o`/`shift+ctrl+o`), the other two not being representable on a live transcript; an uncatalogued configured model is struck and badged, but there is no unsaved state to mark because the saving actions write through |
 
 ### Four gaps that are not about features at all
 
