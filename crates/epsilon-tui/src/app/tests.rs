@@ -1986,6 +1986,7 @@ async fn the_drawn_and_recorded_answers_to_an_open_card_are_the_same_answer() {
             let drawn = crate::render_cache::RenderState {
                 expand_all: app.prefs.expand_outputs,
                 hide_thinking: false,
+                filter: crate::state::TranscriptFilter::default(),
                 expanded: &app.card_open,
                 more_key: None,
             };
