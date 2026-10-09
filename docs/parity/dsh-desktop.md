@@ -120,7 +120,7 @@ measurements taken here at all.
 | Layout, sidebars, files tree, terminal, browser, preview, sessions | 65 | 2 | 21 | 37 | 5 |
 | Approvals, questions, schedule, jobs, goal, plan, subagents, models | 50 | 3 | 11 | 36 | 0 |
 | Un-numbered reference rows | 30 | 1 | 3 | 21 | 5 |
-| **Total** | **433** | **20** | **92** | **279** | **42** |
+| **Total** | **433** | **20** | **93** | **278** | **42** |
 
 ---
 
@@ -164,7 +164,7 @@ do are written out.
 | D-029 | `dsh://open` shows the window without passing credentials. | `apps/desktop/src/main.ts:1228-1232` | missing | — | No URL scheme is registered. |
 | D-030 | Closing the last window quits everywhere except macOS. | `apps/desktop/src/main.ts:1237-1239` | partial | `crates/epsilon-desktop/src/lib.rs:183-188` | `eframe::run_native` returns when the last window closes, so the product half is right. The macOS exception is not implemented and is not planned. |
 | D-031 | Every ordinary quit asks the Host what it would interrupt; if the Host reports nothing interruptible the quit proceeds with no dialog. | `apps/desktop/src/quit-confirmation.ts:68-77` | partial | `crates/epsilon-desktop/src/app.rs` — `inspect_quit` asks what a close would interrupt (turn, parked asks, on-screen conversation) and `answer_close_request` refuses with a dialog naming it; since round 17 the refusal cancels the platform close in the same function (`CancelClose` — before that the dialog could never appear in production, eframe closes uncancelled viewports). The second half stays open deliberately, not by omission: a tested product rule says closing is the reader's decision even for an empty window, and overturning it solo would trade the reference's frictionless close for that rule | `closing_the_window_asks_before_it_loses_a_turn`, `refusing_a_close_cancels_the_platform_close` (CancelClose observed on the frame), `a_typed_draft_keeps_its_guard` |
-| D-032 | Three localized explanations exist — running tasks, scheduled tasks, or both — and a failed or timed-out inspection is treated as "running tasks" rather than a silent quit. | `apps/desktop/src/quit-confirmation.ts:15-21`, `:71-74` | missing | — | As D-031. The fail-closed shape the reference gets right is worth porting; it is recorded in [Open rows](#open-rows). |
+| D-032 | Three localized explanations exist — running tasks, scheduled tasks, or both — and a failed or timed-out inspection is treated as "running tasks" rather than a silent quit. | `apps/desktop/src/quit-confirmation.ts:15-21`, `:71-74` | partial | `crates/epsilon-desktop/src/app.rs` — **three explanations now, where there were two.** `QuitAsk` gained `queued`, measured from the real agent's steering *and* follow-up queues, so a reader who typed a message while a turn was running is told `1 queued message is waiting, and it is dropped` instead of `Nothing is in flight` while a message sat in a queue nothing would deliver. The steered and follow-up forms are counted together because from a reader's point of view they are the same thing — a message the harness agreed to deliver later. **Still open:** Epsilon has no scheduled-task concept, so the reference's third *kind* (as against third *count*) has no target here, and a failed/timed-out inspection cannot occur because the measurement reads in-process rather than over IPC | `a_quit_with_queued_work_names_it_on_the_frame`, `a_quit_with_a_steered_message_also_names_it` (both drive the real agent queue, not a hand-set field) |
 | D-033 | Quit is the default button and Cancel answers Esc; macOS places Cancel left of Quit, Windows places Quit left of Cancel. | `apps/desktop/src/quit-confirmation.ts:79-90` | missing | — | As D-031. |
 | D-034 | A second quit request while the box is open joins it; on macOS it also raises the application. | `apps/desktop/src/quit-confirmation.ts:52-55`, `apps/desktop/src/main.ts:1003` | missing | — | As D-031. |
 | D-035 | The confirmation is skipped when the OS is ending the session. | `apps/desktop/src/main.ts:1082-1090`, `:1240` | missing | — | As D-031. |
@@ -783,7 +783,7 @@ of the document**, so it lists ids rather than paraphrasing cells — the cell i
 
 | area | partial rows |
 |---|---|
-| Electron shell | D-001, D-021, D-030, D-031, D-045, D-058, D-061, D-062, D-064, D-066 |
+| Electron shell | D-001, D-021, D-030, D-031, D-032, D-045, D-058, D-061, D-062, D-064, D-066 |
 | Approvals and presets | D-073, D-074, D-075, D-076, D-080, D-081, D-082, D-083 |
 | Transcript and tool cards | C-107, C-109, C-121, C-123, C-126, C-132, C-141, C-143, C-145, C-147, C-157, C-160, C-162, C-163, C-168, C-169 |
 | Keyboard and settings | S-109, S-113, S-115, S-117, S-119, S-125, S-126, S-159, S-164 |
@@ -815,7 +815,7 @@ rather than merely underserved:
 
 | area | missing rows |
 |---|---|
-| Electron shell | D-007, D-008, D-009, D-012, D-013, D-014, D-017, D-018, D-019, D-020, D-022, D-024, D-025, D-026, D-027, D-028, D-029, D-032, D-033, D-034, D-035, D-036, D-037, D-038, D-039, D-040, D-041, D-042, D-043, D-044, D-046, D-047, D-052, D-053, D-054, D-055, D-056, D-057, D-059, D-060, D-063, D-068, D-069, D-070 |
+| Electron shell | D-007, D-008, D-009, D-012, D-013, D-014, D-017, D-018, D-019, D-020, D-022, D-024, D-025, D-026, D-027, D-028, D-029, D-033, D-034, D-035, D-036, D-037, D-038, D-039, D-040, D-041, D-042, D-043, D-044, D-046, D-047, D-052, D-053, D-054, D-055, D-056, D-057, D-059, D-060, D-063, D-068, D-069, D-070 |
 | Approvals and presets | D-077, D-079 |
 | Transcript and tool cards | C-101, C-102, C-103, C-104, C-105, C-106, C-108, C-112, C-113, C-114, C-115, C-116, C-117, C-118, C-119, C-122, C-124, C-125, C-128, C-129, C-130, C-131, C-133, C-134, C-136, C-137, C-138, C-139, C-142, C-144, C-146, C-148, C-149, C-150, C-151, C-154, C-155, C-156, C-158, C-159, C-161, C-164, C-165, C-166, C-167, C-171, C-172, C-173, C-175, C-176, C-177, C-178, C-179, C-180, C-181, C-182 |
 | Keyboard and settings | S-102, S-104, S-105, S-106, S-108, S-110, S-111, S-112, S-114, S-116, S-121, S-122, S-123, S-124, S-128, S-130, S-129, S-131, S-132, S-133, S-134, S-136, S-137, S-138, S-139, S-140, S-141, S-142, S-143, S-144, S-145, S-146, S-147, S-148, S-149, S-150, S-151, S-152, S-153, S-155, S-156, S-157, S-158, S-160, S-161, S-162, S-163, S-166, S-167, S-168 |
@@ -824,25 +824,29 @@ rather than merely underserved:
 | Approvals through models | I-108, I-109, I-110, I-111, I-112, I-113, I-114, I-115, I-116, I-117, I-118, I-119, I-120, I-121, I-122, I-123, I-124, I-125, I-126, I-127, I-128, I-129, I-130, I-131, I-132, I-135, I-136, I-138, I-140, I-143, I-144, I-145, I-146, I-147, I-148, I-150 |
 | Un-numbered reference rows | U-002, U-004, U-005, U-007, U-008, U-009, U-010, U-011, U-013, U-014, U-015, U-016, U-018, U-019, U-020, U-021, U-026, U-027, U-028, U-029, U-030 |
 
-### The five highest-priority missing rows
+### The six highest-priority missing rows
 
-**Two entries have left this list since it was first written, and one has moved down.** D-078 and
-I-107 — the approval channel failing closed — were first here and are now `done`: the integrator
-opened `crates/epsilon-safety` after this pass and found the rule stronger than the reference's,
-pinned by `dropped_ask_denies_fail_closed`
+**Three entries have left this list since it was first written, and the top one has moved down.**
+D-078 and I-107 — the approval channel failing closed — were first here and are now `done`: the
+integrator opened `crates/epsilon-safety` after this pass and found the rule stronger than the
+reference's, pinned by `dropped_ask_denies_fail_closed`
 (`crates/epsilon-safety/src/channel_ui.rs:186-195`). The writing pass had refused to infer a
 security property from "the window does not contradict it", and that refusal is what sent the row
 to the engine to be checked rather than quietly marked `done`. Then the keybinding registry, which
-was first here, was largely closed by M315 — it is now **second**, and the reason is below.
+was first here, was largely closed by M315 — it is now **second**. And **D-032, the top entry, went
+`partial` in round 98**: what a quit would interrupt is now measured across three states, so the
+dialog names queued work rather than reporting "nothing in flight" while a message sat in a queue
+nothing would deliver.
 
-1. **D-032 to D-036 — quitting with work in flight, and D-031's remainder.** Closing the window while a turn is running
-   ends the process. The reference asks what would be interrupted, treats an unknown answer as
-   "running tasks", defaults to the safe choice and makes Cancel the focused button. The durable
-   session file means little is lost, but a reader who has not pressed `/clear` and does not know
-   that is not protected. **This moved to first** when the registry below it was mostly closed:
-   it is the one remaining gap here that touches `AGENTS.md` §6's "never lose a user's work", and
-   D-031 itself is now `partial` rather than half done (the idle-with-session silent close and the
-   button order in D-033 are still open).
+1. **D-033 to D-036 — the quit dialog's own keyboard and window model.** D-032 (what a quit would
+   interrupt) is now `partial` and carries three explanations; what remains is the *shape* of the
+   dialog: which button Quit is, whether Escape answers Cancel, and what a second request does.
+   **Escape answering Cancel is already implemented and the button order is a recorded deliberate
+   difference** — "Keep working" is the leftmost control and takes focus, because a dialog a
+   reflexive Enter dismisses destructively is the case `AGENTS.md` §6 exists for, and DSH's
+   Windows-order rule puts the destructive action first. Closing the window while a turn is running
+   no longer ends the process (M316), and a reader who has not pressed `/clear` is told the
+   conversation is on screen only.
 2. **The keybinding registry, now two rows short of closed — the recorder and the write half.**
    [`AGENTS.md`](../../AGENTS.md) §2.4 says slash commands, palette entries **and keybindings** are
    "declared once and read by every front end, with per-front-end capability declared as data".
@@ -857,7 +861,8 @@ was first here, was largely closed by M315 — it is now **second**, and the rea
    nothing writes it, and a binding set in a UI would not survive a restart. D-063 follows from
    the recorder: with no chords being captured there are no two-key chords whose press and release
    would need the reference's split treatment. Everything in this entry is `missing` or, for
-   S-125, `partial`; none of it is the mechanism, which exists.
+   S-125, `partial`; none of it is the mechanism, which exists. **What it shares with entry 1 is
+   the shape of the remaining work: the mechanism exists and the two surfaces on it do not.**
 3. **D-046 and S-105 — adding a workspace from inside the window.** A window is launched with a
    workspace and has no way to change or add one. Every related row (L-120, L-127, U-026 to U-030,
    S-103) is downstream of this one.
@@ -870,7 +875,13 @@ was first here, was largely closed by M315 — it is now **second**, and the rea
    new session, rename, fork or archive one from here; every one of those heads is refused by name
    (`commands.rs:446-451`, which says why `/new` in particular is not mapped onto the nearest thing
    that exists). The sessions pane can *resume* a stored session (`app.rs:3679-3697`) and nothing
-   else, so the window is a reader of sessions rather than an editor of them.
+   else, so the window is a reader of sessions rather than an editor of them. **The terminal's
+   browser can now delete one (round 96), which makes this asymmetry sharper rather than smaller: a
+   capability the smaller front end has is one the window is named for lacking.**
+6. **A sixth entry, added after round 98, and it is the one that most resembles a bug.** The
+   window's quit dialog now names queued work, which was the third explanation it lacked. What the
+   entries above have in common is that each is a *surface*; the recorder (entry 2) is the one with
+   the largest count of rows behind it, and it is the natural next round.
 
 ---
 

@@ -2647,6 +2647,16 @@ struct QuitAsk {
     /// A session file with something in it, and whether it has been `/clear`ed in this
     /// window. The transcript on screen is the only record of a conversation nobody exported.
     conversation: bool,
+    /// Messages the reader queued and which quit would drop (steering + follow-up).
+    ///
+    /// **The third explanation, and it was missing.** A reader who typed a
+    /// follow-up while a turn was running has work *waiting* that is neither a
+    /// turn in flight nor a parked ask, so `inspect_quit` reported neither and
+    /// the dialog said "Nothing is in flight" while a message sat in a queue
+    /// nothing would deliver. DSH asks for three explanations rather than one
+    /// for exactly this reason: "running" and "waiting on you" are different
+    /// states with different remedies, and so is "waiting for its turn".
+    queued: usize,
     /// No session at all — the window opened onto nothing, so there is nothing to lose and
     /// the dialog would be pure friction. Recorded so the "ask anyway?" path is a decision
     /// rather than a reflex.
@@ -2682,6 +2692,25 @@ impl QuitAsk {
             parts.push(
                 "this conversation is only on screen until the session is reopened".to_string(),
             );
+        }
+        if self.queued > 0 {
+            // Numbered, and said in the reader's terms: "a message you queued",
+            // not "queue depth", because the question being answered is "what
+            // do I lose if I close now".
+            parts.push(format!(
+                "{} queued {} waiting, and {} dropped if you close",
+                self.queued,
+                if self.queued == 1 {
+                    "message is".to_string()
+                } else {
+                    "messages are".to_string()
+                },
+                if self.queued == 1 {
+                    "it is"
+                } else {
+                    "they are"
+                }
+            ));
         }
         if parts.is_empty() {
             return "Nothing is in flight. Close the window?".to_string();
@@ -7480,6 +7509,7 @@ impl IdeApp {
                 running: false,
                 pending_approvals: 0,
                 conversation: false,
+                queued: 0,
                 empty: true,
             },
             Some(session) => {
@@ -7492,6 +7522,11 @@ impl IdeApp {
                     // claim that `/clear` was not pressed, which is what the reference asks
                     // about too.
                     conversation: rows > 0,
+                    // Both queues: a steered interjection and a follow-up are both
+                    // messages the reader wrote and the harness agreed to deliver
+                    // later. Quitting delivers neither.
+                    queued: session.agent().steer_queue_len()
+                        + session.agent().followup_queue_len(),
                     empty: false,
                 }
             }
@@ -12976,6 +13011,103 @@ mod tests {
         );
     }
 
+    /// **A quit with messages queued says so, and names how many.**
+    ///
+    /// The third explanation, and it was missing: a reader who typed a follow-up
+    /// while a turn was running has work *waiting* that is neither a turn in
+    /// flight nor a parked ask. `inspect_quit` measured neither, so the dialog
+    /// reported "Nothing is in flight" while a message sat in a queue nothing
+    /// would deliver — DSH asks for three explanations rather than one exactly
+    /// because "running", "waiting on you" and "waiting for its turn" have
+    /// different remedies.
+    ///
+    /// Driven through the real agent queue rather than a hand-set field, because
+    /// the defect is a *measurement* that missed a state, and setting the field
+    /// would make the test agree with itself.
+    #[test]
+    fn a_quit_with_queued_work_names_it_on_the_frame() {
+        let (ws, _keep) = scratch_workspace("quit-queued");
+        let (session, notices) = faux_session(&ws);
+        let mut h = Harness::with_session(ws, session, notices);
+        h.type_text("hello");
+        let _ = h.paint();
+
+        // Queue real work on the real agent: a follow-up, which is what a reader
+        // types while a turn is running.
+        let agent = std::sync::Arc::clone(h.app.session().expect("a session").agent());
+        agent.follow_up(epsilon_contracts::message::Message::User(
+            epsilon_contracts::message::UserMessage {
+                id: "queued-1".into(),
+                timestamp_ms: 0,
+                content: vec![epsilon_contracts::content::UserContent::Text {
+                    text: "and then the sequel".into(),
+                }],
+            },
+        ));
+        assert_eq!(agent.followup_queue_len(), 1, "the fixture queued one");
+
+        assert!(
+            !h.request_close(),
+            "a close with queued work must be refused"
+        );
+        let frame = h.paint();
+        assert!(
+            h.app.quit_confirm.is_some(),
+            "the refusal must be a question.\n{}",
+            frame.describe()
+        );
+        assert!(
+            frame
+                .region("agent")
+                .iter()
+                .any(|t| t.contains("1 queued message is waiting, and it is dropped")),
+            "the dialog must name the queued work, not report nothing in flight.\n{}",
+            frame.describe()
+        );
+    }
+
+    /// **A steered interjection counts as queued work too.**
+    ///
+    /// The two queues exist for different reasons — steering is delivered
+    /// mid-run, a follow-up after it — but from a reader's point of view they are
+    /// the same thing: a message they wrote that the harness agreed to deliver
+    /// later. Measuring one and not the other would leave the same hole half
+    /// open, so both are counted here.
+    #[test]
+    fn a_quit_with_a_steered_message_also_names_it() {
+        let (ws, _keep) = scratch_workspace("quit-steered");
+        let (session, notices) = faux_session(&ws);
+        let mut h = Harness::with_session(ws, session, notices);
+        h.type_text("hello");
+        let _ = h.paint();
+
+        let agent = std::sync::Arc::clone(h.app.session().expect("a session").agent());
+        agent.steer(epsilon_contracts::message::Message::User(
+            epsilon_contracts::message::UserMessage {
+                id: "steered-1".into(),
+                timestamp_ms: 0,
+                content: vec![epsilon_contracts::content::UserContent::Text {
+                    text: "actually, do it the other way".into(),
+                }],
+            },
+        ));
+        assert_eq!(agent.steer_queue_len(), 1, "the fixture steered one");
+
+        assert!(
+            !h.request_close(),
+            "a close with a steered message must be refused"
+        );
+        let frame = h.paint();
+        assert!(
+            frame
+                .region("agent")
+                .iter()
+                .any(|t| t.contains("1 queued message is waiting")),
+            "steering is queued work as well.\n{}",
+            frame.describe()
+        );
+    }
+
     /// **A second close request does not fall through into a close.**
     ///
     /// A guard that can be beaten by holding the window's close button is not a guard, and
@@ -13124,6 +13256,7 @@ mod tests {
             running: true,
             pending_approvals: 0,
             conversation: true,
+            queued: 0,
             empty: false,
         };
         let text = ask.sentence();
@@ -13134,6 +13267,7 @@ mod tests {
             running: false,
             pending_approvals: 0,
             conversation: false,
+            queued: 0,
             empty: true,
         };
         assert!(
@@ -13152,6 +13286,7 @@ mod tests {
             running: false,
             pending_approvals: 1,
             conversation: false,
+            queued: 0,
             empty: false,
         };
         let text = ask.sentence();
