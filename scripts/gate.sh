@@ -70,6 +70,10 @@ run "check-parity-citations" python scripts/check-parity-citations.py --quiet ||
 # harness line, never what a done row's ours column means (the fifth goal
 # audit's finding; the vintage remap cannot see a row wrong when written).
 run "check-citation-placement" python scripts/check-citation-placement.py || overall=1
+# The reference column resolves against the vendored trees: the workspace-side
+# checker skips references/ because a fresh clone lacks it, which left 883
+# reference citations unverified by construction. Absent trees: says so, exits 0.
+run "check-reference-citations" python scripts/check-reference-citations.py || overall=1
 # Verb counts are stated in prose in four places and updated by hand every
 # verb round; four rounds running each missed at least one site. Dated
 # records are excluded by design -- see the script.

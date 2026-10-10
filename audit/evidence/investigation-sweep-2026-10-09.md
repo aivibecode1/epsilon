@@ -154,13 +154,44 @@ padded.
   evidence-discipline section (§5) is the same failure mode ponytail names, packaged
   sharper and with an enforcement marker.
 
-## 7. Reference re-audit (tasks-1g/1h) — **a four-row sample, not a full re-derivation**
+## 7. Reference re-audit (tasks-1g/1h) — first a four-row sample, then the full measurement
 
-**What this stream actually was, stated plainly:** four rows pulled and verified by reading
-both sides, plus the mechanical checks over the whole matrices (citations resolve, counts
-agree — §0). It was **not** a fresh row-level re-derivation of the 339-row matrix; that is
-what the M313 inventories were, and this stream sampled and cross-checked rather than
-rebuilding. Four rows, both sides read:
+**What this stream was, and what it became.** It began as four rows pulled and verified by
+reading both sides (§0's table is kept below), which the goal's own auditor correctly
+rejected: the reference citations were unverified by construction, because
+`check-parity-citations.py` skips `references/` by design. Two instruments closed that, and
+both are reproducible:
+
+1. **`scripts/check-reference-citations.py` — a gate leg, 891 citations.** Every reference-side
+   citation in both matrices is resolved against the vendored root for existence and line
+   range (the DSH matrix's `ui-*`/`shortcuts/`/`locale/` paths under `packages/client/`), and
+   it says so and exits 0 when the vendored trees are absent — the same contract
+   `check-links.py` keeps. It found **4 broken citations**, corrected against the trees:
+   `ui-conversation/src/submission-settings.ts:6-28` (C-142 — the row cited a
+   `src/client/` path that does not exist), `ui-attachment/src/FileCard.tsx:46-78` (I-148 —
+   same shape), `ui-directory-picker-native/src/client/flow.ts:27` (U-026 — a bare
+   continuation), and `ui-directory-picker-browse/src/client/flow.ts:16-17` (U-027 — the
+   cited range ran past the file's 43 lines). It also covers the 8 CSS citations the first
+   version's regex would have skipped, each verified by hand against the file (C-150's
+   `max-width: 900px`, C-153's `overflow-y: clip`, S-128's `800px`, S-164's `2px` ring,
+   S-165's `prefers-reduced-motion`).
+2. **`scripts/report-reference-fidelity.py` — all 772 rows scored.** Every row's behaviour
+   keywords are checked against the window around its reference citations; a row sharing no
+   vocabulary is a candidate for a reviewer, not a defect. **64 candidates were read against
+   the vendored source and all 64 are legitimate** (recorded as 82 by a shell
+   variant of the stop-word list before the script was committed; the seventh audit measured 64
+   from the committed instrument and the record was corrected to the measurement) — every citation lands on the behaviour its
+   row claims (P-027's `handleCtrlC` with its 500 ms, P-026's `getDoubleEscapeAction`, P-047's
+   `showModelsSelector` + `app.models.save`, P-070's `showSessionSelector`, P-136's
+   `Spacer(1)`, D-001's `1280×820` BrowserWindow, D-031's `decide()`, C-117's `onCopy`,
+   S-112's desktop binding…). The zero overlap is the instrument's stated limitation — a
+   citation can be right in a vocabulary its claim does not share — and the candidate list is
+   reproducible with `python scripts/report-reference-fidelity.py`.
+
+**The honesty this section now carries:** existence and range are checked mechanically for
+every reference citation; content was hand-verified for all 64 candidates the instrument
+ranked as weakest, plus the 8 CSS rows. That is a measurement of the whole matrix's
+fidelity, not a sample of four. The original four-row evidence is kept below unchanged.
 
 | Row | Matrix claim | Verification |
 |---|---|---|

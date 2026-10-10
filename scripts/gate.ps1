@@ -205,6 +205,12 @@ $gates = @(
     # because a row wrong when written is faithfully re-pointed wrong. Proven by
     # control: the pre-fix anchor is flagged, exit 1.
     @{ Name = "check-citation-placement"; Exe = "python"; Args = @("scripts/check-citation-placement.py") },
+    # The reference column of both matrices resolves against the vendored trees:
+    # the workspace-side checker skips `references/` because a fresh clone lacks
+    # it, which left 883 reference citations unverified by construction. When
+    # the trees are absent this leg says so and exits 0; when present, every
+    # cited line must exist and be in range. Proven by control.
+    @{ Name = "check-reference-citations"; Exe = "python"; Args = @("scripts/check-reference-citations.py") },
     # Verb counts are stated in prose in four places and updated by hand every
     # verb round; four rounds running each missed at least one site. Dated
     # records (ADR amendments, the STATUS log) are excluded by design — see
