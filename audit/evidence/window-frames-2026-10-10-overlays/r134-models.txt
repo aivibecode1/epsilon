@@ -1,0 +1,36 @@
+frame at 1440x900 (tier full):
+  [title] epsilon-tabs-overlay-models  ·  no agent attached
+  [status] no agent attached
+  [hints] ctrl+b sidebar  ·  left/right width
+  [sidebar-toggle] Hide sidebar
+  [activity] ◧ files
+  [activity] ⑂ subagents
+  [activity] ☰ sessions
+  [workspace] Workspace
+  [workspace] workspace  …/Temp/epsilon-tabs-overlay-models
+  [workspace] 2 files
+  [editor] Nothing open
+  [editor] Open alpha.rs
+  [agent] Agent
+  [notices] Notices · 1 · expanded
+  [notices] not connected to an agent
+  [notices] dismiss
+  [agent] a conversation will appear here once an agent is attached
+  [composer] no agent attached
+  [focus] agent
+  [models] openai
+  [models] github-copilot
+  [models] anthropic
+  [models] google
+  [models] deepseek
+  [models] faux
+  [models] ollama
+  [models] amazon-bedrock
+  [models] google-vertex
+  [models] groq
+  [models] mistral
+  [models] moonshot
+  [models] openrouter
+  [models] xai
+  [models] zai
+  [models] esc backs out · enter chooses

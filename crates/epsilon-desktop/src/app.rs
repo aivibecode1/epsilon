@@ -1301,12 +1301,19 @@ impl IdeApp {
         if self.keys.take(ctx, "window.palette") {
             // Toggling rather than only opening, because the chord people press twice
             // because it did not seem to work must not need a different one.
-            // One overlay at a time: opening here closes the other two.
+            // One overlay at a time: opening here closes **every** other one, exactly as
+            // `open_palette` does. This branch used to clear two of the five, so `Ctrl`+`P`
+            // over the settings browser, the transcript search or the timeline stacked a
+            // second modal underneath them — the palette drew below, the keys went to the
+            // overlay on top, and the first Escape closed the box nobody could see.
             if self.palette.is_some() {
                 self.close_palette();
             } else {
                 self.model_picker = None;
                 self.shortcuts_open = false;
+                self.settings_open = false;
+                self.search = None;
+                self.timeline = None;
                 self.palette = Some(Palette::default());
             }
         }
@@ -1352,6 +1359,10 @@ impl IdeApp {
             return;
         }
         if let Some(p) = self.palette.as_mut() {
+            // Re-derive, not only clamp on a step: a query that shrank the match list must
+            // not leave the highlight past its end, because that is a row the reader can no
+            // longer see — the terminal's `sync_slash_state` re-derives for the same reason.
+            p.selected = p.selected.min(entries.len().saturating_sub(1));
             if step != 0 {
                 let last = entries.len().saturating_sub(1) as i32;
                 p.selected = (p.selected as i32 + step).clamp(0, last) as usize;
@@ -1434,15 +1445,21 @@ impl IdeApp {
         }
         // Selection: the reference's recorder opens by *clicking* a row; this
         // window's shortcuts rows are the reference, so the keyboard
-        // equivalent is a selection plus the record chord. Clamped by the
-        // recorder when it arms — an index past the table would record for a
-        // command nobody pointed at.
+        // equivalent is a selection plus the record chord.
+        //
+        // **Clamped to the table, every step.** It used to be a bare
+        // `saturating_add(1)`, so arrowing past the last row left the selection
+        // pointing at nothing: the highlight matched no row and the frame showed
+        // a reference with no selection in it. The recorder's own guard caught
+        // the case where it mattered to a *write*, which is why nothing
+        // failed — the defect was the reader's, not the file's.
         if self.keys.take(ctx, "window.shortcuts.previous") {
             self.shortcuts_selected = self.shortcuts_selected.saturating_sub(1);
             return;
         }
         if self.keys.take(ctx, "window.shortcuts.next") {
-            self.shortcuts_selected = self.shortcuts_selected.saturating_add(1);
+            let last = self.shortcut_rows().len().saturating_sub(1);
+            self.shortcuts_selected = (self.shortcuts_selected + 1).min(last);
             return;
         }
         if self.keys.take(ctx, "window.shortcuts.record") {
@@ -2241,6 +2258,10 @@ impl IdeApp {
             return;
         }
         if let Some(p) = self.model_picker.as_mut() {
+            // Re-derived, not only clamped on a step, and for the same reason the
+            // palette's is: a query that shrank the match list must not leave the
+            // highlight past its end.
+            p.selected = p.selected.min(entries.len().saturating_sub(1));
             if step != 0 {
                 let last = entries.len().saturating_sub(1) as i32;
                 p.selected = (p.selected as i32 + step).clamp(0, last) as usize;
@@ -2805,6 +2826,23 @@ pub struct IdeApp {
     /// before this field existed, and every existing test still describes the
     /// product it was written for.
     focus: FocusTarget,
+    /// Whether the keyboard was in a widget **other than the composer** when the last
+    /// frame finished.
+    ///
+    /// This exists because egui forgets. An unmodified `Escape` sets
+    /// `Memory::focused_widget = None` while the frame's input is *begun*
+    /// (`egui-0.36.2/src/memory/mod.rs:599-602`), so on the frame the key lands there is
+    /// no way to ask who was using it — which is exactly the moment the composer needs
+    /// to know, because `window.composer.escape` is the chord that clears a draft. The
+    /// end of [`Self::paint`] records it, after every widget has drawn and could have
+    /// claimed focus, and the composer reads it at the top of its own draw.
+    ///
+    /// **`AGENTS.md` §6 is the reason this is worth a field.** A reader who typed half a
+    /// prompt, clicked into the sidebar's file filter and pressed Escape — the gesture
+    /// every editor uses for "leave this" — had the draft cleared, because the composer
+    /// took the chord unconditionally. The same gate keeps it from taking Enter while
+    /// another control is being used, which is §2.7.
+    keyboard_away: bool,
     /// The workspace-relative path of the file-tree row the keyboard is on.
     ///
     /// **A path, not an index.** The visible list is filtered and collapsible, so an
@@ -3244,6 +3282,7 @@ impl IdeApp {
             placeholder: "ask anything  ·  enter sends  ·  shift+enter for a new line",
             refusal: None,
             approval_button_ids: Vec::new(),
+            keyboard_away: false,
             dropped_events: 0,
             tree,
             tree_query: String::new(),
@@ -3356,6 +3395,7 @@ impl IdeApp {
             placeholder: "no agent attached",
             refusal: None,
             approval_button_ids: Vec::new(),
+            keyboard_away: false,
             dropped_events: 0,
             tree,
             tree_query: String::new(),
@@ -5191,6 +5231,14 @@ impl IdeApp {
             self.draw_quit_confirm(ui, &mut summary, scale);
         }
         ui.ctx().set_style_of(theme, base_style);
+        // **Who holds the keyboard, recorded for the next frame.** Read once, after every
+        // widget has drawn — the panes, the overlays, the composer — because a widget can
+        // only have claimed focus by the time it has been drawn, and the composer needs
+        // this answer at the *start* of the next frame, before any widget can be asked.
+        // The composer is the comparison point: it is the one text input the window is
+        // built around, and `composer_id()` is the id its `TextEdit` is given.
+        let focused = ui.ctx().memory(|m| m.focused());
+        self.keyboard_away = focused.is_some_and(|id| id != composer_id());
         summary
     }
 
@@ -5207,17 +5255,48 @@ impl IdeApp {
         let query = palette.query.clone();
         let selected = palette.selected;
         let entries = self.palette_entries(&query);
-        let shown: Vec<&PaletteEntry> = entries.iter().take(PALETTE_LIMIT).collect();
-
         let screen = ui.ctx().content_rect();
+        // **Window the rows around the selection, then size the box to the window.**
+        //
+        // Both halves are one defect. The box's height was the row count the palette
+        // *offered*, clamped to a fraction of the screen, while the painter was clipped
+        // to the **screen** and not the box — so a long match list painted the rows the
+        // box had no room for straight over the transcript. And the selection was
+        // clamped to the whole match list while the draw took its first `PALETTE_LIMIT`,
+        // so arrowing past the drawn window left the frame with no highlight at all and
+        // Enter ran an entry nobody could see (`AGENTS.md` §2.7: a control the UI
+        // advertises must not be a no-op, and a row acted on but never drawn is worse).
+        //
+        // The idiom is the one the timeline overlay already uses a few hundred lines
+        // below — "window the list around the selection so the highlight is always the
+        // reader's" — applied here for the same reason, and the box is sized from the
+        // rows it will actually draw so the window cannot exceed its own frame.
+        let row_h = 22.0 * scale;
+        let chrome = (28.0 + 12.0) * scale;
+        let budget = screen.height() * 0.6;
+        // Rows the budget can hold, derived from it rather than guessed: the box is
+        // chrome plus one row per entry, so a count above this is a box that paints
+        // past its own edge.
+        let fits = ((budget - chrome) / row_h).floor().max(1.0) as usize;
+        let visible = PALETTE_LIMIT.min(entries.len()).min(fits);
+        let start = selected
+            .saturating_sub(visible / 3)
+            .min(entries.len().saturating_sub(visible));
+        let shown: Vec<&PaletteEntry> = entries.iter().skip(start).take(visible).collect();
+
         let width = (screen.width() * 0.6).clamp(240.0, 720.0);
         // The box's own height is the search row plus one row per entry, so it is text
-        // geometry and it scales with the text in it.
-        let height = ((28.0 + shown.len() as f32 * 22.0 + 12.0) * scale).min(screen.height() * 0.6);
+        // geometry and it scales with the text in it — and `visible` is bounded by the
+        // budget above, so this cannot exceed it.
+        let height = (chrome + shown.len() as f32 * row_h).min(budget);
         let box_rect = egui::Rect::from_min_size(
             egui::pos2(screen.center().x - width / 2.0, screen.top() + 48.0),
             egui::vec2(width, height),
         );
+        // Recorded so a test can prove no row left the box. The clip is the screen, so
+        // without a recorded box the spill is invisible to the suite: `row_rects` says
+        // where a row landed, and nothing says where it should have stopped.
+        summary.hotspots.push(("palette-box".into(), box_rect));
         let theme = self.theme;
         let painter = ui.painter().with_clip_rect(screen);
         painter.rect_filled(box_rect, 6.0, theme.panel);
@@ -5249,6 +5328,10 @@ impl IdeApp {
 
         let mut y = search.max.y + 4.0;
         for (index, entry) in shown.iter().enumerate() {
+            // The row's index in the **match list**, not in the window: the highlight
+            // and the click rect must both name the entry the reader means, whatever
+            // part of the list is drawn.
+            let index = start + index;
             let row = egui::Rect::from_min_size(
                 egui::pos2(box_rect.left() + 8.0, y),
                 egui::vec2((box_rect.width() - 16.0).max(8.0), 20.0 * scale),
@@ -5308,9 +5391,12 @@ impl IdeApp {
                     entry.command.unwrap_or(entry.label.as_str())
                 ),
                 &format!("Palette row · {} · {}", entry.label, entry.hint),
-                // `Dialog`: the palette is a modal surface over the window, and this is
-                // the row inside it. `Region` would be true and useless.
-                egui::accesskit::Role::Region,
+                // `ListItem`: this is one row in a list of things that can be opened, and
+                // that is what a screen reader must hear. `Region` would be true and
+                // useless — it describes a container, and a reader meeting forty of them
+                // hears forty containers and no rows. The modal surface is the box; the
+                // rows are its items.
+                egui::accesskit::Role::ListItem,
             );
             // A command row is addressable by its **id**, so a test presses
             // `command:goal.pause` rather than the label a reader sees — a label is what
@@ -5321,19 +5407,32 @@ impl IdeApp {
             }
             y += 22.0 * scale;
         }
-        if entries.len() > PALETTE_LIMIT {
-            let note = format!("… {} more — keep typing", entries.len() - PALETTE_LIMIT);
-            paint_text(
-                &painter,
-                summary,
-                "palette",
-                egui::pos2(box_rect.left() + 12.0, y + 10.0 * scale),
-                egui::Align2::LEFT_CENTER,
-                note.clone(),
-                egui::FontId::proportional(11.0 * scale),
-                theme.dim,
-            );
-            summary.rows.push(("palette".into(), note));
+        if entries.len() > shown.len() {
+            // What is off the window, and the two ways to reach it. "Keep typing" alone
+            // was true of the old cap and false of this one: the arrows move the window.
+            let above = start;
+            let below = entries.len() - start - shown.len();
+            let note = match (above > 0, below > 0) {
+                (true, true) => {
+                    format!("… {above} above · {below} below — arrows move, typing narrows")
+                }
+                (false, true) => format!("… {below} below — arrows move, typing narrows"),
+                (true, false) => format!("… {above} above — arrows move"),
+                (false, false) => String::new(),
+            };
+            if !note.is_empty() {
+                paint_text(
+                    &painter,
+                    summary,
+                    "palette",
+                    egui::pos2(box_rect.left() + 12.0, y + 10.0 * scale),
+                    egui::Align2::LEFT_CENTER,
+                    note.clone(),
+                    egui::FontId::proportional(11.0 * scale),
+                    theme.dim,
+                );
+                summary.rows.push(("palette".into(), note));
+            }
         }
         if shown.is_empty() {
             let none = "nothing matches";
@@ -5367,15 +5466,29 @@ impl IdeApp {
         let selected = picker.selected;
         let stage = picker.provider.clone();
         let entries = self.model_picker_entries();
-        let shown: Vec<&ModelPickerEntry> = entries.iter().take(PALETTE_LIMIT).collect();
-
         let screen = ui.ctx().content_rect();
+        // **Window the rows around the selection, and size the box to the window** — the
+        // palette's arrangement, for the reason its own draw gives: the clip is the
+        // screen, so a box sized for more rows than it holds paints them over the
+        // transcript, and a selection clamped past the drawn window leaves the frame
+        // with no highlight at all.
+        let row_h = 22.0 * scale;
+        let chrome = (28.0 + 12.0) * scale;
+        let budget = screen.height() * 0.6;
+        let fits = ((budget - chrome) / row_h).floor().max(1.0) as usize;
+        let visible = PALETTE_LIMIT.min(entries.len()).min(fits);
+        let start = selected
+            .saturating_sub(visible / 3)
+            .min(entries.len().saturating_sub(visible));
+        let shown: Vec<&ModelPickerEntry> = entries.iter().skip(start).take(visible).collect();
+
         let width = (screen.width() * 0.6).clamp(240.0, 720.0);
-        let height = ((28.0 + shown.len() as f32 * 22.0 + 12.0) * scale).min(screen.height() * 0.6);
+        let height = (chrome + shown.len() as f32 * row_h).min(budget);
         let box_rect = egui::Rect::from_min_size(
             egui::pos2(screen.center().x - width / 2.0, screen.top() + 48.0),
             egui::vec2(width, height),
         );
+        summary.hotspots.push(("model-box".into(), box_rect));
         let theme = self.theme;
         let painter = ui.painter().with_clip_rect(screen);
         painter.rect_filled(box_rect, 6.0, theme.panel);
@@ -5410,6 +5523,8 @@ impl IdeApp {
 
         let mut y = search.max.y + 4.0;
         for (index, entry) in shown.iter().enumerate() {
+            // The row's place in the match list, not in the window — see the palette's.
+            let index = start + index;
             let row = egui::Rect::from_min_size(
                 egui::pos2(box_rect.left() + 8.0, y),
                 egui::vec2((box_rect.width() - 16.0).max(8.0), 20.0 * scale),
@@ -5461,23 +5576,34 @@ impl IdeApp {
                 row,
                 &format!("epsilon-model-row-{}", entry.id),
                 &name,
-                egui::accesskit::Role::Region,
+                egui::accesskit::Role::ListItem,
             );
             y += 22.0 * scale;
         }
-        if entries.len() > PALETTE_LIMIT {
-            let note = format!("… {} more — keep typing", entries.len() - PALETTE_LIMIT);
-            paint_text(
-                &painter,
-                summary,
-                "models",
-                egui::pos2(box_rect.left() + 12.0, y + 10.0 * scale),
-                egui::Align2::LEFT_CENTER,
-                note.clone(),
-                egui::FontId::proportional(11.0 * scale),
-                theme.dim,
-            );
-            summary.rows.push(("models".into(), note));
+        if entries.len() > shown.len() {
+            let above = start;
+            let below = entries.len() - start - shown.len();
+            let note = match (above > 0, below > 0) {
+                (true, true) => {
+                    format!("… {above} above · {below} below — arrows move, typing narrows")
+                }
+                (false, true) => format!("… {below} below — arrows move, typing narrows"),
+                (true, false) => format!("… {above} above — arrows move"),
+                (false, false) => String::new(),
+            };
+            if !note.is_empty() {
+                paint_text(
+                    &painter,
+                    summary,
+                    "models",
+                    egui::pos2(box_rect.left() + 12.0, y + 10.0 * scale),
+                    egui::Align2::LEFT_CENTER,
+                    note.clone(),
+                    egui::FontId::proportional(11.0 * scale),
+                    theme.dim,
+                );
+                summary.rows.push(("models".into(), note));
+            }
         }
         if shown.is_empty() {
             let none = "nothing matches";
@@ -5503,8 +5629,16 @@ impl IdeApp {
     /// A read-only overlay in the palette's position — the eye goes to the top
     /// for a thing you opened to read. Rows come straight from the binding
     /// table (see [`Self::shortcut_rows`]), so a rebound chord is shown
-    /// rebound. No cap and no filter: a reference that hides rows is an index
-    /// with pages torn out.
+    /// rebound.
+    ///
+    /// **No filter, and no row is unreachable.** The table is fifty-odd rows long and the
+    /// box is capped at a fraction of the screen, so it shows a window of the table rather
+    /// than all of it: the selection moves the window, and a note names what is above and
+    /// below. The old shape was a box sized for the whole table and then clamped, with the
+    /// painter clipped to the **screen** — so the rows the box had no room for were drawn
+    /// over the transcript instead of being reachable, which is the failure this
+    /// arrangement exists to replace. Hiding rows without saying so would be the other
+    /// half of the same defect, so the note is part of the fix.
     fn draw_shortcuts(&mut self, ui: &mut egui::Ui, summary: &mut FrameSummary, scale: f32) {
         if !self.shortcuts_open {
             return;
@@ -5513,11 +5647,23 @@ impl IdeApp {
 
         let screen = ui.ctx().content_rect();
         let width = (screen.width() * 0.6).clamp(240.0, 720.0);
-        let height = ((28.0 + rows.len() as f32 * 22.0 + 12.0) * scale).min(screen.height() * 0.9);
+        // The window and the box are sized together, from the same budget, so the box
+        // cannot hold more rows than it claims: see the palette's draw for why.
+        let row_h = 20.0 * scale;
+        let chrome = (32.0 + 12.0) * scale;
+        let budget = screen.height() * 0.9;
+        let fits = ((budget - chrome) / row_h).floor().max(1.0) as usize;
+        let visible = rows.len().min(fits);
+        let start = self
+            .shortcuts_selected
+            .saturating_sub(visible / 3)
+            .min(rows.len().saturating_sub(visible));
+        let height = (chrome + visible as f32 * row_h).min(budget);
         let box_rect = egui::Rect::from_min_size(
             egui::pos2(screen.center().x - width / 2.0, screen.top() + 48.0),
             egui::vec2(width, height),
         );
+        summary.hotspots.push(("shortcuts-box".into(), box_rect));
         let theme = self.theme;
         let painter = ui.painter().with_clip_rect(screen);
         painter.rect_filled(box_rect, 6.0, theme.panel);
@@ -5594,7 +5740,10 @@ impl IdeApp {
             summary.rows.push(("shortcuts".into(), line));
             y += 18.0 * scale;
         }
-        for (index, (id, chords)) in rows.iter().enumerate() {
+        // The window of the table the box holds. `index` is the row's place in the
+        // **table**, not in the window, so the highlight and the recorder's target both
+        // name the row the reader means.
+        for (index, (id, chords)) in rows.iter().enumerate().skip(start).take(visible) {
             let row = egui::Rect::from_min_size(
                 egui::pos2(box_rect.left() + 8.0, y),
                 egui::vec2((box_rect.width() - 16.0).max(8.0), 20.0 * scale),
@@ -5656,9 +5805,33 @@ impl IdeApp {
                 row,
                 &format!("epsilon-shortcut-row-{id}"),
                 &name,
-                egui::accesskit::Role::Region,
+                egui::accesskit::Role::ListItem,
             );
-            y += 22.0 * scale;
+            y += row_h;
+        }
+        // What is off the window, and how to reach it: the arrows move the window.
+        let above = start;
+        let below = rows.len().saturating_sub(start + visible);
+        if above > 0 || below > 0 {
+            let note = match (above > 0, below > 0) {
+                (true, true) => format!("… {above} above · {below} below — arrows move"),
+                (false, true) => format!("… {below} below — arrows move"),
+                (true, false) => format!("… {above} above — arrows move"),
+                (false, false) => String::new(),
+            };
+            if !note.is_empty() {
+                paint_text(
+                    &painter,
+                    summary,
+                    "shortcuts",
+                    egui::pos2(box_rect.left() + 12.0, y + 10.0 * scale),
+                    egui::Align2::LEFT_CENTER,
+                    note.clone(),
+                    egui::FontId::proportional(11.0 * scale),
+                    theme.dim,
+                );
+                summary.rows.push(("shortcuts".into(), note));
+            }
         }
         summary.rows.push(("shortcuts".into(), "esc closes".into()));
     }
@@ -5753,7 +5926,7 @@ impl IdeApp {
                 row,
                 &format!("epsilon-settings-row-{}", entry.label),
                 &format!("Setting · {} · {}", entry.label, entry.value),
-                egui::accesskit::Role::Region,
+                egui::accesskit::Role::ListItem,
             );
             y += 22.0 * scale;
         }
@@ -8859,8 +9032,28 @@ impl IdeApp {
         //
         // What the guard taught is kept in `KeyBindings::take`, where it belongs: **a binding
         // is a choice by a person, so it means one specific set of modifiers.**
-        let sent = self.keys.take(ui.ctx(), "window.composer.submit");
-        let escaped = self.keys.take(ui.ctx(), "window.composer.escape");
+        //
+        // **And these two keys belong to whoever holds the keyboard.** The takes have to
+        // happen *before* the text edit is drawn — consume Enter any later and it becomes a
+        // newline — so they cannot wait for the focus test that lives below. They can
+        // still ask the same question one frame earlier: `composer_id()` is the id the text
+        // edit below is given, so "is anything else focused" is answerable before the draw
+        // rather than after it.
+        //
+        // Without this, the composer was the one control in the frame that still owned a key
+        // while somebody else was using it: a reader who typed half a prompt, clicked into
+        // the sidebar's file filter to narrow it and pressed Escape — the gesture every
+        // filter in every editor uses for "leave this" — had the draft cleared, and a reader
+        // who had just clicked the activity bar or "Keep it" and pressed Enter fired that
+        // button *and* sent the draft. `AGENTS.md` §6 is the first half and §2.7 the second.
+        // **Who held the keyboard on the last frame.** egui cannot tell us on this one: an
+        // unmodified `Escape` clears `Memory::focused_widget` while the frame's input is
+        // *begun* (`egui-0.36.2/src/memory/mod.rs:599-602`), so by the time any widget is
+        // drawn the answer is gone. The end of [`Self::paint`] records it, after every
+        // widget has drawn and can claim focus.
+        let keyboard_elsewhere = self.keyboard_away;
+        let sent = !keyboard_elsewhere && self.keys.take(ui.ctx(), "window.composer.submit");
+        let escaped = !keyboard_elsewhere && self.keys.take(ui.ctx(), "window.composer.escape");
         let editor = egui::Rect::from_min_size(
             rect.min,
             egui::vec2(rect.width(), rect.height() - 28.0 * scale),
@@ -8901,14 +9094,14 @@ impl IdeApp {
             .memory(|m| m.focused())
             .is_some_and(|id| id != response.id);
         if escaped {
-            if focused_elsewhere {
-                // Escape brings the keyboard home instead of silently doing nothing.
-                // Before this, a reader who clicked into the file filter could not get
-                // back to the composer from the keyboard at all, and `Escape` — which
-                // does clear a draft, in the box they could no longer see — appeared
-                // broken.
-                response.request_focus();
-            } else if running {
+            // **Only reachable with the keyboard in the composer, or nowhere.** The take
+            // above is gated on exactly that, which is what keeps a reader's draft safe in
+            // every field they might have wandered into. egui also drops focus on Escape at
+            // the start of a frame (`egui-0.36.2/src/memory/mod.rs`), so by the time the
+            // test below runs there is no other widget to name — the "bring the keyboard
+            // home" branch that used to sit here was already unreachable on the frame the
+            // key arrived, and is now unreachable by construction rather than by timing.
+            if running {
                 if let Some(s) = self.session.as_ref() {
                     s.abort();
                 }
@@ -10043,6 +10236,72 @@ mod tests {
         assert_eq!(
             h.app.draft, "hello",
             "clicking a tab must not take the keyboard away from the composer"
+        );
+    }
+
+    /// **`Escape` in the file filter must not throw away the draft.**
+    ///
+    /// The composer takes `window.composer.escape` at the top of its draw — before it
+    /// knows who holds the keyboard, because the two must be consumed *before* the text
+    /// edit is drawn or Enter becomes a newline. So a reader who typed half a prompt,
+    /// clicked into the sidebar's file filter to narrow it, and pressed Escape — the
+    /// gesture every filter in every editor uses for "leave this" — had the draft
+    /// cleared. The composer was the one control in the frame that still owned a key it
+    /// could not see being used.
+    ///
+    /// `AGENTS.md` §6: never lose a user's work. The dismissal of a filter is not consent
+    /// to discard a paragraph.
+    #[test]
+    fn escape_in_the_file_filter_does_not_discard_the_draft() {
+        let (dir, _keep) = scratch_workspace("escape-filter");
+        let mut h = Harness::new(dir);
+        let first = h.paint();
+        let filter = first
+            .hotspot("file-filter")
+            .expect("the sidebar's filter box is drawn");
+        h.app.set_draft("half a thought about the layout module");
+        h.click(filter.center());
+
+        let _ = h.press(egui::Key::Escape);
+        assert_eq!(
+            h.app.draft, "half a thought about the layout module",
+            "Escape left the filter, so it must not have touched the draft"
+        );
+    }
+
+    /// **`Enter` while another control holds the keyboard must act once.**
+    ///
+    /// The other half of the same ownership bug: the composer's submit read ran
+    /// unconditionally, so a reader who had just clicked a button — the activity bar, a
+    /// tab, the delete confirmation's "Keep it" — and pressed Enter fired that button
+    /// *and* sent the draft. One keypress, two actions, one of them invisible in the
+    /// frame the reader was looking at.
+    /// **`Enter` while another control holds the keyboard must act once.**
+    ///
+    /// The other half of the same ownership bug: the composer's submit read ran
+    /// unconditionally, so a reader who had typed in one field and clicked into another
+    /// sent the draft *and* let the focused control act — one keypress, two actions, one
+    /// of them invisible in the frame the reader was looking at.
+    ///
+    /// The sidebar's file filter is the case here because it is a real text input that
+    /// demonstrably takes the keyboard. The activity bar's buttons do not — measured, a
+    /// click there leaves focus on the composer, so there is nothing to disambiguate and
+    /// the composer keeping Enter is correct.
+    #[test]
+    fn enter_while_another_control_holds_the_keyboard_acts_once() {
+        let (dir, _keep) = scratch_workspace("enter-ownership");
+        let mut h = Harness::new(dir);
+        let first = h.paint();
+        let filter = first
+            .hotspot("file-filter")
+            .expect("the sidebar's filter box is drawn");
+        h.app.set_draft("a message nobody meant to send yet");
+        h.click(filter.center());
+
+        let _ = h.press(egui::Key::Enter);
+        assert_eq!(
+            h.app.draft, "a message nobody meant to send yet",
+            "the draft must not be sent while another control owns Enter"
         );
     }
 
@@ -12776,6 +13035,226 @@ mod tests {
         );
     }
 
+    /// **Every palette row is drawn inside the palette box.**
+    ///
+    /// The box's height was the row count it *offered*, clamped to a fraction of the screen —
+    /// and the painter was clipped to the **screen**, not the box. So a palette with more rows
+    /// than the box could hold painted the rest over the transcript: the box claimed a height
+    /// and then drew past it. `row_rects` is the instrument that sees it, because it records
+    /// where each row landed rather than what it said.
+    ///
+    /// **The fixture overflows on purpose.** Two files plus the window's own verbs is more than
+    /// `PALETTE_LIMIT` entries, which is the state the defect needs; a fixture that fit would
+    /// pass against the broken code.
+    #[test]
+    fn every_palette_row_is_drawn_inside_the_palette_box() {
+        let (dir, _keep) = scratch_workspace("palette-box");
+        let mut h = Harness::new(dir);
+        let _ = h.paint();
+        let _ = h.chord(egui::Modifiers::CTRL, egui::Key::P);
+        let entries = h.app.palette_entries("");
+        assert!(
+            entries.len() > PALETTE_LIMIT,
+            "the fixture must overflow the cap, or this test proves nothing: {} entries",
+            entries.len()
+        );
+        let frame = h.paint();
+        let box_rect = frame
+            .hotspot("palette-box")
+            .expect("the palette must record its own box, or no test can see past it");
+        let rows: Vec<egui::Rect> = frame
+            .row_rects
+            .iter()
+            .filter(|(region, _)| region == "palette")
+            .map(|(_, rect)| *rect)
+            .collect();
+        assert!(
+            rows.len() > 8,
+            "the palette draws rows; it drew {}:\n{}",
+            rows.len(),
+            frame.describe()
+        );
+        for row in &rows {
+            assert!(
+                row.max.y <= box_rect.max.y + 0.5,
+                "a palette row left the box it was drawn in: row {row:?}, box {box_rect:?}\n{}",
+                frame.describe()
+            );
+        }
+    }
+
+    /// **The row the keyboard highlights is a row the reader can see, and Enter acts on it.**
+    ///
+    /// Selection was clamped to the whole match list while the draw took the first
+    /// `PALETTE_LIMIT` of it, so arrowing past the drawn window left the frame with **no
+    /// highlight at all** — a control that stops answering — and Enter then ran an entry the
+    /// reader could not see. That is `AGENTS.md` §2.7: a bound key the window does not act on
+    /// must say so, and a row that is acted on but never drawn is worse.
+    #[test]
+    fn the_palette_highlight_is_always_a_row_the_reader_can_see() {
+        let (dir, _keep) = scratch_workspace("palette-highlight");
+        let mut h = Harness::new(dir);
+        let _ = h.paint();
+        let _ = h.chord(egui::Modifiers::CTRL, egui::Key::P);
+        let entries = h.app.palette_entries("");
+        assert!(
+            entries.len() > PALETTE_LIMIT,
+            "the fixture must overflow the cap: {} entries",
+            entries.len()
+        );
+        // Well past the drawn window: the walk a reader makes with one held key.
+        for _ in 0..(PALETTE_LIMIT + 12) {
+            let _ = h.press(egui::Key::ArrowDown);
+        }
+        let selected = h.app.palette.as_ref().expect("still open").selected;
+        let frame = h.paint();
+        let drawn: Vec<&str> = frame.region("palette");
+        let highlighted = entries[selected].label.as_str();
+        assert!(
+            drawn.contains(&highlighted),
+            "the highlighted row ({highlighted:?}, index {selected}) is not on screen.\n\
+             drawn: {drawn:?}\n{}",
+            frame.describe()
+        );
+        // And Enter acts on that same row — the palette closes because an entry ran.
+        let _ = h.press(egui::Key::Enter);
+        assert!(
+            h.app.palette.is_none(),
+            "Enter must act on the highlighted row; selected {selected} = {highlighted:?}"
+        );
+    }
+
+    /// **`Ctrl`+`P` closes the overlay it covers.**
+    ///
+    /// `open_palette` cleared every other overlay; the *chord* that also opens it cleared only
+    /// two of the five, so pressing `Ctrl`+`P` over the settings browser, the transcript search
+    /// or the timeline stacked a second modal that drew **underneath** the first. The first
+    /// Escape then closed the hidden one and the visible overlay looked stuck.
+    ///
+    /// The record's own rule is one overlay at a time, and five of the six paths that open an
+    /// overlay already obey it. This is the sixth.
+    #[test]
+    fn ctrl_p_closes_the_overlay_it_covers() {
+        // The settings browser, reached the way a reader reaches it.
+        let (dir, _keep) = scratch_workspace("palette-exclusive-settings");
+        let (session, notices) = faux_session(&dir);
+        let mut h = Harness::with_session(dir.clone(), session, notices);
+        let _ = h.app.try_command("/settings");
+        assert!(
+            h.app.settings_open,
+            "the browser must be open to be covered"
+        );
+        let _ = h.chord(egui::Modifiers::CTRL, egui::Key::P);
+        assert!(
+            !h.app.settings_open,
+            "Ctrl+P must close the settings browser it covers"
+        );
+        assert!(h.app.palette.is_some(), "and open the palette");
+        let _ = h.press(egui::Key::Escape);
+        assert!(
+            h.app.palette.is_none() && !h.app.settings_open,
+            "one Escape must end it: what is left must be nothing"
+        );
+
+        // The transcript search, by its own chord.
+        let (dir, _keep) = scratch_workspace("palette-exclusive-search");
+        let mut h = Harness::new(dir);
+        let _ = h.paint();
+        let _ = h.chord(egui::Modifiers::CTRL, egui::Key::F);
+        assert!(
+            h.app.search.is_some(),
+            "the search must be open to be covered"
+        );
+        let _ = h.chord(egui::Modifiers::CTRL, egui::Key::P);
+        assert!(
+            h.app.search.is_none(),
+            "Ctrl+P must close the transcript search it covers"
+        );
+        assert!(h.app.palette.is_some(), "and open the palette");
+    }
+
+    /// **Every row the shortcuts reference lists is reachable.**
+    ///
+    /// The box was sized for all fifty-odd rows and then clamped to a fraction of the screen,
+    /// while the painter was clipped to the screen: the table ran out of the bottom of its own
+    /// box and over the transcript, and the rows past the box edge were unreachable by any key.
+    /// The reference's own rule — that hiding rows is an index with pages torn out — was
+    /// therefore broken in the worst direction: nothing was hidden, it was spilled.
+    #[test]
+    fn the_shortcuts_reference_reaches_every_row_it_lists() {
+        let (dir, _keep) = scratch_workspace("shortcuts-reach");
+        let mut h = Harness::new(dir);
+        let _ = h.paint();
+        let _ = h.chord(egui::Modifiers::CTRL, egui::Key::Slash);
+        let all = h.app.shortcut_rows();
+        assert!(all.len() > 30, "the window's table is long: {}", all.len());
+        for _ in 0..(all.len() + 5) {
+            let _ = h.press(egui::Key::ArrowDown);
+        }
+        let frame = h.paint();
+        let drawn: Vec<&str> = frame.region("shortcuts");
+        let (last_id, _) = all.last().expect("a non-empty table");
+        assert!(
+            drawn.contains(&last_id.as_str()),
+            "the last row of the table ({last_id}) is unreachable.\ndrawn: {drawn:?}"
+        );
+        assert_eq!(
+            h.app.shortcuts_selected,
+            all.len() - 1,
+            "the keyboard must reach the last row"
+        );
+        // And nothing left the box.
+        let box_rect = frame
+            .hotspot("shortcuts-box")
+            .expect("the reference must record its own box");
+        let rows: Vec<egui::Rect> = frame
+            .row_rects
+            .iter()
+            .filter(|(region, _)| region == "shortcuts")
+            .map(|(_, rect)| *rect)
+            .collect();
+        for row in &rows {
+            assert!(
+                row.max.y <= box_rect.max.y + 0.5,
+                "a shortcut row left the box it was drawn in: row {row:?}, box {box_rect:?}"
+            );
+        }
+    }
+
+    /// **A palette row announces as a list item, not as a region.**
+    ///
+    /// The call site carried a comment naming `Role::Dialog` as the intent and calling
+    /// `Region` "true and useless" — and then passed `Region`. That is the comment/behaviour
+    /// drift this repository has been bitten by more than once: the prose said one thing, the
+    /// argument said another, and the tree a screen reader read said the third.
+    ///
+    /// `ListItem` is the role for a row in a list, and it is the one the file-tree rows
+    /// already use (`workspace.rs`).
+    #[test]
+    fn a_palette_row_is_announced_as_a_list_item() {
+        let (dir, _keep) = scratch_workspace("palette-role");
+        let mut h = Harness::new(dir);
+        let _ = h.paint();
+        let _ = h.chord(egui::Modifiers::CTRL, egui::Key::P);
+        let _ = h.paint();
+        let rows: Vec<(String, egui::accesskit::Role)> = h
+            .named_nodes()
+            .into_iter()
+            .filter(|(label, _)| label.starts_with("Palette row"))
+            .collect();
+        assert!(
+            !rows.is_empty(),
+            "the palette rows must be in the accessibility tree at all"
+        );
+        for (label, role) in &rows {
+            assert_eq!(
+                role,
+                &egui::accesskit::Role::ListItem,
+                "{label:?} must announce as a list item, not {role:?}"
+            );
+        }
+    }
+
     /// A frame becomes **real geometry**, not just text in a summary.
     ///
     /// Everything else in this file asserts on `FrameSummary`, which is a test instrument: it
@@ -13907,6 +14386,63 @@ mod tests {
             "convergence_frame: four frames written to {}",
             dir.display()
         );
+    }
+
+    /// **Round 134's overlays, written for one to see.**
+    ///
+    /// The text counterpart of `save_frame`, for the same reason: the rasteriser cannot run
+    /// on this machine, and a change to where rows are drawn is exactly the change a text
+    /// frame can show — the palette windowed around a selection deep in a long match list,
+    /// the shortcuts reference showing the same window with what lies above and below it.
+    #[test]
+    #[ignore = "a text-frame fixture; run with --ignored and EPSILON_FRAME_DIR set"]
+    fn the_overlay_frames_are_written_for_one_to_see() {
+        let Some(dir) = std::env::var_os("EPSILON_FRAME_DIR") else {
+            eprintln!("overlay_frame: EPSILON_FRAME_DIR is not set, so nothing is written");
+            return;
+        };
+        let dir = std::path::PathBuf::from(dir);
+        let _ = std::fs::create_dir_all(&dir);
+        fn save(h: &mut Harness, dir: &std::path::Path, name: &str) {
+            let frame = h.paint().describe();
+            match std::fs::write(dir.join(format!("{name}.txt")), &frame) {
+                Ok(()) => eprintln!("overlay_frame: wrote {name}.txt"),
+                Err(e) => eprintln!("overlay_frame: could not write {name}: {e}"),
+            }
+        }
+
+        // The palette, scrolled deep into a match list longer than the box.
+        {
+            let (ws, _keep) = scratch_workspace("overlay-palette");
+            let mut h = Harness::new(ws);
+            let _ = h.paint();
+            let _ = h.chord(egui::Modifiers::CTRL, egui::Key::P);
+            let _ = h.paint();
+            for _ in 0..(PALETTE_LIMIT + 12) {
+                let _ = h.press(egui::Key::ArrowDown);
+            }
+            save(&mut h, &dir, "r134-palette-scrolled");
+        }
+        // The shortcuts reference, at the bottom of its table.
+        {
+            let (ws, _keep) = scratch_workspace("overlay-shortcuts");
+            let mut h = Harness::new(ws);
+            let _ = h.paint();
+            let _ = h.chord(egui::Modifiers::CTRL, egui::Key::Slash);
+            let _ = h.paint();
+            for _ in 0..60 {
+                let _ = h.press(egui::Key::ArrowDown);
+            }
+            save(&mut h, &dir, "r134-shortcuts-bottom");
+        }
+        // The model picker, at its first stage.
+        {
+            let (ws, _keep) = scratch_workspace("overlay-models");
+            let mut h = Harness::new(ws);
+            let _ = h.paint();
+            let _ = h.chord(egui::Modifiers::CTRL, egui::Key::M);
+            save(&mut h, &dir, "r134-models");
+        }
     }
 
     /// A palette row can be **clicked**, not only typed at and confirmed.
