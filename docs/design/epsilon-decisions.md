@@ -2974,3 +2974,33 @@ claimed focus, and the composer reads that.
 a drawn row; a key belongs to whoever holds the keyboard, and when the platform destroys the
 evidence of who that was, the window keeps it.
 
+---
+
+## ADR-036: egui's weak text is this theme's `dim` role
+
+**Decided (round 135).** [`IdeTheme::visuals`](../../crates/epsilon-desktop/src/theme.rs) — the
+one unavoidable bridge from this theme's tokens onto egui's `Visuals` — sets
+`weak_text_color` to the theme's **`dim`** role.
+
+**Why.** Unset, egui derives weak text as `text_color().gamma_multiply(weak_text_alpha)` with
+`weak_text_alpha` at its **own default of 0.6** (`egui-0.36.2/src/style.rs:1141-1143`, `:1506`).
+That is a number this repository chose nothing about and applied no floor to, and it is the colour
+egui paints the *hint* of every `TextEdit` with (`text_edit/builder.rs:632`). So the composer's
+placeholder, the palette's "files and commands" and the model picker's stage hint — the first text
+a new reader meets — were drawn outside every contrast floor the window holds, while the token they
+should have used was already separated and already tested.
+
+**Why `dim` rather than a new colour.** `separated_from_background` already holds `dim` to
+`TEXT_FLOOR` against the page, and a placeholder and a timestamp being one token is a property:
+they cannot drift apart, and a theme change moves both. A second weak colour would be a second
+thing to separate and a second thing to test.
+
+**Rejected alternative.** **Separate egui's weak text in `visuals()` itself, the way the roles are.**
+Rejected: it would apply a floor to a colour this crate does not own, on every palette, for a role
+the theme already has. The bridge points; it does not re-derive.
+
+**Standing rule.** egui's `Visuals` fields are the theme's tokens under another spelling. Where a
+field has a token with a floor, point at the token; where it has no floor of egui's own that this
+repository chose, say so rather than inheriting the default silently.
+
+
