@@ -2921,3 +2921,56 @@ scroll keeps reading from the top, which is the one direction it has.
 make the same way; the reference's behaviour is evidence, not a constraint, when the two front
 ends already disagree and the reader's eye is the tiebreaker.
 
+---
+
+## ADR-035: An overlay draws a window of its list, and the window owns what a key means
+
+**Decided (round 134).** Every overlay that lists things draws a *window* of its match list —
+never the whole list into a box that cannot hold it — and the window follows the selection, so
+the highlighted row is always a drawn row and the box never claims a height it does not fill. A
+key is owned by whoever holds the keyboard: the composer takes `Enter` and `Escape` only while
+the keyboard is in the composer, or nowhere, and the window remembers which that was because
+egui does not.
+
+**Why (the overlays).** The palette and the model picker sized their box to the row count they
+*offered* and clamped it to a fraction of the screen, while the painter was clipped to the
+**screen** — so a match list longer than the box painted the surplus rows over the transcript,
+and the box claimed a height it did not fill. Separately, selection was clamped to the whole
+match list while the draw took its first `PALETTE_LIMIT` of it, so arrowing past the drawn window
+left the frame with **no highlight at all** and `Enter` ran an entry nobody could see. The
+shortcuts reference did both to all fifty-odd rows of its table and clamped its selection to
+nothing at all. `AGENTS.md` §2.7 is the rule both breaks: a bound key the window does not act on
+must say so, and a row acted on but never drawn is worse than a missing one because it looks
+present.
+
+**Why (the keys).** The composer's `Enter` and `Escape` were taken at the top of its draw with no
+test of who held the keyboard. A reader who typed half a prompt, clicked into the sidebar's file
+filter to narrow it, and pressed Escape — the gesture every editor uses for "leave this" — had
+the draft cleared, and the same read let the composer send a draft while another control was
+acting. `AGENTS.md` §6 is the first half, §2.7 the second.
+
+**The part that needed egui's own source.** The takes must happen *before* the text edit is drawn:
+consume `Enter` any later and it becomes a newline. So they cannot wait for the focus test that
+lives below the draw. They can ask the same question one frame earlier — **except on Escape**,
+where egui clears `Memory::focused_widget` while the frame's input is *begun*
+(`egui-0.36.2/src/memory/mod.rs:599-602`), so on the frame the key lands the answer is already
+gone. The window records it at the end of `paint`, after every widget has drawn and could have
+claimed focus, and the composer reads that.
+
+**Rejected alternatives.**
+
+- **A `ScrollArea` in the overlays.** Rejected for now: the palette and the timeline already use
+  a windowed list with a position note, the shortcuts reference is the same shape of data, and a
+  scrollbar adds a scroll-state field and a wheel path to three draw functions. The windowing
+  idiom is in this crate and this round reused it; a scrollbar remains available if a reference
+  list turns out to need optical scanning rather than selection.
+- **Clear the draft on Escape only when the composer has focus, measured on the frame.** Rejected:
+  the measurement is destroyed before the frame draws, which is the whole finding.
+- **Leave the composer's takes unconditional and rely on `approve_pending`'s ordering.** Rejected:
+  that covers one overlay's two keys. The composer is drawn last in the frame and its keys are
+  the ones a reader uses in every other field.
+
+**Standing rule.** A box states a capacity and draws no more than it can hold; a selection names
+a drawn row; a key belongs to whoever holds the keyboard, and when the platform destroys the
+evidence of who that was, the window keeps it.
+
