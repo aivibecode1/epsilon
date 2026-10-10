@@ -245,8 +245,8 @@ minutes. **Two workstreams that both need a battery cannot run in the same hour.
 - [ ] R6 decided in writing by the owner.
 - [ ] A tagged release installs and runs from its notes.
 - [x] R8's sample is complete and the rows it found stale are corrected. (Round 110: 17 rows, 27 tests, 0 downgraded — [`pinning-sample-2026-10-09.md`](../../audit/evidence/pinning-sample-2026-10-09.md).)
-- [ ] `docs/STATUS.md` says what changed and what is still broken; the battery that describes
-      the tree is committed and cited.
+- [x] `docs/STATUS.md` says what changed and what is still broken; the battery that describes
+      the tree is committed and cited. (Round 126, the closing row; `gate-port-r111`.)
 
 ## 5. Deliberately not in this plan
 
