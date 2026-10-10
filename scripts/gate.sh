@@ -66,6 +66,10 @@ run "check-lint-tables" python scripts/check-lint-tables.py       || overall=1
 # the check that means nobody has to. Reference-side paths are excluded (not
 # committed) -- see the script.
 run "check-parity-citations" python scripts/check-parity-citations.py --quiet || overall=1
+# A citation that resolves can still land inside the crate's test module -- a
+# harness line, never what a done row's ours column means (the fifth goal
+# audit's finding; the vintage remap cannot see a row wrong when written).
+run "check-citation-placement" python scripts/check-citation-placement.py || overall=1
 # Verb counts are stated in prose in four places and updated by hand every
 # verb round; four rounds running each missed at least one site. Dated
 # records are excluded by design -- see the script.

@@ -198,6 +198,13 @@ $gates = @(
     # round 14, all repaired by hand; this is the check that means nobody has
     # to. Reference-side paths are excluded (not committed) — see the script.
     @{ Name = "check-parity-citations"; Exe = "python"; Args = @("scripts/check-parity-citations.py", "--quiet") },
+    # A citation that resolves can still land inside the crate's `#[cfg(test)] mod
+    # tests` -- a harness line, which is never what a `done` row's ours column
+    # means. The fifth goal audit found four approval rows citing
+    # `full.textures_delta.clear();`; the vintage remap cannot see that class
+    # because a row wrong when written is faithfully re-pointed wrong. Proven by
+    # control: the pre-fix anchor is flagged, exit 1.
+    @{ Name = "check-citation-placement"; Exe = "python"; Args = @("scripts/check-citation-placement.py") },
     # Verb counts are stated in prose in four places and updated by hand every
     # verb round; four rounds running each missed at least one site. Dated
     # records (ADR amendments, the STATUS log) are excluded by design — see
