@@ -8001,6 +8001,10 @@ impl IdeApp {
             egui::vec2((rect.width() - 16.0).max(0.0), COMPOSER_H * scale - 6.0),
         );
         if composer.width() > 40.0 {
+            // Recorded so a test can prove the field inside stays inside it — the
+            // composer's box is the one a painter-drawn text field can spill out of, and
+            // nothing else in the frame summary says where it ended.
+            summary.hotspots.push(("composer-box".into(), composer));
             self.draw_composer(ui, summary, composer, scale);
         } else {
             // Too narrow for a composer worth drawing; say so rather than drawing a
@@ -9090,14 +9094,44 @@ impl IdeApp {
             rect.min,
             egui::vec2(rect.width(), rect.height() - 28.0 * scale),
         );
-        let response = ui.put(
-            editor,
-            egui::TextEdit::multiline(&mut self.draft)
-                .id(composer_id())
-                .hint_text(hint)
-                .desired_width(editor.width() - 8.0)
-                .font(egui::TextStyle::Monospace),
-        );
+        // **A scrollport, not a growing box.** The field used to be a bare
+        // `TextEdit::multiline` in a fixed rect, and egui sizes a multiline edit from
+        // `desired_height_rows` — four by default — with scrolling existing only inside
+        // a `ScrollArea`. So a long draft claimed as much height as it had lines:
+        // measured, forty lines took **619 points of an 86-point composer**, painting
+        // the text over the Send button's band and out through the bottom of the pane,
+        // with the caret vanishing below it and no way to reach the end. The draft is
+        // the reader's own work, and a draft the window cannot show the end of is a
+        // draft the window can lose (`AGENTS.md` §6).
+        //
+        // The scope is pinned to `editor` for the reason the file editor records: the
+        // pane's own `Ui` starts at the top of the pane, so a scroll area opened on it
+        // would open under the header. `auto_shrink([false, false])` keeps it at the
+        // rect's size rather than collapsing to the content's.
+        let scrolled = ui
+            .scope_builder(egui::UiBuilder::new().max_rect(editor), |ui| {
+                egui::ScrollArea::vertical()
+                    .id_salt("epsilon-composer-draft")
+                    .auto_shrink([false, false])
+                    .show(ui, |ui| {
+                        ui.add(
+                            egui::TextEdit::multiline(&mut self.draft)
+                                .id(composer_id())
+                                .hint_text(hint)
+                                .desired_width(editor.width() - 8.0)
+                                .font(egui::TextStyle::Monospace),
+                        )
+                    })
+            })
+            .inner;
+        let response = scrolled.inner;
+        // Where the text field actually landed — the scrollport's viewport, which is the
+        // rect that must stay inside the composer's box. `Ui::put` sets a **max** rect
+        // and does not clip, so without the scroll area this was the full height of the
+        // draft and `a_long_draft_scrolls_inside_the_composer` measured the spill.
+        summary
+            .hotspots
+            .push(("composer-field".into(), scrolled.inner_rect));
         // **egui already built this node; it just had no name.** `WidgetInfo::text_edit`
         // (`egui-0.36.2/src/data/output.rs:697`) fills the value and the hint and never the
         // label, so the composer's node reached the tree as a `MultilineTextInput` with a
@@ -9106,6 +9140,13 @@ impl IdeApp {
         // see [`name_node`]. The value and the hint are left exactly as egui set them, which
         // is the whole reason that function does not go through `WidgetInfo`.
         name_node(&response, "Composer");
+        // Where the text field actually landed. `Ui::put` sets a **max** rect and does
+        // not clip, so a field whose content is taller than the one it was given draws
+        // past it — which is exactly the defect `a_long_draft_scrolls_inside_the_composer`
+        // measures, and this rect is what it measures.
+        summary
+            .hotspots
+            .push(("composer-field".into(), response.rect));
         // **`Send` is disabled when it cannot send.** `send_draft` returns without a turn
         // for an empty draft and refuses with a sentence for a running one, so a live
         // button in either state is a control that does nothing — the `AGENTS.md` §2.7
@@ -10577,6 +10618,71 @@ mod tests {
             "",
             "the draft it sent is gone, which is what a send does — and it sent once\n{}",
             h.paint().describe()
+        );
+    }
+
+    /// **A long draft scrolls inside the composer instead of spilling over it.**
+    ///
+    /// The composer is a fixed `COMPOSER_H` box, and its text field was a bare
+    /// `TextEdit::multiline` in a fixed rect. egui sizes a multiline edit from
+    /// `desired_height_rows` — **four by default** (`builder.rs:123-140`, `:521`,
+    /// `:687`) — and scrolling only exists inside a `ScrollArea`, which this one had
+    /// none of. So the field's allocated height came from its content, not from its
+    /// rect: measured, an empty composer already overhangs the strip the layout
+    /// reserves, and a twenty-line paste claimed several times the box.
+    ///
+    /// **What a reader saw:** the text ran down over the Send button's band and past
+    /// the bottom of the pane, with the caret vanishing below it and no scrollbar. The
+    /// draft is the reader's own work — `AGENTS.md` §6 — and a draft the window cannot
+    /// show the end of is a draft the window can lose.
+    ///
+    /// Asserted on geometry, not on text: the field's own allocated rect versus the
+    /// rect the composer reserved for it. That is the property, and a test on the
+    /// strings would pass against a box that spills.
+    #[test]
+    fn a_long_draft_scrolls_inside_the_composer() {
+        let (dir, _keep) = scratch_workspace("composer-scroll");
+        let mut h = Harness::new(dir);
+        let _ = h.paint();
+
+        // The composer's own box, before anything is typed into it: the reference the
+        // field must stay inside.
+        let composer = h
+            .paint()
+            .hotspot("composer-box")
+            .expect("the agent pane reports where the composer was laid out");
+        assert!(
+            composer.height() > 0.0,
+            "precondition: a composer with height"
+        );
+
+        // A draft far longer than the box can hold.
+        h.app.set_draft(&"line of a long pasted draft\n".repeat(40));
+        let _ = h.paint();
+
+        let field = h
+            .paint()
+            .hotspot("composer-field")
+            .expect("egui allocates a rect for every TextEdit");
+        assert!(
+            field.height() <= composer.height() + 0.5,
+            "a 40-line draft claimed {:.0} points of a {:.0}-point composer — it must scroll \
+             inside the box, not paint over the pane below it.\n{}",
+            field.height(),
+            composer.height(),
+            h.paint().describe()
+        );
+        // And the draft is still there, reachable and readable: a scrollport that shows
+        // nothing is not a fix. The composer's own accessibility node carries the field's
+        // value, which is also what a screen reader reads — so this is the reader's view
+        // of the draft, not just the model's.
+        let node = h.composer_node();
+        assert_eq!(node.label(), Some("Composer"), "the field kept its name");
+        let value = node.value().unwrap_or_default();
+        assert!(
+            value.contains("line of a long pasted draft"),
+            "the draft must still be in the field, whatever part of it is scrolled into \
+             view; the node held {value:?}"
         );
     }
 
