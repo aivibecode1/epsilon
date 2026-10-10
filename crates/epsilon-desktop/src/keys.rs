@@ -241,6 +241,47 @@ impl KeyBindings {
             .map(|(id, _)| id.to_string())
     }
 
+    /// Empty the user's keybindings file — S-124's restore-all-defaults — keeping
+    /// the replaced file beside it.
+    ///
+    /// **A copy, not a delete** (`AGENTS.md` §6): the restore's whole job is to
+    /// discard what the reader had, so the recoverable copy is what makes it
+    /// reversible in fact rather than in promise. Through the same
+    /// scratch-then-rename the writer uses, so an interrupted restore leaves
+    /// either the old file or the empty one, never half of either.
+    ///
+    /// **The copy is overwritten by each restore rather than kept once** — the
+    /// session store keeps its first backup because that file's original is the
+    /// one worth preserving; here the state a reader wants back is the one they
+    /// had immediately before the restore, which is the one this copy holds.
+    ///
+    /// An **empty object** is written rather than no file: the loader reads it
+    /// as "no rebinds" silently, where an absent file is the normal first-run
+    /// state and a malformed one names itself — the restore must not leave the
+    /// launch warning armed.
+    pub fn clear_in(&mut self, dir: &Path) -> Result<PathBuf, String> {
+        let path = dir.join("keybindings.json");
+        let backup = dir.join("keybindings.json.bak");
+        if path.exists() {
+            let mut scratch_name = backup.as_os_str().to_os_string();
+            scratch_name.push(".partial");
+            let scratch = PathBuf::from(scratch_name);
+            std::fs::copy(&path, &scratch)
+                .map_err(|e| format!("could not copy the replaced file: {e}"))?;
+            if let Err(e) = std::fs::rename(&scratch, &backup) {
+                let _ = std::fs::remove_file(&scratch);
+                return Err(format!("could not keep the replaced file: {e}"));
+            }
+        }
+        std::fs::write(&path, "{}\n")
+            .map_err(|e| format!("could not write the empty bindings: {e}"))?;
+        // Reload through the loader the constructors use, so the effective
+        // table — the settings browser, the footer, every `take` — reads the
+        // defaults from one place rather than a second copy of "empty".
+        *self = Self::load(dir);
+        Ok(path)
+    }
+
     /// Consume `id`'s chord from the event stream if the stream carries one, and say so.
     ///
     /// **The replacement for `consume_key`, and it matches *exactly*.** egui's own

@@ -456,6 +456,12 @@ pub const WINDOW: &[(&str, &[&str])] = &[
     ("window.shortcuts.record", &["enter"]),
     ("window.shortcuts.next", &["down"]),
     ("window.shortcuts.previous", &["up"]),
+    // S-124's restore-all-defaults, and its confirmation. Armed by one chord,
+    // applied by Enter, abandoned by Escape — the two-press shape ADR-032's
+    // risk-confirmation rule gives a destructive action: it cannot be taken by
+    // a reflexive key, and cancelling costs nothing.
+    ("window.shortcuts.restore", &["ctrl+r"]),
+    ("window.shortcuts.restore.confirm", &["enter"]),
     // The settings browser walks like the pickers (separate ids so rebinding
     // one never moves the others).
     ("window.settings.close", &["escape"]),

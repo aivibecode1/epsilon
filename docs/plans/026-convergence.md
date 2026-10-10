@@ -11,7 +11,7 @@ it landed. This plan says what survived that, what the fresh audit found, and wh
 | Document | Status after this plan takes effect |
 |---|---|
 | [`025-completion-plan.md`](025-completion-plan.md) | **Superseded, not discarded.** Its disposition is §1 below, workstream by workstream. Its standing instructions (one build owner, never re-use a battery label, the human items cannot be closed by an agent) remain in force and are re-stated here only where they bite. |
-| [`../parity/pi-tui.md`](../parity/pi-tui.md), [`../parity/dsh-desktop.md`](../parity/dsh-desktop.md) | The scoreboard, unchanged in role. Measured healthy this week: 467 citations resolve, both count checkers exit 0, all 119 test names claimed by `done` rows exist in the tree. |
+| [`../parity/pi-tui.md`](../parity/pi-tui.md), [`../parity/dsh-desktop.md`](../parity/dsh-desktop.md) | The scoreboard, unchanged in role. Measured healthy this week: 471 citations resolve, both count checkers exit 0, all 119 test names claimed by `done` rows exist in the tree. |
 | [`../STATUS.md`](../STATUS.md) | The record. Every round lands here with its battery. |
 
 ---
@@ -163,9 +163,10 @@ pinned through the real draw path.
 real but the other way round:** the defect found was not the recorder eating its own cancel key
 but the *chain order* — the recorder read its keys behind the palette, whose chords are what a
 reader rebinds, so recording `ctrl+p` opened the palette. The recorder now owns the keyboard
-from the top of the frame's key chain, before even approvals. Remaining in the cluster: S-124
-(restore-all-defaults — now a real surface, since the recorder gives the file something to
-restore) and S-126's surface.
+from the top of the frame's key chain, before even approvals. Remaining in the cluster: S-126's surface — S-124
+(restore-all-defaults) landed round 109 on the recorder's file: `ctrl+r` arms, `enter`
+applies, `escape` abandons, and the replaced file is kept as `keybindings.json.bak` (§6's
+recoverable copy).
 
 **Trap.** A recorder is a modal keyboard owner. It must not eat the Escape that cancels it —
 the round-99 confirm-handler defect (frame-consumed `any_key`) is the same shape.
@@ -232,6 +233,7 @@ minutes. **Two workstreams that both need a battery cannot run in the same hour.
 ## 4. Definition of done for this plan
 
 - [x] R1 landed with both matrix rows moved and the ask's hint still truthful. (Round 105: `port-r105c`.)
+- [x] R4 landed: the recorder, its conflict refusal, the writer's caller, and restore-all-defaults. (Rounds 108–109; S-122, S-123, S-124, S-125 done.)
 - [ ] R2 landed or each row is `deliberately different` with both sides cited.
 - [ ] R3 has a ranked pass and every finding landed or recorded.
 - [ ] R5 booked; a reader transcript and a keyboard-only walkthrough exist with dates.

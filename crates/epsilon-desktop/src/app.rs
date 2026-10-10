@@ -1398,6 +1398,40 @@ impl IdeApp {
             self.close_shortcuts();
             return;
         }
+        // **The armed restore owns the overlay's keys** — Enter is the confirm,
+        // Escape abandons, and nothing else is read: a restore that a stray key
+        // could apply between the arming and the reader's answer is the
+        // data-loss shape §6 exists for.
+        if self.restore_armed {
+            if self.keys.take(ctx, "window.shortcuts.restore.confirm") {
+                let dir = self
+                    .keys_dir
+                    .clone()
+                    .or_else(epsilon_core::config::global_dir);
+                match dir {
+                    Some(dir) => match self.keys.clear_in(&dir) {
+                        Ok(_) => self.restore_armed = false,
+                        Err(e) => {
+                            self.transcript
+                                .push_failure(format!("could not restore defaults: {e}"));
+                            self.restore_armed = false;
+                        }
+                    },
+                    None => {
+                        self.transcript
+                            .push_failure("no config directory to restore the defaults into");
+                        self.restore_armed = false;
+                    }
+                }
+            } else if self.keys.take(ctx, "window.shortcuts.close") {
+                self.restore_armed = false;
+            }
+            return;
+        }
+        if self.keys.take(ctx, "window.shortcuts.restore") {
+            self.restore_armed = true;
+            return;
+        }
         // Selection: the reference's recorder opens by *clicking* a row; this
         // window's shortcuts rows are the reference, so the keyboard
         // equivalent is a selection plus the record chord. Clamped by the
@@ -1526,6 +1560,7 @@ impl IdeApp {
         // survives into the next frame.
         self.recording = None;
         self.recording_live = None;
+        self.restore_armed = false;
         self.focus = FocusTarget::Agent;
     }
 
@@ -2578,6 +2613,14 @@ pub struct IdeApp {
     /// The chord the armed recorder is holding, between its press and its
     /// release, so the row can show what is being captured before it saves.
     recording_live: Option<String>,
+    /// Whether restore-all-defaults is armed (S-124).
+    ///
+    /// One chord arms it, Enter applies it, Escape abandons it — the
+    /// two-press shape ADR-032's risk-confirmation rule gives a destructive
+    /// action: a restore the reader cannot decline is the data-loss shape
+    /// `AGENTS.md` §6 exists for. While armed it owns the overlay's keys, so
+    /// the record chord's Enter is the confirm rather than a second recorder.
+    restore_armed: bool,
     /// Where the keybindings file is read and written — `None` in production
     /// means the global config dir, and `Some` is the test seam that keeps a
     /// recorded chord off the machine's own file.
@@ -3238,6 +3281,7 @@ impl IdeApp {
             shortcuts_selected: 0,
             recording: None,
             recording_live: None,
+            restore_armed: false,
             keys_dir: None,
             settings_open: false,
             settings_selected: 0,
@@ -3349,6 +3393,7 @@ impl IdeApp {
             shortcuts_selected: 0,
             recording: None,
             recording_live: None,
+            restore_armed: false,
             keys_dir: None,
             settings_open: false,
             settings_selected: 0,
@@ -5520,6 +5565,32 @@ impl IdeApp {
             // The line the summary carries too: a mode the frame does not
             // report is a mode no frame test can see, and the recorder's whole
             // point is that it is visible.
+            summary.rows.push(("shortcuts".into(), line));
+            y += 18.0 * scale;
+        }
+        // The armed restore's line, under the title and above the table: what
+        // will happen and both ways out. An armed dialog the reader cannot see
+        // is one they cannot decline.
+        if self.restore_armed {
+            let line = format!(
+                "restore all defaults? ({} restores · {} cancels)",
+                self.keys
+                    .label("window.shortcuts.restore.confirm")
+                    .unwrap_or_else(|| "enter".to_string()),
+                self.keys
+                    .label("window.shortcuts.close")
+                    .unwrap_or_else(|| "esc".to_string())
+            );
+            paint_text(
+                &painter,
+                summary,
+                "shortcuts",
+                box_rect.left_top() + egui::vec2(12.0, 30.0 * scale),
+                egui::Align2::LEFT_CENTER,
+                line.clone(),
+                egui::FontId::proportional(12.0 * scale),
+                theme.danger,
+            );
             summary.rows.push(("shortcuts".into(), line));
             y += 18.0 * scale;
         }
@@ -12212,6 +12283,110 @@ mod tests {
         assert!(
             frame.contains("window.palette") && frame.contains(id),
             "the refusal names both commands — the owner and the kept one:\n{frame}"
+        );
+    }
+
+    /// Restore-all-defaults restores them, asks first, and keeps a copy (S-124).
+    ///
+    /// The recorder gave the file something to restore, which is what turns this
+    /// row from a no-op into a surface: a reader with a chord they regret can
+    /// now get the shared table back. Three properties, and each is a defect
+    /// without it — **asks first** (a reflexive key must not discard a file),
+    /// **keeps a recoverable copy** (`AGENTS.md` §6: never lose a user's work),
+    /// and **restores** (a dialog that restores nothing is the lie invariant 7
+    /// names).
+    ///
+    /// The seed path is the recorder's own: a chord is recorded first, then
+    /// restored, so the test proves the restore undid a real rebind rather than
+    /// tidying an absent file.
+    #[test]
+    fn restore_defaults_restores_them_asks_first_and_keeps_a_copy() {
+        let (ws, _keep) = scratch_workspace("restore-defaults");
+        let mut h = Harness::new(ws.clone());
+        let _ = h.app.try_command("/hotkeys");
+        let _ = h.paint();
+        let id = "window.sidebar.toggle";
+
+        // Seed a rebind through the recorder, so there is something to restore.
+        let _ = h.press(egui::Key::Enter);
+        let _ = h.chord_typed(egui::Modifiers::CTRL | egui::Modifiers::ALT, egui::Key::O);
+        assert_eq!(h.app.keys.label(id).as_deref(), Some("ctrl+alt+o"));
+
+        // Arm the restore. The frame must say what is waiting — an armed dialog
+        // that draws nothing is one a reader cannot decline.
+        let armed = h.chord(egui::Modifiers::CTRL, egui::Key::R);
+        assert!(
+            armed
+                .describe()
+                .contains("restore all defaults? (enter restores · esc cancels)"),
+            "arming must say what will happen and both ways out — not merely list the row \
+             that owns the chord:\n{}",
+            armed.describe()
+        );
+        assert_eq!(
+            h.app.keys.label(id).as_deref(),
+            Some("ctrl+alt+o"),
+            "arming alone must not discard anything"
+        );
+
+        // Confirm.
+        let _ = h.press(egui::Key::Enter);
+
+        assert_eq!(
+            h.app.keys.label(id).as_deref(),
+            Some("ctrl+b"),
+            "the shared default is back"
+        );
+        assert!(
+            h.keys_dir().read_dir().map(|d| d.count()).unwrap_or(0) >= 2,
+            "and the replaced file is still there: a recoverable copy, not a delete"
+        );
+        // The copy holds the rebind that was restored away.
+        let copy = std::fs::read_dir(h.keys_dir())
+            .expect("the directory")
+            .filter_map(|e| e.ok())
+            .map(|e| e.path())
+            .find(|p| p.file_name().is_some_and(|n| n != "keybindings.json"))
+            .expect("a second file in the directory");
+        let saved = std::fs::read_to_string(&copy).expect("the copy reads");
+        assert!(
+            saved.contains("ctrl+alt+o"),
+            "the copy holds the restored-away binding: {saved}"
+        );
+    }
+
+    /// Escape abandons the restore, and the file survives untouched.
+    ///
+    /// The other half of the same guard: a restore the reader cannot get out
+    /// of is the data-loss shape `AGENTS.md` §6 exists for.
+    #[test]
+    fn escape_abandons_the_restore_and_the_file_survives() {
+        let (ws, _keep) = scratch_workspace("restore-cancel");
+        let mut h = Harness::new(ws.clone());
+        let _ = h.app.try_command("/hotkeys");
+        let _ = h.paint();
+        let id = "window.sidebar.toggle";
+        let _ = h.press(egui::Key::Enter);
+        let _ = h.chord_typed(egui::Modifiers::CTRL | egui::Modifiers::ALT, egui::Key::O);
+        let written = std::fs::read(h.keys_dir().join("keybindings.json")).expect("seeded");
+
+        let _ = h.chord(egui::Modifiers::CTRL, egui::Key::R);
+        let _ = h.press(egui::Key::Escape);
+
+        assert_eq!(
+            h.app.keys.label(id).as_deref(),
+            Some("ctrl+alt+o"),
+            "an abandoned restore leaves the binding alone"
+        );
+        assert_eq!(
+            std::fs::read(h.keys_dir().join("keybindings.json")).expect("the file is there"),
+            written,
+            "and the file byte-for-byte"
+        );
+        assert_eq!(
+            h.keys_dir().read_dir().map(|d| d.count()).unwrap_or(0),
+            1,
+            "and no copy was made for a restore that never ran"
         );
     }
 
