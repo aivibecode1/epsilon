@@ -7061,6 +7061,94 @@ fn preset_full_access_asks_and_only_yes_switches() {
     assert_eq!(agent.current_preset(), "danger-full-access");
 }
 
+/// **Streaming tool output reaches the screen, not only the record.**
+///
+/// `UiState::apply`'s `ToolExecutionUpdate` arm accumulates the running card's body (M152),
+/// and `a_running_tool_card_shows_the_output_it_has_produced_so_far` pins that on **state**.
+/// The frame is a different question: the render cache was invalidated only for cards with
+/// `ended_at_ms.is_some()`, and a card that is still running has none — so it kept serving
+/// the rows built when the card was opened, and the M152 fix was never on screen. A
+/// three-minute `cargo build` drew a static card for three minutes, which reads as a hang.
+///
+/// That is `AGENTS.md`'s own failure mode in its own words: *a test that passes is not a
+/// claim that is true — for anything a user sees, drive the real draw path and assert on the
+/// frame.* So this drives the real path: events through `apply_with_scroll`, the production
+/// draw, and the screen read back.
+#[test]
+fn a_running_tool_s_output_reaches_the_frame() {
+    use epsilon_contracts::agent_event::AgentEvent;
+    use epsilon_contracts::message::{AssistantMessage, Message, StopReason, Usage};
+    let (mut app, _agent, _rx) = test_app();
+    super::apply_with_scroll(
+        &mut app,
+        &AgentEvent::MessageEnd {
+            message: Box::new(Message::Assistant(AssistantMessage {
+                id: "m-stream".into(),
+                timestamp_ms: 0,
+                provider: "faux".into(),
+                model_id: "faux-1".into(),
+                content: vec![epsilon_contracts::content::ContentBlock::ToolCall {
+                    id: "tc-stream".into(),
+                    name: "bash".into(),
+                    arguments: serde_json::json!({ "command": "cargo build" }),
+                }],
+                stop_reason: StopReason::ToolUse,
+                error_message: None,
+                usage: Usage::default(),
+            })),
+        },
+    );
+    super::apply_with_scroll(
+        &mut app,
+        &AgentEvent::ToolExecutionStart {
+            tool_call_id: "tc-stream".into(),
+            tool_name: "bash".into(),
+            args: serde_json::json!({ "command": "cargo build" }),
+        },
+    );
+    // **The frame in between is the point.** A card that has never been drawn is built
+    // fresh on the first frame with whatever body it already has, so driving all the
+    // events before any draw would pass against the broken code. The real sequence
+    // paints while the tool is running: the card is drawn once (pending, no output),
+    // then output streams in, then the next frame must show it.
+    let first = render_rows(&mut app, 80, 30).join("\n");
+    assert!(
+        !first.contains("epsilon-core"),
+        "precondition: nothing has streamed on the first frame:\n{first}"
+    );
+
+    // Two chunks: the second is the assertion, because a cache that is not invalidated
+    // between them shows the first one's rows for good.
+    for chunk in [
+        "Compiling epsilon-core v0.1.0",
+        "Compiling epsilon-tools v0.1.0",
+    ] {
+        super::apply_with_scroll(
+            &mut app,
+            &AgentEvent::ToolExecutionUpdate {
+                tool_call_id: "tc-stream".into(),
+                tool_name: "bash".into(),
+                partial: epsilon_contracts::tool::ToolPartial {
+                    content: vec![epsilon_contracts::content::ContentBlock::Text {
+                        text: chunk.into(),
+                    }],
+                    details: serde_json::Value::Null,
+                },
+            },
+        );
+    }
+    let frame = render_rows(&mut app, 80, 30).join("\n");
+    assert!(
+        frame.contains("epsilon-core"),
+        "the first streamed line must be on screen:\n{frame}"
+    );
+    assert!(
+        frame.contains("epsilon-tools"),
+        "the second streamed line must be on screen too — a card rebuilt only when it finishes \
+         shows the first one for the whole run:\n{frame}"
+    );
+}
+
 /// Tool cards read as blocks: a blank row before each card (P-136).
 ///
 /// Pushed in `push_line` (the single funnel), not by producers — so every

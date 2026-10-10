@@ -127,31 +127,52 @@ impl App {
         self.keybindings.key_text("app.tools.expand")
     }
 
-    /// Mark every finished card's rows as stale.
+    /// Name the cards this event moved, so the render cache rebuilds them.
     ///
-    /// Called by the event loop after each event is applied. A card's id is stable
-    /// across its own status change — that is what lets the reader's open/closed
-    /// choice survive the result landing — so the cache cannot notice the change
-    /// from the id alone and has to be told. Listing every finished card is
-    /// deliberate: the rebuild happens once per card, and "which card changed" is
-    /// not a question the reducer is asked to answer.
+    /// Two halves, one walk. A card settles *inside* its line — the result marks the
+    /// call's own row finished, so neither the row count nor its id changes and the
+    /// cache would happily keep serving "pending" for a call that has returned. And a
+    /// card's streamed output lands on its body while `ended_at_ms` is still `None`, so
+    /// the finished-only walk never named it and the cache served the rows built when
+    /// the card opened: the M152 fix was correct in state and **never on screen**, which
+    /// is `AGENTS.md`'s own failure mode in its own words — a test that passes is not a
+    /// claim that is true, and for anything a user sees the real draw path is what has to
+    /// be asserted.
     ///
-    /// The walk is linear in the transcript and the membership test is a hash
-    /// lookup, so one call is O(lines). It used to be O(lines × cards) — the set
-    /// was a `Vec` scanned with `contains` — and the event loop can drain up to
-    /// [`MAX_EVENT_DRAIN`] events before drawing a single frame, which made a
-    /// busy stream pay that walk 128 times per frame for a list that almost
+    /// A card's id is stable across its own status change — that is what lets the
+    /// reader's open/closed choice survive the result landing — so the cache cannot
+    /// notice the change from the id alone and has to be told. Naming the moved cards is
+    /// deliberate: the rebuild happens once per card, and "which card changed" is a
+    /// question the reducer is asked to answer here rather than in the cache.
+    ///
+    /// The walk is unchanged in cost. It already ran for this event class, and the
+    /// membership test is a hash lookup, so one call is O(lines). It used to be
+    /// O(lines × cards) — the set was a `Vec` scanned with `contains` — and the event loop
+    /// can drain up to [`MAX_EVENT_DRAIN`] events before drawing a single frame, which
+    /// made a busy stream pay that walk 128 times per frame for a list that almost
     /// always had nothing to add.
-    pub(crate) fn restale_finished_cards(&mut self) {
+    pub(crate) fn restale_cards(&mut self, ev: &AgentEvent) {
+        // The card this event names, if it names one that is still running: `Start`
+        // moves it into `Running` and `Update` grows its body, and neither has set
+        // `ended_at_ms`. `End` settles it and is covered by the clause above.
+        let streaming = match ev {
+            AgentEvent::ToolExecutionStart { tool_call_id, .. }
+            | AgentEvent::ToolExecutionUpdate { tool_call_id, .. } => Some(tool_call_id.as_str()),
+            _ => None,
+        };
         for line in self.ui.lines() {
-            if line.card.as_ref().is_some_and(|c| c.ended_at_ms.is_some())
-                && !self.card_restale.contains(&line.id)
-            {
+            let Some(card) = line.card.as_ref() else {
+                continue;
+            };
+            let moved =
+                card.ended_at_ms.is_some() || streaming.is_some_and(|id| card.tool_call_id == id);
+            if moved && !self.card_restale.contains(&line.id) {
                 self.card_restale.insert(line.id);
             }
         }
     }
 
+    /// Name the finished cards, so the render cache rebuilds them.
     /// Run state for the header.
     ///
     /// The phase word is derived here rather than stored, so it cannot disagree

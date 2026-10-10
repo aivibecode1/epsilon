@@ -1596,7 +1596,7 @@ fn apply_with_scroll(app: &mut App, ev: &AgentEvent) {
     // one to re-scan the transcript was `O(events x lines)` per frame for a
     // question whose answer was already known.
     if event_can_end_a_card(ev) {
-        app.restale_finished_cards();
+        app.restale_cards(ev);
     }
     match ev {
         AgentEvent::AgentStart => app.run_started_at = Some(std::time::Instant::now()),

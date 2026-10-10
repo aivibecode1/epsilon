@@ -1,0 +1,28 @@
+
+=== streaming-tool-output @ 80x24 ===
++--------------------------------------------------------------------------------+
+|idle           ?/1.0M · ↑0 ↓0 · Faux (offline scripted) • thinking off · offline|
+|                                                                                |
+|                                                                                |
+|                                                                                |
+|                                                                                |
+|                                                                                |
+|                                                                                |
+|                                                                                |
+|                                                                                |
+|                                                                                |
+|                                                                                |
+|                                                                                |
+|                                                                                |
+|                                                                                |
+|                                                                                |
+|                                                                                |
+|> cargo build                                                                   |
+|                                                                                |
+|\ bash $ cargo build · pending                                                  |
+|| Compiling epsilon-core v0.1.0                                                 |
+|| Compiling epsilon-tools v0.1.0                                                |
+|> ask anything                                                                  |
+|--------------------------------------------------------------------------------|
+|insert · enter send · pageup scroll back · pagedown       ...\crates\epsilon-tui|
++--------------------------------------------------------------------------------+

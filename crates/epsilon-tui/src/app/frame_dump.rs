@@ -307,6 +307,65 @@ fn frames_tool_cards() {
     shoot("tool-cards", &mut app);
 }
 
+/// **A tool's output arriving while it runs.** The M152 fix, on screen.
+///
+/// The events are driven through `apply_with_scroll` — the real event loop's path — and
+/// the frame is painted *between* the chunks, because a card that has never been drawn is
+/// built fresh on the first frame with whatever body it already has. That is the whole
+/// point: the defect this fixture exists to show was a cache that invalidated only
+/// finished cards, so the running one kept the rows built when it opened.
+#[test]
+#[ignore = "a rendering fixture; run with --ignored --nocapture"]
+fn frames_streaming_tool_output() {
+    use epsilon_contracts::agent_event::AgentEvent;
+    let (mut app, _a, _r) = test_app();
+    app.ui.push_local_input("cargo build");
+    app.ui.apply(&AgentEvent::MessageEnd {
+        message: Box::new(Message::Assistant(AssistantMessage {
+            id: "m-stream".into(),
+            timestamp_ms: 0,
+            provider: "faux".into(),
+            model_id: "faux-1".into(),
+            content: vec![epsilon_contracts::content::ContentBlock::ToolCall {
+                id: "c1".into(),
+                name: "bash".into(),
+                arguments: serde_json::json!({ "command": "cargo build" }),
+            }],
+            stop_reason: StopReason::ToolUse,
+            error_message: None,
+            usage: Usage::default(),
+        })),
+    });
+    super::apply_with_scroll(
+        &mut app,
+        &AgentEvent::ToolExecutionStart {
+            tool_call_id: "c1".into(),
+            tool_name: "bash".into(),
+            args: serde_json::json!({ "command": "cargo build" }),
+        },
+    );
+    shoot("streaming-tool-running", &mut app);
+    for chunk in [
+        "Compiling epsilon-core v0.1.0",
+        "Compiling epsilon-tools v0.1.0",
+    ] {
+        super::apply_with_scroll(
+            &mut app,
+            &AgentEvent::ToolExecutionUpdate {
+                tool_call_id: "c1".into(),
+                tool_name: "bash".into(),
+                partial: epsilon_contracts::tool::ToolPartial {
+                    content: vec![epsilon_contracts::content::ContentBlock::Text {
+                        text: chunk.into(),
+                    }],
+                    details: serde_json::json!({}),
+                },
+            },
+        );
+        shoot("streaming-tool-output", &mut app);
+    }
+}
+
 /// **The high-contrast palette, on the drawn frame (M312).**
 ///
 /// That palette's claim is a set of numbers, and numbers are what every other check in this
