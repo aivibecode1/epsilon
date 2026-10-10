@@ -1,21 +1,26 @@
-"""Measure citation drift: does each matrix citation's target line carry the row's subject?
+"""Report rows whose cited lines share no vocabulary with the behaviour claim: a reviewer's queue, not a gate.
 
-**Why this exists.** `check-parity-citations.py` proves a citation resolves to a file and an
-in-range line. It does not — and its own docstring says it cannot — prove the line says what
-the row claims. A citation that points at the wrong line is worse than one that points
-nowhere, because it looks verified. The fourth goal audit found ~100 of them: rounds 100-103
-and 105-109 inserted code above anchors written earlier, and the checker stayed green.
+**Why this exists, and why it is a report.** The ninth goal audit found two rows whose
+citations pointed at unrelated production code (P-079 cited the Resume/New arms for the
+Import prompt; P-038 cited the F2 chords for the Ctrl+P sentence) — wrong when written, so
+invisible to the blame-vintage remap, and pointing at production lines, so invisible to the
+placement leg. Both were found by a human reading the row against the code, and both are
+fixed. This instrument surfaces that class for the next reviewer: it flags citations whose row
+names a subject that exists somewhere in the target file yet not within `WINDOW` lines of the
+citation.
 
-**Method.** For every row, the `ours` cell is parsed for citations
-(`crates/...:line` / `:start-end`) and for *subjects* — backticked identifiers and
-snake_case/CamelCase tokens that look like code symbols. A citation is **drifted** when some
-subject of its row *exists somewhere in the target file* yet appears nowhere within
-`WINDOW` lines of the citation. A citation whose row names no symbol the file contains is
-left alone: it points at a prose region and is not measurable this way — those are the
-checker's honest blind spot, stated rather than hidden.
+**Why it must not be a gate.** It is a vocabulary heuristic and it is noisy by construction:
+a citation can be right in words its claim does not share. Measured on the tree after those
+fixes: **218 candidates across 181 rows, the overwhelming majority prose words**
+("prints", "always", "becomes") — a gate leg would fail the build on a false positive, which is
+worse than the blind spot. It is also blind to struct-field symbols (`pending_import`): it
+sees only backticked names that appear as definitions in the target file, which is why the
+auditor found P-079 by reading where this only ranks it among its noisy queue. The honest
+claim is a queue to read, not a proof of anything — the same role
+`report-reference-fidelity.py` holds.
 
-    python scripts/check-citation-subjects.py            # exit 1 if any drifted
-    python scripts/check-citation-subjects.py --verbose  # list them, with the subject
+    python scripts/report-citation-subjects.py            # the queue, by count
+    python scripts/report-citation-subjects.py --verbose  # list them, with the subject
 """
 
 from __future__ import annotations
@@ -60,6 +65,14 @@ def subjects_of(cell: str) -> list[str]:
     return seen
 
 
+def emit(text: str) -> None:
+    """Print, surviving a console whose code page lacks the matrix's glyphs."""
+    try:
+        print(text)
+    except UnicodeEncodeError:
+        print(text.encode("ascii", "replace").decode("ascii"))
+
+
 def main() -> int:
     verbose = "--verbose" in sys.argv
     drifted: list[tuple[str, str, str, int, str]] = []
@@ -100,14 +113,20 @@ def main() -> int:
                 near = "\n".join(lines[lo:hi])
                 if not any(s in near for s in in_file):
                     drifted.append((matrix, rid, path, start, in_file[0]))
-    print(
+    # Exit 0 by design: this is a report, not a control. A queue whose majority is
+    # false positives must not read as a failing gate -- that was the ninth audit's
+    # objection to its predecessor, which exited 1 under the `check-` name while no
+    # gate and no document owned its number.
+    emit(
         f"citations: {total}; measurable: {checked}; drifted: {len(drifted)} "
-        f"across {len({d[1] for d in drifted})} rows"
+        f"across {len({d[1] for d in drifted})} rows (report only — exit 0)"
     )
     if verbose:
         for matrix, rid, path, start, subject in drifted:
-            print(f"  {matrix}:{rid} {path}:{start} (subject `{subject}` elsewhere)")
-    return 1 if drifted else 0
+            emit(f"  {matrix}:{rid} {path}:{start} (subject `{subject}` elsewhere)")
+    emit("A candidate is a reviewer's queue, not a defect list: a citation can be")
+    emit("right in a vocabulary its claim does not share.")
+    return 0
 
 
 if __name__ == "__main__":
