@@ -211,7 +211,7 @@ recorded on the reference page rather than claimed.
 | Two markdown renderers over pulldown-cmark (`epsilon-tui/src/markdown.rs`, `epsilon-desktop/src/markup.rs`) | **Accepted platform duplication** — two draw targets (ratatui `Line`s vs egui text) over one parser. Same shape as the shared `call_head` (round 81). |
 | TUI-local `/skills` row formatting (round 43 note: "ten TUI-local lines") | **Recorded, small.** Candidate for the shared-formatter move if a third formatter appears; not worth a round alone. |
 | `crates/epsilon-desktop/src/app.rs` at 18.5k lines | **Complexity signal.** Tests start at `:8729`, so production code is ~8.7k lines in one file. Not a defect by itself; it is the file every desktop round touches, and the parser/`approve_pending` split (`:8711`) shows the seam pattern the file should keep following. |
-| `ponytail:` markers | 12, each naming a ceiling — the debt ledger is small and current. |
+| `ponytail:` markers | **10**, each naming a ceiling — the debt ledger is small and current (counted; the audit rework found this row and the verdict row above had drifted to twelve between them). |
 
 ## 10. The ranked findings the convergence starts from
 
