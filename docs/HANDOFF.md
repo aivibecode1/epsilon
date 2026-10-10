@@ -38,7 +38,7 @@ defect, not an optimisation.**
 **The suite is green and the tree is clean.** Latest battery: see the *Latest green battery* line at
 the top of `STATUS.md`; it names the log file under `audit/evidence/`. The convergence's closing
 record is the row dated 2026-10-09 ("the convergence is done") and the plan that drove it is
-[`plans/026`](plans/026-convergence.md); as of that record the battery was `gate-port-r112`,
+[`plans/026`](plans/026-convergence.md); the latest battery is the rework's `gate-port-r113` (see the line at the top of `STATUS.md`; the convergence's own closing row cites `gate-port-r112`),
 thirteen legs all `[exit=0]`, **2,308 passed / 0 failed / 13 ignored across 78 binaries**.
 
 **Do not trust a number in a document over the command that produced it.** Every count in
