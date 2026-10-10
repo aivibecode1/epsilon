@@ -334,6 +334,92 @@ fn enter_aimed_at_the_focused_refuse_button_refuses_the_ask() {
     );
 }
 
+/// Round 105's frame, written for one to see (plan 026 R1's "done if a frame shows it").
+///
+/// The same real path the test above drives — a real composed agent, a real parked
+/// ask, the Refuse button focused as if clicked, a real Enter — and the frame is
+/// written instead of only asserted: the ask strip with the focused button, then the
+/// recorded refusal. The rasteriser cannot run on this machine (round 58), so the
+/// text frame is the artifact, exactly as the convergence's other window frames are.
+/// `#[ignore]`d like the galleries; `EPSILON_FRAME_DIR` must be absolute (the test
+/// process runs in the package root, the TUI fixture's rule).
+#[test]
+#[ignore = "a frame fixture; run with --ignored and EPSILON_FRAME_DIR set"]
+fn r105_the_focused_refuse_button_answers_enter_for_a_person_to_see() {
+    let Some(dir) = std::env::var_os("EPSILON_FRAME_DIR") else {
+        eprintln!("r105_frame: EPSILON_FRAME_DIR is not set, so nothing is written");
+        return;
+    };
+    let dir = std::path::PathBuf::from(dir);
+    let _ = std::fs::create_dir_all(&dir);
+    fn save(frame: &str, dir: &std::path::Path, name: &str) {
+        match std::fs::write(dir.join(format!("{name}.txt")), frame) {
+            Ok(()) => eprintln!("r105_frame: wrote {name}.txt"),
+            Err(e) => eprintln!("r105_frame: could not write {name}: {e}"),
+        }
+    }
+
+    let ws = tempfile::tempdir().expect("a workspace");
+    let (ctx, mut app) = wire(ws.path());
+    let session = app.session().expect("this window has a session").clone();
+
+    paint_once(&ctx, &mut app, 1440.0, 900.0);
+    paint_with(&ctx, &mut app, 1440.0, 900.0, type_and_enter("say hello"));
+
+    let deadline = Instant::now() + Duration::from_secs(20);
+    while Instant::now() < deadline && session.pending_approvals().is_empty() {
+        paint_once(&ctx, &mut app, 1440.0, 900.0);
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    assert!(
+        !session.pending_approvals().is_empty(),
+        "the run never parked on a gate."
+    );
+
+    // One paint so the ask strip draws its buttons and republishes their ids.
+    paint_once(&ctx, &mut app, 1440.0, 900.0);
+    let ids = app.approval_button_ids().to_vec();
+    assert_eq!(ids.len(), 2, "Allow then Refuse are drawn: {ids:?}");
+    let refuse = ids[1];
+
+    ctx.memory_mut(|m| m.request_focus(refuse));
+    let focused = paint_once(&ctx, &mut app, 1440.0, 900.0);
+    save(&focused.describe(), &dir, "r105-gate-focused-refuse");
+
+    paint_with(&ctx, &mut app, 1440.0, 900.0, press(egui::Key::Enter));
+
+    let deadline = Instant::now() + Duration::from_secs(20);
+    let mut frame = paint_once(&ctx, &mut app, 1440.0, 900.0);
+    while Instant::now() < deadline
+        && !frame
+            .region("agent")
+            .join(
+                "
+",
+            )
+            .contains("refused")
+    {
+        std::thread::sleep(Duration::from_millis(20));
+        frame = paint_once(&ctx, &mut app, 1440.0, 900.0);
+    }
+    let agent = frame.region("agent").join(
+        "
+",
+    );
+    assert!(
+        agent.contains("refused"),
+        "the frame must show the refusal before it is worth writing.
+{}",
+        frame.describe()
+    );
+    assert!(
+        !agent.contains("allowed"),
+        "and not an allow.
+{agent}"
+    );
+    save(&frame.describe(), &dir, "r105-refusal-recorded");
+}
+
 /// Escape refuses, and refuses *only* the gate.
 ///
 /// Enter sends a prompt and Escape aborts a run; both keys are also how a permission gate

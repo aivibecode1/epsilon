@@ -146,7 +146,7 @@ padded.
   bolted on: `AGENTS.md` §5 *is* the ponytail ladder in prose ("Ask Ponytail first… walk the
   ladder… write the minimum"). The skill adds the sharpened rungs, the "test only where the
   corner is cut" rule, and the `ponytail:` marker discipline, and the tree already carries
-  **12 `ponytail:` markers** in Rust source (measured: `epsilon-llm`, `epsilon-session`,
+  **10 `ponytail:` markers** in Rust source (counted from the tree — the audit rework re-measured this after the auditor found the earlier figure carried rather than measured: `epsilon-llm`, `epsilon-session`,
   `epsilon-tools`, `epsilon-tui` ×4, `epsilon-tui/src/latex.rs` ×2, others). Nothing should be
   adopted *because* the skill exists; the verdict is adoption on merit: the repo's own
   evidence-discipline section (§5) is the same failure mode ponytail names, packaged
