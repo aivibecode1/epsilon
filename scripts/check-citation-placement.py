@@ -101,6 +101,25 @@ def resolve(path: str, line_text: str, bases: dict[str, str]) -> str:
     return resolved if resolved else path
 
 
+def names_a_test(sentence: str, bases: dict[str, str]) -> bool:
+    """Whether a verified-cell sentence names a test function of the file it cites.
+
+    A sentence like "pins it with `dropped_ask_denies_fail_closed`
+    (`channel_ui.rs:186-195`)" is the verified column doing its job: naming the
+    test that pins the row. A harness citation in such a sentence is legitimate;
+    anywhere else it is the class this checker exists to catch.
+    """
+    m = CITATION.search(sentence)
+    if not m:
+        return False
+    path = resolve(m.group(1), sentence, bases)
+    try:
+        text = Path(path).read_text(encoding="utf-8")
+    except OSError:
+        return False
+    return any(f"fn {t}" in text for t in re.findall(r"`([a-z_][a-z0-9_]{6,})`", sentence))
+
+
 def main() -> int:
     verbose = "--verbose" in sys.argv
     harness: list[tuple[str, str, str, int]] = []
@@ -115,8 +134,22 @@ def main() -> int:
             if len(cells) < 7 or not re.fullmatch(r"[A-Z]+-\d+", cells[1]):
                 continue
             rid = cells[1]
-            for m in CITATION.finditer(cells[5]):
-                path = resolve(m.group(1), cells[5], bases)
+            # Every cell, not only the ours column: the fifth audit's stale
+            # anchors sat in verified cells too (D-045, P-121). The reference
+            # column (index 3) names vendored paths that are not committed, and
+            # the regex only matches `.rs`, so `AGENTS.md` links never appear.
+            #
+            # The verified column may name the test that pins the row -- that is
+            # its job -- so a harness citation sitting in a sentence that names a
+            # test function of the cited file is legitimate (D-078/I-107 cite
+            # `dropped_ask_denies_fail_closed` at channel_ui.rs:186). Only the
+            # ours column, and verified sentences naming no test, are held to
+            # the production rule.
+            ours, verified = cells[5], cells[6]
+            keep = [s for s in re.split(r"(?<=[.!?]) ", verified) if not names_a_test(s, bases)]
+            checked_text = f"{ours} {' '.join(keep)}"
+            for m in CITATION.finditer(checked_text):
+                path = resolve(m.group(1), checked_text, bases)
                 if not path.startswith("crates/"):
                     continue
                 total += 1
