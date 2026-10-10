@@ -214,6 +214,11 @@ called F5 and found real defects in. The check that exists (citations resolve) c
 **Done-when.** A sampled audit (every fifth `done` row, both matrices) confirms each named test
 moves its row, or downgrades the row with the half named.
 
+**Landed, round 110.** 17 rows sampled (12 of 61 Pi, 5 of 26 DSH), 27 named tests read against
+their rows' behaviour cells, **0 downgraded**; the record states what the sample does and does
+not prove and names what a continuous version of the check would need. Evidence:
+[`../audit/evidence/pinning-sample-2026-10-09.md`](../../audit/evidence/pinning-sample-2026-10-09.md).
+
 ---
 
 ## 3. Sequence, and the machine rules that shape it
@@ -239,7 +244,7 @@ minutes. **Two workstreams that both need a battery cannot run in the same hour.
 - [ ] R5 booked; a reader transcript and a keyboard-only walkthrough exist with dates.
 - [ ] R6 decided in writing by the owner.
 - [ ] A tagged release installs and runs from its notes.
-- [ ] R8's sample is complete and the rows it found stale are corrected.
+- [x] R8's sample is complete and the rows it found stale are corrected. (Round 110: 17 rows, 27 tests, 0 downgraded — [`pinning-sample-2026-10-09.md`](../../audit/evidence/pinning-sample-2026-10-09.md).)
 - [ ] `docs/STATUS.md` says what changed and what is still broken; the battery that describes
       the tree is committed and cited.
 
