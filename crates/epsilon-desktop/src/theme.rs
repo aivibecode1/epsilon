@@ -375,6 +375,18 @@ impl IdeTheme {
             Visuals::light()
         };
         v.override_text_color = Some(self.text);
+        // **egui's weak text — the placeholder, and every hint string — is this theme's
+        // `dim` role.** Unset, egui derives it as `text_color() * weak_text_alpha` with
+        // `weak_text_alpha` at its own default of 0.6
+        // (`egui-0.36.2/src/style.rs:1141-1143`, `:1506`), a number no floor in this
+        // repository was ever applied to. The composer's "ask anything …", the palette's
+        // "files and commands" and the model picker's stage hint are all drawn in it, and
+        // they are the first text a new reader meets.
+        //
+        // The role already exists and is already separated to [`TEXT_FLOOR`] by
+        // [`Self::separated_from_background`], so this is a pointer rather than a second
+        // colour: a hint and a timestamp cannot drift apart because they are one token.
+        v.weak_text_color = Some(self.dim);
         v.panel_fill = self.panel;
         v.window_fill = self.panel;
         v.extreme_bg_color = self.background;
@@ -457,6 +469,44 @@ mod tests {
                  (dim {:?} on background {:?})",
                 t.dim,
                 t.background
+            );
+        }
+    }
+
+    /// **egui's weak text — the placeholder — meets the same floor.**
+    ///
+    /// `visuals()` bridges this theme onto egui's `Visuals`, and it never set
+    /// `weak_text_color`. egui then derives it as
+    /// `text_color().gamma_multiply(weak_text_alpha)` with `weak_text_alpha` at its
+    /// **own default of 0.6** (`egui-0.36.2/src/style.rs:1141-1143`, `:1506`) — a
+    /// number this repository chose nothing about, and the one egui uses for text it
+    /// considers unimportant. The composer's placeholder is that text, and so are the
+    /// palette's "files and commands" and the model picker's stage hint.
+    ///
+    /// So the three hint strings a new reader meets first were drawn in a colour no
+    /// floor in this file had ever been applied to, while every token it could have
+    /// used was already separated and already tested. The fix is to name one.
+    #[test]
+    fn egui_weak_text_meets_the_floor_the_tokens_meet() {
+        for palette in [ThemeMode::Dark, ThemeMode::Light, ThemeMode::HighContrast] {
+            let t = IdeTheme::from(palette);
+            let v = t.visuals();
+            let weak = v
+                .weak_text_color
+                .unwrap_or_else(|| panic!("{palette:?} leaves egui's weak text unset"));
+            let ratio = IdeTheme::ratio(weak, t.background);
+            assert!(
+                ratio >= TEXT_FLOOR,
+                "{palette:?} egui weak text (the placeholder) is {ratio:.2}:1 on the \
+                 background — below the {TEXT_FLOOR}:1 floor every token here holds \
+                 (weak {weak:?} on background {:?})",
+                t.background
+            );
+            // And it is not merely *some* colour that passes: it must be the token this
+            // theme already separates, so the two cannot drift apart.
+            assert_eq!(
+                weak, t.dim,
+                "{palette:?} weak text must be the theme's own dim role, not a second spelling"
             );
         }
     }

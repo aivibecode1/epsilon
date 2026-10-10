@@ -2433,17 +2433,30 @@ fn said_for(cmd: GoalCommand) -> &'static str {
 ///
 /// # Why `F6` and not `Tab`
 ///
-/// **`Tab` must keep inserting a tab into the composer.** This window edits code, and
-/// indenting with a tab is not a legacy habit here — it is the keystroke a developer
-/// already has in their hands and sends dozens of times an hour. Spending it on pane
-/// navigation would trade a real editing capability for a navigation nicety, and the
-/// only way to recover it would be a mode switch, which is a worse trap than the one
-/// it removes.
+/// **`Tab` moves focus in this window, and that is the correct behaviour — the comment
+/// that used to stand here claimed it "must keep inserting a tab into the composer"
+/// on the ground that "this window edits code", and both halves were false.**
 ///
-/// `F6` is the platform convention for cycling regions and pane groups — Windows,
-/// GNOME and macOS all bind it to something of this shape — and no other key in this
-/// window claims it. `Shift+F6` reverses the cycle. **This is a deliberate decision,
-/// not an oversight**, and it is recorded here because a reviewer counting `Key::Tab`
+/// The composer's `TextEdit` calls neither `lock_focus(true)` nor an `EventFilter`, so
+/// egui's default applies: `tab` is not captured, and egui uses it for keyboard
+/// navigation (`egui-0.36.2/src/widgets/text_edit/builder.rs:341-353` — "The default
+/// captures the arrow keys, but not tab or escape. Keys not captured by the filter are
+/// instead used by egui for keyboard navigation"). So `Tab` has always moved focus. The
+/// comment described an intention the code never had, which is the shape of drift this
+/// repository treats as a defect: the next reader would have "fixed" a missing feature
+/// that was already the behaviour.
+///
+/// **And the premise was wrong about the window.** The only editor this window has is
+/// read-only ([`crate::workspace`] — its own header says so, and it prints `read-only`
+/// on the pane). The agent edits files through its tools; nobody indents here. The
+/// keystroke a developer "sends dozens of times an hour" is spent in a field that
+/// exists in the terminal front end, not in this one.
+///
+/// So `Tab` is left to egui, where it does what WCAG 2.1.1 asks of a keyboard: it
+/// moves between the controls in the pane. `F6` remains the region cycle — the
+/// platform convention for moving between pane groups, bound by Windows, GNOME and
+/// macOS — and `Shift+F6` reverses it. **This is a deliberate decision, not an
+/// oversight**, and it is recorded here because a reviewer counting `Key::Tab`
 /// occurrences will otherwise read it as the accessibility gap it used to be.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FocusTarget {
@@ -5321,6 +5334,12 @@ impl IdeApp {
                 .hint_text("files and commands")
                 .desired_width(search.width() - 8.0),
         );
+        // **Named, so it is still named once the reader has typed.** The placeholder is
+        // egui's and it is the node's *value*, which vanishes on the first keystroke —
+        // a field that is unnamed exactly when it is in use. The composer beside it is
+        // named the same way; see [`name_node`] for why this touches one field on the
+        // node egui already built rather than adding a second one.
+        name_node(&response, "Palette search");
         response.request_focus();
         summary
             .hotspots
@@ -8881,6 +8900,19 @@ impl IdeApp {
             layout.rows[i].height = probe.min_rect().max.y - before;
         }
     }
+    /// Whether `Send` can do anything at all right now.
+    ///
+    /// **One predicate, read by the draw and by the test**, so the button's state cannot
+    /// disagree with the claim a test makes about it. Both conditions are cases where
+    /// `send_draft` returns without producing a turn: an empty draft has nothing to
+    /// send, and a running session refuses with a sentence the composer's own
+    /// placeholder already tells the reader about ("running — esc stops"). A control
+    /// that cannot act says so (`AGENTS.md` §2.7) — a disabled button dims and takes no
+    /// input, where a live one that does nothing is a lie the mouse cannot escape.
+    pub fn send_is_disabled(&self) -> bool {
+        self.draft.trim().is_empty() || self.session.as_ref().is_some_and(|s| s.running())
+    }
+
     /// Send whatever the composer holds.
     ///
     /// Extracted from the draw path because **the interesting part is not the drawing.**
@@ -9074,15 +9106,34 @@ impl IdeApp {
         // see [`name_node`]. The value and the hint are left exactly as egui set them, which
         // is the whole reason that function does not go through `WidgetInfo`.
         name_node(&response, "Composer");
-        let send_clicked = ui
-            .put(
-                egui::Rect::from_min_size(
-                    rect.right_bottom() + egui::vec2(-64.0 * scale, -24.0 * scale),
-                    egui::vec2(64.0 * scale, 22.0 * scale),
-                ),
-                egui::Button::new("Send"),
-            )
-            .clicked();
+        // **`Send` is disabled when it cannot send.** `send_draft` returns without a turn
+        // for an empty draft and refuses with a sentence for a running one, so a live
+        // button in either state is a control that does nothing — the `AGENTS.md` §2.7
+        // lie, reachable by mouse with no chord to rebind out of it.
+        //
+        // egui's `Sense` is how the disabled state is expressed here: `Sense::hover()`
+        // takes no click, so the button answers nothing while staying on screen. Drawn
+        // rather than removed, because a control that vanishes is a different lie from
+        // one that says it cannot act now — and the hotspot below is recorded so a test
+        // can prove it is still there.
+        //
+        // The predicate is `send_is_disabled`, the same one the test reads, so the drawn
+        // state and the asserted state cannot disagree.
+        let send_response = ui.put(
+            egui::Rect::from_min_size(
+                rect.right_bottom() + egui::vec2(-64.0 * scale, -24.0 * scale),
+                egui::vec2(64.0 * scale, 22.0 * scale),
+            ),
+            egui::Button::new("Send").sense(if self.send_is_disabled() {
+                egui::Sense::hover()
+            } else {
+                egui::Sense::click()
+            }),
+        );
+        summary
+            .hotspots
+            .push(("composer-send".into(), send_response.rect));
+        let send_clicked = send_response.clicked();
         if sent || send_clicked {
             self.send_draft();
         }
@@ -10387,6 +10438,145 @@ mod tests {
                 .any(|t| t.contains("replaced as a block")),
             "a diff that is not line-accurate must say so.\n{}",
             after.describe()
+        );
+    }
+
+    /// **A `Send` button that cannot send is disabled, not dead.**
+    ///
+    /// The button has always been drawn enabled, and `send_draft` returns `None`
+    /// silently for an empty draft. So a reader who clicks `Send` on an empty composer —
+    /// which is the first thing anyone does with a chat box — gets a button press that
+    /// changes nothing at all: no state, no message, no explanation. `AGENTS.md` §2.7 is
+    /// about a *bound key* that does nothing; this is the same lie from the mouse, and
+    /// the mouse has no chord to rebind out of it.
+    ///
+    /// The reference disables its primary on exactly these states
+    /// (`ui-conversation/src/client/skeleton/InputBar.tsx:305`,
+    /// `:477-481`), and `running` belongs with empty for a second reason: the
+    /// placeholder already says "running — esc stops", so an enabled Send would
+    /// advertise a chord the row above it is telling the reader not to use.
+    #[test]
+    fn the_send_button_is_disabled_when_it_cannot_send() {
+        let (dir, _keep) = scratch_workspace("send-disabled");
+        let mut h = Harness::new(dir);
+        let _ = h.paint();
+        assert!(
+            h.app.draft.is_empty(),
+            "precondition: a fresh composer has nothing to send"
+        );
+
+        let frame = h.paint();
+        let button = frame
+            .hotspot("composer-send")
+            .expect("the Send button records where it was drawn");
+        // The disabled state is egui's own: it paints the button dimmed and takes no
+        // input. What a test can read is the summary, so the summary says it.
+        assert!(
+            h.app.send_is_disabled(),
+            "Send must be disabled with an empty draft.\n{}",
+            frame.describe()
+        );
+        assert!(button.width() > 0.0, "and it is still drawn, not hidden");
+
+        // With a draft it comes back — a button that never re-enables is the same lie
+        // from the other side.
+        h.app.set_draft("a thought");
+        let _ = h.paint();
+        assert!(
+            !h.app.send_is_disabled(),
+            "Send must be enabled once there is something to send"
+        );
+    }
+
+    /// **The palette's search box has a name of its own.**
+    ///
+    /// Its only accessible name was `.hint_text("files and commands")`, which egui
+    /// writes as the node's **value** and which disappears on the first keystroke. A
+    /// reader arriving at the field after typing one character heard nothing at all —
+    /// the one text input in the window's most-used overlay, unnamed exactly when it
+    /// is in use.
+    ///
+    /// DSH labels its filter inputs with a placeholder *and* an aria-label
+    /// (`ui-plugin-manager/src/client/PluginManagerPage.tsx:257-258`), and the composer
+    /// beside it is already named this way.
+    #[test]
+    fn the_palette_search_box_keeps_its_name_after_a_keystroke() {
+        let (dir, _keep) = scratch_workspace("palette-search-name");
+        let mut h = Harness::new(dir);
+        let _ = h.paint();
+        let _ = h.chord(egui::Modifiers::CTRL, egui::Key::P);
+        let _ = h.paint();
+        h.type_text("a");
+
+        let nodes = h.named_nodes();
+        let search: Vec<_> = nodes
+            .iter()
+            .filter(|(label, _)| label.starts_with("Palette search"))
+            .collect();
+        assert!(
+            !search.is_empty(),
+            "the search box must still be named after a keystroke; the tree holds: {:?}",
+            nodes.iter().map(|(l, _)| l).collect::<Vec<_>>()
+        );
+    }
+
+    /// **A held Enter sends once and types nothing — the round-135 finding, settled.**
+    ///
+    /// The queue carried "a held Enter floods the transcript with the same refusal row".
+    /// A guard was written for it, measured, and removed, and this test pins what is
+    /// actually true so the guard does not come back.
+    ///
+    /// Measured, in order:
+    ///
+    /// 1. **The flood is not reproducible.** It needs a session still running twenty
+    ///    frames later; the faux provider finishes long before, so no reachable state in
+    ///    this harness produces it.
+    /// 2. **The first guard made it worse.** Gating the *take* on the repeat left the
+    ///    event in the stream, where the `TextEdit` read it — so a held Enter typed
+    ///    newlines into the draft (`"a prompt"` → `"a prompt\n\n\n…"`, measured).
+    /// 3. **The truth is that a repeat is consumed and sends once.** `KeyBindings::take`
+    ///    removes the event from the stream, so the `TextEdit` never sees it; the repeat
+    ///    that sends clears the draft, and every repeat after it finds nothing to send.
+    ///
+    /// So a held Enter sends the draft exactly once and leaves no newlines. That is the
+    /// behaviour this test holds, and the reason a future reader should not add an
+    /// `Event::repeat` guard: the reference's guard
+    /// (`ui-conversation/src/client/input/editor/keymap.ts:154`) protects a path where a
+    /// repeat *would* reach the submit handler twice, and on this one it does not.
+    #[test]
+    fn a_held_enter_sends_once_and_types_nothing() {
+        let (dir, _keep) = scratch_workspace("repeat-once");
+        let (session, notices) = faux_session(&dir);
+        let mut h = Harness::with_session(dir, session, notices);
+        let _ = h.paint();
+        h.app.set_draft("a prompt");
+        let _ = h.paint();
+
+        // Twenty repeats: the shape an OS auto-repeat delivers for one held key.
+        for _ in 0..20 {
+            let mut input = h.input.clone();
+            input.events = vec![egui::Event::Key {
+                key: egui::Key::Enter,
+                physical_key: None,
+                pressed: true,
+                repeat: true,
+                modifiers: egui::Modifiers::NONE,
+            }];
+            let mut out = FrameSummary::default();
+            let mut full = h.ctx.run_ui(input, |ui| out = h.app.paint(ui));
+            full.textures_delta.clear();
+        }
+        let draft = h.app.draft.clone();
+        assert!(
+            !draft.contains('\n'),
+            "a held Enter must not type into the composer; the draft became {draft:?}\n{}",
+            h.paint().describe()
+        );
+        assert_eq!(
+            draft,
+            "",
+            "the draft it sent is gone, which is what a send does — and it sent once\n{}",
+            h.paint().describe()
         );
     }
 
@@ -16472,12 +16662,26 @@ mod tests {
     }
 
     /// **Every palette row is reachable by name, and the search box is still unnamed.**
+    /// The palette's rows and its search box, in the accessibility tree.
     ///
-    /// The rows are drawn with `Painter::text` on rectangles, so before this they were a
-    /// picture of a list of things that can be opened. The second half of the test is the
-    /// rule that keeps it from becoming two pictures: egui **already** emits a node for the
-    /// palette's search `TextEdit`, and it stays exactly as egui built it — unnamed, with
-    /// its hint as the placeholder. One node per region; the reader hears the palette once.
+    /// The rows are drawn with `Painter::text` on rectangles, so before they were named
+    /// they were a picture of a list of things that can be opened.
+    ///
+    /// **The search box is named, and this test used to assert the opposite.** It asserted
+    /// `search.label() == None` on the ground that "naming it a second time is how a
+    /// region ends up announced twice" — and that reasoning was wrong about the
+    /// mechanism. `name_node` (`app.rs:268`) writes **one field on the node egui already
+    /// built**, through `Context::accesskit_node_builder`; it does not add a second node,
+    /// so naming the field cannot double-announce it. The composer beside it has been
+    /// named the same way since M301, with a test asserting the node count is still one.
+    ///
+    /// What the old assertion bought was the opposite of what it intended: egui's
+    /// `WidgetInfo::text_edit` fills the node's **value** with the draft and its **hint**
+    /// with the placeholder, and never the label — so the palette's search box was
+    /// announced as an unlabelled field whose only description was a hint that disappears
+    /// on the first keystroke. The one text input in the window's most-used overlay was
+    /// unnamed exactly when it was in use. This is the M301 shape again: **a test that
+    /// documents a limitation is a test that will resist its correction.**
     #[test]
     fn the_palette_names_every_row_it_offers() {
         let (dir, _keep) = scratch_workspace("a11y-palette");
@@ -16499,15 +16703,25 @@ mod tests {
             .expect("egui builds a node for every TextEdit, the palette's search box included");
         assert_eq!(
             search.label(),
-            None,
-            "the search box already had a node. Naming it a second time is how a region ends \
-             up announced twice."
+            Some("Palette search"),
+            "the search box carries a name of its own; egui fills the value and the hint and \
+             never the label (egui-0.36.2/src/data/output.rs:697)"
         );
         assert_eq!(
             search.placeholder(),
             Some("files and commands"),
             "the hint is egui's placeholder and must survive: it is what the field says about \
              itself."
+        );
+        // **One node, not two** — the assertion the old test was reaching for, made against
+        // the thing that actually matters. `name_node` writes a field on egui's node rather
+        // than adding one, and this is what proves it stayed that way.
+        let named = h.named_nodes();
+        assert_eq!(
+            named.iter().filter(|(l, _)| l == "Palette search").count(),
+            1,
+            "one node per region: two would announce the search box twice.\nthe tree held: \
+             {named:?}"
         );
     }
 
