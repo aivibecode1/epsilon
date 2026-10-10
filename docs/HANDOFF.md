@@ -97,11 +97,13 @@ The plan has the detail and the evidence. In rough priority order:
 pwsh -File scripts/gate.ps1 <label>          # Windows — use this one here
 ```
 
-Thirteen legs, and the log names them in order: eight repository checks (links, `AGENTS.md`
-lock, lint tables, parity citations, verb counts, parity counts, line endings, control bytes),
+Fifteen legs, and the log names them in order: ten repository checks (links, `AGENTS.md`
+lock, lint tables, parity citations, citation placement, reference citations, verb counts,
+parity counts, line endings, control bytes),
 then `fmt`, `clippy -D warnings`, the full test suite, the offline demo and the real-feature
 check. (This line said "Ten legs" — five repository checks — from before the citation legs
-landed; the fourth goal audit found it, and the count is now taken from the log's own
+landed, then "Thirteen legs, eight repository checks" when the citation legs landed; the
+seventh audit found the second also stale, and the count is now taken from the log's own
 `=====` lines rather than remembered.)
 
 - **Give it a timeout above 600 s.** The test leg alone runs several minutes.
