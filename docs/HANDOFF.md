@@ -97,9 +97,12 @@ The plan has the detail and the evidence. In rough priority order:
 pwsh -File scripts/gate.ps1 <label>          # Windows — use this one here
 ```
 
-Ten legs: five repository checks (links, `AGENTS.md` lock, lint tables, line endings, control
-bytes), then `fmt`, `clippy -D warnings`, the full test suite, the offline demo and the real-feature
-check.
+Thirteen legs, and the log names them in order: eight repository checks (links, `AGENTS.md`
+lock, lint tables, parity citations, verb counts, parity counts, line endings, control bytes),
+then `fmt`, `clippy -D warnings`, the full test suite, the offline demo and the real-feature
+check. (This line said "Ten legs" — five repository checks — from before the citation legs
+landed; the fourth goal audit found it, and the count is now taken from the log's own
+`=====` lines rather than remembered.)
 
 - **Give it a timeout above 600 s.** The test leg alone runs several minutes.
 - **Never re-use a label.** `gate.ps1` truncates the log, so a reused label destroys the failed

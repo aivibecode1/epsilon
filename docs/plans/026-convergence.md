@@ -47,8 +47,8 @@ it leaves and the trap that makes it longer than it looks.
 **Why first.** The only finding of the sweep that is a live safety defect with a
 wrong-direction failure mode: a focused **Refuse** button receives an Enter that has already
 been consumed by the global `approve_pending` and resolves **AllowOnce**
-(`crates/epsilon-desktop/src/app.rs:4605`, `:8711`; the consuming take is
-`crates/epsilon-desktop/src/keys.rs:225`; the chords are `epsilon-contracts/src/keybind.rs:503-504`).
+(`crates/epsilon-desktop/src/app.rs:4853`, `:9070`; the consuming take is
+`crates/epsilon-desktop/src/keys.rs:295`; the chords are `epsilon-contracts/src/keybind.rs:518-519`).
 The outcomes are right and the disambiguation is wrong — the exact thing the reference's row
 exists to prevent (`packages/client/ui-approval/src/client/ApprovalPanel.tsx:51`).
 
@@ -69,7 +69,7 @@ do not paper over it with a second global read.
 
 **Landed, round 105 (battery `port-r105c`, green first time — the disk and PDB machine faults are in the STATUS row).** Both rows are `done`. The buttons are real
 widgets, so the fix is the one the trap names: the gate records the buttons' ids as it draws
-them (`app.rs:7848-7856`) and the global read stands aside when one holds focus, leaving
+them (`app.rs:8146-8154`) and the global read stands aside when one holds focus, leaving
 egui's own focused-widget Enter handling to activate it
 (`egui-0.36.2/src/context.rs:1466-1477` — verified in the vendored source, not assumed).
 Pinned by `enter_aimed_at_the_focused_refuse_button_refuses_the_ask`, which asserts the
@@ -234,6 +234,20 @@ not prove and names what a continuous version of the check would need. Evidence:
 time; `CARGO_BUILD_JOBS=1`; build outside the repository; a battery gets a fresh label and a
 timeout above 600 s; never edit source while a battery runs. A warm-tree battery is ~40
 minutes. **Two workstreams that both need a battery cannot run in the same hour.**
+
+**The citation rule, added after the fourth audit (round 128's successor).** A round that
+shifts lines in a file the matrices cite must run `scripts/remap-by-vintage.py` **before its
+battery**: the tool maps each row's citations from that row's own last-modified commit, so
+one document may hold citations of many vintages. `check-parity-citations` proves a line
+*exists* — its own docstring says it cannot prove the line says what the row claims, and a
+citation that points at unrelated code is worse than one that points nowhere because it looks
+verified. The fourth audit measured ~100 such anchors (168–248 lines off) inherited from
+rounds 100–103 and this goal's own 105–109; the per-vintage remap re-pointed 461 of them, and
+the 17 difflib could not align were re-pointed by hand against the measured symbol positions.
+Rows written with no line anchor at all (this goal's S-122…S-125, P-054/P-183 originally)
+were given real `path:line` citations. **A reworked round whose battery label already ran is
+not exempt: the log then describes a tree whose citations were right when it ran and wrong
+after the next round.**
 
 ## 4. Definition of done for this plan
 

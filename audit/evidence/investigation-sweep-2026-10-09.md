@@ -80,6 +80,8 @@ converted one way from the terminal's roles (`src/theme.rs:28`), not forked.
 
 ### Verified live defect — D-073 / I-104: the permission gate's Enter routing
 
+*(The anchors below are the sweep's date — the defect's positions then, before round 105 landed. The fix's current anchors are in D-073's matrix row; the drift between them is itself one of this goal's findings.)*
+
 The matrix rows (verified by reading both sides this session):
 
 - `docs/parity/dsh-desktop.md:217` — D-073: *"the window resolves the gate from a global
