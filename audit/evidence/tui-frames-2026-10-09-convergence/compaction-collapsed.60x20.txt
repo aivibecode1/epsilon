@@ -1,0 +1,24 @@
+
+=== compaction-collapsed @ 60x20 ===
++------------------------------------------------------------+
+|idle        Faux (offline scripted) • thinking off · offline|
+|▎ ❯ compact                                                 |
+|                                                            |
+|• ── context compacted · from 96k tokens · ↑12k ↓310 · 21k  |
+|• re-read ──                                                |
+|│   … 1 more line (ctrl+x to open)                          |
+|                                                            |
+|                                                            |
+|                                                            |
+|                                                            |
+|                                                            |
+|                                                            |
+|                                                            |
+|                                                            |
+|                                                            |
+|                                                            |
+|                                                            |
+|❯ ask anything                                              |
+|────────────────────────────────────────────────────────────|
+|insert · enter send · pageup    …\Epsilon\crates\epsilon-tui|
++------------------------------------------------------------+

@@ -89,7 +89,7 @@ desktop's key namespace is separate from the terminal's"
 (`crates/epsilon-desktop/src/app.rs:744-759`, measured at M313). **Rows D-061, D-062 and S-125
 carry the current state**; this paragraph is not a substitute for them. **The §2.4 gap's two
 named halves — the recorder (S-122) and persistence (S-125) — are both closed as of round 108**;
-what remains of the cluster is S-124 (restore-all-defaults) and S-126's surface.
+what remains of the cluster is S-126's surface (S-124, restore-all-defaults, closed in round 109).
 
 **Every `path:line` in the ours column is point-in-time, and dated.** They were measured at
 **M313**, against the tree as it stood in that pass. M314 and M315 both edited
@@ -870,8 +870,8 @@ nothing would deliver.
    (S-125) — the recorder is the writer's first production caller, through the atomic
    scratch-then-rename path. D-063 still stands: with single-key chords there are no two-key
    chords whose press and release would need the reference's split treatment. **What remains in
-   this cluster is S-124** (restore-all-defaults — nothing to restore *existed* until the
-   recorder gave the file something to restore) **and S-126's** notice-not-toast surface. What
+   this cluster is S-126's** notice-not-toast surface — S-124, restore-all-defaults, closed in
+   round 109 on the recorder's file (arm/confirm/abandon, with the §6 copy). What
    it shared with entry 1 was the shape of the remaining work: the mechanism exists and the
    surfaces did not. The surfaces exist now.
 3. **D-046 and S-105 — adding a workspace from inside the window.** A window is launched with a

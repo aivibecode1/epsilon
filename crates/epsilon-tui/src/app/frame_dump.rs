@@ -162,6 +162,44 @@ fn frames_streaming() {
     shoot("streaming", &mut app);
 }
 
+/// The compaction digest, both states, at every width (plan 026 R2, round 106).
+///
+/// The slice's own frames: the collapsed row hiding the digest whole behind its
+/// affordance, and the opened row showing it nested under the continuation
+/// gutter. The `usage: None` arm is the legacy-session shape — a summary with no
+/// bill is still a digest, and the row still opens.
+#[test]
+#[ignore = "a rendering fixture; run with --ignored --nocapture"]
+fn frames_compaction_digest() {
+    let (mut app, agent, _rx) = test_app();
+    app.ui.push_local_input("compact");
+    let summary = "The reader is porting the desktop's approval gate. The Enter                    routing defect is fixed and the honesty half is pinned. Nothing                    else is in flight.";
+    app.ui.apply(&AgentEvent::CompactionFinished {
+        usage: Some(Usage {
+            input: 12_400,
+            output: 310,
+            cache_read: 8_900,
+            cache_write: 0,
+            total_tokens: 21_610,
+            cache_reported: true,
+        }),
+        model_id: Some("test-model".into()),
+        summary: summary.into(),
+        tokens_before: 96_000,
+    });
+    shoot("compaction-collapsed", &mut app);
+
+    use super::keys::handle_key;
+    use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+    // The expand chord, through the real key path.
+    handle_key(
+        &mut app,
+        &agent,
+        KeyEvent::new(KeyCode::Char('x'), KeyModifiers::CONTROL),
+    );
+    shoot("compaction-opened", &mut app);
+}
+
 #[test]
 #[ignore = "a rendering fixture; run with --ignored --nocapture"]
 fn frames_permission_dialog() {

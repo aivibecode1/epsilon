@@ -13836,6 +13836,79 @@ mod tests {
         eprintln!("quit_frame: wrote {written} frame(s) to {}", dir.display());
     }
 
+    /// The convergence rounds' window frames, written as text for one to see.
+    ///
+    /// **The text counterpart of `save_frame`, because the rasteriser cannot run
+    /// here** (round 58: both adapters — Vulkan access-violation, Dx12 hangs — and
+    /// the same crash on the baseline), and a frame nobody can look at is a frame
+    /// the "rendered and looked at" discipline cannot claim. What is written is the
+    /// harness's own `describe()` — the same text the tests assert on, which carries
+    /// the markers and the regions: the failure row's `x`, the recorder's armed
+    /// line, the refusal's both-names row, the restore's confirm line.
+    ///
+    /// `#[ignore]`d like the gallery, and harmless without `EPSILON_FRAME_DIR`.
+    #[test]
+    #[ignore = "a text-frame fixture; run with --ignored and EPSILON_FRAME_DIR set"]
+    fn the_convergence_frames_are_written_for_one_to_see() {
+        fn save_text(h: &mut Harness, dir: &std::path::Path, name: &str) -> bool {
+            let frame = h.paint().describe();
+            match std::fs::write(dir.join(format!("{name}.txt")), &frame) {
+                Ok(()) => {
+                    eprintln!("convergence_frame: wrote {name}.txt");
+                    true
+                }
+                Err(e) => {
+                    eprintln!("convergence_frame: could not write {name}: {e}");
+                    false
+                }
+            }
+        }
+        let Some(dir) = std::env::var_os("EPSILON_FRAME_DIR") else {
+            eprintln!("convergence_frame: EPSILON_FRAME_DIR is not set, so nothing is written");
+            return;
+        };
+        let dir = std::path::PathBuf::from(dir);
+        let _ = std::fs::create_dir_all(&dir);
+
+        // Round 107: a failure beside an ordinary notice — the pair the severity
+        // row exists for.
+        {
+            let (ws, _keep) = scratch_workspace("conv107-failure");
+            let mut h = Harness::new(ws.clone());
+            let mut t = Transcript::new(ws);
+            t.push_notice("a harness notice");
+            t.push_failure("error: 500 from provider");
+            h.app.seed_transcript(t);
+            save_text(&mut h, &dir, "r107-failure-pair");
+        }
+        // Round 108: the armed recorder, then the conflict refusal.
+        {
+            let (ws, _keep) = scratch_workspace("conv108-recorder");
+            let mut h = Harness::new(ws.clone());
+            let _ = h.app.try_command("/hotkeys");
+            let _ = h.paint();
+            let _ = h.press(egui::Key::Enter);
+            save_text(&mut h, &dir, "r108-recorder-armed");
+            let _ = h.chord_typed(egui::Modifiers::CTRL, egui::Key::P);
+            save_text(&mut h, &dir, "r108-recorder-refusal");
+        }
+        // Round 109: the armed restore.
+        {
+            let (ws, _keep) = scratch_workspace("conv109-restore");
+            let mut h = Harness::new(ws.clone());
+            let _ = h.app.try_command("/hotkeys");
+            let _ = h.paint();
+            let _ = h.press(egui::Key::Enter);
+            let _ = h.chord_typed(egui::Modifiers::CTRL | egui::Modifiers::ALT, egui::Key::O);
+            let _ = h.chord(egui::Modifiers::CTRL, egui::Key::R);
+            save_text(&mut h, &dir, "r109-restore-armed");
+        }
+        eprintln!(
+            "convergence_frame: four frames written to {}",
+            dir.display()
+        );
+    }
+
     /// A palette row can be **clicked**, not only typed at and confirmed.
     ///
     /// A palette whose rows can only be reached by typing is a worse editor than the file tree

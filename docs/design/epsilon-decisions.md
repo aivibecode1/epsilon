@@ -2823,3 +2823,51 @@ review). Mid-session switching rides a `set_preset` seam on the gate trait
 (defaulted no-op for fixed-posture gates), with the preset as a separate
 layer over an untouched base stack — project denies survive every switch,
 and the session memory clears on all of them.
+
+## ADR-033: A recording chord is not a command — the recorder owns the window's keyboard above approvals
+
+**Decided (full-port round 108).** While the shortcuts recorder is armed, it owns the
+window's keyboard **from the top of the frame's key chain — above the approval gate**, which
+was the chain's previous top.
+
+**Why.** The chord being recorded must not also fire the command it is aimed at. Recording
+`ctrl+p` must not open the palette; recording `enter` while a run is parked on a gate must not
+answer it. A reader who armed the recorder has said what the next key means, and the reader's
+intent outranks every command the recorded chord would otherwise perform. The defect that
+settled it was found by the first run of the recorder's own conflict test: the recorder read
+its keys at the overlay's position in the chain — behind the palette, whose chords are exactly
+what a reader rebinds — so recording `ctrl+p` opened the palette and the captured chord never
+reached the table.
+
+**What the chain says now.** One surface owns the keyboard at a time and ownership is a
+priority the key chain states in order: the recorder while armed; then approvals; then the
+overlays in their documented order; then the panes; then the composer. The approval gate keeps
+its priority over every other surface (the rule M312–M315 established); the recorder is the
+one owner above it, and only while armed — every other state leaves the gate's precedence
+exactly as it was.
+
+**Rejected alternatives.**
+
+- **Capture at the overlay's position.** The first cut. Rejected on the evidence above: the
+  recorded chord fires the command it is aimed at. There is no priority order that fixes this
+  from below the surfaces whose chords a reader records.
+- **Capture only unbound chords, and let bound chords act.** Rejected: the chords worth
+  recording are the ones already in use. A recorder that declines `ctrl+p` because `ctrl+p` is
+  bound is a recorder that cannot rebind anything in use — which is the whole job.
+- **A free-floating capture that ignores the table's grammar.** Rejected: the captured chord
+  must be one the product can read back, enforced by the round-trip guard in `keys.rs`
+  (`chord_of` — render, parse, compare; `set_in` refuses what does not parse). A capture mode
+  that could produce an unsaveable binding would be a recorder whose result silently does
+  nothing.
+
+**Standing rule.** A modal keyboard owner is a priority the chain states in order, and a new
+owner takes the top deliberately rather than by the accident of where its handler sits. The
+cancel path stays simple — Escape is the close id, taken before the capture scan, exactly as
+the round-99 confirm-handler rule requires.
+
+**The rest of the convergence's rounds, recorded here so their status is one reading.**
+Round 105 (the gate yields Enter to a focused approval button) and round 107 (the window's
+failure rows) are defect fixes restoring documented intent — the M261/round-97 precedent, no
+new rule. Round 106 (the compaction digest opens live) is a capability addition pinned in the
+matrix rows. Round 109 (restore-all-defaults) is ADR-032's risk-confirmation shape applied to
+a new surface. This ADR is the one structural rule the convergence added.

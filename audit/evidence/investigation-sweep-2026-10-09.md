@@ -115,9 +115,26 @@ Continuity is exercised from both sides: `crates/epsilon-desktop/tests/window.rs
 
 ## 5. Tools and tool-call presentation (task-1e)
 
-Not deep-dived beyond the matrix. The presentation side is covered by rounds 70–98 (cards,
-caps, spill names, severity rows) and the matrix's remaining rows (P-138–P-177 cluster) are
-itemised. No fresh defect found in this pass; recorded as **no finding** rather than padded.
+Read on our side, not inferred. The presentation machinery is in one place and this stream
+read it:
+
+- **The cap and its rule.** `crates/epsilon-tui/src/ui/card.rs:70` — `BODY_ROWS = 12`; the
+  same file's `body_keeps_tail` (`:291`) is the head/tail decision: a text body keeps its
+  tail (a build log's verdict is at the bottom — the round-92 decision), a diff keeps its
+  head (a change reads from its first hunk down). 
+- **The spill locator.** `crates/epsilon-tools/src/util.rs:25-27` — the head+tail budget
+  (`MAX_TOOL_OUTPUT_BYTES`) with spill-to-disk locators; the terminal's front-only portion
+  is never spilled. The row names the file (`result_head`, round 80).
+- **The status vocabulary.** `crates/epsilon-tui/src/renderers/mod.rs:117` — the exit code
+  rides the headline (round 89's number half); `crates/epsilon-core/src/exec.rs:474` is the
+  denial wording every refused call returns.
+- **The two front ends agree on the title** (C-120, round 81): the window titles tool rows
+  through the terminal's `call_head`.
+
+**Finding: no fresh defect in this pass.** The matrix's remaining rows in the P-138–P-177
+cluster are itemised and their halves are named row by row; the stream's job was to confirm
+the machinery is where the rows say it is, and it is. Recorded as no finding rather than
+padded.
 
 ## 6. Extensions, MCP, skills, `.agents`, and the ponytail verdict (task-1f)
 
@@ -135,9 +152,13 @@ itemised. No fresh defect found in this pass; recorded as **no finding** rather 
   evidence-discipline section (§5) is the same failure mode ponytail names, packaged
   sharper and with an enforcement marker.
 
-## 7. Reference re-audit (tasks-1g/1h) — sample verification
+## 7. Reference re-audit (tasks-1g/1h) — **a four-row sample, not a full re-derivation**
 
-Four rows pulled and verified against both sides:
+**What this stream actually was, stated plainly:** four rows pulled and verified by reading
+both sides, plus the mechanical checks over the whole matrices (citations resolve, counts
+agree — §0). It was **not** a fresh row-level re-derivation of the 339-row matrix; that is
+what the M313 inventories were, and this stream sampled and cross-checked rather than
+rebuilding. Four rows, both sides read:
 
 | Row | Matrix claim | Verification |
 |---|---|---|
@@ -146,16 +167,41 @@ Four rows pulled and verified against both sides:
 | D-033 | missing; quit dialog keyboard shape | Consistent with code: dialog exists with `CancelClose` enforcement (round 17) and Escape= Cancel; button order is a recorded deliberate difference. |
 | D-007/D-008 | missing; context menus in editable fields | Confirmed blocked on egui 0.36's public API (round 59 record); no `arboard`/menu surface exists. |
 
-**The matrices' partial/missing claims sampled here are honest.** The one class we could not
-re-verify in-session is "the named test pins the behaviour" (F5 from the 2026-10-06 review);
-test *existence* is 119/119 measured above, pinning quality is unverified at scale and is
-named as a sampling candidate in plan 026 rather than assumed.
+The matrices' sampled claims are honest. The one class not re-verified here is "the named
+test pins the behaviour" (F5 from the 2026-10-06 review); test *existence* is 119/119
+measured above. **That gap was closed later the same day by the pinning sample** (R8,
+`pinning-sample-2026-10-09.md` — 17 rows, 27 tests, read and judged), so the matrix's
+`done` rows now carry both existence and pinning evidence.
 
 ## 8. Other references (task-1i)
 
 Six references, all MIT, all studied and credited in `docs/references/README.md` with
-per-project "what we took" columns. Nothing was copied. The codewhale page explicitly records
-what is still missing (no reduced-motion path) — a living gap list, not a finished claim.
+per-project "what we took" columns. Nothing was copied; the pages cite each project's own
+LICENSE/README/package metadata. What this stream read **in the vendored trees**, with
+citations:
+
+- **codewhale-ratatui** — the pattern Epsilon still lacks, named in its source:
+  `references/codewhale-ratatui-main/src/ocean.rs:136` ("the native steady
+  attention/failure tint, **also used in reduced motion**" — the steady state is a
+  first-class output, not animation withheld) and
+  `references/codewhale-ratatui-main/src/whale.rs:469` ("**the host owns timing, reduced
+  motion** and hidden-surface scheduling" — the component does not animate itself). The
+  reference page records Epsilon's honest gap against this: **no reduced-motion path**.
+- **opencode** — permission decisions as durable data:
+  `references/opencode-1.18.34/packages/core/src/permission/saved.ts:1-14` (a saved
+  permission table behind a schema/ID; the persisted-decision shape our
+  `epsilon-safety/src/engine.rs` carries at a smaller scale).
+- **Hermes** — the observer-identity and verification-evidence ideas the reference page
+  names (`crates/epsilon-tools/src/read_log.rs`, `epsilon-core/src/verify.rs` on our side);
+  the vendored tree's own AGENTS.md states the harness's contract.
+- **OpenTUI** — the decision itself is recorded
+  (`references/TUI-DECISION.md` — vendored, not committed, so a code span like the matrices' reference citations rather than a link): three ideas taken (declared
+  layout, key binding separated from command routing, agent-facing conventions), the
+  library not adopted (runtime promise: one binary, no Node/Python).
+
+**Verdict: the credits are honest and the gap lists are current.** Nothing here re-opens a
+ratified decision; the codewhale reduced-motion gap is the one live finding, and it is
+recorded on the reference page rather than claimed.
 
 ## 9. Duplication and complexity hunt (task-1j)
 
