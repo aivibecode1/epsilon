@@ -36,8 +36,10 @@ defect, not an optimisation.**
 ## 2. The state of the build, honestly
 
 **The suite is green and the tree is clean.** Latest battery: see the *Latest green battery* line at
-the top of `STATUS.md`; it names the log file under `audit/evidence/`. As of this handoff that was
-`gate-m311final`, ten legs all `[exit=0]`, 2,044 passed / 0 failed / 8 ignored across 78 binaries.
+the top of `STATUS.md`; it names the log file under `audit/evidence/`. The convergence's closing
+record is the row dated 2026-10-09 ("the convergence is done") and the plan that drove it is
+[`plans/026`](plans/026-convergence.md); as of that record the battery was `gate-port-r111`,
+thirteen legs all `[exit=0]`, **2,308 passed / 0 failed / 13 ignored across 78 binaries**.
 
 **Do not trust a number in a document over the command that produced it.** Every count in
 `STATUS.md` is attributed to a log; if a number matters, open the log, or re-run the command. This
@@ -46,28 +48,40 @@ written down.
 
 ### What is genuinely done
 
-- **One core, two front ends, and one command registry half-moved.** The command half lives in
-  `epsilon-contracts` and both front ends read it. The *flat* `REGISTRY` of `Action` rows is not
-  built — see the plan.
+- **One core, two front ends, one composition point, and one command registry.** The command half
+  lives in `epsilon-contracts` and both front ends read it; the *keybindings* half closed with the
+  shared grammar (M315) and the window's recorder and restore (rounds 108–109, S-122/S-123/S-125/
+  S-124). The *flat* `REGISTRY` of `Action` rows is not built — see the plan.
 - **The desktop is a real native window** and it has been **seen**: `audit/evidence/desktop-frames-2026-10-04/`
   holds a rendered 1440×900 frame. Getting there is worth understanding before you touch rendering —
   see §4.
 - **Its accessibility tree is known to reach the operating system**, read through Windows UI
   Automation from a separate process (`scripts/desktop-a11y-probe.ps1`).
-- **Approvals, permissions, checkpoints/rollback, sessions/resume, goals, subagents, MCP, skills,
-  model and provider switching, cost tracking** all exist and are exercised by the suite.
+- **Approvals, permissions (including presets), checkpoints/rollback, sessions/resume, goals,
+  subagents, MCP, skills, model and provider switching, cost tracking** all exist and are exercised by
+  the suite. The window's failure notices now draw as failures (round 107), its compaction digest
+  opens live (round 106), and the terminal's failure rows have had their own severity since round 97.
 
 ### What is NOT done — the short version
 
 The plan has the detail and the evidence. In rough priority order:
 
-1. **A real screen reader has never been run.** UI Automation is one layer *below* a reader: it
-   proves the platform exposes names and roles, not that anything announces them.
-2. **Lease-takeover detection** — two writers can still share one session file. **Read the plan
-   before attempting this**; the obvious fix makes the product worse and the reason is written down.
-3. **The denied-tools filter**, **`/model` auto-fetch targeting**, **the desktop answering 3 of 38
-   commands**, **the flat `Action` registry**, **one unnamed `ScrollBar`**, and **Class B of the
-   dead-code sweep** (50 items, each needing a judgement rather than a sweep).
+1. **A real screen reader has never been run, and no dated human keyboard-only pass exists.** UI
+   Automation is one layer *below* a reader: it proves the platform exposes names and roles, not that
+   anything announces them. Both items need a person, and they have slipped every round (plan 026 R5).
+2. **The desktop's pixels have never been seen on this machine.** The offscreen rasteriser crashes
+   here on both adapters (Vulkan access-violation, Dx12 hangs — round 58 re-proved it), so visual QA
+   must happen where the raster works.
+3. **Plaintext credentials still sit in `auth.json`** against locked `AGENTS.md` §6; proposal 7 is
+   unanswered and the fix needs the owner's signature (plan 026 R6).
+4. **The release is untagged.** Preview install was verified (round 73); no artifact is published
+   (plan 026 R7).
+5. **The compaction digest's replay and markdown halves.** A resumed session hydrates from *messages*
+   while the digest lives in the store's compaction entry, so `/resume` shows `[context compacted]`
+   without opening it (P-054/P-183 stay `partial`).
+6. **The DSH Desktop matrix's 275 open rows.** ~70 are Electron chrome the native invariant
+   permanently excludes; the portable remainder is roadmap, not a defect list. The Windows keyboard
+   shortcuts surface remains S-126's.
 
 ---
 
