@@ -87,9 +87,9 @@ here: whether the window's own chords now route through the shared table or are 
 comment recorded before that work — "the registry that would carry it does not exist yet … the
 desktop's key namespace is separate from the terminal's"
 (`crates/epsilon-desktop/src/app.rs:744-759`, measured at M313). **Rows D-061, D-062 and S-125
-carry the current state**; this paragraph is not a substitute for them. What is left of the §2.4
-gap as those rows record it is the recorder (S-122) and persistence (S-125), and it is **second** in
-[The five highest-priority missing rows](#the-five-highest-priority-missing-rows).
+carry the current state**; this paragraph is not a substitute for them. **The §2.4 gap's two
+named halves — the recorder (S-122) and persistence (S-125) — are both closed as of round 108**;
+what remains of the cluster is S-124 (restore-all-defaults) and S-126's surface.
 
 **Every `path:line` in the ours column is point-in-time, and dated.** They were measured at
 **M313**, against the tree as it stood in that pass. M314 and M315 both edited
@@ -115,12 +115,12 @@ measurements taken here at all.
 | Electron shell (`apps/desktop/**`) | 70 | 0 | 10 | 44 | 16 |
 | Approvals and permission presets | 14 | 5 | 7 | 2 | 0 |
 | Transcript, streaming and tool cards | 82 | 4 | 16 | 56 | 6 |
-| Keyboard, settings, themes, locale, account, models, plugins | 68 | 4 | 9 | 50 | 5 |
+| Keyboard, settings, themes, locale, account, models, plugins | 68 | 7 | 8 | 48 | 5 |
 | Palette, quick open, composer, connection, design system | 54 | 2 | 14 | 33 | 5 |
 | Layout, sidebars, files tree, terminal, browser, preview, sessions | 65 | 2 | 21 | 37 | 5 |
 | Approvals, questions, schedule, jobs, goal, plan, subagents, models | 50 | 4 | 10 | 36 | 0 |
 | Un-numbered reference rows | 30 | 1 | 3 | 21 | 5 |
-| **Total** | **433** | **22** | **91** | **278** | **42** |
+| **Total** | **433** | **25** | **90** | **276** | **42** |
 
 ---
 
@@ -359,11 +359,11 @@ chords, all literals.** See **ED-001**.
 | S-119 | Menus and dialogs reserve up/down to move, Enter to select, Esc to dismiss. | `ui-shortcuts/src/client/fixed.ts:12-14` | partial | `crates/epsilon-desktop/src/app.rs:896-903` | The palette reserves Escape, Enter and both arrows for itself (`app.rs:896-903`), which is the same reservation. There are no menus and no dialogs to reserve for. Covered by `the_palette_owns_its_arrows_and_the_tree_cursor_stays_where_it_was` and `escape_closes_the_palette_and_leaves_the_draft_alone`. |
 | S-120 | While an approval is pending, Enter allows once and Esc rejects. | `ui-approval/src/client/index.ts:82`, `:85` | done | `crates/epsilon-desktop/src/app.rs:5528-5537` | Same code path as D-072. Covered by `a_permission_gate_is_answered_by_pressing_enter_in_the_window` and `escape_refuses_a_waiting_gate`. |
 | S-121 | The reference is a 480x600 card grouped Application / Message input / Menus and dialogs / Approval area. | `ui-shortcuts/src/client/Reference.tsx:153` | missing | — | As S-101. |
-| S-122 | Clicking an application row opens an inline recorder that records two overlapping keys and saves on **key release**. | `ui-shortcuts/src/client/Editor.tsx:44`, `:126`, `:132` | missing | — | **No recorder**, and this is the largest remaining gap in the keybinding story: a user can now *set* a binding in a file but cannot record one with a keystroke. The table it would record into is in place (`crates/epsilon-contracts/src/keybind.rs`), so what is missing is the surface, not the mechanism. |
-| S-123 | A saved combination occupied by another command is refused with both command names. | `shortcuts/src/configuration.ts:147`, `ui-shortcuts/src/client/Editor.tsx:68` | missing | — | As S-122: no recorder to refuse anything. The conflict check the reference has is a **test** here (`no_chord_is_bound_to_two_ids_in_the_terminal_table`), which catches the same mistake at build time rather than at save time. |
-| S-124 | **Restore all defaults** affects only the current runtime/platform profile and asks for confirmation. | `ui-shortcuts/src/client/Reference.tsx:205`, `:213` | missing | — | As S-122. There is nothing to restore, because nothing is written. |
-| S-125 | Bindings persist per device: Web in `localStorage`, Desktop in `userData/keybindings.json`. | `shortcuts/src/client/storage.ts:6`, `:38` | partial | `crates/epsilon-desktop/src/keys.rs` | **M315: the window reads a keybinding store**, from the same `<config dir>/keybindings.json` the terminal reads and through the same grammar. What is missing is persistence *back*: nothing writes it, so a binding a user set by hand survives and one set in a UI would not. |
-| S-126 | An unreadable keybinding file disables all editing and names the document and reload action in a toast. | `ui-shortcuts/src/client/Reference.tsx:93`, `shortcuts/src/persistence.ts:17` | partial | The window falls back to defaults without stopping — and since round 31 a present-but-unusable file names itself with the reason and the fix (reopen after repairing) in a launch notice carried on the bindings themselves (`KeyBindings::load_warning`); absent stays silent as it should. No toast surface exists (notices persist in the transcript instead), and there is no bindings editor to disable | `a_broken_keybindings_file_names_itself` (absent silent, broken/non-object/unreadable warn, valid silent; negative control run) |
+| S-122 | Clicking an application row opens an inline recorder that records two overlapping keys and saves on **key release**. | `ui-shortcuts/src/client/Editor.tsx:44`, `:126`, `:132` | done | `crates/epsilon-desktop/src/app.rs`'s `shortcuts_keys` (the record chord, on the selected row), `recorder_keys` (the press names the chord, the release saves it), `draw_shortcuts` (the live capture and the cancel hint), `crates/epsilon-desktop/src/keys.rs`'s `chord_of` (the round-trip guard) | Landed round 108 (plan 026 R4). The reference opens the recorder by **clicking** a row; this window's shortcuts rows are the reference surface, so the keyboard equivalent is a selection (`window.shortcuts.next`/`previous`) plus the record chord (`enter`) on the selected row. A modifier held across the press is part of the chord — captured on the release, which is also when the save happens. Pinned by `the_shortcuts_recorder_captures_a_chord_and_saves_it` (real key path, asserts the **effective** binding and the file on disk) and `escape_cancels_the_recorder_without_writing`. Frame read: the armed overlay shows `recording window.sidebar.toggle — press a key… (esc cancels)`. **The recorder owns the keyboard from the top of the frame's key chain** — before the palette and the pickers — because the chord being recorded must not also fire the command it is aimed at (recording `ctrl+p` must not open the palette; that ordering defect was found by the conflict test's first run). |
+| S-123 | A saved combination occupied by another command is refused with both command names. | `shortcuts/src/configuration.ts:147`, `ui-shortcuts/src/client/Editor.tsx:68` | done | `crates/epsilon-desktop/src/keys.rs`'s `conflict` (the scan over effective chords), `recorder_keys`'s refusal arm | Closed with S-122, round 108. The refusal names both commands and keeps the recording armed — the reference's own editor reports the conflict and stays open, because a refusal that disarms is one the reader cannot retry past. Pinned by `the_recorder_refuses_a_chord_another_command_owns_naming_both`: capturing `ctrl+p` (the palette's chord) writes nothing, leaves `window.sidebar.toggle` on `ctrl+b`, and the frame carries the failure row `x ctrl+p is already window.palette's chord — window.sidebar.toggle keeps ctrl+b`. Control run: `conflict` stubbed to `None` fails the test. |
+| S-124 | **Restore all defaults** affects only the current runtime/platform profile and asks for confirmation. | `ui-shortcuts/src/client/Reference.tsx:205`, `:213` | missing | — | Still not built — but the reason the row carried is gone: there *is* something written now (the round-108 recorder saves through `keys.rs`'s `set_in`), so restore-all-defaults is a real surface rather than a no-op. It is the natural next slice of this cluster and is recorded rather than claimed. |
+| S-125 | Bindings persist per device: Web in `localStorage`, Desktop in `userData/keybindings.json`. | `shortcuts/src/client/storage.ts:6`, `:38` | done | `crates/epsilon-desktop/src/keys.rs`'s `set_in` (the atomic writer, landed round 100), `app.rs`'s `recorder_keys` (its first production caller, round 108) | Round 100 landed the write half and said the recorder was its only missing caller; round 108 supplied it. The window reads and writes the same `<config dir>/keybindings.json` the terminal reads, through the same grammar and the same atomic scratch-then-rename discipline `layout::save_in` uses. Pinned by `the_shortcuts_recorder_captures_a_chord_and_saves_it` (the chord is on disk after the release, asserted by reading the file back) and, at the writer's own level, the round-100 suite (rebind survives a reopen; unknown ids survive; an unparseable chord is refused rather than written). |
+| S-126 | An unreadable keybinding file disables all editing and names the document and reload action in a toast. | `ui-shortcuts/src/client/Reference.tsx:93`, `shortcuts/src/persistence.ts:17` | partial | The window falls back to defaults without stopping — and since round 31 a present-but-unusable file names itself with the reason and the fix (reopen after repairing) in a launch notice carried on the bindings themselves (`KeyBindings::load_warning`); absent stays silent as it should. No toast surface exists (notices persist in the transcript instead), and there is no bindings editor to disable — the round-108 recorder is per-binding, and a file the launch could not read is exactly the file the recorder would write through, so the honest surface is the notice rather than a disabled mode | `a_broken_keybindings_file_names_itself` (absent silent, broken/non-object/unreadable warn, valid silent; negative control run) |
 | S-127 | Windows keycaps join modifiers with `+`; macOS uses control glyphs; a two-key chord prints no `aria-keyshortcuts`. | `shortcuts/src/binding.ts:86`, `:87`, `:78` | deliberately different | `crates/epsilon-desktop/src/app.rs:2864-2877` | There is no keycap reference to render. The few chords the window prints are printed as words — `ctrl+b sidebar  ·  left/right width` — and that spelling is itself a measured decision: the first rasterised frame drew the arrows as two tofu boxes because egui's bundled proportional font has no `U+2190`/`U+2192`, and no assertion was looking at the screen (`app.rs:2866-2874`). |
 | S-128 | Settings opens as a centred modal panel **800 px wide and 800 px tall**. | `ui-settings-general/src/client/SettingsRoot.module.css:89-91` | missing | — | No Settings surface. |
 | S-129 | The Settings navigation lists Account, General, Models, Built-in plugins in a fixed order. | `ui-settings-general/src/client/index.ts:234` | missing | — | As S-128. |
@@ -786,7 +786,7 @@ of the document**, so it lists ids rather than paraphrasing cells — the cell i
 | Electron shell | D-001, D-021, D-030, D-031, D-032, D-045, D-058, D-061, D-062, D-064, D-066 |
 | Approvals and presets | D-074, D-075, D-076, D-080, D-081, D-082, D-083 |
 | Transcript and tool cards | C-107, C-109, C-121, C-123, C-126, C-132, C-141, C-143, C-145, C-147, C-157, C-160, C-162, C-163, C-168, C-169 |
-| Keyboard and settings | S-109, S-113, S-115, S-117, S-119, S-125, S-126, S-159, S-164 |
+| Keyboard and settings | S-109, S-113, S-115, S-117, S-119, S-126, S-159, S-164 |
 | Palette and composer | P-102, P-106, P-108, P-117, P-121, P-122, P-126, P-128, P-132, P-136, P-140, P-146, P-148, P-150 |
 | Layout and panes | L-101, L-102, L-103, L-105, L-108, L-113, L-128, L-129, L-130, L-131, L-132, L-143, L-146, L-151, L-152, L-155, L-158, L-159, L-160, L-161, L-164 |
 | Approvals through models | I-101, I-105, I-106, I-133, I-134, I-137, I-139, I-141, I-142, I-149 |
@@ -827,7 +827,7 @@ rather than merely underserved:
 | Electron shell | D-007, D-008, D-009, D-012, D-013, D-014, D-017, D-018, D-019, D-020, D-022, D-024, D-025, D-026, D-027, D-028, D-029, D-033, D-034, D-035, D-036, D-037, D-038, D-039, D-040, D-041, D-042, D-043, D-044, D-046, D-047, D-052, D-053, D-054, D-055, D-056, D-057, D-059, D-060, D-063, D-068, D-069, D-070 |
 | Approvals and presets | D-077, D-079 |
 | Transcript and tool cards | C-101, C-102, C-103, C-104, C-105, C-106, C-108, C-112, C-113, C-114, C-115, C-116, C-117, C-118, C-119, C-122, C-124, C-125, C-128, C-129, C-130, C-131, C-133, C-134, C-136, C-137, C-138, C-139, C-142, C-144, C-146, C-148, C-149, C-150, C-151, C-154, C-155, C-156, C-158, C-159, C-161, C-164, C-165, C-166, C-167, C-171, C-172, C-173, C-175, C-176, C-177, C-178, C-179, C-180, C-181, C-182 |
-| Keyboard and settings | S-102, S-104, S-105, S-106, S-108, S-110, S-111, S-112, S-114, S-116, S-121, S-122, S-123, S-124, S-128, S-130, S-129, S-131, S-132, S-133, S-134, S-136, S-137, S-138, S-139, S-140, S-141, S-142, S-143, S-144, S-145, S-146, S-147, S-148, S-149, S-150, S-151, S-152, S-153, S-155, S-156, S-157, S-158, S-160, S-161, S-162, S-163, S-166, S-167, S-168 |
+| Keyboard and settings | S-102, S-104, S-105, S-106, S-108, S-110, S-111, S-112, S-114, S-116, S-121, S-124, S-128, S-130, S-129, S-131, S-132, S-133, S-134, S-136, S-137, S-138, S-139, S-140, S-141, S-142, S-143, S-144, S-145, S-146, S-147, S-148, S-149, S-150, S-151, S-152, S-153, S-155, S-156, S-157, S-158, S-160, S-161, S-162, S-163, S-166, S-167, S-168 |
 | Palette and composer | P-103, P-105, P-107, P-109, P-110, P-111, P-112, P-113, P-115, P-116, P-118, P-119, P-120, P-123, P-124, P-125, P-129, P-130, P-131, P-134, P-135, P-137, P-139, P-141, P-142, P-143, P-144, P-145, P-147, P-149, P-151, P-152, P-153 |
 | Layout and panes | L-104, L-109, L-111, L-112, L-116, L-117, L-118, L-119, L-120, L-121, L-122, L-123, L-124, L-125, L-126, L-127, L-133, L-134, L-135, L-136, L-137, L-139, L-140, L-141, L-142, L-144, L-145, L-147, L-148, L-149, L-150, L-153, L-154, L-156, L-157, L-162, L-163 |
 | Approvals through models | I-108, I-109, I-110, I-111, I-112, I-113, I-114, I-115, I-116, I-117, I-118, I-119, I-120, I-121, I-122, I-123, I-124, I-125, I-126, I-127, I-128, I-129, I-130, I-131, I-132, I-135, I-136, I-138, I-140, I-143, I-144, I-145, I-146, I-147, I-148, I-150 |
@@ -856,22 +856,24 @@ nothing would deliver.
    Windows-order rule puts the destructive action first. Closing the window while a turn is running
    no longer ends the process (M316), and a reader who has not pressed `/clear` is told the
    conversation is on screen only.
-2. **The keybinding registry, now two rows short of closed — the recorder and the write half.**
+2. **The keybinding registry — closed, round 108 (S-122, S-123, S-125 all `done`).**
    [`AGENTS.md`](../../AGENTS.md) §2.4 says slash commands, palette entries **and keybindings** are
    "declared once and read by every front end, with per-front-end capability declared as data".
-   The mechanism is now in place and shared: `crates/epsilon-contracts/src/keybind.rs` holds the
+   The mechanism is shared: `crates/epsilon-contracts/src/keybind.rs` holds the
    grammar, the window reads the same `keybindings.json` the terminal reads, and a conflict check
    that the reference performs at save time is a **test** here
-   (`no_chord_is_bound_to_two_ids_in_the_terminal_table`). **What is left is the two surfaces.**
-   *The recorder* — S-122, with S-123, S-124 and S-126 following from it: a user can hand-write a
-   binding into a file but cannot record one with a keystroke, cannot be told two commands want
-   the same chord, and has nothing to restore. S-122 is the largest single missing surface left.
-   *The write half* — S-125: nothing writes the file, so it is neither atomic nor `0600` because
-   nothing writes it, and a binding set in a UI would not survive a restart. D-063 follows from
-   the recorder: with no chords being captured there are no two-key chords whose press and release
-   would need the reference's split treatment. Everything in this entry is `missing` or, for
-   S-125, `partial`; none of it is the mechanism, which exists. **What it shares with entry 1 is
-   the shape of the remaining work: the mechanism exists and the two surfaces on it do not.**
+   (`no_chord_is_bound_to_two_ids_in_the_terminal_table`). **The surfaces landed in round 108:**
+   *the recorder* (S-122/S-123) — a selection plus the record chord opens an inline recorder on
+   the selected row, the press names the chord and its release saves it, an occupied chord is
+   refused naming both commands, and the recorder owns the keyboard from the top of the frame's
+   key chain so the recorded chord never fires the command it is aimed at; *the write half*
+   (S-125) — the recorder is the writer's first production caller, through the atomic
+   scratch-then-rename path. D-063 still stands: with single-key chords there are no two-key
+   chords whose press and release would need the reference's split treatment. **What remains in
+   this cluster is S-124** (restore-all-defaults — nothing to restore *existed* until the
+   recorder gave the file something to restore) **and S-126's** notice-not-toast surface. What
+   it shared with entry 1 was the shape of the remaining work: the mechanism exists and the
+   surfaces did not. The surfaces exist now.
 3. **D-046 and S-105 — adding a workspace from inside the window.** A window is launched with a
    workspace and has no way to change or add one. Every related row (L-120, L-127, U-026 to U-030,
    S-103) is downstream of this one.

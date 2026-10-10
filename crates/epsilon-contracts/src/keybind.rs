@@ -447,6 +447,15 @@ pub const WINDOW: &[(&str, &[&str])] = &[
     // The shortcuts reference: toggled, and closed when already in front.
     ("window.shortcuts", &["ctrl+/"]),
     ("window.shortcuts.close", &["escape"]),
+    // S-122's recorder, and the selection it records for. Enter arms the
+    // recorder on the selected row; the next chord's release saves it. The
+    // reference opens the same inline recorder by clicking a row
+    // (`ui-shortcuts/src/client/Editor.tsx:44,126,132`); a keyboard window
+    // needs the row selection the click stands for, which is what next and
+    // previous are.
+    ("window.shortcuts.record", &["enter"]),
+    ("window.shortcuts.next", &["down"]),
+    ("window.shortcuts.previous", &["up"]),
     // The settings browser walks like the pickers (separate ids so rebinding
     // one never moves the others).
     ("window.settings.close", &["escape"]),

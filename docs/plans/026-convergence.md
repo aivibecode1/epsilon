@@ -157,6 +157,16 @@ round 100), S-126.
 chord naming both commands, and the file write is atomic and survives a restart — all three
 pinned through the real draw path.
 
+**Landed, round 108.** All three halves pinned (`the_shortcuts_recorder_captures_a_chord_and_saves_it`,
+`the_recorder_refuses_a_chord_another_command_owns_naming_both`,
+`escape_cancels_the_recorder_without_writing`), both controls run, frames read. **The trap was
+real but the other way round:** the defect found was not the recorder eating its own cancel key
+but the *chain order* — the recorder read its keys behind the palette, whose chords are what a
+reader rebinds, so recording `ctrl+p` opened the palette. The recorder now owns the keyboard
+from the top of the frame's key chain, before even approvals. Remaining in the cluster: S-124
+(restore-all-defaults — now a real surface, since the recorder gives the file something to
+restore) and S-126's surface.
+
 **Trap.** A recorder is a modal keyboard owner. It must not eat the Escape that cancels it —
 the round-99 confirm-handler defect (frame-consumed `any_key`) is the same shape.
 

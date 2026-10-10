@@ -1385,8 +1385,134 @@ impl IdeApp {
             }
             return;
         }
-        if self.shortcuts_open && self.keys.take(ctx, "window.shortcuts.close") {
+        if !self.shortcuts_open {
+            return;
+        }
+        // **The recorder's own key handling lives at the top of the frame's key
+        // chain** (see `paint`), not here: a chord being recorded must not also
+        // fire the command it is aimed at, and this handler sits behind the
+        // palette and the pickers, whose chords are exactly what a reader
+        // rebinds. What remains here is arming it — the record chord, on the
+        // selected row.
+        if self.keys.take(ctx, "window.shortcuts.close") {
             self.close_shortcuts();
+            return;
+        }
+        // Selection: the reference's recorder opens by *clicking* a row; this
+        // window's shortcuts rows are the reference, so the keyboard
+        // equivalent is a selection plus the record chord. Clamped by the
+        // recorder when it arms — an index past the table would record for a
+        // command nobody pointed at.
+        if self.keys.take(ctx, "window.shortcuts.previous") {
+            self.shortcuts_selected = self.shortcuts_selected.saturating_sub(1);
+            return;
+        }
+        if self.keys.take(ctx, "window.shortcuts.next") {
+            self.shortcuts_selected = self.shortcuts_selected.saturating_add(1);
+            return;
+        }
+        if self.keys.take(ctx, "window.shortcuts.record") {
+            let rows = self.shortcut_rows();
+            if let Some((id, _)) = rows.get(self.shortcuts_selected) {
+                self.recording = Some(id.clone());
+                self.recording_live = None;
+            }
+        }
+    }
+
+    /// The armed recorder: the next chord's press names it, its release saves
+    /// it — S-122's own words ("records two overlapping keys and saves on key
+    /// release"), and the reason a modifier held across the press is part of
+    /// the chord rather than something to reconstruct afterwards.
+    ///
+    /// Every key event is consumed here while the recorder is armed, so no
+    /// other handler in the frame sees the recorded chord.
+    fn recorder_keys(&mut self, ctx: &egui::Context) {
+        // Escape cancels, and cancels cleanly: the previous binding stays and
+        // nothing is written (S-124). The close id is escape, and taking it
+        // here — before the capture scan — is what keeps the cancel's release
+        // from being read as a save.
+        if self.keys.take(ctx, "window.shortcuts.close") {
+            self.recording = None;
+            self.recording_live = None;
+            return;
+        }
+        let id = self.recording.clone().unwrap_or_default();
+        let mut press: Option<(egui::Key, egui::Modifiers)> = None;
+        let mut released = false;
+        ctx.input_mut(|i| {
+            let mut keep = Vec::with_capacity(i.events.len());
+            for event in std::mem::take(&mut i.events) {
+                match event {
+                    egui::Event::Key {
+                        key,
+                        pressed: true,
+                        modifiers,
+                        ..
+                    } if press.is_none() => press = Some((key, modifiers)),
+                    egui::Event::Key { pressed: false, .. } => released = true,
+                    other => keep.push(other),
+                }
+            }
+            i.events = keep;
+        });
+        if let Some((key, modifiers)) = press {
+            // The live capture, so the row shows what is being recorded before
+            // it saves. A key the grammar cannot name shows as nothing rather
+            // than as a chord that would not read back.
+            self.recording_live =
+                crate::keys::KeyBindings::chord_of(key, modifiers).map(|c| c.to_label());
+        }
+        // The save waits for the release, and for a chord the live capture
+        // accepted: a cancel's release arrives with nothing held.
+        let Some(chord) = self
+            .recording_live
+            .as_deref()
+            .and_then(epsilon_contracts::keybind::Chord::parse)
+        else {
+            return;
+        };
+        if !released {
+            return;
+        }
+        // S-123: a chord another command owns is refused, naming both — the
+        // owner and the command that keeps its chord. The recorder stays
+        // armed: a refusal that disarms is one the reader cannot retry past.
+        if let Some(owner) = self.keys.conflict(chord, &id) {
+            let kept = self
+                .keys
+                .label(&id)
+                .unwrap_or_else(|| "its default".to_string());
+            self.transcript.push_failure(format!(
+                "{} is already {}'s chord — {} keeps {}",
+                chord.to_label(),
+                owner,
+                id,
+                kept
+            ));
+            self.recording_live = None;
+            return;
+        }
+        let dir = self
+            .keys_dir
+            .clone()
+            .or_else(epsilon_core::config::global_dir);
+        let Some(dir) = dir else {
+            self.transcript
+                .push_failure("no config directory to write the binding into");
+            self.recording = None;
+            return;
+        };
+        match self.keys.set_in(&dir, &id, &[chord.to_label()]) {
+            Ok(_) => {
+                self.recording = None;
+                self.recording_live = None;
+            }
+            Err(e) => {
+                self.transcript
+                    .push_failure(format!("could not save {id}: {e}"));
+                self.recording_live = None;
+            }
         }
     }
 
@@ -1395,6 +1521,11 @@ impl IdeApp {
     /// The same two halves as [`Self::close_palette`], for the same reason.
     fn close_shortcuts(&mut self) {
         self.shortcuts_open = false;
+        // An armed recorder is disarmed by closing — the overlay's own rule
+        // that closing is the reader's decision, and no half-armed state
+        // survives into the next frame.
+        self.recording = None;
+        self.recording_live = None;
         self.focus = FocusTarget::Agent;
     }
 
@@ -2427,6 +2558,30 @@ pub struct IdeApp {
     model_picker: Option<ModelPicker>,
     /// Whether the shortcuts reference overlay is open (S-101).
     shortcuts_open: bool,
+    /// Index into the shortcuts rows — the row the recorder records for.
+    ///
+    /// The reference's recorder opens by *clicking* a row; this window has no
+    /// row clicks in the shortcuts overlay (the rows are the reference, and
+    /// the settings browser below them is the clickable surface), so the
+    /// keyboard equivalent is a selection plus the record chord. One number,
+    /// clamped at draw time — a selection index that drifted out of the table
+    /// would record for a command nobody pointed at.
+    shortcuts_selected: usize,
+    /// The binding id being recorded, while the recorder is armed.
+    ///
+    /// `Some` means the next key press names the chord and its release saves
+    /// it (S-122). The recorder owns the keyboard while armed — every key
+    /// event is consumed before any other handler sees it — because a
+    /// recorder that lets the recorded chord *also* fire the command it was
+    /// aimed at is a recorder that cannot rebind anything in use.
+    recording: Option<String>,
+    /// The chord the armed recorder is holding, between its press and its
+    /// release, so the row can show what is being captured before it saves.
+    recording_live: Option<String>,
+    /// Where the keybindings file is read and written — `None` in production
+    /// means the global config dir, and `Some` is the test seam that keeps a
+    /// recorded chord off the machine's own file.
+    keys_dir: Option<std::path::PathBuf>,
     /// Whether the settings browser overlay is open.
     settings_open: bool,
     /// Index into the settings rows.
@@ -3080,6 +3235,10 @@ impl IdeApp {
             model_picker: None,
             model_rects: Vec::new(),
             shortcuts_open: false,
+            shortcuts_selected: 0,
+            recording: None,
+            recording_live: None,
+            keys_dir: None,
             settings_open: false,
             settings_selected: 0,
             settings_rects: Vec::new(),
@@ -3187,6 +3346,10 @@ impl IdeApp {
             model_picker: None,
             model_rects: Vec::new(),
             shortcuts_open: false,
+            shortcuts_selected: 0,
+            recording: None,
+            recording_live: None,
+            keys_dir: None,
             settings_open: false,
             settings_selected: 0,
             settings_rects: Vec::new(),
@@ -4625,6 +4788,15 @@ impl IdeApp {
         // The drain lives in `pump`, which both `paint` and `eframe::App::logic` call — see
         // there for why neither call site can be the only one.
         self.pump();
+        // **The armed recorder owns the keyboard before every other handler — even
+        // approvals.** The chord being recorded must not also fire the command it
+        // is aimed at: recording `ctrl+p` must not open the palette, and
+        // recording `enter` while a gate is parked must not answer it. A reader
+        // who armed the recorder has said what the next key means, and this is
+        // the one surface whose whole job is to see that key first.
+        if self.recording.is_some() {
+            self.recorder_keys(ui.ctx());
+        }
         // **Approvals, before anything else can want a key.** While a run is parked on a
         // gate, `Enter` and `Escape` belong to that gate. The composer below reads the same
         // two keys to send and to abort, so whichever ran first decided what those keys
@@ -5326,11 +5498,54 @@ impl IdeApp {
             .push(("shortcuts".into(), "Keyboard shortcuts".into()));
 
         let mut y = box_rect.top() + 32.0 * scale;
-        for (id, chords) in &rows {
+        // The recorder's line, under the title and above the table: which
+        // command is being recorded, and the way out. A mode the reader cannot
+        // see is a mode they cannot leave.
+        if let Some(id) = self.recording.clone() {
+            let esc = self
+                .keys
+                .label("window.shortcuts.close")
+                .unwrap_or_else(|| "esc".to_string());
+            let line = format!("recording {id} — press a key… ({esc} cancels)");
+            paint_text(
+                &painter,
+                summary,
+                "shortcuts",
+                box_rect.left_top() + egui::vec2(12.0, 30.0 * scale),
+                egui::Align2::LEFT_CENTER,
+                line.clone(),
+                egui::FontId::proportional(12.0 * scale),
+                theme.warn,
+            );
+            // The line the summary carries too: a mode the frame does not
+            // report is a mode no frame test can see, and the recorder's whole
+            // point is that it is visible.
+            summary.rows.push(("shortcuts".into(), line));
+            y += 18.0 * scale;
+        }
+        for (index, (id, chords)) in rows.iter().enumerate() {
             let row = egui::Rect::from_min_size(
                 egui::pos2(box_rect.left() + 8.0, y),
                 egui::vec2((box_rect.width() - 16.0).max(8.0), 20.0 * scale),
             );
+            // The selection: the row the record chord acts on. The band is the
+            // same selection role the settings browser uses — one convention,
+            // not a second spelling of "this row is the one".
+            if index == self.shortcuts_selected && !self.recording.is_some() {
+                painter.rect_filled(row, 3.0, theme.selection_focus);
+            }
+            // While recording, the selected row's chord cell shows what is
+            // being captured — the press, before its release saves it. A
+            // recorder that shows nothing until it has already saved is a
+            // recorder the reader cannot see working.
+            let recording_here = self.recording.as_deref() == Some(id.as_str());
+            let shown = if recording_here {
+                self.recording_live
+                    .clone()
+                    .unwrap_or_else(|| "press a key…".to_string())
+            } else {
+                chords.clone()
+            };
             paint_text(
                 &painter,
                 summary,
@@ -5347,19 +5562,29 @@ impl IdeApp {
                 "shortcuts",
                 row.right_top() - egui::vec2(4.0, 14.0 * scale),
                 egui::Align2::RIGHT_CENTER,
-                chords.clone(),
+                shown,
                 egui::FontId::proportional(11.0 * scale),
-                theme.dim,
+                if recording_here {
+                    theme.warn
+                } else {
+                    theme.dim
+                },
             );
             summary.rows.push(("shortcuts".into(), id.clone()));
             // **Named rows, like the palette's.** Painted text reaches no
             // screen reader on its own; the salt is the binding id, which is
-            // stable whatever the table order becomes.
+            // stable whatever the table order becomes. A row being recorded
+            // says so in its name — the state must be announced, not drawn.
+            let name = if recording_here {
+                format!("Shortcut · {id} · recording")
+            } else {
+                format!("Shortcut · {id} · {chords}")
+            };
             name_region(
                 ui,
                 row,
                 &format!("epsilon-shortcut-row-{id}"),
-                &format!("Shortcut · {id} · {chords}"),
+                &name,
                 egui::accesskit::Role::Region,
             );
             y += 22.0 * scale;
@@ -11887,6 +12112,142 @@ mod tests {
         assert!(!h.app.settings_open, "and the browser must give way to it");
     }
 
+    /// The shortcuts reference records a chord and saves it (S-122).
+    ///
+    /// A user can hand-write a binding into `keybindings.json` and has been able
+    /// to since M315, but cannot record one with a keystroke — the largest
+    /// single missing surface left in the window's keyboard story, with the
+    /// table it records into already shared with the terminal. The reference
+    /// opens an inline recorder that saves on key release
+    /// (`ui-shortcuts/src/client/Editor.tsx:44,126,132`); ours does the same
+    /// through the real key path, and the assertion is on the **effective**
+    /// binding — a chord that does not reach the table would be a recorder
+    /// that draws a chord and does nothing.
+    ///
+    /// Hermetic by construction: the scratch harness pins the keys directory
+    /// (the same seam `bounded` gives the prefs), so no test chord is written
+    /// to the machine's own config.
+    #[test]
+    fn the_shortcuts_recorder_captures_a_chord_and_saves_it() {
+        let (ws, _keep) = scratch_workspace("recorder-save");
+        let mut h = Harness::new(ws.clone());
+        let _ = h.app.try_command("/hotkeys");
+        let _ = h.paint();
+
+        // The first row of the table is the sidebar toggle; the recorder acts
+        // on the selected row, and the selection starts at the top.
+        let id = "window.sidebar.toggle";
+        let before = h.app.keys.label(id);
+
+        // Enter arms the recorder, and the frame says so — a mode that draws
+        // nothing is a mode nobody knows they are in.
+        let armed = h.press(egui::Key::Enter);
+        eprintln!(
+            "ARMED FRAME:
+{}",
+            armed.describe()
+        );
+        assert!(
+            armed.describe().contains("press a key"),
+            "arming the recorder must say what it is waiting for:\n{}",
+            armed.describe()
+        );
+
+        // A chord nobody owns, pressed and released the way a terminal sends a
+        // held key: the save happens on the release (S-122: "records two
+        // overlapping keys and saves on key release").
+        let _ = h.chord_typed(egui::Modifiers::CTRL | egui::Modifiers::ALT, egui::Key::O);
+
+        assert_eq!(
+            h.app.keys.label(id).as_deref(),
+            Some("ctrl+alt+o"),
+            "the recorded chord must reach the effective binding — the row and the \
+             key handler both read it"
+        );
+        assert_ne!(
+            h.app.keys.label(id),
+            before,
+            "and it must be a change, not a re-read of the default"
+        );
+        // And it is on disk, through the writer the settings files use — a
+        // binding that survives only in memory does not survive a reopen.
+        let file = h.keys_dir().join("keybindings.json");
+        let saved = std::fs::read_to_string(&file).expect("the recorder wrote a file");
+        assert!(
+            saved.contains("ctrl+alt+o"),
+            "the chord is persisted: {saved}"
+        );
+    }
+
+    /// A chord another command already owns is refused, naming both (S-123).
+    ///
+    /// The reference refuses an occupied combination with both command names
+    /// (`shortcuts/src/configuration.ts:147`, cited by the row); the same
+    /// mistake silently stealing a chord from another command is the defect
+    /// this prevents. The refusal is a **failure** row — it is the thing the
+    /// reader must not miss — and the recorder stays armed, because a refusal
+    /// that disarms is a refusal the reader cannot retry past.
+    #[test]
+    fn the_recorder_refuses_a_chord_another_command_owns_naming_both() {
+        let (ws, _keep) = scratch_workspace("recorder-conflict");
+        let mut h = Harness::new(ws.clone());
+        let _ = h.app.try_command("/hotkeys");
+        let _ = h.paint();
+        let id = "window.sidebar.toggle";
+        let _ = h.press(egui::Key::Enter);
+
+        // `ctrl+p` is the palette's chord in the shared table.
+        let _ = h.chord_typed(egui::Modifiers::CTRL, egui::Key::P);
+
+        let frame = h.paint().describe();
+        assert!(
+            !h.keys_dir().join("keybindings.json").exists(),
+            "a refused chord must not be written"
+        );
+        assert_ne!(
+            h.app.keys.label(id).as_deref(),
+            Some("ctrl+p"),
+            "and the binding must not have moved"
+        );
+        assert!(
+            frame.contains("window.palette") && frame.contains(id),
+            "the refusal names both commands — the owner and the kept one:\n{frame}"
+        );
+    }
+
+    /// Escape cancels the recorder, and writes nothing.
+    ///
+    /// The Cancel path S-124 names: an armed recorder that a stray key cannot
+    /// get out of is a keyboard trap, and the window's own overlay rules say
+    /// closing is the reader's decision.
+    #[test]
+    fn escape_cancels_the_recorder_without_writing() {
+        let (ws, _keep) = scratch_workspace("recorder-cancel");
+        let mut h = Harness::new(ws.clone());
+        let _ = h.app.try_command("/hotkeys");
+        let _ = h.paint();
+        let id = "window.sidebar.toggle";
+        let before = h.app.keys.label(id);
+
+        let _ = h.press(egui::Key::Enter);
+        let _ = h.press(egui::Key::Escape);
+
+        assert!(
+            !h.keys_dir().join("keybindings.json").exists(),
+            "a cancelled recorder writes nothing"
+        );
+        assert_eq!(
+            h.app.keys.label(id),
+            before,
+            "and the binding it was arming against is untouched"
+        );
+        let frame = h.paint().describe();
+        assert!(
+            !frame.contains("press a key"),
+            "the recorder is disarmed, not waiting:\n{frame}"
+        );
+    }
+
     /// Escape closes the settings browser; rows are named for readers.
     #[test]
     fn settings_escape_and_names() {
@@ -13527,6 +13888,11 @@ mod tests {
         let dir = tempfile::tempdir().expect("a settings directory");
         app.prefs_dir = Some(dir.path().to_path_buf());
         app.prefs = Preferences::load_from(app.workspace(), app.prefs_dir.as_deref());
+        // **The same scratch directory holds the keybindings file**, so the
+        // recorder's save cannot write the machine's own config — the
+        // hermeticity the prefs pin above bought, extended to the one other
+        // file this window writes.
+        app.keys_dir = Some(dir.path().to_path_buf());
         // **Pinned, not loaded.** `load_model_id` reads the developer's own
         // `~/.config/epsilon/config.toml`, so the picker's second place belongs to
         // whoever last saved a default on this machine — and the suite would order
@@ -13546,6 +13912,38 @@ mod tests {
     impl Harness {
         fn new(workspace: std::path::PathBuf) -> Self {
             Self::sized(workspace, 1440.0, 900.0)
+        }
+        /// The directory this window reads and writes its **keybindings** in —
+        /// the scratch directory `bounded` pins, so a recorder test never
+        /// writes the machine's own config.
+        fn keys_dir(&self) -> &std::path::Path {
+            self.settings.path()
+        }
+        /// Press and release one chord **in one frame**, the shape a terminal
+        /// sends for a held key — and the shape the recorder saves on (S-122:
+        /// "records two overlapping keys and saves on key release").
+        fn chord_typed(&mut self, modifiers: egui::Modifiers, key: egui::Key) -> FrameSummary {
+            let mut input = self.input.clone();
+            input.events = vec![
+                egui::Event::Key {
+                    key,
+                    physical_key: None,
+                    pressed: true,
+                    repeat: false,
+                    modifiers,
+                },
+                egui::Event::Key {
+                    key,
+                    physical_key: None,
+                    pressed: false,
+                    repeat: false,
+                    modifiers,
+                },
+            ];
+            let mut out = FrameSummary::default();
+            let mut full = self.ctx.run_ui(input, |ui| out = self.app.paint(ui));
+            full.textures_delta.clear();
+            out
         }
         /// A harness around a window that has a **real agent**, which [`Self::sized`]
         /// cannot build — it is deliberately the agent-less state, for the test that

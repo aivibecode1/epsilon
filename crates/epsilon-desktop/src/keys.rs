@@ -212,6 +212,35 @@ impl KeyBindings {
             .collect()
     }
 
+    /// The chord an egui key event spells, and whether the grammar can read it back.
+    ///
+    /// The recorder captures a raw key event, and a key the table cannot name
+    /// (`neutral_key`'s `\u{0}` fallback) must be refused rather than saved:
+    /// a binding the product cannot re-read is a binding that silently stops
+    /// working, which is the same rule `set_in` enforces on hand-written
+    /// files. The round-trip is the check — render, parse, compare.
+    pub fn chord_of(key: egui::Key, modifiers: egui::Modifiers) -> Option<Chord> {
+        let chord = Chord {
+            key: neutral_key(key),
+            mods: neutral_mods(modifiers),
+        };
+        let spelled = chord.to_label();
+        (Chord::parse(&spelled) == Some(chord)).then_some(chord)
+    }
+
+    /// Whether `chord` is the effective chord of any binding other than `except`.
+    ///
+    /// S-123's rule: the recorder refuses a chord another command owns, naming
+    /// both commands. Effective, not default — a reader who already moved
+    /// `window.palette` elsewhere must be allowed to take `ctrl+p`.
+    pub fn conflict(&self, chord: Chord, except: &str) -> Option<String> {
+        epsilon_contracts::keybind::WINDOW
+            .iter()
+            .filter(|(id, _)| *id != except)
+            .find(|(id, _)| self.chords(id).contains(&chord))
+            .map(|(id, _)| id.to_string())
+    }
+
     /// Consume `id`'s chord from the event stream if the stream carries one, and say so.
     ///
     /// **The replacement for `consume_key`, and it matches *exactly*.** egui's own
