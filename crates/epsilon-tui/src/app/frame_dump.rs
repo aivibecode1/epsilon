@@ -351,3 +351,51 @@ fn frames_command_palette() {
     app.palette_open = true;
     shoot("palette-open", &mut app);
 }
+
+/// **The conversation's live edge, next to the composer (roadmap item 5).**
+///
+/// A transcript shorter than the viewport used to draw under the header and leave
+/// the rest of the body blank, so the newest text sat as far from the input as the
+/// screen allowed. The rule has three regimes and all three are drawn, because
+/// the one that must *not* change — a window the reader scrolled back — is the
+/// case a "make the body consistent" pass would break first:
+///
+/// 1. a short conversation, with the spare rows above it;
+/// 2. a streaming answer, where the tail grows into the space;
+/// 3. a scrolled-back window over a long transcript, still filled from the top.
+#[test]
+#[ignore = "a rendering fixture; run with --ignored --nocapture"]
+fn frames_the_live_edge_sits_next_to_the_composer() {
+    let (mut app, _a, _r) = test_app();
+    app.ui.push_local_input("what changed?");
+    app.ui.push_notice("here is the answer");
+    app.input = "and the next thing?".into();
+    app.cursor_chars = app.input.chars().count();
+    shoot("live-edge-short", &mut app);
+
+    let (mut app, _a, _r) = test_app();
+    app.ui.push_local_input("run the tests");
+    app.ui.apply(&AgentEvent::MessageUpdate {
+        message: Box::new(Message::Assistant(AssistantMessage {
+            id: "live-edge".into(),
+            timestamp_ms: 0,
+            provider: "faux".into(),
+            model_id: "faux-1".into(),
+            content: vec![epsilon_contracts::content::ContentBlock::text(
+                "I will start by listing the files in the workspace and then read the layout module to understand how the frame is composed before making any changes to it."
+                    .to_string(),
+            )],
+            stop_reason: StopReason::EndTurn,
+            error_message: None,
+            usage: Usage::default(),
+        })),
+    });
+    shoot("live-edge-streaming", &mut app);
+
+    let mut app = test_app().0;
+    for index in 0..60 {
+        app.ui.push_notice(format!("ROW-{index:03}"));
+    }
+    app.scroll_from_bottom = 5;
+    shoot("live-edge-scrolled", &mut app);
+}

@@ -2871,3 +2871,53 @@ failure rows) are defect fixes restoring documented intent — the M261/round-97
 new rule. Round 106 (the compaction digest opens live) is a capability addition pinned in the
 matrix rows. Round 109 (restore-all-defaults) is ADR-032's risk-confirmation shape applied to
 a new surface. This ADR is the one structural rule the convergence added.
+
+---
+
+## ADR-034: The transcript's live edge is the row above the composer
+
+**Decided (round 133).** A terminal conversation shorter than the viewport draws its spare rows
+**above** the content, so the newest row is always the row directly above the composer's rule.
+Deliberately different from pi, and the welcome screen is deliberately exempt.
+
+**Why.** `ratatui`'s `Paragraph` lays its rows from the top of the region it is given, so the
+transcript was top-anchored: at 80×24 a user turn, a separator and one notice drew on rows 1–3 of
+a twenty-row body, the composer took row 21, and **seventeen blank body rows** sat between the
+newest text and the input — while an answer streamed in, it arrived as far from the composer as
+the screen allows. pi does the same thing by construction — its `ScrollView` computes
+`maxScrollTop = max(0, contentHeight - viewportHeight)`
+([`references/pi-1.0.0/packages/tui/src/components/scroll-view.ts:129`](../../references/pi-1.0.0/packages/tui/src/components/scroll-view.ts))
+so short content parks at offset 0, and the fixed input dock is a separate `VStack`
+([`chat-viewport.ts:31-45`](../../references/pi-1.0.0/packages/coding-agent/src/modes/interactive/chat-viewport.ts)).
+Epsilon is a port of pi, so matching it was the default — **and the default was the defect here,
+because our two front ends disagreed**: the desktop follows its tail through egui's
+`ScrollArea::stick_to_bottom`
+([`crates/epsilon-desktop/src/app.rs`](../../crates/epsilon-desktop/src/app.rs)), so the same
+conversation sat in two different places depending on which front end you opened it in.
+`AGENTS.md` §2.1 makes that disagreement the defect rather than the difference: a capability one
+front end has, the terminal has, because it is the same machinery behind a different draw call.
+
+**Rejected alternatives.**
+
+- **Keep pi's top-anchoring and make the desktop match it.** Rejected: it would mean removing
+  `stick_to_bottom` from the window — deleting working behaviour to reach parity with a layout
+  accident. The direction that helps the reader is the one both should take.
+- **Bottom-anchor the whole body, welcome screen included.** Rejected: the first-run screen is a
+  title, not a conversation, and there is no live edge to follow until something has been said.
+  A hero that jumped to the bottom of an empty window would be decoration for its own sake. The
+  exemption is pinned by a test so the next pass that "makes the body consistent" has an argument
+  to answer.
+- **Pad with styled space, or move the composer up to meet the content.** Rejected: the first
+  paints a band where there is no conversation, and the second is a layout change to a surface
+  whose regions are pinned at every supported size by `ui::layout`'s own tests — for a benefit
+  the padding already delivers.
+
+**What does not change.** A window the reader scrolled back is untouched: padding is computed
+from what survived the viewport window, and `scroll::transcript_skip` returns 0 exactly when the
+content fits, so a scrolled window always has more rows than fit and pads nothing. The history
+scroll keeps reading from the top, which is the one direction it has.
+
+**Standing rule.** Where a conversation is drawn is a front-end decision both front ends must
+make the same way; the reference's behaviour is evidence, not a constraint, when the two front
+ends already disagree and the reader's eye is the tiebreaker.
+

@@ -7233,6 +7233,147 @@ fn streaming_text_is_separated_from_the_previous_block() {
     );
 }
 
+// ---- the conversation's live edge sits next to the composer ------------------
+//
+// The transcript used to be top-anchored: `draw_transcript` handed ratatui a
+// `Paragraph` whose first row was the transcript region's first row, so a
+// conversation shorter than the viewport drew its content under the header and
+// left every remaining body row blank — at 80x24 a user turn, a separator and
+// one notice drew on rows 1-3 of a twenty-row body and left seventeen blank
+// rows between the newest text and the composer, and during a turn the arriving
+// answer scrolled *away* from the input the reader was about to type into.
+//
+// Roadmap item 5 said this "wants its own decision". The decision is taken here
+// and the reason is stated in the test that pins it: pi's own `ScrollView` is
+// top-anchored by construction (`references/pi-1.0.0/packages/tui/src/components/
+// scroll-view.ts`, `maxScrollTop = max(0, contentHeight - viewportHeight)`, so
+// short content parks at offset 0), and Epsilon is a port of pi — but the
+// desktop front end already follows the chat convention through
+// `stick_to_bottom`, and `AGENTS.md` §2.1 is the invariant that matters: the two
+// front ends disagreeing about where a conversation sits is the defect, not the
+// difference. Deliberately different from pi, recorded as such.
+
+/// The body's last row carries the conversation's last row.
+///
+/// Read from the layout the production draw uses, not from a remembered row
+/// number: the composer's own `y` is where "directly above the composer" means.
+#[test]
+fn a_short_conversation_sits_directly_above_the_composer() {
+    let (mut app, _agent, _rx) = test_app();
+    app.ui.push_local_input("what changed?");
+    app.ui.push_notice("here is the answer");
+
+    let rows = render_rows(&mut app, 80, 24);
+    let above_composer = crate::ui::layout::Regions::split(Rect::new(0, 0, 80, 24), 1)
+        .composer
+        .y as usize
+        - 1;
+    assert!(
+        rows[above_composer].contains("here is the answer"),
+        "the newest row must sit directly above the composer, not under the header:\n{rows:#?}"
+    );
+    // The dead space moved *above* the content rather than disappearing: an
+    // empty body row at the top is what bottom-anchoring means, and a reader
+    // who scrolls up still finds the header immediately followed by the first
+    // thing that was said.
+    assert!(
+        rows[1].trim().is_empty(),
+        "the spare rows must sit above the conversation:\n{rows:#?}"
+    );
+}
+
+/// A view the reader scrolled back is untouched by the anchoring.
+///
+/// Padding is only correct while the view is following its tail: `transcript_skip`
+/// returns 0 exactly when the content is shorter than the viewport, so a scrolled
+/// window always has more rows than fit and there is nothing to pad. Pinning the
+/// *scrolled* frame too, because "the frozen window moved" is the failure a
+/// padding rule that ignored the scroll state would produce.
+#[test]
+fn a_scrolled_back_view_fills_the_body_from_the_top() {
+    let mut app = bench_app(UiState::new());
+    for index in 0..60 {
+        app.ui.push_notice(format!("ROW-{index:03}"));
+    }
+    let rows = render_rows(&mut app, 60, 20);
+    app.scroll_from_bottom = 5;
+    let scrolled = render_rows(&mut app, 60, 20);
+    let above_composer = crate::ui::layout::Regions::split(Rect::new(0, 0, 60, 20), 1)
+        .composer
+        .y as usize
+        - 1;
+    assert!(
+        !scrolled[1].trim().is_empty() && !scrolled[above_composer].trim().is_empty(),
+        "a scrolled window is full top to bottom, with nothing padded:\n{scrolled:#?}"
+    );
+    assert!(
+        scrolled.join("\n").contains("ROW-"),
+        "the transcript vanished from the scrolled frame:\n{scrolled:#?}"
+    );
+    assert_ne!(rows, scrolled, "the scroll did not move the window");
+}
+
+/// The live answer streams in next to the composer, not under the header.
+///
+/// The streaming case is where anchoring earns its place: the tail grows a row at
+/// a time, and with it top-anchored the text a reader is watching arrives as far
+// from the input as the screen allows.
+#[test]
+fn a_streaming_tail_arrives_next_to_the_composer() {
+    use epsilon_contracts::agent_event::AgentEvent;
+    use epsilon_contracts::message::{AssistantMessage, Message, StopReason, Usage};
+    let (mut app, _agent, _rx) = test_app();
+    app.ui.apply(&AgentEvent::MessageUpdate {
+        message: Box::new(Message::Assistant(AssistantMessage {
+            id: "m1".into(),
+            timestamp_ms: 0,
+            provider: "faux".into(),
+            model_id: "faux-1".into(),
+            content: vec![epsilon_contracts::content::ContentBlock::text(
+                "first line of the answer",
+            )],
+            stop_reason: StopReason::EndTurn,
+            error_message: None,
+            usage: Usage::default(),
+        })),
+    });
+
+    let rows = render_rows(&mut app, 80, 24);
+    let above_composer = crate::ui::layout::Regions::split(Rect::new(0, 0, 80, 24), 1)
+        .composer
+        .y as usize
+        - 1;
+    assert!(
+        rows[above_composer].contains("first line of the answer"),
+        "the streaming tail must sit directly above the composer:\n{rows:#?}"
+    );
+}
+
+/// The welcome screen is a hero, not a conversation, and stays at the top.
+///
+/// The one part of the body the anchoring deliberately does not touch: there is
+// no live edge to follow until something has been said, and a title that jumped
+// to the bottom of an empty window would be decoration for its own sake. Pinned
+/// because the next pass that "makes the whole body consistent" would otherwise
+/// have no test arguing with it.
+#[test]
+fn the_welcome_screen_stays_at_the_top_of_the_body() {
+    let (mut app, _agent, _rx) = test_app();
+    let rows = render_rows(&mut app, 80, 24);
+    assert!(
+        rows.iter().any(|r| r.contains("E P S I L O N")),
+        "the welcome screen must still be on the first frame:\n{rows:#?}"
+    );
+    let hero = rows
+        .iter()
+        .position(|r| r.contains("E P S I L O N"))
+        .expect("the welcome screen is on screen");
+    assert_eq!(
+        hero, 2,
+        "the hero belongs at the top of the body:\n{rows:#?}"
+    );
+}
+
 /// Reasoning and the answer separate *while* streaming, not only at commit.
 ///
 /// Round 72's rule one level in. `draw_transcript` built both tails in one

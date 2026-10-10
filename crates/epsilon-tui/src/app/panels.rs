@@ -526,6 +526,40 @@ pub(super) fn draw_transcript(
             .take(remaining),
     );
 
+    // The conversation's live edge sits next to the composer.
+    //
+    // A `Paragraph` lays its rows out from the top of its region, so until now a
+    // conversation shorter than the viewport drew under the header and left
+    // every remaining body row blank: at 80x24 a user turn, a separator and one
+    // notice drew on rows 1-3 of a twenty-row body, leaving seventeen blank rows
+    // between the newest text and the composer, and while an answer streamed in
+    // it arrived as far from the input as the screen allows.
+    //
+    // So the spare rows are moved *above* the content rather than left below it.
+    // They are `LineKind::Blank` for a reason and not decoration: a blank row is
+    // exactly what the separation rules above already insert between blocks, so
+    // the padding draws the same pixels the transcript already uses for "no
+    // conversation here".
+    //
+    // `Paragraph::scroll` is not the shortcut it looks like. It skips *forward*
+    // through the composed lines — `for _ in 0..self.scroll.y` — so it shifts
+    // content up out of the top of the region, which is top-anchoring with a
+    // different window, and its offset is unsigned so nothing can ask it for the
+    // other direction (`ratatui-widgets-0.3.2/src/paragraph.rs`). Padding rows
+    // is the only way to say "there is no conversation here" in the space above.
+    //
+    // **Only while the view is following its tail.** `transcript_skip` returns 0
+    // exactly when the content fits, so a window the reader scrolled back always
+    // has more rows than fit and this pads nothing — the frozen window keeps
+    // reading from the top, which is the one direction a history scroll has.
+    // Padding is therefore computed from what survived the window, not from a
+    // separate test of the scroll state.
+    let spare = visible.saturating_sub(rows.len());
+    if spare > 0 {
+        let blank = (crate::state::LineKind::Blank, Line::from(Vec::new()));
+        rows.splice(0..0, std::iter::repeat_n(blank, spare));
+    }
+
     // visible_rows already applied the viewport offset; decoration runs on the
     // rows that survived, and pads to the FRAME width, not the body width, so a
     // banded row reaches the terminal edge.
