@@ -3003,4 +3003,60 @@ the theme already has. The bridge points; it does not re-derive.
 field has a token with a floor, point at the token; where it has no floor of egui's own that this
 repository chose, say so rather than inheriting the default silently.
 
+## ADR-037: The desktop stays on egui — re-evaluated with fresh measurements, experiment path defined
+
+**Status: accepted (goal-authorized stack evaluation, 2026-10-11).**
+
+**The question.** The goal authorizes re-evaluating the desktop stack without privileging
+Rust purity — even a non-Rust UI — if the user experience earns it. ADR-020 chose egui over
+gpui, iced, Dioxus and Slint on a measured table. This ADR re-checks the inputs that can be
+checked and records what would overturn the choice.
+
+**Re-verified today, by measurement rather than memory.**
+
+- egui/eframe pinned at 0.36.2 (`Cargo.lock:1196`); `cargo tree -p epsilon-desktop` shows no
+  `bindgen`, `clang`, Skia, webview or `wry` anywhere in the desktop tree — ADR-020's
+  build-host argument still holds byte for byte.
+- AccessKit is exercised, not merely enabled: the Harness a11y tests (`named_nodes`,
+  one-name-per-row, off-screen absence) run green, including the newest `Digest` naming
+  test — the tree a screen reader consumes is asserted row by row.
+- Frame costs (`frame_cost`, run 2026-10-11): transcript layout is flat — 3.4/3.8/3.5 ms
+  at 50/200/800 rich rows — and 93% of the 800-row frame (97.4 of 104 ms) is egui's own
+  text layout and shaping, not harness code. Virtualization holds; the toolkit is the
+  budget.
+- One measured cost is ours: `agent.goal()` reads 3.1 ms at 50 stored messages and
+  21.7 ms at 400, called twice per painted frame in the probe. That is a caching
+  follow-up for hardening (refresh the `GoalView` on arrival, not on paint), not a stack
+  verdict — no carrier renders a 22 ms store read faster.
+
+**What was not re-measured, stated plainly.** No alternative stack was prototyped or
+benchmarked in this evaluation. Building throwaway Tauri/Electron/Slint shells to time
+them would be the expensive way to re-derive ADR-020's table, whose eliminating columns
+still stand: the native constraint (no webview, no embedded browser) removes webview
+carriers regardless of their frame times; Slint's GPL-3.0/royalty pairing is incompatible
+with this workspace's MIT terms regardless of its widgets; gpui and iced shipped no
+AccessKit support in the published crates ADR-020 measured. If any of those inputs
+changes, this decision reopens — see triggers below.
+
+**Decision: keep egui/eframe; define the experiment path instead of running it.** A
+second desktop implementation started today would split every pixel test, every a11y
+assertion and every frame fixture in two while the first harness is mid-program — two
+products that agree, against `AGENTS.md` §2. The authorized experiment shape, when and if
+it is taken:
+
+- Behind a Cargo feature flag, default off; the shipped binary is byte-identical with it off.
+- Through `epsilon-runtime` only (`build_runtime`, `resolve_launch`): the experiment may
+  own pixels, never composition, session layout, tools or permissions.
+- The shared command registry (`COMMAND_HEADS`, `TERMINAL`/`WINDOW`, palette derivation)
+  stays the contract; a second hand-maintained list is a defect, not an experiment.
+- Core and TUI are unaffected by construction: no desktop-only dependency or redraw may
+  move into `epsilon-core`, `epsilon-runtime` or `epsilon-tui`, and the full battery stays
+green with the flag both off and on.
+
+**Revisit triggers (any one reopens this ADR).** egui stalls below the project's MSRV or
+regresses AccessKit support; a competitor ships first-class accessibility under a
+compatible licence with no native-code build host; the hardened frame budget (post
+`goal()`-read fix) still misses 60 fps on the reference transcript while a measured
+prototype does not; the owner directs otherwise.
+
 
