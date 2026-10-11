@@ -2554,6 +2554,62 @@ async fn timeline_picker_opens_and_enter_jumps() {
     assert!(!app.timeline_open, "Esc dismisses without navigating");
 }
 
+/// The tree panel names its position: `(n/total)` (P-295).
+///
+/// Pi's tree status line reads `(selected/total)`; the counter shares the footer
+/// line with the key hints (`panels.rs`: "the counter stays where the reader looks
+/// for it"). Drawn through the production draw at both frame sizes, moved once to
+/// prove the numerator follows the highlight — a counter stuck at 1/3 would pass a
+/// test that never pressed Down.
+#[test]
+fn the_timeline_footer_names_its_position() {
+    use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+    let (mut app, agent, _rx) = test_app();
+    let tmp = tempfile::tempdir().unwrap();
+    let store = std::sync::Arc::new(std::sync::Mutex::new(
+        epsilon_core::SessionStore::open(tmp.path().join("s.jsonl")).unwrap(),
+    ));
+    agent.attach_session_store(std::sync::Arc::clone(&store));
+    {
+        let mut st = store.lock().unwrap();
+        use epsilon_contracts::content::UserContent;
+        use epsilon_contracts::message::UserMessage;
+        use epsilon_contracts::session_entry::EntryKind;
+        for (i, text) in ["first", "second", "third"].iter().enumerate() {
+            let _ = st
+                .append(EntryKind::Message {
+                    message: epsilon_contracts::message::Message::User(UserMessage {
+                        id: epsilon_contracts::new_id("msg"),
+                        timestamp_ms: i as u64,
+                        content: vec![UserContent::Text {
+                            text: text.to_string(),
+                        }],
+                    }),
+                    api_request_sha256: None,
+                })
+                .unwrap();
+        }
+    }
+    assert!(!type_and_enter(&mut app, &agent, "/timeline"));
+    assert!(app.timeline_open);
+    assert_eq!(app.timeline_entries.len(), 3);
+    // `/timeline` lands on the leaf (P-290), so the counter opens at 3/3.
+    for (width, height) in [(80u16, 24u16), (100, 30)] {
+        let rows = render_rows(&mut app, width, height);
+        assert!(
+            rows.iter().any(|r| r.contains("3/3")),
+            "at {width}x{height} the footer must name position 3 of 3: {rows:?}"
+        );
+    }
+    let up = KeyEvent::new(KeyCode::Up, KeyModifiers::empty());
+    handle_key(&mut app, &agent, up);
+    let rows = render_rows(&mut app, 80, 24);
+    assert!(
+        rows.iter().any(|r| r.contains("2/3")),
+        "the numerator must follow the highlight: {rows:?}"
+    );
+}
+
 // ---- M23: favorites ----------------------------------------------------------------
 
 #[tokio::test]
