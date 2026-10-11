@@ -36,7 +36,7 @@ use std::time::Duration;
 
 use epsilon_contracts::agent_event::{AgentEvent, PermissionDecision, PermissionRequest};
 use epsilon_contracts::content::ContentBlock;
-use epsilon_contracts::message::{Message, StopReason};
+use epsilon_contracts::message::{COMPACTION_MARKER, Message, StopReason, Usage};
 use epsilon_core::Agent;
 use epsilon_safety::ChannelApprovalUi;
 
@@ -237,6 +237,24 @@ impl Transcript {
 impl Transcript {
     /// Build a transcript from messages already in history, with no events.
     ///
+    /// Rebuild from an agent's live history, reattaching its compaction digests.
+    ///
+    /// One call for every path that resumes — session switches, timeline jumps — so
+    /// the surfaces cannot drift apart. No store, a locked file, or a failed read
+    /// leaves the markers plain (today's behavior) rather than failing a resume that
+    /// already hydrated: a digest no action can follow is not worth noise (the P-055
+    /// rule, one function over).
+    pub fn from_history(agent: &Agent, history: &[Message]) -> Self {
+        let mut digests = Vec::new();
+        if let Some(store) = agent.session_store()
+            && let Ok(st) = store.lock()
+            && let Ok(read) = st.compaction_digests()
+        {
+            digests = read;
+        }
+        Self::from_messages_with_digests(history, &digests)
+    }
+
     /// Needed for **opening a session**: switching to a stored conversation restores its
     /// history on the agent, and nothing emits an event for it, so a window that only
     /// reduced events would open the file and show an empty pane. That is the "nothing
@@ -247,7 +265,24 @@ impl Transcript {
     /// Tool calls become their own rows and tool results their own rows, because a
     /// transcript that showed only the prose would hide half of what the agent did.
     pub fn from_messages(messages: &[Message]) -> Self {
+        Self::from_messages_with_digests(messages, &[])
+    }
+
+    /// Rebuild from replayed messages, reattaching compaction digests (P-054/P-183,
+    /// window replay half).
+    ///
+    /// Each `[context compacted]` marker row takes the next digest, oldest first, and
+    /// becomes the same cost-plus-summary notice the live arm draws — one builder,
+    /// both paths. A marker with no digest stays the user row hydration made it:
+    /// inventing a summary is worse than a strange-looking user line. Digests come
+    /// from the store's `compaction_digests` (branch order, so digest `i` meets
+    /// marker `i`); [`Transcript::from_history`] reads them beside the messages.
+    pub fn from_messages_with_digests(
+        messages: &[Message],
+        digests: &[epsilon_session::CompactionDigest],
+    ) -> Self {
         let mut t = Transcript::new(std::env::temp_dir());
+        let mut digests = digests.iter();
         for message in messages {
             match message {
                 Message::User(u) => {
@@ -263,7 +298,16 @@ impl Transcript {
                         .collect::<Vec<_>>()
                         .join("\n");
                     if !text.trim().is_empty() {
-                        t.push(RowKind::User, text);
+                        if text == COMPACTION_MARKER {
+                            match digests.next() {
+                                Some(d) => {
+                                    t.push_compaction_digest(d.tokens_before, d.usage, &d.summary)
+                                }
+                                None => t.push(RowKind::User, text),
+                            }
+                        } else {
+                            t.push(RowKind::User, text);
+                        }
                     }
                 }
                 Message::Assistant(a) => {
@@ -445,6 +489,18 @@ impl Transcript {
             .collect()
     }
 
+    /// A compaction digest row: the cost line plus the summary, as one notice.
+    ///
+    /// The window has no collapsed rows (it virtualises and shows everything), so the
+    /// digest rides the row as text rather than behind a chord — the same words the
+    /// terminal draws, through the same builder (`epsilon_tui::state::compaction_cost_line`),
+    /// with the visibility the window gives every row. One builder for the live arm,
+    /// both resume paths, and the terminal: three surfaces, one wording.
+    fn push_compaction_digest(&mut self, tokens_before: u64, usage: Option<Usage>, summary: &str) {
+        let cost = epsilon_tui::state::compaction_cost_line(tokens_before, usage);
+        self.push(RowKind::Notice, format!("{cost}\n{summary}"));
+    }
+
     /// Add a harness notice the reader should see.
     pub fn push_notice(&mut self, text: &str) {
         self.push(RowKind::Notice, text.to_string());
@@ -474,6 +530,17 @@ impl Transcript {
     pub fn apply(&mut self, ev: &AgentEvent) {
         match ev {
             AgentEvent::Notice { text } => self.push(RowKind::Notice, text.clone()),
+
+            // P-054/P-183, window live half: the reducer folded no compaction event,
+            // so a compaction the agent ran left no row here — only the `/compact`
+            // channel's bare notice. The digest rides the row as text: the window
+            // has no collapsed rows, so there is no chord to hide it behind.
+            AgentEvent::CompactionFinished {
+                usage,
+                summary,
+                tokens_before,
+                ..
+            } => self.push_compaction_digest(*tokens_before, *usage, summary),
 
             AgentEvent::MessageStart { message } => self.open_live_rows(message),
 
@@ -1846,6 +1913,101 @@ mod tests {
                 .any(|r| r.kind == RowKind::Notice && r.text.contains("Response was stopped")),
             "a replayed stopped answer must carry its notice: {:?}",
             t.rows()
+        );
+    }
+
+    /// A resumed compaction marker regains its digest (P-054/P-183, window replay half).
+    ///
+    /// `from_messages` renders without events and a compaction entry is not a message,
+    /// so today the marker replays as a user turn the reader never typed. RED first:
+    /// no row carries the cost line.
+    #[test]
+    fn replayed_history_reattaches_the_compaction_digest() {
+        let marker = Message::User(epsilon_contracts::message::UserMessage {
+            id: "m".into(),
+            timestamp_ms: 0,
+            content: vec![epsilon_contracts::content::UserContent::Text {
+                text: epsilon_contracts::message::COMPACTION_MARKER.into(),
+            }],
+        });
+        let t = Transcript::from_messages_with_digests(
+            &[marker],
+            &[epsilon_session::CompactionDigest {
+                summary: "earlier work".into(),
+                tokens_before: 12_000,
+                usage: None,
+                model_id: None,
+            }],
+        );
+        let digest = t
+            .rows()
+            .iter()
+            .find(|r| r.text.contains("context compacted · from"))
+            .expect("the resumed compaction must draw its cost row");
+        assert_eq!(
+            digest.kind,
+            RowKind::Notice,
+            "a compaction row is a notice, not a user turn: {:?}",
+            t.rows()
+        );
+        assert!(
+            digest.text.contains("earlier work"),
+            "the digest rides the row: {}",
+            digest.text
+        );
+        assert!(
+            digest.text.contains("no usage reported"),
+            "a bill-less compaction says so: {}",
+            digest.text
+        );
+    }
+
+    /// A marker with no digest stays a user row — the reader typed nothing, but neither
+    /// did the compactor record anything, and inventing a summary is worse than a
+    /// strange-looking user line. RED first: the row must survive untouched.
+    #[test]
+    fn a_marker_without_a_digest_stays_a_user_row() {
+        let marker = Message::User(epsilon_contracts::message::UserMessage {
+            id: "m".into(),
+            timestamp_ms: 0,
+            content: vec![epsilon_contracts::content::UserContent::Text {
+                text: epsilon_contracts::message::COMPACTION_MARKER.into(),
+            }],
+        });
+        let t = Transcript::from_messages_with_digests(&[marker], &[]);
+        assert_eq!(t.rows().len(), 1);
+        assert_eq!(
+            t.rows()[0].kind,
+            RowKind::User,
+            "no digest, no rewrite: {:?}",
+            t.rows()
+        );
+    }
+
+    /// A live compaction draws its cost row with the digest (P-054/P-183, window live half).
+    ///
+    /// The reducer folded no compaction event, so a compaction the agent ran left no
+    /// row at all in this front end — only the `/compact` channel's bare "context
+    /// compacted" notice. RED first: no row carries the cost line.
+    #[test]
+    fn a_live_compaction_draws_its_cost_row_with_the_digest() {
+        let mut t = transcript();
+        t.apply(&AgentEvent::CompactionFinished {
+            usage: None,
+            model_id: None,
+            summary: "earlier work".into(),
+            tokens_before: 8_000,
+        });
+        let digest = t
+            .rows()
+            .iter()
+            .find(|r| r.text.contains("context compacted · from"))
+            .expect("the live compaction must draw its cost row");
+        assert_eq!(digest.kind, RowKind::Notice, "{:?}", t.rows());
+        assert!(
+            digest.text.contains("earlier work"),
+            "the digest rides the row: {}",
+            digest.text
         );
     }
 

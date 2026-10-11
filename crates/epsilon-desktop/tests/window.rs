@@ -968,6 +968,73 @@ fn switching_to_a_stored_session_puts_its_conversation_on_the_screen() {
     );
 }
 
+/// A resumed compaction shows its cost row with the digest (P-054/P-183, window replay half).
+///
+/// End to end through real `switch_session` onto the painted screen: the marker the
+/// live compactor wrote regains the digest the store kept. RED first: the marker
+/// replayed as a user turn the reader never typed, with no cost row anywhere.
+#[test]
+fn resumed_compaction_digest_reaches_the_screen() {
+    use epsilon_contracts::session_entry::EntryKind;
+    let ws = tempfile::tempdir().expect("a workspace");
+    let sessions_root = epsilon_runtime::sessions_root(ws.path());
+    std::fs::create_dir_all(&sessions_root).expect("sessions root");
+    let path = sessions_root.join("compacted.jsonl");
+    let user = |text: &str| {
+        epsilon_contracts::message::Message::User(epsilon_contracts::message::UserMessage {
+            id: "m".into(),
+            timestamp_ms: 1,
+            content: vec![epsilon_contracts::content::UserContent::Text { text: text.into() }],
+        })
+    };
+    let mut store =
+        epsilon_session::SessionStore::open_in(&path, ws.path()).expect("the store opens");
+    store
+        .append(EntryKind::Message {
+            message: user("hello"),
+            api_request_sha256: None,
+        })
+        .expect("the message lands in the log");
+    store
+        .append(EntryKind::Compaction {
+            summary: "a screen-visible digest".into(),
+            tokens_before: 1000,
+            retained_tail: vec![],
+            details: None,
+            usage: None,
+            model_id: None,
+        })
+        .expect("the compaction lands in the log");
+    store
+        .append(EntryKind::Message {
+            message: user(epsilon_contracts::message::COMPACTION_MARKER),
+            api_request_sha256: None,
+        })
+        .expect("the marker lands in the log");
+    drop(store);
+
+    let (ctx, mut app) = wire(ws.path());
+    app.switch_session(&path)
+        .expect("an unlocked session resumes");
+
+    let after = paint_once(&ctx, &mut app, 1440.0, 900.0);
+    let agent: Vec<String> = after
+        .region("agent")
+        .iter()
+        .map(|s| s.to_string())
+        .collect();
+    assert!(
+        agent.iter().any(|t| t.contains("context compacted · from")),
+        "the resumed compaction must draw its cost row.\n{}",
+        after.describe()
+    );
+    assert!(
+        agent.iter().any(|t| t.contains("a screen-visible digest")),
+        "the digest must ride the row.\n{}",
+        after.describe()
+    );
+}
+
 /// A file the harness cannot open is refused, and the window still draws.
 ///
 /// A click that appears to do nothing is the state this repository keeps failing to rule
@@ -1890,6 +1957,26 @@ fn compact_from_the_typed_line_compacts_and_reports() {
         reported,
         "the compaction must report back into the transcript.\n{}",
         paint_once(&ctx, &mut app, 1440.0, 900.0).describe()
+    );
+    // The empty faux session has nothing to summarize, so the pass fails — and a
+    // failed pass must never report success. The old channel sent "context compacted"
+    // on any `Ok`, including `Failed`; only `CompactionFinished` may print that row now.
+    let final_frame = paint_once(&ctx, &mut app, 1440.0, 900.0);
+    assert!(
+        final_frame
+            .region("agent")
+            .iter()
+            .any(|t| t.contains("context compaction skipped")),
+        "a failed pass must say it was skipped, with the reason.\n{}",
+        final_frame.describe()
+    );
+    assert!(
+        !final_frame
+            .region("agent")
+            .iter()
+            .any(|t| t.contains("context compacted · from")),
+        "and it must not print a success row for work that never happened.\n{}",
+        final_frame.describe()
     );
 }
 

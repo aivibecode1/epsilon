@@ -636,7 +636,11 @@ impl TranscriptLine {
 /// hand-written formats are how "from N tokens" gains a second spelling. A digest with
 /// no usage (pi v1 files carry none) reads "no usage reported" rather than a number
 /// that was never reported.
-fn compaction_cost_line(
+///
+/// `pub` because the desktop window draws the same row: both front ends read one
+/// builder rather than each owning the wording (the `epsilon-tui` → `epsilon-desktop`
+/// edge already carries theme roles and metrics, and a cost line is presentation).
+pub fn compaction_cost_line(
     tokens_before: u64,
     usage: Option<epsilon_contracts::message::Usage>,
 ) -> String {
@@ -2487,7 +2491,10 @@ mod tests {
             crate::ui::theme::ASCII,
         );
         let text_of = |row: &ratatui::text::Line<'_>| {
-            row.spans.iter().map(|s| s.content.clone()).collect::<String>()
+            row.spans
+                .iter()
+                .map(|s| s.content.clone())
+                .collect::<String>()
         };
 
         let mut live = UiState::new();
@@ -2499,15 +2506,13 @@ mod tests {
         });
 
         let mut replayed = UiState::new();
-        replayed.hydrate_from_history(&[Message::User(
-            epsilon_contracts::message::UserMessage {
-                id: new_id("msg"),
-                timestamp_ms: 0,
-                content: vec![epsilon_contracts::content::UserContent::Text {
-                    text: epsilon_contracts::message::COMPACTION_MARKER.into(),
-                }],
-            },
-        )]);
+        replayed.hydrate_from_history(&[Message::User(epsilon_contracts::message::UserMessage {
+            id: new_id("msg"),
+            timestamp_ms: 0,
+            content: vec![epsilon_contracts::content::UserContent::Text {
+                text: epsilon_contracts::message::COMPACTION_MARKER.into(),
+            }],
+        })]);
         replayed.attach_compaction_digests(&[epsilon_session::CompactionDigest {
             summary: "earlier work".into(),
             tokens_before: 12_000,
@@ -2517,11 +2522,9 @@ mod tests {
 
         for width in [80, 100] {
             let live_rows = snapshot_rows(&live.lines, width, false, 0, 50, &theme);
-            let replayed_rows =
-                snapshot_rows(&replayed.lines, width, false, 0, 50, &theme);
+            let replayed_rows = snapshot_rows(&replayed.lines, width, false, 0, 50, &theme);
             let live_text: Vec<String> = live_rows.iter().map(text_of).collect();
-            let replayed_text: Vec<String> =
-                replayed_rows.iter().map(text_of).collect();
+            let replayed_text: Vec<String> = replayed_rows.iter().map(text_of).collect();
             assert_eq!(
                 live_text, replayed_text,
                 "live and replayed rows must draw identically at {width}: {live_text:?}"

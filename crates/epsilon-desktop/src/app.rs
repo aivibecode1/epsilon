@@ -2121,7 +2121,7 @@ impl IdeApp {
                 Ok(_) => {
                     let history = agent.history();
                     let count = history.len();
-                    self.transcript = Transcript::from_messages(&history);
+                    self.transcript = Transcript::from_history(&agent, &history);
                     self.refresh_metrics();
                     self.transcript.push_notice(&format!(
                         "jumped to #{} · {count} messages on this branch",
@@ -2807,12 +2807,13 @@ pub struct IdeApp {
     /// showed no figures until the first event arrived would be asserting the defect this
     /// field was added to fix.
     pub(crate) metrics: Option<epsilon_tui::ui::metrics::Metrics>,
-    /// What a running `/compact` reported, when it reports.
+    /// What a running `/compact` reported, when it failed.
     ///
-    /// A channel rather than an event because `compact_now`'s success and failure are
-    /// otherwise indistinguishable at the window: the reducer folds neither
-    /// `CompactionStarted` nor `CompactionFinished`, so a compaction that failed would leave
-    /// a reader who pressed `/compact` looking at an unchanged transcript.
+    /// A channel rather than an event because a failed compaction emits nothing the
+    /// window folds: success arrives as `CompactionFinished` on the broadcast and the
+    /// drain draws its digest row, but a failure would leave a reader who pressed
+    /// `/compact` looking at an unchanged transcript. Only failures travel here, so a
+    /// success is never printed twice.
     compact_tx: tokio::sync::mpsc::UnboundedSender<String>,
     compact_rx: tokio::sync::mpsc::UnboundedReceiver<String>,
     /// The `gh gist create` answer comes back on a channel, same shape as
@@ -4442,10 +4443,11 @@ impl IdeApp {
     /// call in a session — and awaiting it here would freeze the window for the duration,
     /// which is the failure this window has already produced five other ways.
     ///
-    /// The answer comes back on a channel, the same shape as the goal round's. It cannot come
-    /// back as an event: `compact_now` emits `CompactionStarted`/`CompactionFinished`, and the
-    /// window's reducer folds neither, so a failure would end with a reader who pressed
-    /// `/compact` and saw nothing at all.
+    /// A failure comes back on a channel, the same shape as the goal round's.
+    /// Success needs none: `compact_now` emits `CompactionFinished` on the broadcast
+    /// and the drain folds it into a digest row, while a failure emits nothing the
+    /// reducer folds — so a failure would end with a reader who pressed `/compact`
+    /// and saw nothing at all.
     pub fn run_compact(&mut self) {
         let Some(session) = self.session.as_ref() else {
             return;
@@ -4459,13 +4461,28 @@ impl IdeApp {
             return;
         };
         handle.spawn(async move {
+            // Success needs no channel: `compact_now` emits `CompactionFinished` on the
+            // broadcast and the drain folds it into a digest row, so reporting it here
+            // too would print the compaction twice. Every other outcome has no event
+            // and still needs this channel — a reader who pressed `/compact` and saw
+            // nothing is the defect it exists to close. (The old code sent "context
+            // compacted" on any `Ok`, including `Failed` — a failed compaction
+            // reported as a success.)
             let mut produced = Vec::new();
-            let outcome = agent.compact_now(&mut produced).await;
-            tx.send(match outcome {
-                Ok(_) => "context compacted".to_string(),
-                Err(e) => format!("compaction failed: {e}"),
-            })
-            .ok();
+            match agent.compact_now(&mut produced).await {
+                Ok(epsilon_core::CompactionOutcome::Committed) => {}
+                // The run loop's own words for a failed pass, so both front ends
+                // name the same fact the same way.
+                Ok(epsilon_core::CompactionOutcome::Failed(why)) => {
+                    tx.send(format!("context compaction skipped: {why}")).ok();
+                }
+                // Cancelled is user-initiated and the run loop stays silent on it;
+                // so does this.
+                Ok(epsilon_core::CompactionOutcome::Cancelled) => {}
+                Err(e) => {
+                    tx.send(format!("compaction failed: {e}")).ok();
+                }
+            }
         });
     }
 
@@ -6658,7 +6675,7 @@ impl IdeApp {
         session.resume(path)?;
         let history = session.agent().history();
         let count = history.len();
-        self.transcript = Transcript::from_messages(&history);
+        self.transcript = Transcript::from_history(session.agent(), &history);
         // The session changed: the taskbar must follow it.
         self.refresh_window_title();
         // **The second of the two places these figures can change.** `live_resume` replaces

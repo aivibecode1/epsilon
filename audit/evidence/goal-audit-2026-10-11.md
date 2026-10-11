@@ -116,6 +116,19 @@ sessions rooted per workspace (M217).
 - Failure notices draw as failures (`RowKind::NoticeFail`, `app.rs:391,589,8633`,
   `session.rs:152`) — round 107 present.
 
+## Landed slices (this goal)
+
+### S1 — TUI compaction replay half (`143e0af`, core task)
+
+P-054/P-183 replay half for the terminal: `COMPACTION_MARKER` once in contracts,
+`SessionStore::compaction_digests()` (branch order), one `compaction_cost_line`
+builder, one `hydrate_compaction_digests` helper for all four hydrating paths,
+one `strip_line` funnel. Evidence: store + 2 ui + 1 e2e (wire-removal control) +
+1 render-equivalence test (80/100, frame read: cost row + `… 1 more line`).
+Suites: contracts 93, session 80+42+6, tui 609, core 206+… all green; fmt clean;
+clippy clean on all four crates; parity checkers green. Still open: markdown body,
+desktop replay half.
+
 ## Next in this task
 
 TUI/desktop surface spot-checks against the matrices, docs-structure contradiction sweep,
