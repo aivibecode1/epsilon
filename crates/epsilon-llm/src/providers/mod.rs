@@ -826,6 +826,52 @@ impl HttpEventStream {
     }
 }
 
+/// How long a request may take to get **response headers** before it is abandoned.
+///
+/// The stall watchdog covers the body (`STREAM_IDLE_LIMIT`) and the client covers
+/// the TCP connect (`http.rs`, 15 s), and the gap between them is real: a peer
+/// that completes the handshake and then never sends headers sits outside both.
+/// `req.send().await` had no deadline at all, so a captive proxy or a wedged
+/// server hung the turn with a spinner and no way out — and `Retrying` could not
+/// help, because the call it wraps never returned. That is the whole reason a
+/// retry policy exists being defeated by a hole one layer below it.
+///
+/// Deliberately **not** `reqwest`'s `Client::timeout`: that bounds the *whole*
+/// request including the body, and streams legitimately run for minutes. The
+/// deadline belongs around the send, which is what returns once headers arrive.
+///
+/// Generous on purpose. A cold provider behind a slow proxy can legitimately take
+/// tens of seconds to start answering, and failing a real request to fix a hung
+/// one would trade the rarer defect for the commoner.
+pub const HEADER_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(60);
+
+/// Send one request, bounding the wait for response headers by `deadline`.
+///
+/// The error wording carries "timed out" on purpose: `retry::classify` routes
+/// that to [`crate::retry::FailureKind::Network`], the class `Retrying` retries
+/// and `fallback` switches on. A message that failed without it would be `Other`
+/// — no retry, no fallback — which is the same hole one layer up, and the
+/// stall watchdog below already words its timeout the same way for the same
+/// reason (`M60`).
+///
+/// `deadline` is a parameter rather than a read of [`HEADER_TIMEOUT`] so the test
+/// can drive it against a real socket in milliseconds. The workspace forbids
+/// `unsafe`, so `std::env::set_var` is not available to shrink a const the way
+/// `EPSILON_STREAM_IDLE_SECS` does — and an override nothing can test is the
+/// documented-feature-with-no-code shape this crate has just removed elsewhere.
+async fn send_with_header_deadline(
+    req: reqwest::RequestBuilder,
+    deadline: std::time::Duration,
+) -> Result<reqwest::Response, String> {
+    match tokio::time::timeout(deadline, req.send()).await {
+        Ok(Ok(response)) => Ok(response),
+        Ok(Err(e)) => Err(format!("request failed: {e}")),
+        Err(_elapsed) => Err(format!(
+            "request timed out after {deadline:?} waiting for response headers"
+        )),
+    }
+}
+
 /// No bytes for this long on a LIVE stream means the provider is gone: a
 /// half-open socket (VPN drop, NAT timeout, proxy that swallowed the FIN) leaves
 /// `chunk()` pending forever, so the turn would hang with a spinner and no way
@@ -1344,11 +1390,7 @@ pub async fn try_stream_direct(
             req = req.header(name, value);
         }
     }
-    let response = req
-        .body(body.to_string())
-        .send()
-        .await
-        .map_err(|e| format!("request failed: {e}"))?;
+    let response = send_with_header_deadline(req.body(body.to_string()), HEADER_TIMEOUT).await?;
     if !response.status().is_success() {
         let status = response.status().as_u16();
         let head = response.text().await.unwrap_or_default();
@@ -1495,19 +1537,24 @@ impl StreamFn for DirectProvider {
             }
         }
 
-        let response = match req.body(body.to_string()).send().await {
-            Ok(r) => r,
-            Err(e) => {
-                let kind = crate::retry::classify(&e.to_string());
-                return Box::new(OnceStream {
-                    ev: Some(StreamEvent::Done {
-                        message: crate::stream_fn::error_message(format!(
-                            "request failed ({kind:?}): {e}"
-                        )),
-                    }),
-                });
-            }
-        };
+        // The same header deadline as the other send path, and the same reason: a
+        // peer that completes the handshake and never answers would otherwise
+        // hang this one forever too. The error path here already classifies, so
+        // the wording only has to stay inside the classes `classify` knows.
+        let response =
+            match send_with_header_deadline(req.body(body.to_string()), HEADER_TIMEOUT).await {
+                Ok(r) => r,
+                Err(e) => {
+                    let kind = crate::retry::classify(&e);
+                    return Box::new(OnceStream {
+                        ev: Some(StreamEvent::Done {
+                            message: crate::stream_fn::error_message(format!(
+                                "request failed ({kind:?}): {e}"
+                            )),
+                        }),
+                    });
+                }
+            };
 
         if !response.status().is_success() {
             let status = response.status().as_u16();
@@ -1612,6 +1659,101 @@ mod http_stream_tests {
     use super::*;
     use crate::http::SseEvent;
     use crate::providers::openai_compat::OpenAiCompatWire;
+
+    /// A listener that accepts a connection and never answers — the shape of a
+    /// captive proxy or a wedged server that completed the TCP handshake and
+    /// then went quiet before the response headers.
+    ///
+    /// Held open by the returned guard: dropping it closes the listener while
+    /// the test is still using the port. A real socket rather than a mock,
+    /// because the defect is in what the real `reqwest` send does.
+    fn silent_listener() -> (std::net::SocketAddr, std::thread::JoinHandle<()>) {
+        let listener = std::net::TcpListener::bind(("127.0.0.1", 0)).expect("bind a local socket");
+        let addr = listener.local_addr().expect("the bound address");
+        let handle = std::thread::spawn(move || {
+            // Accept once and hold the connection open without replying. The
+            // loop is here so a connection refused before the accept still
+            // leaves the thread parked rather than panicking.
+            if let Ok((stream, _)) = listener.accept() {
+                std::thread::park();
+                drop(stream);
+            }
+        });
+        (addr, handle)
+    }
+
+    /// **A send that never gets response headers fails on a deadline.**
+    ///
+    /// The shared client sets a *connect* timeout and the stall watchdog wraps
+    /// the response **body** stream — which only exists once the headers have
+    /// arrived. So a peer that completes the handshake and never sends headers
+    /// sat outside both: `req.send().await` had no deadline at all, the turn
+    /// hung with a spinner and no way out, and `Retrying` could not help
+    /// because the call it wraps never returned — which is the entire point of
+    /// the retry policy that exists for exactly this case.
+    ///
+    /// This drives the real send path against a real socket, so it exercises
+    /// `reqwest` rather than a stand-in for it.
+    #[tokio::test]
+    async fn a_send_that_never_answers_fails_on_a_deadline() {
+        let (addr, _guard) = silent_listener();
+        let url = format!("http://{addr}/v1/chat/completions");
+        let req = crate::http::http_client()
+            .post(&url)
+            .header("content-type", "application/json")
+            .body("{}".to_string());
+
+        let err = send_with_header_deadline(req, std::time::Duration::from_millis(150))
+            .await
+            .expect_err("a server that never answers must fail");
+
+        assert!(
+            err.contains("timed out") || err.contains("did not answer"),
+            "the failure must name the deadline: {err}"
+        );
+        // The wording is what routes the retry policy: `retry::classify` sends
+        // anything containing "timed out" to `FailureKind::Network`, which is
+        // the class `Retrying` retries and `fallback` switches on. A message
+        // that failed without that word would be `Other` — no retry, no
+        // fallback, which is the same hole one layer up.
+        assert_eq!(
+            crate::retry::classify(&err),
+            crate::retry::FailureKind::Network,
+            "the header timeout must classify as a network failure so the retry \
+             policy fires: {err}"
+        );
+    }
+
+    /// A send that answers promptly still works, and the deadline does not
+    /// disturb it. The other half of the same test: a bound that breaks the
+    /// happy path is not a fix.
+    #[tokio::test]
+    async fn a_send_that_answers_is_not_disturbed_by_the_deadline() {
+        let listener = std::net::TcpListener::bind(("127.0.0.1", 0)).expect("bind a local socket");
+        let addr = listener.local_addr().expect("the bound address");
+        let responder = std::thread::spawn(move || {
+            use std::io::{Read, Write};
+            if let Ok((mut stream, _)) = listener.accept() {
+                let mut buf = [0u8; 1024];
+                let _ = stream.read(&mut buf);
+                let _ = stream.write_all(
+                    b"HTTP/1.1 200 OK\r\ncontent-length: 2\r\nconnection: close\r\n\r\nok",
+                );
+            }
+        });
+
+        let url = format!("http://{addr}/v1/chat/completions");
+        let req = crate::http::http_client()
+            .post(&url)
+            .header("content-type", "application/json")
+            .body("{}".to_string());
+
+        let response = send_with_header_deadline(req, std::time::Duration::from_secs(10))
+            .await
+            .expect("a server that answers must not be failed by the deadline");
+        assert!(response.status().is_success(), "{:?}", response.status());
+        drop(responder);
+    }
 
     #[test]
     fn deepseek_text_chunk_produces_done_with_nonempty_content() {
