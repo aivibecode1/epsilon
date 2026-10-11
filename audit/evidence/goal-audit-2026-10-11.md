@@ -157,6 +157,41 @@ Evidence: 3 reducer RED-first retargeted, frame test with plain-path control, fr
 read (cost row, parsed heading, body). Suites: desktop 342 lib + 52 window green;
 fmt/clippy clean. P-183 → done (P-054 stays partial: the card concept is terminal-only).
 
+## Desktop-stack evaluation (this goal)
+
+### D2 — ADR-037 keeps egui, experiment path defined (`pending`, desktop-stack task)
+
+Re-verified by measurement (egui 0.36.2 pinned, clean dep tree, AccessKit asserted,
+transcript flat to 800 rows); goal()-read cost recorded as hardening follow-up;
+alternatives standing unless re-measured (stated, not benchmarked). No experiment
+started: a second implementation now would split every pixel/a11y test in two
+mid-program. Path defined (flag off by default, runtime-only, shared registry,
+battery green both ways) with four reopen triggers.
+
+## Hardening evidence (this goal)
+
+### H1 — goal()-read cost is probe-only, production already cached
+
+ADR-037 recorded `agent.goal()` at 3.1 ms (50 msgs) / 21.7 ms (400 msgs), twice per
+painted frame *in the probe*. Production does not pay it per frame: `IdeApp::goal`
+is a cached field (`app.rs:4201-4206`), refreshed only on event batches
+(`pump`, `arrived > 0`), goal commands, and session switches — never on a quiet
+frame. No code change; the follow-up is closed by measurement, not by a cache
+that already exists.
+
+### H2 — Safety invariants green
+
+`epsilon-safety` 50 + 5 + 7 green: `deny_is_monotonic_across_layers`,
+`full_access_allows_but_project_deny_still_wins`,
+`dropped_ask_denies_fail_closed`, `memory_promotion_cannot_override_a_fresh_deny`,
+`additive_project_subject_deny_survives_external_allow`.
+
+### H3 — Contrast / distinguishability green
+
+TUI theme contrast + high-contrast AAA floors, 5 distinguishable-without-colour
+tests, desktop `contrast_of_a_colour_with_itself_is_one` — all green. Real screen
+reader run + human keyboard pass remain owner-side (R5, carried).
+
 ## Core task close
 
 `core` is complete: the gap analysis's only implementable core gaps were the digest
