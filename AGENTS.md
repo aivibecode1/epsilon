@@ -1,11 +1,17 @@
 # AGENTS.md — Working in the Epsilon repository
 
-**Version 2.0 · 2026-10-03**
+**Version 3.0 · 2026-10-11**
 
 > **LOCKED: maintainer-owned; agents never edit this file.**
 > Its SHA-256 is in `AGENTS.md.sha256` and `scripts/check-agents-lock.py` fails CI when they
 > differ. If you believe this file is wrong, append a proposal to
 > [`docs/AGENTS-PROPOSALS.md`](docs/AGENTS-PROPOSALS.md) and say so in your final report.
+>
+> v3 was rewritten from the tree (not from memory) under explicit owner authorisation to
+> unlock, rewrite and relock, then relocked. v2 → v3 corrects the gate-leg list (§4),
+> names the shared keybinding tables (§2.4), records the authorised desktop-stack
+> experiment rule (§2.3), the shell/build-env correction (§4), and the one locked rule the
+> tree currently violates (§6). Evidence: `audit/evidence/goal-audit-2026-10-11.md`.
 
 This file is the permanent reference for anyone — human or agent — changing this repository.
 It holds only what stays true. Anything that moves (progress, open work, decisions in flight)
@@ -41,10 +47,13 @@ These do not change without an ADR in
    configuration becomes a running agent (`build_runtime`, `resolve_launch`). A second copy of
    composition is a defect, not an optimisation (ADR-021).
 3. **The desktop is native.** egui/eframe over winit + wgpu, rendered natively (ADR-020).
-   No Electron, no Tauri-with-HTML, no wry.
-4. **One command registry.** Slash commands, palette entries and keybindings are declared once
-   and read by every front end, with per-front-end capability declared as data rather than as
-   a second hand-maintained list.
+   No Electron, no Tauri-with-HTML, no wry. A different desktop stack may only be explored
+   behind a feature flag plus an ADR, must keep the native feel (no webview, no embedded
+   browser), and must never destabilise the core or the terminal.
+4. **One command registry.** Slash commands (`COMMAND_HEADS`), palette entries (derived from
+   each front end's `SUPPORTED` subset) and keybindings (`TERMINAL` / `WINDOW` tables) are
+   declared once in `epsilon-contracts` and read by every front end, with per-front-end
+   capability declared as data rather than as a second hand-maintained list.
 5. **No library depends on `epsilon-cli`.** Cargo rejects cycles; it does not stop you adding an
    edge nobody meant. `epsilon-cli` may depend on the others; the reverse is a review item.
 6. **A refusal path never exits the process.** Functions shared with a window return an error;
@@ -74,7 +83,7 @@ crates/
   epsilon-server      HTTP/SSE frontend
   epsilon-desktop     native desktop IDE (egui/eframe)
   epsilon-cli         the binary: argument parsing and mode dispatch
-docs/                 START-HERE.md, STATUS.md, design/, references/, milestones/, user/
+docs/                 START-HERE.md, STATUS.md, design/, references/, parity/, plans/, milestones/, user/
 scripts/              gate.ps1 / gate.sh, check-*.py, console-probe.py
 references/           read-only reference harnesses. Never modify, move or delete.
 ```
@@ -97,7 +106,7 @@ cargo run -q -p epsilon-desktop                           # the native IDE
 cargo run -q -p epsilon-cli                               # the terminal UI
 ```
 
-**The battery runs all of it plus four repository gates:**
+**The battery runs all of it plus ten repository gates, fifteen legs in all:**
 
 ```sh
 pwsh -File scripts/gate.ps1 <label>    # Windows — use this one here
@@ -105,8 +114,10 @@ bash scripts/gate.sh <label>           # POSIX and CI
 pwsh -File scripts/gate-until-pass.ps1 -Label <label>   # retry with a fingerprint, stops on a repeat
 ```
 
-Gates, in order: `check-links`, `check-lint-tables`, `check-line-endings`,
-`check-control-bytes`, `fmt`, `clippy`, `test`, `demo`, `real-check`. The log lands at
+Legs, in order: `check-links`, `check-agents-lock`, `check-lint-tables`,
+`check-parity-citations`, `check-citation-placement`, `check-reference-citations`,
+`check-verb-counts`, `check-parity-counts`, `check-line-endings`, `check-control-bytes`,
+`fmt`, `clippy`, `test`, `demo`, `real-check`. The log lands at
 `target/gate-<label>.log`. **Give it a timeout above 600 s** — the test leg alone runs several
 minutes. Copy evidence you want to keep out of `target/`, which is disposable.
 
@@ -122,6 +133,8 @@ a tree that no longer exists.
 - **Build outside the repository.** `CARGO_TARGET_DIR` goes to `%TEMP%\epsilon-target`, set by
   `gate.ps1`. Writing build output inside this repository makes `cl.exe` fail with
   `D8050: cannot execute c1.dll`, which cargo reports as a broken *dependency*.
+  Any shell build must export both variables first; a `ring`/`cl.exe` failure after
+  forgetting them is a machine fault, not a defect — set the variables and re-run.
 - **`LNK1104` on a freshly linked test executable is a machine fault, not a defect.** Avira
   flags some paths and the link fails on a file that does not exist. Never change security
   configuration from an agent session. Rebuild the test profile under fresh metadata
@@ -129,7 +142,8 @@ a tree that no longer exists.
 - **Disk is tight.** Turn debug info off to run a full battery in ~4 GB instead of ~33 GB
   (`CARGO_PROFILE_DEV_DEBUG=0`, `CARGO_PROFILE_TEST_DEBUG=0`), and turn it back on for the round
   that debugs a failure. Name the knob wherever you cite the battery.
-- `bash` here is WSL and has no Windows `cargo`. Use `gate.ps1`.
+- `bash` here is WSL and may not have a working Windows `cargo`. Prefer `gate.ps1`; if your
+  shell does have one, the build-env rules above still apply.
 - The repository is **LF** in the index and on disk (`.gitattributes`: `* text=auto eol=lf`).
 
 ## 5. Engineering rules
@@ -180,6 +194,10 @@ reports success while the thing you wanted did not happen.*
   control and bidi characters before it reaches a screen.
 - **Never write a credential to disk in plaintext.** Secrets belong in the OS credential store.
   Never accept one on a command line.
+  **Known open violation:** provider credentials are currently stored in
+  `<config dir>/auth.json` (`crates/epsilon-llm/src/auth.rs`), against this rule. The fix
+  needs the owner's signature (plan 026 R6, proposal 7); until it lands, no new plaintext
+  secret may be added and the rule stays as stated.
 - **Never lose a user's work.** Confirm before discarding or overwriting; keep a recoverable
   copy; a refusal path must leave the file untouched.
 - Validate input at every boundary — paths, RPC frames, HTTP bodies, MCP payloads. A path
@@ -270,7 +288,7 @@ not be the author. Route over-engineering findings through Ponytail review.
 - [ ] New public items are documented; behaviour-level changes have an ADR.
 - [ ] Docs updated and their commands actually run; links resolve.
 - [ ] Ponytail's audit is clean, or each remaining finding is justified in writing.
-- [ ] `CREDITS.md` complete; `AGENTS.md` untouched and its lock check passing; workspace clean.
+- [ ] `CREDITS.md` complete; `AGENTS.md` lock check passing; workspace clean.
 - [ ] `docs/STATUS.md` says what changed and what is still broken.
 
 ## 14. Conflict resolution
