@@ -76,13 +76,18 @@
 //! The split is by *where the effect is*, not by how much work it is:
 //!
 //! * **agent-level** — the effect is on the agent or its session, so both frontends can do it
-//!   identically: `/compact`, `/goal`.
+//!   identically: `/compact`, `/goal`, `/model`, `/preset`, `/restore`, `/branch`, `/tree`.
 //! * **window-level** — the effect is on a particular set of pixels, so it belongs to the
 //!   window that has those pixels: `/sessions`, `/tasks`, `/session`, `/clear`, `/theme`,
-//!   `/help` — exactly [`SUPPORTED`], no more.
-//! * **terminal-only** — everything else, refused by name: a terminal-only surface
-//!   (`/timeline`, `/editor`, `/hotkeys`), a session-file action this window has no
-//!   equivalent for (`/new`, `/resume`, `/fork`, `/clone`), and the rest.
+//!   `/help`, `/settings`, `/search`.
+//! * **shared spelling, native shape** — `/new`, `/resume`, `/fork`, `/clone`, `/import`,
+//!   `/export`, `/share`, `/hotkeys`, `/copy`, `/exit`, `/reload`, `/skills`, `/changelog`,
+//!   `/name`, `/think`, `/trust`, `/expand`, `/templates`, `/scoped_models`, `/login`,
+//!   `/logout`, `/skill`: the same effect as the terminal through the same helpers, drawn natively.
+//! * **terminal-only** — refused by name: `/editor`, which has no native bridge, and the rest.
+//!
+//! The enumeration above is illustrative; [`SUPPORTED`] is the declaration. If they disagree,
+//! the declaration wins and this paragraph is the bug.
 
 use std::sync::Arc;
 

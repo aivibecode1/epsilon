@@ -2696,6 +2696,14 @@ hand before it was believed**, and one of them turned out to be stale in two pla
 is the scoreboard earning its keep. They are recorded here so the next round starts from evidence
 rather than from a fresh sweep.
 
+> **Disposition 2026-10-11: all five items below have since landed and are kept as history.**
+> (1) todo settle — `9e8dea3`, `state.rs:991-1038` with `CONTROL_RESTORE_TODO_DOUBLE_DRAW` control.
+> (2) session deletion — `epsilon-session/src/delete.rs`, P-237 `partial` (`parity/pi-tui.md:667`).
+> (3) card-cap direction — `body_keeps_tail` (`tui/src/ui/card.rs:274-292`), P-142/P-156 `partial`.
+> (4) model picker — provider-first pinned (P-250), uncatalogued rows struck+badged (P-260).
+> (5) filter cycle — `ctrl+o`/`shift+ctrl+o` live (P-294 `partial`), all five modes in `/tree` (`f`).
+> Evidence: `audit/evidence/goal-audit-2026-10-11.md` (F2).
+
 **1. The transcript's `todo` card is drawn twice, and the first copy says `pending` forever.**
 The `todo` result arm returns *before* the in-place settle that every other tool goes through
 (`crates/epsilon-tui/src/state.rs:1339-1349` live, `:1164-1173` replay), so the frame carries
