@@ -3352,6 +3352,92 @@ async fn resume_names_compactions() {
     let _ = app;
 }
 
+/// A resumed compaction shows the cost and opens onto the digest (P-054/P-183, replay half).
+///
+/// End to end through real `/resume`: the marker the live compactor wrote regains the
+/// digest the store kept — the same cost-plus-summary row the live path draws. RED
+/// first: the row replayed as a bare user line with no cost and no payload.
+#[tokio::test]
+async fn resume_reattaches_the_compaction_digest() {
+    use epsilon_contracts::session_entry::EntryKind;
+    let ws = tempfile::tempdir().unwrap();
+    let path = ws.path().join("compacted.jsonl");
+    let user = |text: &str| {
+        epsilon_contracts::message::Message::User(epsilon_contracts::message::UserMessage {
+            id: "m".into(),
+            timestamp_ms: 1,
+            content: vec![epsilon_contracts::content::UserContent::Text { text: text.into() }],
+        })
+    };
+    {
+        let store = std::sync::Arc::new(std::sync::Mutex::new(
+            epsilon_core::SessionStore::open(&path).unwrap(),
+        ));
+        let mut guard = store.lock().unwrap();
+        guard
+            .append(EntryKind::Message {
+                message: user("hello"),
+                api_request_sha256: None,
+            })
+            .unwrap();
+        guard
+            .append(EntryKind::Compaction {
+                summary: "earlier work".into(),
+                tokens_before: 1000,
+                retained_tail: vec![],
+                details: None,
+                usage: None,
+                model_id: None,
+            })
+            .unwrap();
+        // The live compactor's marker, spelled once (COMPACTION_MARKER) — a
+        // hand-typed copy would prove only that the test can spell it.
+        guard
+            .append(EntryKind::Message {
+                message: user(epsilon_contracts::message::COMPACTION_MARKER),
+                api_request_sha256: None,
+            })
+            .unwrap();
+    }
+    let (mut app, agent, _) = test_app();
+    app.workspace_root = ws.path().to_path_buf();
+    let backing = std::sync::Arc::new(std::sync::Mutex::new(
+        epsilon_core::SessionStore::open(ws.path().join("t.jsonl")).unwrap(),
+    ));
+    agent.attach_session_store(std::sync::Arc::clone(&backing));
+
+    assert!(!type_and_enter(
+        &mut app,
+        &agent,
+        &format!("/resume {}", path.display())
+    ));
+    let rows: Vec<_> = app.ui.lines().iter().collect();
+    let digest = rows
+        .iter()
+        .find(|l| l.text.contains("context compacted · from"))
+        .expect("the resumed compaction must draw its cost row");
+    assert_eq!(
+        digest.kind,
+        crate::state::LineKind::System,
+        "a compaction row is a system row, not a user turn"
+    );
+    assert!(
+        digest.is_expandable_event_row(),
+        "the replayed row must open like the live one"
+    );
+    assert_eq!(
+        digest.full.as_deref(),
+        Some("earlier work"),
+        "the digest rides the row as its payload"
+    );
+    assert!(
+        digest.text.contains("no usage reported"),
+        "a pi-v1-style compaction with no bill says so: {}",
+        digest.text
+    );
+    let _ = app;
+}
+
 /// Resuming a session recorded elsewhere names the directory.
 ///
 /// Relative paths in the file were written against the recorded directory;

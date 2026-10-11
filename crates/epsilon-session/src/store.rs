@@ -358,6 +358,25 @@ fn hash_id(id: &str) -> u64 {
     h
 }
 
+/// One compaction's replayable digest: what a resumed transcript needs to redraw the
+/// row the live path drew (P-054/P-183, replay half). Read from this branch's entries,
+/// oldest first, so digest `i` is the digest for the `i`th `[context compacted]` marker
+/// in the hydrated transcript — the same order both were written in. A whole-file read
+/// would misattach across branches: billing is whole-file in `usage_accounts` because
+/// money is owed wherever it was spent, but a digest is positional, so it follows the
+/// branch.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CompactionDigest {
+    /// Summary text replacing the shadowed history.
+    pub summary: String,
+    /// Estimated tokens before compaction.
+    pub tokens_before: u64,
+    /// Usage of the summarization call(s), when recorded.
+    pub usage: Option<Usage>,
+    /// Catalog model id of the summarizer, when known.
+    pub model_id: Option<String>,
+}
+
 /// An open session file. Holds an offset index so long sessions stream lazily instead of
 /// living fully in RAM (fixing pi's memory-growth weakness while keeping the JSONL format).
 ///
@@ -1642,6 +1661,37 @@ impl SessionStore {
             }
         }
         Ok(by_model)
+    }
+
+    /// One digest per compaction on this branch, oldest first
+    /// ([`CompactionDigest`]: why branch order, not whole-file order).
+    ///
+    /// A digest with no `usage` still replays its row: the live path draws the same cost
+    /// line with "no usage reported" (pi v1 files carry none), so the reader degrades to
+    /// the live shape rather than refusing to draw — the row a resumed session shows for
+    /// an old compaction is the row a live session showed for one.
+    pub fn compaction_digests(&self) -> Result<Vec<CompactionDigest>, StoreError> {
+        let mut out = Vec::new();
+        for entry in self.branch_entries()? {
+            // Fields by name, so a renamed field breaks here instead of silently
+            // dropping the digest; `..` tolerates an added field the digest does not read.
+            match entry.kind {
+                EntryKind::Compaction {
+                    summary,
+                    tokens_before,
+                    usage,
+                    model_id,
+                    ..
+                } => out.push(CompactionDigest {
+                    summary,
+                    tokens_before,
+                    usage,
+                    model_id,
+                }),
+                _ => continue,
+            }
+        }
+        Ok(out)
     }
 
     /// Read one entry's identity (`id`, `seq`) by id, or `None` when the file holds

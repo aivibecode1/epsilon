@@ -708,6 +708,7 @@ pub(crate) fn handle_key(app: &mut App, agent: &Arc<Agent>, key: KeyEvent) -> bo
                             Ok(n) => {
                                 let messages = agent.history();
                                 app.ui.hydrate_from_history(&messages);
+                                app.ui.hydrate_compaction_digests(agent);
                                 app.ui
                                     .push_notice(format!("{what} · {n} messages on this branch"));
                             }
@@ -807,6 +808,7 @@ pub(crate) fn handle_key(app: &mut App, agent: &Arc<Agent>, key: KeyEvent) -> bo
                             Ok(n) => {
                                 let messages = agent.history();
                                 app.ui.hydrate_from_history(&messages);
+                                app.ui.hydrate_compaction_digests(agent);
                                 app.ui.push_notice(format!(
                                     "jumped to #{} · {n} messages on this branch",
                                     row.seq

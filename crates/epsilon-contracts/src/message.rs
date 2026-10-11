@@ -5,6 +5,14 @@ use serde::{Deserialize, Serialize};
 use crate::content::{ContentBlock, UserContent};
 use crate::ids::{MessageId, ToolCallId};
 
+/// The in-band marker a compaction leaves in the message stream: the human-readable
+/// half of a `Compaction` entry.
+///
+/// Written once by the compactor (`epsilon-core`), read back on resume by both front
+/// ends to reattach the digest. One spelling on purpose — a second literal is how a
+/// resumed session stops recognising its own compactions.
+pub const COMPACTION_MARKER: &str = "[context compacted]";
+
 /// How much reasoning the model should do before answering (pi's `ThinkingLevel`).
 ///
 /// One shared ladder for every wire; each provider maps/clamps it to its own

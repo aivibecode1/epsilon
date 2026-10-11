@@ -34,6 +34,6 @@ pub use import::{
 pub use lease::{LeaseOutcome, SessionLease, sweep_stale_locks};
 pub use search::{SearchOptions, SessionSearchHit, search_session};
 pub use store::{
-    FaultOp, LineDiagnosis, ModelViewEntry, SessionStore, StoreError, build_forest_from_entries,
-    original_backup_path,
+    CompactionDigest, FaultOp, LineDiagnosis, ModelViewEntry, SessionStore, StoreError,
+    build_forest_from_entries, original_backup_path,
 };

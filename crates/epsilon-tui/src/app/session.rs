@@ -296,6 +296,10 @@ impl App {
                     ),
                 }
             }
+            // P-054/P-183 replay half: compactions are entries, not messages, so the
+            // markers hydration left behind regain their digests here, beside the
+            // bills — one helper for every hydrating path, so they cannot drift.
+            self.ui.hydrate_compaction_digests(agent);
             // P-055: opening a session whose history contains compactions says
             // so — a resumed conversation reads differently when parts of it
             // are summaries, and nothing else on screen names that. Counted

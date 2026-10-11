@@ -3868,6 +3868,47 @@ fn a_legacy_compaction_with_usage_but_no_accounting_entry_is_not_counted() {
     );
 }
 
+// -------------------------------------------------------------------------------------
+// Compaction digests for resume replay (P-054/P-183, replay half).
+// -------------------------------------------------------------------------------------
+
+#[test]
+fn a_resumed_session_can_read_back_each_compactions_digest_in_order() {
+    // The defect: a resumed session hydrates from messages, and a compaction entry is
+    // not a message — so `/resume` showed `[context compacted]` with no way to recover
+    // the summary, the token count, or the bill. The digest reader is what makes the
+    // replay half possible: one row per compaction on this branch, in entry order.
+    let dir = tempfile::tempdir().unwrap();
+    let mut store = SessionStore::open(dir.path().join("s.jsonl")).unwrap();
+    for (summary, tokens) in [("first pass", 8_000u64), ("second pass", 20_000u64)] {
+        store
+            .append(EntryKind::Compaction {
+                summary: summary.into(),
+                tokens_before: tokens,
+                retained_tail: Vec::new(),
+                details: None,
+                usage: Some(billed(tokens, 200)),
+                model_id: Some("m".into()),
+            })
+            .unwrap();
+    }
+
+    let digests = store.compaction_digests().unwrap();
+    assert_eq!(
+        digests.len(),
+        2,
+        "one digest per compaction, in entry order: {digests:?}"
+    );
+    assert_eq!(digests[0].summary, "first pass");
+    assert_eq!(digests[0].tokens_before, 8_000);
+    assert_eq!(digests[1].summary, "second pass");
+    assert_eq!(digests[1].tokens_before, 20_000);
+    assert_eq!(
+        digests[1].usage.expect("digest carries its bill").input,
+        20_000
+    );
+}
+
 #[test]
 fn a_pop_that_discards_a_turn_takes_its_bill_with_it() {
     // F23, the regression. M144 appended a SEPARATE accounting entry after the compaction,

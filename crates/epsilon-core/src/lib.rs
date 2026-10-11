@@ -130,7 +130,7 @@ fn today_string() -> String {
 }
 
 use epsilon_contracts::agent_event::{AgentEvent, TurnEndReason};
-use epsilon_contracts::message::{AssistantMessage, Message, StopReason, Usage};
+use epsilon_contracts::message::{AssistantMessage, COMPACTION_MARKER, Message, StopReason, Usage};
 use epsilon_contracts::stream::{StreamEvent, StreamFolder};
 
 pub use gate::{Authorization, AutoAllow, AutoDeny, PermissionGate};
@@ -3287,7 +3287,7 @@ impl Agent {
             id: epsilon_contracts::new_id("msg"),
             timestamp_ms: now_ms(),
             content: vec![UserContent::Text {
-                text: "[context compacted]".into(),
+                text: COMPACTION_MARKER.into(),
             }],
         }));
         // The same usage that went onto the durable entry above, handed to the live

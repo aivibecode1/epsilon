@@ -4,7 +4,7 @@
 //! reducer, kept free of terminal code so it is unit-testable without a pty.
 
 use epsilon_contracts::agent_event::AgentEvent;
-use epsilon_contracts::message::{AssistantMessage, Message, StopReason};
+use epsilon_contracts::message::{AssistantMessage, COMPACTION_MARKER, Message, StopReason};
 
 /// Test-only switch that restores the pre-fix `todo` double-draw.
 ///
@@ -629,6 +629,67 @@ impl TranscriptLine {
     }
 }
 
+/// The collapsed cost line of a compaction row, live and replayed alike.
+///
+/// One builder on purpose: the live `CompactionFinished` handler and the resume-time
+/// digest rewrite must print the same words for the same compaction, and two
+/// hand-written formats are how "from N tokens" gains a second spelling. A digest with
+/// no usage (pi v1 files carry none) reads "no usage reported" rather than a number
+/// that was never reported.
+fn compaction_cost_line(
+    tokens_before: u64,
+    usage: Option<epsilon_contracts::message::Usage>,
+) -> String {
+    let f = epsilon_core::cache_stats::fmt_tokens;
+    match usage {
+        Some(u) => format!(
+            "── context compacted · from {} tokens · ↑{} ↓{} · {} re-read ──",
+            f(tokens_before),
+            f(u.input),
+            f(u.output),
+            f(u.input.saturating_add(u.cache_read))
+        ),
+        None => format!(
+            "── context compacted · from {} tokens · no usage reported ──",
+            f(tokens_before)
+        ),
+    }
+}
+
+/// Strip display-steering characters from a line's text, body and markdown source,
+/// recording what was removed. The single funnel for hostile-text safety: `push_line`
+/// and the resume-time row rewrite both go through here so neither can forget it.
+fn strip_line(line: &mut TranscriptLine) {
+    let mut removed = crate::text_safety::Stripped::default();
+    let (text, hit) = crate::text_safety::display_safe(&line.text);
+    if hit.any() {
+        removed.bidi += hit.bidi;
+        removed.control += hit.control;
+        line.text = text.into_owned();
+    }
+    if let Some(full) = line.full.take() {
+        let (safe_full, hit) = crate::text_safety::display_safe(&full);
+        if hit.any() {
+            removed.bidi += hit.bidi;
+            removed.control += hit.control;
+            line.full = Some(safe_full.into_owned());
+        } else {
+            line.full = Some(full);
+        }
+    }
+    if let Some(md) = line.md.take() {
+        let (safe_md, hit) = crate::text_safety::display_safe(&md);
+        if hit.any() {
+            removed.bidi += hit.bidi;
+            removed.control += hit.control;
+            line.md = Some(safe_md.into_owned());
+        } else {
+            line.md = Some(md);
+        }
+    }
+    line.hidden = removed;
+}
+
 /// Long tool outputs collapse to a head + ellipsis so one bash call cannot flood the pane.
 /// How many lines of in-flight output a running tool card keeps.
 ///
@@ -1218,6 +1279,53 @@ impl UiState {
         }
     }
 
+    /// Reattach compaction digests to a hydrated transcript (P-054/P-183, replay half).
+    ///
+    /// Call after [`UiState::hydrate_from_history`] with the store's
+    /// [`epsilon_session::SessionStore::compaction_digests`]: each plain
+    /// `[context compacted]` marker row takes the next digest, oldest first, and becomes
+    /// the same expandable cost-plus-summary row the live path draws — same builder
+    /// ([`compaction_cost_line`]), same payload, same affordance. A marker with no
+    /// digest behind it stays exactly what hydration made it: inventing a summary
+    /// would be worse than showing none.
+    pub fn attach_compaction_digests(&mut self, digests: &[epsilon_session::CompactionDigest]) {
+        let mut digests = digests.iter();
+        for line in self.lines.iter_mut() {
+            if line.kind != LineKind::User || line.text != COMPACTION_MARKER {
+                continue;
+            }
+            let Some(digest) = digests.next() else {
+                break;
+            };
+            let mut replacement = TranscriptLine::expandable(
+                LineKind::System,
+                compaction_cost_line(digest.tokens_before, digest.usage),
+                digest.summary.clone(),
+            );
+            strip_line(&mut replacement);
+            *line = replacement;
+        }
+    }
+
+    /// Read this agent's compaction digests from its store and attach them to the
+    /// hydrated rows ([`UiState::attach_compaction_digests`]).
+    ///
+    /// One call for every path that hydrates — `/resume`, `/import`, the browser's
+    /// Enter, branch jumps — so the surfaces cannot drift apart. No store, a locked
+    /// file, or a failed read leaves the markers plain (today's behavior) rather than
+    /// failing a resume that already hydrated: a digest no action can follow is not
+    /// worth noise (the P-055 rule, one function over).
+    pub fn hydrate_compaction_digests(&mut self, agent: &epsilon_core::Agent) {
+        let Some(store) = agent.session_store() else {
+            return;
+        };
+        let Ok(st) = store.lock() else { return };
+        let Ok(digests) = st.compaction_digests() else {
+            return;
+        };
+        self.attach_compaction_digests(&digests);
+    }
+
     /// Rebuild the frame's view from a replayed session's messages.
     ///
     /// Summarization bills are **not** folded in here — they are not messages, so they
@@ -1656,26 +1764,14 @@ impl UiState {
                 // be surprising. A legacy session with no usage (pi v1 files carry
                 // none) still prints the line, saying "?" rather than a number
                 // that was never reported.
-                let f = epsilon_core::cache_stats::fmt_tokens;
                 // **The collapsed row names what the context held before the pass.**
                 // Pi's collapsed line is `Compacted from N tokens (KEY to expand)`
-                // (`compaction-summary-message.ts:49-51`); ours carried the
-                // summariser's bill and dropped the figure the row exists to
-                // explain — what the context was, and therefore how much the
-                // compaction saved. Both facts ride one row now.
-                let cost = match usage {
-                    Some(u) => format!(
-                        "── context compacted · from {} tokens · ↑{} ↓{} · {} re-read ──",
-                        f(*tokens_before),
-                        f(u.input),
-                        f(u.output),
-                        f(u.input.saturating_add(u.cache_read))
-                    ),
-                    None => format!(
-                        "── context compacted · from {} tokens · no usage reported ──",
-                        f(*tokens_before)
-                    ),
-                };
+                // (`compaction-summary-message.ts:49-51`); ours carries the summariser's
+                // bill beside the figure the row exists to explain — what the context
+                // was, and therefore how much the compaction saved. Built by
+                // [`compaction_cost_line`], shared with the resume path so a live row
+                // and its replay cannot disagree about the wording.
+                let cost = compaction_cost_line(*tokens_before, *usage);
                 // **The summary rides the row as its expandable payload.** It was
                 // appended to the durable entry and never emitted, so the live
                 // transcript showed the cost and withheld the digest — the one
@@ -1769,34 +1865,7 @@ impl UiState {
         {
             self.lines.push(TranscriptLine::plain(LineKind::Blank, ""));
         }
-        let mut removed = crate::text_safety::Stripped::default();
-        let (text, hit) = crate::text_safety::display_safe(&line.text);
-        if hit.any() {
-            removed.bidi += hit.bidi;
-            removed.control += hit.control;
-            line.text = text.into_owned();
-        }
-        if let Some(full) = line.full.take() {
-            let (safe_full, hit) = crate::text_safety::display_safe(&full);
-            if hit.any() {
-                removed.bidi += hit.bidi;
-                removed.control += hit.control;
-                line.full = Some(safe_full.into_owned());
-            } else {
-                line.full = Some(full);
-            }
-        }
-        if let Some(md) = line.md.take() {
-            let (safe_md, hit) = crate::text_safety::display_safe(&md);
-            if hit.any() {
-                removed.bidi += hit.bidi;
-                removed.control += hit.control;
-                line.md = Some(safe_md.into_owned());
-            } else {
-                line.md = Some(md);
-            }
-        }
-        line.hidden = removed;
+        strip_line(&mut line);
         self.lines.push(line);
     }
 }
@@ -2312,6 +2381,156 @@ mod tests {
         );
         assert_eq!(by_model["yesterday-model"].input, 1_000);
         assert_eq!(by_model["today-model"].input, 4_000);
+    }
+
+    /// A resumed compaction marker must regain its digest (P-054/P-183, replay half).
+    ///
+    /// Hydration reads messages and a compaction entry is not one, so today the
+    /// `[context compacted]` row replays as a bare user line: no cost, no summary, no
+    /// affordance — while the live path draws the cost plus the digest behind `ctrl+x`.
+    /// Attaching the store's digests must rebuild exactly the live row.
+    #[test]
+    fn a_resumed_compaction_marker_regains_its_digest() {
+        let history = vec![Message::User(epsilon_contracts::message::UserMessage {
+            id: new_id("msg"),
+            timestamp_ms: 0,
+            content: vec![epsilon_contracts::content::UserContent::Text {
+                text: "[context compacted]".into(),
+            }],
+        })];
+        let mut st = UiState::new();
+        st.hydrate_from_history(&history);
+        st.attach_compaction_digests(&[epsilon_session::CompactionDigest {
+            summary: "earlier work".into(),
+            tokens_before: 12_000,
+            usage: Some(usage(12_000, 400, 0)),
+            model_id: Some("m".into()),
+        }]);
+
+        assert_eq!(
+            st.lines.len(),
+            1,
+            "the marker is replaced, not doubled: {:?}",
+            st.lines.iter().map(|l| &l.text).collect::<Vec<_>>()
+        );
+        let row = &st.lines[0];
+        assert_eq!(
+            row.kind,
+            LineKind::System,
+            "a compaction row is a system row, not a user turn"
+        );
+        assert!(
+            row.is_expandable_event_row(),
+            "the replayed row must open like the live one"
+        );
+        assert_eq!(
+            row.full.as_deref(),
+            Some("earlier work"),
+            "the digest rides the row as its payload"
+        );
+        assert!(
+            row.text
+                .starts_with("── context compacted · from 12k tokens"),
+            "the cost line names what the context held: {}",
+            row.text
+        );
+    }
+
+    /// More markers than digests: the unmatched marker stays a plain user line.
+    ///
+    /// An old session (or a branch whose compaction entry is elsewhere) may carry a
+    /// marker with no digest behind it. Inventing a summary would be worse than showing
+    /// none — the row must stay exactly what hydration made it.
+    #[test]
+    fn a_marker_without_a_digest_stays_a_plain_line() {
+        let marker = || {
+            Message::User(epsilon_contracts::message::UserMessage {
+                id: new_id("msg"),
+                timestamp_ms: 0,
+                content: vec![epsilon_contracts::content::UserContent::Text {
+                    text: "[context compacted]".into(),
+                }],
+            })
+        };
+        let mut st = UiState::new();
+        st.hydrate_from_history(&[marker(), marker()]);
+        st.attach_compaction_digests(&[epsilon_session::CompactionDigest {
+            summary: "earlier work".into(),
+            tokens_before: 8_000,
+            usage: None,
+            model_id: None,
+        }]);
+
+        assert_eq!(st.lines.len(), 2);
+        assert!(
+            st.lines[0].is_expandable_event_row(),
+            "the first marker takes the one digest"
+        );
+        assert_eq!(
+            st.lines[1].kind,
+            LineKind::User,
+            "the unmatched marker is untouched, not invented"
+        );
+    }
+
+    /// A replayed compaction row draws exactly what the live row draws.
+    ///
+    /// Same builder, same struct shape — but "same code path" is a claim about the
+    /// pixels, so this renders both rows through the real pipeline at 80 and 100
+    /// columns and compares the drawn text row by row. A divergence (a kind the
+    /// renderer treats differently, a payload it drops) fails here, not in a review.
+    #[test]
+    fn a_replayed_compaction_row_renders_like_the_live_one() {
+        use crate::render_cache::snapshot_rows;
+        let theme = crate::ui::theme::Theme::new(
+            crate::ui::theme::ColorMode::None,
+            crate::ui::theme::ASCII,
+        );
+        let text_of = |row: &ratatui::text::Line<'_>| {
+            row.spans.iter().map(|s| s.content.clone()).collect::<String>()
+        };
+
+        let mut live = UiState::new();
+        live.apply(&AgentEvent::CompactionFinished {
+            usage: Some(usage(12_000, 400, 0)),
+            model_id: Some("m".into()),
+            summary: "earlier work".into(),
+            tokens_before: 12_000,
+        });
+
+        let mut replayed = UiState::new();
+        replayed.hydrate_from_history(&[Message::User(
+            epsilon_contracts::message::UserMessage {
+                id: new_id("msg"),
+                timestamp_ms: 0,
+                content: vec![epsilon_contracts::content::UserContent::Text {
+                    text: epsilon_contracts::message::COMPACTION_MARKER.into(),
+                }],
+            },
+        )]);
+        replayed.attach_compaction_digests(&[epsilon_session::CompactionDigest {
+            summary: "earlier work".into(),
+            tokens_before: 12_000,
+            usage: Some(usage(12_000, 400, 0)),
+            model_id: Some("m".into()),
+        }]);
+
+        for width in [80, 100] {
+            let live_rows = snapshot_rows(&live.lines, width, false, 0, 50, &theme);
+            let replayed_rows =
+                snapshot_rows(&replayed.lines, width, false, 0, 50, &theme);
+            let live_text: Vec<String> = live_rows.iter().map(text_of).collect();
+            let replayed_text: Vec<String> =
+                replayed_rows.iter().map(text_of).collect();
+            assert_eq!(
+                live_text, replayed_text,
+                "live and replayed rows must draw identically at {width}: {live_text:?}"
+            );
+            assert!(
+                live_text.iter().any(|r| r.contains("context compacted")),
+                "the comparison is void if neither row drew the cost line"
+            );
+        }
     }
 
     /// Replaying into a state that already holds a session must replace, not add. If the
