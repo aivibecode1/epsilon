@@ -813,9 +813,27 @@ async fn run_one(agent: &Arc<Agent>, p: &mut PreparedCall) -> ToolResultMessage 
         })
     };
 
-    let outcome: Result<ToolOutput, ToolFailure> = tool
-        .execute(p.invocation.clone(), ctx, Arc::clone(&sink))
-        .await;
+    // The last boundary without a containment. `Tool::execute` is the one seam that
+    // runs user code — a native tool is arbitrary Rust, an extension tool is someone
+    // else's — and every other seam a third party can break already has one: the
+    // provider call (`lib.rs:533`), the detached body (`lib.rs:4368`) and all four turn
+    // hooks. On the Barrier path below there is no `tokio::spawn` to turn a panic into a
+    // `JoinError`, so without this an unwinding tool took the whole run with it: the
+    // call the model had already emitted, the money the turn had already spent, and the
+    // pending row the transcript was showing all disappeared on one unwind.
+    //
+    // The failure has to arrive as a *tool result*, not an exception: the model reads it
+    // and can decide what to do, and no caller in either front end is written to catch
+    // an unwind out of `run`.
+    let outcome: Result<ToolOutput, ToolFailure> = crate::contain_panic(
+        tool.execute(p.invocation.clone(), ctx, Arc::clone(&sink)),
+        |payload| {
+            Err(ToolFailure::msg(format!(
+                "tool '{name}' panicked: {payload}"
+            )))
+        },
+    )
+    .await;
 
     let is_error = outcome.is_err();
     agent.emit(AgentEvent::ToolExecutionEnd {

@@ -543,7 +543,11 @@ async fn contain_hook<T>(fut: impl std::future::Future<Output = T>, fallback: T)
 /// Written against std only (no `futures-util` dependency in this crate): `pin!` + `poll_fn`
 /// put the panic boundary exactly around `poll`, so a future that unwinds mid-await is caught
 /// too, and a panicked future is never polled again.
-async fn contain_panic<T>(
+/// The tool seam is the one boundary that runs *user* code — a native tool is arbitrary
+/// Rust and an extension tool is arbitrary someone else's — and it was the only call site
+/// without a containment. `pub(crate)` so `exec.rs` can reach it, which is where the
+/// `Tool::execute` call lives.
+pub(crate) async fn contain_panic<T>(
     fut: impl std::future::Future<Output = T>,
     on_panic: impl FnOnce(String) -> T,
 ) -> T {

@@ -1384,6 +1384,181 @@ impl epsilon_contracts::tool::Tool for SteerDuringTurn {
     }
 }
 
+/// The panic the tool above raises. Named so the assertion below compares against the
+/// *payload* the tool actually produced rather than a phrase the author reasoned about —
+/// the first version of this test asserted against the tool's description, which is a
+/// different string the failure never contains.
+const TOOL_PANIC: &str = "a native tool that panics must not unwind through the run";
+
+/// A native tool that panics where the loop has no boundary around it.
+///
+/// `Sequential` with no resource, so `plan_batch` puts the call on the **Barrier**
+/// path (`exec.rs:211-217`) — which is the path that awaits `run_one` directly in the
+/// loop rather than inside a `tokio::spawn`. That is the whole point: the Segments
+/// path turns a panic into a `JoinError` the batch already handles, and the Barrier
+/// path has no equivalent, so an unwinding tool takes the run with it.
+struct BarrierPanickingTool {
+    descriptor: epsilon_contracts::tool::ToolDescriptor,
+}
+
+#[async_trait]
+impl epsilon_contracts::tool::Tool for BarrierPanickingTool {
+    fn descriptor(&self) -> &epsilon_contracts::tool::ToolDescriptor {
+        &self.descriptor
+    }
+
+    async fn execute(
+        &self,
+        _call: epsilon_contracts::tool::ToolInvocation,
+        _ctx: epsilon_contracts::tool::ToolContext,
+        _sink: epsilon_contracts::tool::ToolUpdateSink,
+    ) -> Result<epsilon_contracts::tool::ToolOutput, epsilon_contracts::tool::ToolFailure> {
+        panic!("{TOOL_PANIC}")
+    }
+}
+
+/// **A panicking native tool lands a failed tool result, not an unwind.**
+///
+/// `contain_panic` (`lib.rs:546-574`) already wraps every other seam a third party can
+/// break — the provider call, the detached body, all four turn hooks — and a tool is the
+/// one that reaches *user code*: a native tool is arbitrary Rust, and an extension or
+/// plugin tool is arbitrary *someone else's* Rust. `Tool::execute` was the one boundary
+/// without a containment, on the path that cannot make one for itself.
+///
+/// What the unwind costs is not only the run. The model already emitted a tool call, the
+/// run already spent money on it, and the transcript has a pending row for it: unwinding
+/// past `run` drops all three on the floor. So the failure has to become a tool *result*
+/// — the model reads "the tool panicked" and can decide what to do — rather than an
+/// exception no caller in the front ends is written to catch.
+#[tokio::test]
+async fn a_panicking_native_tool_lands_a_failed_result_on_the_barrier_path() {
+    let mut registry = ToolRegistry::new();
+    registry.register(Arc::new(BarrierPanickingTool {
+        descriptor: epsilon_contracts::tool::ToolDescriptor {
+            name: "explodes".into(),
+            label: "Explodes".into(),
+            description: "panics when executed".into(),
+            parameters_schema: serde_json::json!({ "type": "object" }),
+            // Sequential and resource-less: `plan_batch` returns Barrier, which is the
+            // path under test.
+            execution_mode: epsilon_contracts::tool::ExecutionMode::Sequential,
+        },
+    }));
+    let agent = epsilon_core::Agent::new(
+        LoopLimits::default(),
+        Arc::new(SlowProvider::new(
+            FauxProvider::new(vec![
+                epsilon_llm::FauxStep::call("tc_1", "explodes", serde_json::json!({})),
+                epsilon_llm::FauxStep::say("recovered from the panic"),
+            ]),
+            0,
+        )),
+        Arc::new(registry),
+        Arc::new(AutoAllow),
+        std::env::temp_dir(),
+    );
+
+    let outcome = agent
+        .run(user_msg("make it explode"))
+        .await
+        .expect("a panicking tool must not unwind through the run");
+
+    // The tool result the model reads names the panic and keeps its own message.
+    let panicked = outcome.produced.iter().find_map(|m| match m {
+        Message::ToolResult(r) if r.tool_name == "explodes" => Some(r),
+        _ => None,
+    });
+    let result = panicked.unwrap_or_else(|| {
+        panic!(
+            "the panicking call must have produced a tool result: {:?}",
+            outcome.produced
+        )
+    });
+    assert!(
+        result.is_error,
+        "a panicking tool reported success would be the worst outcome available: {:?}",
+        result.content
+    );
+    assert!(
+        result.content.iter().any(|c| match c {
+            epsilon_contracts::content::ContentBlock::Text { text } =>
+                text.contains("panicked") && text.contains(TOOL_PANIC),
+            _ => false,
+        }),
+        "the result must name the panic and keep its own message: {:?}",
+        result.content
+    );
+}
+
+/// **And on the Segments path, which used to be the asymmetry itself.**
+///
+/// A `Parallel` tool with no resource plans to `Segments`, where the call runs inside a
+/// `tokio::spawn` and a panic already turned into a `JoinError` the batch handled — so the
+/// Barrier path was the one with no boundary at all. The containment was therefore put in
+/// `run_one`, which both plans share, and this test is what stops someone narrowing it
+/// back to the Barrier arm: one boundary, two plans, one place.
+#[tokio::test]
+async fn a_panicking_tool_lands_a_failed_result_on_the_segments_path_too() {
+    let mut registry = ToolRegistry::new();
+    registry.register(Arc::new(BarrierPanickingTool {
+        descriptor: epsilon_contracts::tool::ToolDescriptor {
+            name: "explodes".into(),
+            label: "Explodes".into(),
+            description: "panics when executed".into(),
+            parameters_schema: serde_json::json!({ "type": "object" }),
+            // Parallel and resource-less: two calls conflict with nothing, so each
+            // becomes its own group and the batch runs them in spawned tasks.
+            execution_mode: epsilon_contracts::tool::ExecutionMode::Parallel,
+        },
+    }));
+    registry.register(Arc::new(EchoTool::new()));
+    let agent = epsilon_core::Agent::new(
+        LoopLimits::default(),
+        Arc::new(SlowProvider::new(
+            FauxProvider::new(vec![
+                epsilon_llm::FauxStep::ToolCalls {
+                    text: None,
+                    calls: vec![
+                        epsilon_llm::FauxToolCall {
+                            id: "tc_boom".into(),
+                            name: "explodes".into(),
+                            arguments: serde_json::json!({}),
+                        },
+                        epsilon_llm::FauxToolCall {
+                            id: "tc_ok".into(),
+                            name: "echo".into(),
+                            arguments: serde_json::json!({ "text": "still here" }),
+                        },
+                    ],
+                },
+                epsilon_llm::FauxStep::say("recovered from both"),
+            ]),
+            0,
+        )),
+        Arc::new(registry),
+        Arc::new(AutoAllow),
+        std::env::temp_dir(),
+    );
+
+    let outcome = agent
+        .run(user_msg("make it explode in parallel"))
+        .await
+        .expect("a panicking tool must not unwind through the run");
+
+    // **The sibling's work survives.** A panic in one spawned task taking the whole batch
+    // with it is the same failure one layer up: the surviving call had already run and
+    // its result is real work the user would otherwise lose.
+    let ok = outcome.produced.iter().find_map(|m| match m {
+        Message::ToolResult(r) if r.tool_call_id == "tc_ok" => Some(r),
+        _ => None,
+    });
+    assert!(
+        ok.is_some_and(|r| !r.is_error),
+        "the sibling call's real work must survive a panic in its neighbour: {:?}",
+        outcome.produced
+    );
+}
+
 /// Hooks that break the contract and panic on every seam (CORE-02 containment test).
 struct PanickingTurnHooks;
 
