@@ -23,7 +23,12 @@ required-features = ["rmcp/server", "rmcp/transport-io"]
 
 [dev-dependencies]
 rmcp = { workspace = true, features = ["server", "transport-io"] }
-tokio = { workspace = true, features = ["macros", "rt"] }
+# `test-util` for `#[tokio::test(start_paused = true)]`: the hung-call test reaches its
+# deadline the moment the call has nothing left to do, so the wait is instant and the
+# test never sleeps. `tokio-util` because `ToolContext::token` is a
+# `CancellationToken` and a test has to be able to build one.
+tokio = { workspace = true, features = ["macros", "rt", "test-util"] }
+tokio-util = { workspace = true }
 
 [lints]
 workspace = true

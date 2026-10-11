@@ -108,7 +108,32 @@ struct McpBridgeTool {
 }
 
 /// How long a successful health probe stays valid (Hermes' availability-TTL).
+///
+/// It is fixed. A comment used to sit here claiming an `EPS_MCP_MEALTH_TTL_MS`
+/// environment override existed for tests, and nothing in the crate read it —
+/// a documented feature with no code behind it, which is the shape AGENTS.md
+/// calls a lie. The honest resolution was to **remove the claim rather than
+/// add an override nothing uses**: the TTL needs shrinking in exactly one
+/// place (the deadline test) and a caller can always spin up a fresh tool.
 pub const HEALTH_TTL_MS: i64 = 30_000;
+
+/// How long one MCP tool call may take before it is abandoned.
+///
+/// Deliberately the same order as the shell tool's default (120 s): an MCP tool is
+/// a remote procedure that may do real work, so the bound has to be loose enough
+/// not to fail a legitimate slow one and tight enough that a wedged server costs
+/// a turn rather than the process. Fixed, not configurable — an override would
+/// be a knob nothing uses, which is the mistake this round just removed from the
+/// health probe's comment.
+///
+/// The deadline test needs no short value: it runs under paused tokio time, so the
+/// 120 s elapse the moment the call has nothing left to do.
+pub const CALL_TIMEOUT_SECS: u64 = 120;
+
+/// The deadline for one call.
+fn call_timeout() -> std::time::Duration {
+    std::time::Duration::from_secs(CALL_TIMEOUT_SECS)
+}
 
 impl McpBridgeTool {
     /// Probe server health at most once per [`HEALTH_TTL_MS`], and always
@@ -148,25 +173,73 @@ impl Tool for McpBridgeTool {
     async fn execute(
         &self,
         call: ToolInvocation,
-        _ctx: ToolContext,
+        ctx: ToolContext,
         _on_update: ToolUpdateSink,
     ) -> Result<ToolOutput, ToolFailure> {
         // DIRECTION-02: TTL-cached health probe so a dead server fails fast
-        // with an honest message instead of an opaque transport error. Tests
-        // can shrink the TTL via the `EPS_MCP_HEALTH_TTL_MS` env override.
+        // with an honest message instead of an opaque transport error.
+        //
+        // This comment used to add "Tests can shrink the TTL via the
+        // `EPS_MCP_HEALTH_TTL_MS` env override" — and nothing read that variable,
+        // which is a documented feature with no code behind it. The constant is
+        // fixed; the honest way to test a different TTL is a fresh tool.
         self.ensure_healthy().await.map_err(ToolFailure::msg)?;
-        // Third-party MCP output is UNTRUSTED DATA (AGENTS.md contract): we pass it back
-        // verbatim as text and never act on embedded instructions.
-        let text = match self.connector.call_tool(&self.tool_name, call.args).await {
-            Ok(t) => t,
-            Err(e) => {
-                // A failed call invalidates the probe: the NEXT call re-probes
-                // before attempting another round-trip.
-                self.last_probe_ms
-                    .store(0, std::sync::atomic::Ordering::Relaxed);
-                return Err(ToolFailure::msg(e));
+        // **The call is bounded and cancellable.**
+        //
+        // It used to be a bare `.await` with `ctx` discarded, which is the one
+        // shape a remote procedure can take that no amount of surrounding
+        // machinery recovers from: the loop's abort checkpoint
+        // (`epsilon-core/src/exec.rs:731`) only stops calls that have not
+        // *started*, and nothing anywhere puts a watchdog on tool execution. A
+        // server that accepted a request and never replied took the run down
+        // with it — `Esc` did nothing visible and the only exit was killing the
+        // process.
+        //
+        // Both halves matter and they cover different readers. Cancellation is
+        // the one a person triggers; the deadline is the one that fires when
+        // nobody is watching, which is exactly when a wedged server is least
+        // likely to be noticed. `Tool::execute`'s contract has said to poll
+        // `ctx.token` all along (`epsilon-contracts/src/tool.rs:463-464`) —
+        // this was the one built-in tool that did not, and its siblings
+        // `webfetch` and `shell` both do (`webfetch.rs:181-184`,
+        // `shell.rs:554-573`).
+        //
+        // The tool is dropped when either branch wins, which is what abandons
+        // the in-flight request rather than leaking a task per hung call.
+        let cancelled = ctx.token.clone();
+        let call_fut = self.connector.call_tool(&self.tool_name, call.args);
+        let text = tokio::select! {
+            _ = cancelled.cancelled() => {
+                return Err(ToolFailure::msg(format!(
+                    "[aborted] MCP tool {}::{} cancelled by user before completion",
+                    self.server_name, self.tool_name
+                )));
+            }
+            answered = tokio::time::timeout(call_timeout(), call_fut) => {
+                match answered {
+                    Ok(Ok(t)) => t,
+                    Ok(Err(e)) => {
+                        // A failed call invalidates the probe: the NEXT call re-probes
+                        // before attempting another round-trip.
+                        self.last_probe_ms.store(0, std::sync::atomic::Ordering::Relaxed);
+                        return Err(ToolFailure::msg(e));
+                    }
+                    Err(_) => {
+                        // The deadline also invalidates the probe: a server that failed
+                        // to answer once has earned a re-probe before the next attempt.
+                        self.last_probe_ms.store(0, std::sync::atomic::Ordering::Relaxed);
+                        return Err(ToolFailure::msg(format!(
+                            "MCP tool {}::{} did not answer within {:?} and was abandoned",
+                            self.server_name,
+                            self.tool_name,
+                            call_timeout()
+                        )));
+                    }
+                }
             }
         };
+        // Third-party MCP output is UNTRUSTED DATA (AGENTS.md contract): we pass it back
+        // verbatim as text and never act on embedded instructions.
         let mut out = ToolOutput::text(text);
         out.details = serde_json::json!({ "mcp_server": self.server_name });
         Ok(out)
@@ -362,5 +435,150 @@ mod tests {
         }))
         .unwrap();
         assert_eq!(cfg.name, "gh");
+    }
+
+    /// A connector whose tool call never answers — the shape of a wedged MCP server.
+    ///
+    /// `std::future::pending()` rather than a sleeping thread, because the bug these
+    /// tests pin is precisely that nothing was *awaiting* the call: a blocking handler
+    /// would hang the executor thread and make a `select!` look broken for the wrong
+    /// reason.
+    struct HangingConnector;
+
+    #[async_trait]
+    impl Connector for HangingConnector {
+        async fn list_tools(&self) -> Result<Vec<McpToolInfo>, String> {
+            Ok(vec![McpToolInfo {
+                name: "hangs".into(),
+                description: "never answers".into(),
+                schema: serde_json::json!({ "type": "object" }),
+            }])
+        }
+
+        async fn call_tool(&self, _tool: &str, _args: serde_json::Value) -> Result<String, String> {
+            std::future::pending().await
+        }
+
+        async fn is_healthy(&self) -> Result<(), String> {
+            Ok(())
+        }
+    }
+
+    /// Build the bridged tool these tests drive.
+    ///
+    /// A plain `async fn`, not a future-polling harness: tokio is a dependency of this
+    /// crate and every test here is a `#[tokio::test]`, so the bridge's own await is
+    /// enough. The first version of this fixture hand-rolled a `RawWaker` and a
+    /// yield-and-poll loop — a no-op waker never wakes anything, so it only worked
+    /// because the loop spun, and it needed `unsafe` to do it. Reaching for the runtime
+    /// already in the graph is the whole lesson of that.
+    async fn hanging_tool() -> Arc<dyn Tool> {
+        let mut registry = ToolRegistry::new();
+        let connector: Arc<dyn Connector> = Arc::new(HangingConnector);
+        bridge(&mut registry, "wedged", connector)
+            .await
+            .expect("the bridge registers");
+        registry
+            .get(&qualified_name("wedged", "hangs"))
+            .expect("bridged tool registered")
+    }
+
+    /// **A cancelled MCP call returns instead of hanging forever.**
+    ///
+    /// `McpBridgeTool::execute` took the tool's `ToolContext` as `_ctx` and awaited
+    /// `connector.call_tool(..)` with nothing racing it, so a server that accepted a
+    /// request and never replied wedged the run: the loop's abort checkpoint
+    /// (`epsilon-core/src/exec.rs:731`) only stops calls that have not *started*, and
+    /// there is no watchdog on tool execution anywhere. `Esc` did nothing visible and
+    /// the only exit was killing the process — which is the whole reason
+    /// `Tool::execute`'s contract tells implementors to poll `ctx.token`
+    /// (`epsilon-contracts/src/tool.rs:463-464`), and this was the one built-in tool
+    /// that did not.
+    #[tokio::test]
+    async fn a_cancelled_mcp_call_returns_instead_of_hanging() {
+        let tool = hanging_tool().await;
+        let token = tokio_util::sync::CancellationToken::new();
+        let child = token.clone();
+        // Cancel from another task: the call is already in flight when the token fires,
+        // which is the state that hung.
+        tokio::spawn(async move {
+            tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+            child.cancel();
+        });
+        let ctx = ToolContext {
+            session_id: "t".into(),
+            observation_scope: std::sync::Arc::new(()),
+            cwd: std::env::temp_dir(),
+            spill_dir: std::env::temp_dir().join("eps-mcp"),
+            token: token.clone(),
+            task_host: None,
+            goal_host: None,
+        };
+        let err = tokio::time::timeout(
+            std::time::Duration::from_secs(5),
+            tool.execute(
+                ToolInvocation {
+                    tool_call_id: "tc_cancel".into(),
+                    args: serde_json::json!({}),
+                },
+                ctx,
+                Arc::new(|_| {}),
+            ),
+        )
+        .await
+        .expect("the call must return rather than hang")
+        .expect_err("a cancelled call is an error");
+        assert!(
+            err.message.contains("cancel") || err.message.contains("abort"),
+            "the failure must say the call was cancelled, not what the server did: {}",
+            err.message
+        );
+    }
+
+    /// **A hung MCP call fails after a deadline instead of waiting for ever.**
+    ///
+    /// The other half of the same hole. Cancellation only helps when somebody presses
+    /// Escape; a server that never answers and nobody watching still takes the run
+    /// down. Paused tokio time makes this deterministic and instant: the deadline is
+    /// reached the moment the call has nothing left to do.
+    #[tokio::test(start_paused = true)]
+    async fn a_hung_mcp_call_fails_after_a_deadline() {
+        let tool = hanging_tool().await;
+        let ctx = ToolContext {
+            session_id: "t".into(),
+            observation_scope: std::sync::Arc::new(()),
+            cwd: std::env::temp_dir(),
+            spill_dir: std::env::temp_dir().join("eps-mcp"),
+            token: Default::default(),
+            task_host: None,
+            goal_host: None,
+        };
+        // An outer bound **longer than the production deadline**, which is the only shape
+        // that gives both halves a reader wants: the product's own deadline fires first
+        // (120 s against 300 s), and if it is ever removed this fails at 300 s instead of
+        // hanging. Under paused tokio time both are instant. A shorter bound was tried
+        // first and was wrong — it fired first and the test then asserted its own timeout
+        // rather than the product's.
+        let err = tokio::time::timeout(
+            std::time::Duration::from_secs(300),
+            tool.execute(
+                ToolInvocation {
+                    tool_call_id: "tc_hang".into(),
+                    args: serde_json::json!({}),
+                },
+                ctx,
+                Arc::new(|_| {}),
+            ),
+        )
+        .await
+        .expect("a hung MCP call must fail on the product's deadline, not hang")
+        .expect_err("a call that never answers must fail");
+        assert!(
+            err.message.contains("did not answer")
+                || err.message.contains("timed out")
+                || err.message.contains("deadline"),
+            "the failure must name the deadline: {}",
+            err.message
+        );
     }
 }
