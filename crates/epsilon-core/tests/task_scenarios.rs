@@ -1184,3 +1184,90 @@ async fn a_panicking_foreground_resume_lands_failed_not_running() {
         settled.output
     );
 }
+
+/// **A subagent's work is visible while it runs, not only when it lands.**
+///
+/// Every `Agent` gets its own event channel (`Agent::new`, `lib.rs:856`) and nothing
+/// bridged a child's to the parent's, so a delegated subagent was a black box: for the
+/// whole of a five-minute delegation the parent's subscribers saw nothing at all — no
+/// notice, no tool starting, no progress — and learned only the settled summary.
+///
+/// The parent's own settle notice (`task_notice`, line 4612) is what makes this easy to
+/// miss: something *does* arrive, at the end. So the run is invisible in the middle rather
+/// than absent, which is the shape that reads as a hang.
+///
+/// The forwarded set is deliberately not the whole enum, and the boundary is the whole
+/// design. A child's `ToolExecution*` events are forwarded because the terminal's reducer
+/// keys on `tool_call_id` and does nothing when the id is unknown (`state.rs:1533-1540`)
+/// — so a subagent's calls set the status line and add no transcript rows. A child's
+/// `Notice` is forwarded because a notice is already "a transient status line, deliberately
+/// NOT part of the transcript". What is **not** forwarded is `MessageEnd`/`AgentEnd`: they
+/// would put a subagent's messages in the operator's transcript *and* re-record its usage
+/// through `record_usage`, which the tool-result path already folds once
+/// (`record_tool_usage`) — so forwarding them would bill every delegated task twice.
+#[tokio::test]
+async fn a_subagents_tool_calls_are_visible_to_the_parent_while_they_run() {
+    let mut registry = ToolRegistry::new();
+    registry.register(Arc::new(epsilon_core::testing::EchoTool::new()));
+    let agent = epsilon_core::Agent::new(
+        LoopLimits::default(),
+        Arc::new(PanicGuard(FauxProvider::new(vec![
+            // The child's own two turns: it calls echo, then finishes. The provider
+            // instance is shared with the parent, so the script is consumed in order.
+            FauxStep::call(
+                "t_child",
+                "echo",
+                serde_json::json!({"text": "subagent work"}),
+            ),
+            FauxStep::say("child done"),
+        ]))),
+        Arc::new(registry),
+        Arc::new(AutoAllow),
+        std::env::temp_dir(),
+    );
+    let mut rx = agent.subscribe();
+    let host = agent.clone() as Arc<dyn TaskHost>;
+
+    let outcome = host
+        .run_task(req("do it", "foreground probe", false, None))
+        .await
+        .expect("the foreground task completes");
+    // **The precondition, asserted.** Without this the test could pass against a build
+    // where the child never called echo at all — the empty-list RED would then be proving
+    // the fixture, not the defect.
+    let settled = match outcome {
+        TaskOutcome::Completed(s) => s,
+        other => panic!("a foreground task completes inline, got {other:?}"),
+    };
+    assert!(
+        settled.text.contains("subagent work"),
+        "the child really ran echo, so there is a tool start to forward: {}",
+        settled.text
+    );
+
+    let starts = drain_tool_starts(&mut rx);
+    assert!(
+        starts
+            .iter()
+            .any(|(id, name)| id == "t_child" && name == "echo"),
+        "the child's tool call must reach the parent's subscribers: {starts:?}"
+    );
+}
+
+/// Every `ToolExecutionStart` on the channel, as `(id, name)`.
+fn drain_tool_starts(
+    rx: &mut tokio::sync::broadcast::Receiver<Arc<epsilon_contracts::agent_event::AgentEvent>>,
+) -> Vec<(String, String)> {
+    let mut out = Vec::new();
+    while let Ok(ev) = rx.try_recv() {
+        if let epsilon_contracts::agent_event::AgentEvent::ToolExecutionStart {
+            tool_call_id,
+            tool_name,
+            ..
+        } = &*ev
+        {
+            out.push((tool_call_id.clone(), tool_name.clone()));
+        }
+    }
+    out
+}

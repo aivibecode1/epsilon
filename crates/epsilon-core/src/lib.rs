@@ -4226,6 +4226,57 @@ impl Agent {
 
     /// Insert a new task, evicting the oldest finished entry at the cap.
     fn register_task_entry(&self, entry: TaskEntry) {
+        // **A subagent's work is visible while it runs, not only when it lands.**
+        //
+        // Every `Agent` builds its own event channel (`Agent::new`, `lib.rs:856`) and
+        // nothing bridged a child's to the parent's, so a delegated subagent was a black
+        // box: for the whole of a five-minute delegation the parent's subscribers saw
+        // nothing — no notice, no tool starting, no progress — and learned only the
+        // settled summary. The settle notice (`task_notice`) is what makes this easy to
+        // miss, because something *does* arrive at the end: the run is invisible in the
+        // middle rather than absent, which is the shape that reads as a hang.
+        //
+        // The forwarded set is deliberately not the whole enum, and the boundary is the
+        // design. `ToolExecution*` and `Notice` are forwarded because the terminal's
+        // reducer keys on `tool_call_id` and does nothing when the id is unknown
+        // (`epsilon-tui/src/state.rs:1533-1540`) — so a subagent's calls set the status
+        // line and add no transcript rows, and a notice is already "a transient status
+        // line, deliberately NOT part of the transcript". What is **not** forwarded is
+        // `MessageEnd`/`AgentEnd`: they would put a subagent's messages in the operator's
+        // transcript *and* re-record its usage through `record_usage`, which the
+        // tool-result path already folds once (`record_tool_usage`) — so forwarding them
+        // would bill every delegated task twice.
+        //
+        // The forwarder holds the child's `Receiver` and the parent's `Sender`, never the
+        // child's `Arc`. A tokio broadcast `Receiver` does not keep its channel open, so
+        // when the registry drops this entry the child's `Sender` drops with it, the
+        // channel closes, and this task ends instead of looping for ever. Dropping the
+        // `JoinHandle` detaches a tokio task without aborting it, which is exactly what is
+        // wanted here.
+        let mut forwarding = entry.child.subscribe();
+        let parent_tx = self.events_tx.clone();
+        tokio::spawn(async move {
+            loop {
+                match forwarding.recv().await {
+                    Ok(ev) => {
+                        let forwarded = match &*ev {
+                            AgentEvent::Notice { .. }
+                            | AgentEvent::ToolExecutionStart { .. }
+                            | AgentEvent::ToolExecutionUpdate { .. }
+                            | AgentEvent::ToolExecutionEnd { .. } => Some((*ev).clone()),
+                            _ => None,
+                        };
+                        if let Some(ev) = forwarded {
+                            let _ = parent_tx.send(Arc::new(ev));
+                        }
+                    }
+                    // Lagging is a dropped event, not a closed channel: the child is still
+                    // running and the next one is worth having.
+                    Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => continue,
+                    Err(_) => break,
+                }
+            }
+        });
         if let Ok(mut v) = self.tasks.lock() {
             if v.len() >= TASK_REGISTRY_CAP
                 && let Some(pos) = v
