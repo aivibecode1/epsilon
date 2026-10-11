@@ -138,7 +138,23 @@ channel printed success on any `Ok`, including `Failed`. Evidence: 3 reducer
 RED-first (arm-removal control on the live one), resume-to-screen 1440×900
 (switch-removal control), `/compact` pins honest skip + no success row. Suites:
 desktop 342 lib + 51 window green; tui 610; fmt/clippy clean. Still open: markdown
-body (both front ends).
+markdown body (terminal; window recorded for `desktop-parity`).
+
+### S3 — Terminal digest markdown (`261d81e`, core task)
+
+`event_body` parses the open digest with `md_to_lines` (plain digests parse to
+themselves); collapsed form unchanged (source-line count, hides whole). Evidence:
+RED-first pair (open renders markdown + collapsed control), frame read, full tui
+612 green. Still open: window markdown (recorded for `desktop-parity`).
+
+## Core task close
+
+`core` is complete: the gap analysis's only implementable core gaps were the digest
+halves (S1/S2/S3, all landed with RED-first tests + frame evidence); everything else
+in its title (goals, presets-as-YOLO, subagents/depth-1, tools, sessions, context,
+permissions, recovery) was verified present and reachable from both front ends in
+the audit. Follow-ups live where they belong: window markdown → `desktop-parity`,
+`auth.json` plaintext → owner-blocked R6.
 
 ## Next in this task
 
