@@ -866,3 +866,157 @@ async fn a_compaction_records_its_bill_on_its_own_entry() {
         "some compaction entry must carry both a bill and the model that was charged"
     );
 }
+
+/// **A compaction is billed to the model that answered, not the session's.**
+///
+/// The request is built from `self.model_id` (`lib.rs:3030-3035`) and the entry records
+/// that same `model.id`. But the `ModelRef` is only what the request *asked* for; the
+/// summarizer is an isolated stream, and when one is installed it can answer from
+/// somewhere else entirely. The main-turn path already reads the model off the response
+/// (`lib.rs:3464`) for exactly this reason — a response that lands after a `/model`
+/// switch belongs to the model that generated it — and the compaction was the one
+/// caller that did not.
+///
+/// What a wrong model costs is money, quietly: Epsilon prices from the catalog when it
+/// tallies, so a `faux-1` bill filed under `claude-fable-5` prices that call at Claude's
+/// rates on every read, forever, with nothing on screen to contradict it. Rounds 138
+/// and 139 have both now surfaced bills that reached *somewhere* under the *wrong name*.
+#[tokio::test]
+async fn a_compaction_is_billed_to_the_model_that_answered() {
+    let steps = vec![
+        big_echo_call("tc_model", 4000),
+        epsilon_llm::FauxStep::say("final answer"),
+    ];
+    let (agent, store, _dir) = setup(
+        steps,
+        LoopLimits {
+            compaction_threshold_tokens: 1500,
+            compaction_tail_tokens: 300,
+            max_turns: 8,
+            ..Default::default()
+        },
+    );
+    // An **unknown** model id on purpose. A catalog-known one installs its window, which
+    // dwarfs this script and suppresses the compaction entirely — the first draft used
+    // `claude-fable-5` and failed with "no entry" rather than with its own assertion.
+    // `model_hot_swap_refreshes_live_window` covers that half; this test needs the fixed
+    // threshold to actually fire.
+    agent.set_model_id("vendor/expensive-model");
+    agent.set_summarizer(Arc::new(DivergentSummarizer {
+        answers_as: "faux-1".into(),
+        summary: "## Objective\nsummarized state".into(),
+    }));
+    let mut rx = agent.subscribe();
+
+    let outcome = agent.run(user("long task")).await.unwrap();
+    assert_eq!(
+        outcome.reason,
+        epsilon_contracts::agent_event::TurnEndReason::Completed
+    );
+
+    // **And the live event, not only the durable row.** The two carry the same bill and
+    // the terminal prices from the event (`epsilon-tui/src/state.rs:1702`), so a wrong
+    // model here mis-prices the running session, not only a replay. Collected before the
+    // store is read, and asserted unconditionally: the event must exist, because the
+    // compaction committed.
+    let mut event_models = Vec::new();
+    while let Ok(ev) = rx.try_recv() {
+        if let AgentEvent::CompactionFinished { model_id, .. } = &*ev {
+            event_models.push(model_id.clone());
+        }
+    }
+    // The threshold can fire more than once in one run (the same record
+    // `a_compaction_records_its_bill_on_its_own_entry` carries), so the assertion is on
+    // *every* event rather than on the next one.
+    assert!(
+        !event_models.is_empty(),
+        "the compaction committed, so it emitted the event"
+    );
+    assert!(
+        event_models.iter().all(|m| m.as_deref() == Some("faux-1")),
+        "every event must name the model that answered: {event_models:?}"
+    );
+
+    let st = store.lock().unwrap();
+    let compacted = st
+        .read_all()
+        .unwrap()
+        .into_iter()
+        .filter_map(|e| match e.kind {
+            EntryKind::Compaction { model_id, .. } => model_id,
+            _ => None,
+        })
+        .next()
+        .expect("the run compacted, so there is an entry");
+    assert_eq!(
+        compacted, "faux-1",
+        "the entry must name the model that answered, not the session's: {compacted}"
+    );
+    let _ = outcome;
+}
+
+/// A summarizer that answers as its own model, ignoring what the request asked for.
+///
+/// The faux provider echoes back whatever `ModelRef` it is handed
+/// (`epsilon-llm/src/faux.rs:132`, `:163`), so without this the request's model and the
+/// answer's model can never diverge — and a test asserting "the answerer, not the session"
+/// would pass against the broken code for the wrong reason, with both sides being the
+/// session's. **That is exactly the mistake this round's first draft made**, and the reason
+/// it failed with "no entry" rather than with the assertion is that the draft was missing
+/// its own `set_summarizer` — a fixture that did not send what the product sends, which
+/// this file has already recorded once before at `frames_tool_cards`.
+struct DivergentSummarizer {
+    /// The model id the answer will carry.
+    answers_as: String,
+    /// The summary text, so the compaction commits.
+    summary: String,
+}
+
+#[async_trait::async_trait]
+impl epsilon_llm::StreamFn for DivergentSummarizer {
+    async fn stream(
+        &self,
+        _model: &epsilon_llm::ModelRef,
+        _ctx: epsilon_llm::LlmContext,
+    ) -> epsilon_llm::BoxEventStream {
+        Box::new(OnceDone {
+            message: epsilon_contracts::message::AssistantMessage {
+                id: epsilon_contracts::new_id("msg"),
+                timestamp_ms: 0,
+                provider: "faux".into(),
+                model_id: self.answers_as.clone(),
+                content: vec![ContentBlock::Text {
+                    text: self.summary.clone(),
+                }],
+                stop_reason: epsilon_contracts::StopReason::EndTurn,
+                error_message: None,
+                usage: epsilon_contracts::message::Usage {
+                    input: 700,
+                    output: 200,
+                    total_tokens: 900,
+                    ..Default::default()
+                },
+            },
+            taken: false,
+        })
+    }
+}
+
+/// A one-shot stream that delivers exactly one `Done` and then ends.
+struct OnceDone {
+    message: epsilon_contracts::message::AssistantMessage,
+    taken: bool,
+}
+
+#[async_trait::async_trait]
+impl epsilon_llm::EventStream for OnceDone {
+    async fn next(&mut self) -> Option<epsilon_contracts::stream::StreamEvent> {
+        if self.taken {
+            return None;
+        }
+        self.taken = true;
+        Some(epsilon_contracts::stream::StreamEvent::Done {
+            message: self.message.clone(),
+        })
+    }
+}

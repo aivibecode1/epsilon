@@ -3148,11 +3148,21 @@ impl Agent {
                 // rollback separated a summary from its cost (F23). pi puts the usage here
                 // for the same reason (`session-manager.ts:68-80`).
                 //
-                // The model comes from the `ModelRef` the summarizer actually ran with, not
-                // from the header at read time — Epsilon prices from the catalog when it
-                // tallies, so a bill with no model cannot be priced at all.
+                // The model comes from the **response**, not the `ModelRef` the request
+                // was built from — which is `self.model_id` (`:3030-3035`) and therefore
+                // the session's *current* model. The summarizer is an isolated stream and
+                // the whole point of installing one is that it can answer from elsewhere,
+                // so the request's model is only what was *asked for*. The main-turn path
+                // already reads the model off the message (`:3464`) for the same reason:
+                // a response that lands after a `/model` switch belongs to the model that
+                // generated it.
+                //
+                // Epsilon prices from the catalog when it tallies, so a bill filed under
+                // the wrong model prices that call at the wrong rates on every read,
+                // forever, with nothing on screen to contradict it — the same
+                // attributes-somewhere class rounds 138 and 139 just surfaced.
                 usage: Some(answer.usage),
-                model_id: Some(model.id.clone()),
+                model_id: Some(answer.model_id.clone()),
             }) {
                 // F07: nothing has diverged yet — memory is untouched and the caller reports the
                 // failure — but the store just refused a durable write, so a later request must
@@ -3226,9 +3236,14 @@ impl Agent {
         // The same usage that went onto the durable entry above, handed to the live
         // UI as well. Without it the cost is only visible after `/resume`, so the
         // number rises when a user reopens a session they were just working in.
+        //
+        // `answer.model_id`, not `model.id`: the event is the only live surface that
+        // prices this bill (the terminal folds it into the same per-model rows the
+        // request path uses — `epsilon-tui/src/state.rs:1702`), and a wrong model here
+        // mis-prices it in the running session, not just on replay.
         self.emit(AgentEvent::CompactionFinished {
             usage: Some(answer.usage),
-            model_id: Some(model.id.clone()),
+            model_id: Some(answer.model_id.clone()),
             summary: summary.clone(),
             tokens_before: estimate_messages_before as u64,
         });
