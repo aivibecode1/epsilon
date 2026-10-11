@@ -33,7 +33,8 @@ fixed; `AGENTS.md` v3 rewritten from the tree, validated and relocked.
 - ADR-037 keeps egui on fresh measurements with a defined (not started) experiment path.
 - Hardening: goal-read already cached by design; safety 62 + contrast suites green.
 
-Battery pending (fresh label, full gate). Carried owner-side: `auth.json` plaintext (R6),
+Battery green (`gate-goal-s3-20261011`, 15/15 legs, 2,355/0/19) — goal session complete;
+see evidence files. Carried owner-side: `auth.json` plaintext (R6),
 real screen-reader run (R5), release tag (R7).
 
 ### Timing
@@ -361,12 +362,15 @@ instead of newlining, and the sessions sidebar being a keyboard trap. What remai
 
 ## Verification (what is actually true)
 
-**Latest green battery: [`gate-port-r147-2026-10-10.txt`](../audit/evidence/gate-port-r147-2026-10-10.txt),
-2026-10-10 — the tree this file describes, and it is the one HEAD holds.** Fifteen legs, all
-`[exit=0]`, `GATE PASS`. **2,339 passed / 0 failed / 19 ignored across 78 binaries**, summed from
+**Latest green battery: [`gate-goal-s3-20261011.txt`](../audit/evidence/gate-goal-s3-20261011.txt),
+2026-10-11 — the tree this file describes, and it is the one HEAD holds.** Fifteen legs, all
+`[exit=0]`, `GATE PASS`. **2,355 passed / 0 failed / 19 ignored across 78 binaries**, summed from
 that one log's `test result:` lines. `CARGO_PROFILE_DEV_DEBUG=0` and `CARGO_PROFILE_TEST_DEBUG=1`,
 both in the log's own header — the second for **fresh metadata**, because the filename the machine
-blocks is derived from the profile hash and moves when the knob does.
+blocks is derived from the profile hash and moves when the knob does. (Two earlier attempts this
+session failed on machine faults, both preserved: `gate-goal-s1` ran out of disk mid-demo —
+13/15 legs green including the full suite — and `gate-goal-s2`'s test leg went green before the
+runner was killed with it mid-demo.)
 
 > **Ten findings closed in a row** (rounds 138–147). Rounds 138–144 were things that *happened*
 > wrongly, 145–146 were things that *went unsaid*, and 147 is the first one that **adds a
