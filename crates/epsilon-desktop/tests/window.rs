@@ -805,8 +805,45 @@ fn assistant_markdown_reaches_the_screen_as_text_not_as_markup() {
     );
 }
 
-/// The user's own text is **not** interpreted.
+/// A compaction digest draws as markdown, under its own name (P-183, window markdown half).
 ///
+/// The digest is summarizer-model prose, so it renders through the same markdown path
+/// as an answer — but named "Compaction summary", never "Agent said": a record
+/// presenting as a reply would mislead about what just happened. RED first: the `#`
+/// marker reaches the screen verbatim.
+#[test]
+fn compaction_digest_renders_markdown_under_its_own_name() {
+    use epsilon_contracts::agent_event::AgentEvent;
+
+    let mut t = epsilon_desktop::Transcript::new(std::env::temp_dir());
+    t.apply(&AgentEvent::CompactionFinished {
+        usage: None,
+        model_id: None,
+        summary: "# Done\n\nshipped it".into(),
+        tokens_before: 8_000,
+    });
+
+    let ctx = egui::Context::default();
+    let mut app = IdeApp::without_agent(Options::for_workspace("/tmp/ws"));
+    app.seed_transcript(t);
+    let frame = paint_once(&ctx, &mut app, 1440.0, 900.0);
+
+    let agent = frame.region("agent");
+    assert!(
+        !agent.iter().any(|l| l.contains("# Done")),
+        "the heading marker must be parsed, not printed: {agent:?}"
+    );
+    assert!(
+        agent.iter().any(|l| l.contains("Done")) && agent.iter().any(|l| l.contains("shipped it")),
+        "and the words must survive parsing: {agent:?}"
+    );
+    assert!(
+        agent.iter().any(|l| l.contains("context compacted · from")),
+        "the cost row stays on screen above the digest: {agent:?}"
+    );
+}
+
+/// The user's own text is **not** interpreted.///
 /// The rule that keeps the window honest about what was said: a prompt containing
 /// `**markdown**` is text the user typed, and a window that renders it is a window
 /// showing something they did not.

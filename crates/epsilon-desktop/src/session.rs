@@ -150,6 +150,16 @@ pub enum RowKind {
     /// accessible name both switch on it), and a second column beside it would be
     /// a second thing those functions consult.
     NoticeFail,
+    /// A compaction digest: summarizer-model prose about compacted-away context.
+    ///
+    /// A variant rather than text inside the cost `Notice` for the reason the draw
+    /// path states: only model prose is interpreted as markdown, and the cost line
+    /// is harness text. One row would force the summary through the notice's
+    /// plain-text path or the cost line through the markdown parser — both
+    /// misrender one half. The terminal's equivalent is the expandable event row
+    /// (cost head, digest body); the window has no collapsed rows, so both halves
+    /// draw.
+    Digest,
     /// A file changed, as one summary line: path, additions, removals.
     Changed,
     /// One changed line inside a `RowKind::Changed` block.
@@ -489,16 +499,17 @@ impl Transcript {
             .collect()
     }
 
-    /// A compaction digest row: the cost line plus the summary, as one notice.
+    /// A compaction digest row: the cost line, then the summary as its own markdown row.
     ///
-    /// The window has no collapsed rows (it virtualises and shows everything), so the
-    /// digest rides the row as text rather than behind a chord — the same words the
-    /// terminal draws, through the same builder (`epsilon_tui::state::compaction_cost_line`),
-    /// with the visibility the window gives every row. One builder for the live arm,
-    /// both resume paths, and the terminal: three surfaces, one wording.
+    /// The window has no collapsed rows (it virtualises and shows everything), so both
+    /// halves draw — the cost as a `Notice`, the digest as a [`RowKind::Digest`]
+    /// through the same markdown path as assistant prose. The cost line shares one
+    /// builder with the terminal (`epsilon_tui::state::compaction_cost_line`): three
+    /// surfaces, one wording.
     fn push_compaction_digest(&mut self, tokens_before: u64, usage: Option<Usage>, summary: &str) {
         let cost = epsilon_tui::state::compaction_cost_line(tokens_before, usage);
-        self.push(RowKind::Notice, format!("{cost}\n{summary}"));
+        self.push(RowKind::Notice, cost);
+        self.push(RowKind::Digest, summary.to_string());
     }
 
     /// Add a harness notice the reader should see.
@@ -1939,26 +1950,34 @@ mod tests {
                 model_id: None,
             }],
         );
-        let digest = t
+        // Two rows, not one: the cost notice, then the digest as its own markdown
+        // row. One row would force the summary through the notice's plain-text
+        // path or the cost line through the markdown parser — both misrender one
+        // half. RED first: the cost row carries the summary as text.
+        let cost = t
             .rows()
             .iter()
             .find(|r| r.text.contains("context compacted · from"))
             .expect("the resumed compaction must draw its cost row");
         assert_eq!(
-            digest.kind,
+            cost.kind,
             RowKind::Notice,
             "a compaction row is a notice, not a user turn: {:?}",
             t.rows()
         );
         assert!(
-            digest.text.contains("earlier work"),
-            "the digest rides the row: {}",
-            digest.text
+            !cost.text.contains("earlier work"),
+            "the cost row names the price, not the prose: {}",
+            cost.text
         );
-        assert!(
-            digest.text.contains("no usage reported"),
-            "a bill-less compaction says so: {}",
-            digest.text
+        let digest = t
+            .rows()
+            .iter()
+            .find(|r| r.kind == RowKind::Digest)
+            .expect("the digest must ride its own row");
+        assert_eq!(
+            digest.text, "earlier work",
+            "the digest row carries the summary"
         );
     }
 
@@ -1998,17 +2017,18 @@ mod tests {
             summary: "earlier work".into(),
             tokens_before: 8_000,
         });
-        let digest = t
+        let cost = t
             .rows()
             .iter()
             .find(|r| r.text.contains("context compacted · from"))
             .expect("the live compaction must draw its cost row");
-        assert_eq!(digest.kind, RowKind::Notice, "{:?}", t.rows());
-        assert!(
-            digest.text.contains("earlier work"),
-            "the digest rides the row: {}",
-            digest.text
-        );
+        assert_eq!(cost.kind, RowKind::Notice, "{:?}", t.rows());
+        let digest = t
+            .rows()
+            .iter()
+            .find(|r| r.kind == RowKind::Digest)
+            .expect("the digest must ride its own markdown row");
+        assert_eq!(digest.text, "earlier work", "{:?}", t.rows());
     }
 
     #[test]

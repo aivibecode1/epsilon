@@ -147,6 +147,16 @@ themselves); collapsed form unchanged (source-line count, hides whole). Evidence
 RED-first pair (open renders markdown + collapsed control), frame read, full tui
 612 green. Still open: window markdown (recorded for `desktop-parity`).
 
+## Desktop-parity slices (this goal)
+
+### D1 — Window digest markdown (`pending`, desktop-parity task)
+
+`RowKind::Digest` + speaker-parameterized markdown draw path (`Compaction summary`,
+region stays `agent`); cost `Notice` + digest `Digest` rows from one builder.
+Evidence: 3 reducer RED-first retargeted, frame test with plain-path control, frame
+read (cost row, parsed heading, body). Suites: desktop 342 lib + 52 window green;
+fmt/clippy clean. P-183 → done (P-054 stays partial: the card concept is terminal-only).
+
 ## Core task close
 
 `core` is complete: the gap analysis's only implementable core gaps were the digest

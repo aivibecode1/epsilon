@@ -389,15 +389,21 @@ fn row_kind_name(kind: &RowKind) -> String {
         RowKind::Diff => "Changed line".to_string(),
         RowKind::Notice => "Notice".to_string(),
         RowKind::NoticeFail => "Failure".to_string(),
+        // Named for what it is, not who said it: the digest is summarizer-model
+        // prose about history, and "Agent said" would present a record as a reply.
+        RowKind::Digest => DIGEST_ROW_NAME.to_string(),
     }
 }
 
-/// The one kind name that is a constant rather than a reading.
+/// The two kind names that are constants rather than readings.
 ///
-/// [`Self::draw_markdown`] is reached from the assistant row and from no other, so every
-/// block it names belongs to the agent's answer. It states that here, next to the function
-/// whose doc says it, rather than taking a parameter every caller would pass the same word.
+/// [`Self::draw_markdown`] is reached from the assistant row and the digest row, so
+/// every block it names belongs to model prose — the agent's answer, or the
+/// summarizer's record of compacted-away context. The speaker travels as a parameter
+/// so the two cannot be confused: a digest that announced itself as a reply would
+/// present a record as news.
 const AGENT_ROW_NAME: &str = "Agent said";
+const DIGEST_ROW_NAME: &str = "Compaction summary";
 
 /// One transcript line's accessible name: `Transcript row · {kind} · {excerpt}`.
 ///
@@ -587,6 +593,7 @@ fn row_seen(row: &crate::session::Row) -> u64 {
         RowKind::Diff => 7,
         RowKind::Notice => 8,
         RowKind::NoticeFail => 8,
+        RowKind::Digest => 9,
     };
     fold(&mut h, &row.text);
     h
@@ -7460,6 +7467,7 @@ impl IdeApp {
         summary: &mut FrameSummary,
         marker: &str,
         color: egui::Color32,
+        speaker: &str,
         text: &str,
         measure: bool,
         scale: f32,
@@ -7476,7 +7484,7 @@ impl IdeApp {
                 ui,
                 measure,
                 egui::RichText::from(line.clone()).color(color).into(),
-                &row_name(AGENT_ROW_NAME, &line),
+                &row_name(speaker, &line),
             );
             summary.rows.push(("agent".into(), line));
             return;
@@ -7487,12 +7495,26 @@ impl IdeApp {
                 crate::markup::Block::Heading { runs, .. } => {
                     let job = crate::markup::job_at(runs, theme.title, theme.code, scale);
                     let line = format!("{prefix}{}", plain_of(runs));
-                    Self::record_block(ui, summary, egui::WidgetText::from(job), line, measure);
+                    Self::record_block(
+                        ui,
+                        summary,
+                        speaker,
+                        egui::WidgetText::from(job),
+                        line,
+                        measure,
+                    );
                 }
                 crate::markup::Block::Paragraph(runs) => {
                     let job = crate::markup::job_at(runs, color, theme.code, scale);
                     let line = format!("{prefix}{}", plain_of(runs));
-                    Self::record_block(ui, summary, egui::WidgetText::from(job), line, measure);
+                    Self::record_block(
+                        ui,
+                        summary,
+                        speaker,
+                        egui::WidgetText::from(job),
+                        line,
+                        measure,
+                    );
                 }
                 crate::markup::Block::ListItem {
                     marker: bullet,
@@ -7500,12 +7522,26 @@ impl IdeApp {
                 } => {
                     let job = crate::markup::job_at(runs, color, theme.code, scale);
                     let line = format!("{prefix}{bullet}{}", plain_of(runs));
-                    Self::record_block(ui, summary, egui::WidgetText::from(job), line, measure);
+                    Self::record_block(
+                        ui,
+                        summary,
+                        speaker,
+                        egui::WidgetText::from(job),
+                        line,
+                        measure,
+                    );
                 }
                 crate::markup::Block::Quote(runs) => {
                     let job = crate::markup::job_at(runs, theme.dim, theme.code, scale);
                     let line = format!("{prefix}❯ {}", plain_of(runs));
-                    Self::record_block(ui, summary, egui::WidgetText::from(job), line, measure);
+                    Self::record_block(
+                        ui,
+                        summary,
+                        speaker,
+                        egui::WidgetText::from(job),
+                        line,
+                        measure,
+                    );
                 }
                 crate::markup::Block::Code { language, lines } => {
                     let tag = language
@@ -7518,7 +7554,7 @@ impl IdeApp {
                             ui,
                             measure,
                             egui::RichText::from(shown.clone()).color(theme.code).into(),
-                            &row_name(AGENT_ROW_NAME, &shown),
+                            &row_name(speaker, &shown),
                         );
                         summary.rows.push(("agent".into(), shown));
                     }
@@ -7534,7 +7570,7 @@ impl IdeApp {
                         // **A rule is structure, not content.** Eight dashes is a picture of
                         // a divider; a name that reads "--------" identifies nothing in a
                         // conversation, so it is named as what it is and nothing more.
-                        &row_name(&format!("{AGENT_ROW_NAME} · rule"), ""),
+                        &row_name(&format!("{speaker} · rule"), ""),
                     );
                     summary.rows.push(("agent".into(), rule));
                 }
@@ -7631,11 +7667,12 @@ impl IdeApp {
     fn record_block(
         ui: &mut egui::Ui,
         summary: &mut FrameSummary,
+        speaker: &str,
         text: egui::WidgetText,
         recorded: String,
         measure: bool,
     ) {
-        let response = Self::row_label(ui, measure, text, &row_name(AGENT_ROW_NAME, &recorded));
+        let response = Self::row_label(ui, measure, text, &row_name(speaker, &recorded));
         summary.rows.push(("agent".into(), recorded));
         summary.row_rects.push(("agent".into(), response.rect));
     }
@@ -8648,6 +8685,10 @@ impl IdeApp {
             // The failure shares the cross with the failed tool row -- same glyph,
             // same meaning (the terminal's SystemErr rule, round 97).
             RowKind::NoticeFail => ("x ", theme.danger),
+            // Prose like an answer, named like a record: the digest draws in the
+            // text colour (the terminal's digest body does too) under the dim
+            // cost notice above it.
+            RowKind::Digest => ("  ", theme.text),
         };
         // A tool row with no arguments yet still has to say which tool it is: an
         // empty row with a marker is a mark the reader has to decode.
@@ -8673,12 +8714,35 @@ impl IdeApp {
             _ if row.text.is_empty() => "".into(),
             _ => Self::safe_to_show(&row.text),
         };
-        // **Only the assistant's text is interpreted.** A user who types `**hi**`
+        // **Only model prose is interpreted.** A user who types `**hi**`
         // must see `**hi**`; a diff line is a diff line. Rendering is an
         // interpretation, and applying it to text that is not prose makes the
-        // window lie about what was said.
+        // window lie about what was said. The digest is summarizer-model prose,
+        // so it draws through the same path under its own name.
         if matches!(row.kind, RowKind::Assistant) {
-            self.draw_markdown(ui, summary, marker, color, &body, measure, scale);
+            self.draw_markdown(
+                ui,
+                summary,
+                marker,
+                color,
+                AGENT_ROW_NAME,
+                &body,
+                measure,
+                scale,
+            );
+            return None;
+        }
+        if matches!(row.kind, RowKind::Digest) {
+            self.draw_markdown(
+                ui,
+                summary,
+                marker,
+                color,
+                DIGEST_ROW_NAME,
+                &body,
+                measure,
+                scale,
+            );
             return None;
         }
         // **What this row is, in the words a reader would use for it.** Read from the same

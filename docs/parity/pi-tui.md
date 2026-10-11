@@ -75,7 +75,7 @@ this document**, tallied from its own tables — not a projection.
 | 2. Layout and renderer | 10 | 3 | 2 | 4 | 1 |
 | 3. Composer and editor | 24 | 6 | 12 | 4 | 2 |
 | 4. Slash commands and autocomplete | 13 | 2 | 5 | 6 | 0 |
-| 5. Transcript and streaming | 35 | 8 | 3 | 21 | 3 |
+| 5. Transcript and streaming | 35 | 9 | 2 | 21 | 3 |
 | 6. Model picker and thinking | 9 | 0 | 4 | 5 | 0 |
 | 7. Auth, login and permissions | 8 | 0 | 3 | 4 | 1 |
 | 8. Sessions | 17 | 7 | 5 | 3 | 2 |
@@ -89,7 +89,7 @@ this document**, tallied from its own tables — not a projection.
 | 16. Status indicators | 13 | 2 | 5 | 5 | 1 |
 | 17. Footer | 12 | 3 | 4 | 3 | 2 |
 | 18. Selector and overlay components | 79 | 12 | 24 | 36 | 7 |
-| **Total** | **339** | **62** | **109** | **141** | **27** |
+| **Total** | **339** | **63** | **108** | **141** | **27** |
 
 A further **17 rows are not in the counts above**: the 10 `Y-###` rows Pi ships outside its interactive mode (out of
 scope by design) and the 7 `AA-###` rows recording what was never inventoried. Both are listed in full near the end
@@ -318,7 +318,7 @@ in each component.
 | P-180 | A custom message without `display` is not rendered at all, and is not drawn just because it exists | `packages/coding-agent/src/modes/interactive/interactive-mode.ts:3822-3823` | missing | none | — |
 | P-181 | A custom session entry is added only if its renderer produces content; the host still owns the leading spacer | `packages/coding-agent/src/modes/interactive/components/custom-entry.ts:54`, `packages/coding-agent/src/modes/interactive/interactive-mode.ts:3790-3792` | missing | none | — |
 | P-182 | An entry renderer that throws is the one extension renderer that surfaces the error, as a boxed `[customType] renderer failed:` | `packages/coding-agent/src/modes/interactive/components/custom-entry.ts:47`, `:50` | missing | none | — |
-| P-183 | A compaction entry collapses to `Compacted from N tokens (KEY to expand)` and expands to a header plus markdown | `packages/coding-agent/src/modes/interactive/components/compaction-summary-message.ts:49`, `:51`, `:42` | partial | The collapsed row names `from N tokens` and the resolved `ctrl+x` chord (`crates/epsilon-tui/src/state.rs:1639`'s `CompactionFinished` arm; `ui/card.rs:325`'s `event_body` and `more_lines`); opening shows the digest whole under the continuation gutter. **The live half, the terminal replay half, and both window halves are built:** resumed markers regain their digests in `/resume`, `/import`, the browser and branch jumps (one helper per front end; `compaction_digests` reads branch order); the window draws the digest as a full notice row (it has no collapsed rows) through the same cost builder; the terminal's open body is parsed as markdown (same parser as assistant prose; plain digests draw exactly as before). **Still open:** markdown in the window — its "only assistant text is interpreted" rule stands until a notice-markdown variant is designed | `a_compaction_row_opens_to_the_summary_it_carried` — the affordance's exact wording is pinned (the ellipsis, the count, the singular, "more" not "earlier" because the digest hides below), and the expansion drives the real key path — plus the four replay tests on P-054, the five window tests, `an_opened_digest_renders_its_markdown` (heading styled, words kept; frame read) with `a_collapsed_digest_still_hides_whole` as its control |
+| P-183 | A compaction entry collapses to `Compacted from N tokens (KEY to expand)` and expands to a header plus markdown | `packages/coding-agent/src/modes/interactive/components/compaction-summary-message.ts:49`, `:51`, `:42` | done | The collapsed row names `from N tokens` and the resolved `ctrl+x` chord (`crates/epsilon-tui/src/state.rs:1639`'s `CompactionFinished` arm; `ui/card.rs:325`'s `event_body` and `more_lines`); opening shows the digest whole under the continuation gutter. **The live half, the terminal replay half, and both window halves are built:** resumed markers regain their digests in `/resume`, `/import`, the browser and branch jumps (one helper per front end; `compaction_digests` reads branch order); the window draws the digest as a full notice row (it has no collapsed rows) through the same cost builder; the terminal's open body is parsed as markdown (same parser as assistant prose; plain digests draw exactly as before). **The window half is built too:** the digest rides its own `Digest` row through the same markdown draw path as answers, under its own name (`Compaction summary`, never `Agent said`) — a new row kind rather than a flag, for the reason the draw path states | `a_compaction_row_opens_to_the_summary_it_carried` — the affordance's exact wording is pinned (the ellipsis, the count, the singular, "more" not "earlier" because the digest hides below), and the expansion drives the real key path — plus the four replay tests on P-054, the five window tests, `an_opened_digest_renders_its_markdown` (heading styled, words kept; frame read) with `a_collapsed_digest_still_hides_whole` as its control; window: `compaction_digest_renders_markdown_under_its_own_name` (heading parsed, words kept, cost row above; frame read; plain-path control) |
 | P-184 | Branch and skill cards have their own collapsed wording, and only compaction shows a count | `packages/coding-agent/src/modes/interactive/components/branch-summary-message.ts:50`, `:41`, `packages/coding-agent/src/modes/interactive/components/skill-invocation-message.ts:49-50`, `:41` | missing | none | — |
 | P-185 | Compaction, branch and skill cards each toggle on a left click | `packages/coding-agent/src/modes/interactive/components/compaction-summary-message.ts:61`, `packages/coding-agent/src/modes/interactive/components/branch-summary-message.ts:60` | missing | none — mouse capture is off (`crates/epsilon-tui/src/app.rs:1549`) | — |
 
@@ -766,7 +766,7 @@ row says so — that is a gap in the inventory, and closing it is cheap.
 | 2. Layout and renderer | 10 | 3 | 2 | 4 | 1 |
 | 3. Composer and editor | 24 | 6 | 12 | 4 | 2 |
 | 4. Slash commands and autocomplete | 13 | 2 | 5 | 6 | 0 |
-| 5. Transcript and streaming | 35 | 8 | 3 | 21 | 3 |
+| 5. Transcript and streaming | 35 | 9 | 2 | 21 | 3 |
 | 6. Model picker and thinking | 9 | 0 | 4 | 5 | 0 |
 | 7. Auth, login and permissions | 8 | 0 | 3 | 4 | 1 |
 | 8. Sessions | 17 | 7 | 5 | 3 | 2 |
@@ -780,7 +780,7 @@ row says so — that is a gap in the inventory, and closing it is cheap.
 | 16. Status indicators | 13 | 2 | 5 | 5 | 1 |
 | 17. Footer | 12 | 3 | 4 | 3 | 2 |
 | 18. Selector and overlay components | 79 | 12 | 24 | 36 | 7 |
-| **Total** | **339** | **62** | **109** | **141** | **27** |
+| **Total** | **339** | **63** | **108** | **141** | **27** |
 
 ### The `missing` rows — 161
 
@@ -807,7 +807,7 @@ nothing here is a claim that the behaviour cannot be built.
 | Footer (3) | P-197, P-207, P-208 |
 | Selector and overlay components (36) | P-230, P-232, P-234, P-235, P-239, P-242, P-244, P-245, P-248, P-251, P-255, P-256, P-257, P-258, P-259, P-261, P-281, P-283, P-284, P-285, P-286, P-296, P-297, P-300, P-304, P-306, P-307, P-308, P-310, P-311, P-314, P-316, P-317, P-318, P-319, P-323 |
 
-### The `partial` rows — 118
+### The `partial` rows — 117
 
 An `E-` row covers these and something is not finished. The reason column is the shortest honest statement of what.
 
@@ -817,7 +817,7 @@ An `E-` row covers these and something is not finished. The reason column is the
 | Layout and renderer (2) | P-217, P-218 | the jump affordance is a footer badge, not a pill in the viewport; matches are counted, not highlighted in the transcript |
 | Composer and editor (12) | P-025, P-027, P-028, P-034, P-035, P-036, P-209, P-210, L-000, L-001, L-002, L-003 | mostly: the behaviour exists in the source with **no test**, or only one half is built. P-022 has no test typing `!`; P-030 is pinned by no test at all; P-036's tests run the spawner seam and assert no frame; L-000 carries 23 ids, not 47 entries |
 | Slash commands and autocomplete (5) | P-043, P-044, P-046, P-047, P-084 | the `/` menu lists slash items only; no per-command argument completer; no refresh-then-open fallback; `/scoped-models` and `/changelog` are driven only by the all-heads sweep |
-| Transcript and streaming (3) | P-040, P-054, P-183 | thinking hides on Alt+T, not Ctrl+T, with a narrower affordance; the compaction digest expands live and on replay in the terminal (as markdown when open) and draws fully in the window as plain text; abort text lands on a system row, not the answer |
+| Transcript and streaming (2) | P-040, P-054 | thinking hides on Alt+T, not Ctrl+T, with a narrower affordance; the compaction digest expands live and on replay in the terminal (as markdown when open) and draws as cost notice plus markdown digest in the window — the card concept itself is terminal-only; abort text lands on a system row, not the answer |
 | Model picker and thinking (4) | P-037, P-038, P-048, P-272 | the `/think` head parses but no row establishes the argument form or a picker; no per-model override submenu; P-037 has no no-reasoning message (the catalog carries no reasoning flag); P-038 cycles favorites, not all models (M23, deliberate) |
 | Auth, login and permissions (3) | P-062, P-064, P-067 | one masked modal instead of an auth-type → provider → dialog chain with `onBack`; one of four dialog event kinds; the TUI path for `/logout <provider>` is unpinned |
 | Sessions (5) | P-070, P-072, P-074, P-077, P-082 | no cross-directory scope / rename / delete in the picker; no branch summarisation; fork is at the leaf, not at a chosen message; no cache-warming status; reload covers four resource kinds, not six |
