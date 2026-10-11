@@ -1559,6 +1559,142 @@ async fn a_panicking_tool_lands_a_failed_result_on_the_segments_path_too() {
     );
 }
 
+/// Hooks that panic on the **tool** seams.
+///
+/// `before_tool_call` and `after_tool_call` are user code exactly as the four turn hooks
+/// are — and the turn hooks are contained (`lib.rs:4368`) while the tool hooks are not.
+/// A panic in `after_tool_call` unwinds out of `run_one`, which on the Segments plan is
+/// inside a `tokio::spawn`, so the task dies and the batch's join arm sees a
+/// `JoinError`. That is the trigger this test needs, and it is a real hole in its own
+/// right: the tool hook seam has no panic boundary.
+struct PanickingToolHooks {
+    /// The tool whose `after_tool_call` panics; anything else passes through.
+    trips_on: String,
+}
+
+#[async_trait]
+impl epsilon_contracts::tool::ToolHooks for PanickingToolHooks {
+    async fn after_tool_call(
+        &self,
+        ctx: epsilon_contracts::tool::AfterToolCallContext,
+    ) -> Result<Option<epsilon_contracts::tool::AfterToolCallResult>, String> {
+        if ctx.tool_name == self.trips_on {
+            panic!("an after_tool_call hook that panics must not discard its siblings");
+        }
+        Ok(None)
+    }
+}
+
+/// **One group's join failure must not discard the other groups' completed work.**
+///
+/// The batch's join arm returns `Err` at the *first* failing group, and `Err` out of
+/// `execute_batch` throws away `slots` — the results the other groups had already
+/// produced, and the results the failing group's own task had already pushed into its
+/// local `out` before it died. Every one of those is real work the loop paid for and a
+/// user would want back: "never lose a user's work" is the repository's own rule
+/// (AGENTS.md §6), and this is it in a one-line arm.
+///
+/// What it costs the caller is worse than a lost result. `execute_batch` returning `Err`
+/// means the whole turn fails — so the transcript carries tool calls with no answers,
+/// the model is told nothing about what happened, and a front end shows a failed run
+/// whose work had actually finished.
+#[tokio::test]
+async fn a_join_failure_keeps_the_other_groups_finished_work() {
+    let mut registry = ToolRegistry::new();
+    registry.register(Arc::new(EchoTool::new()));
+    registry.register(Arc::new(BarrierPanickingHookTool {
+        descriptor: epsilon_contracts::tool::ToolDescriptor {
+            name: "hooked".into(),
+            label: "Hooked".into(),
+            description: "succeeds; its hook then panics".into(),
+            parameters_schema: serde_json::json!({ "type": "object" }),
+            // Parallel and resource-less: two calls conflict with nothing, so each is its
+            // own group and the batch runs them in separate spawned tasks — which is what
+            // makes a panic a `JoinError` rather than an unwind.
+            execution_mode: epsilon_contracts::tool::ExecutionMode::Parallel,
+        },
+    }));
+    let agent = epsilon_core::Agent::new(
+        LoopLimits::default(),
+        Arc::new(SlowProvider::new(
+            FauxProvider::new(vec![
+                epsilon_llm::FauxStep::ToolCalls {
+                    text: None,
+                    calls: vec![
+                        epsilon_llm::FauxToolCall {
+                            id: "tc_boom".into(),
+                            name: "hooked".into(),
+                            arguments: serde_json::json!({}),
+                        },
+                        epsilon_llm::FauxToolCall {
+                            id: "tc_ok".into(),
+                            name: "echo".into(),
+                            arguments: serde_json::json!({ "text": "still here" }),
+                        },
+                    ],
+                },
+                epsilon_llm::FauxStep::say("recovered"),
+            ]),
+            0,
+        )),
+        Arc::new(registry),
+        Arc::new(AutoAllow),
+        std::env::temp_dir(),
+    );
+    agent.set_tool_hooks(Arc::new(PanickingToolHooks {
+        trips_on: "hooked".into(),
+    }));
+
+    let outcome = agent
+        .run(user_msg("run both in parallel"))
+        .await
+        .expect("one group failing must not fail the whole batch");
+
+    // **The sibling's real work survives**, which is the assertion the defect existed
+    // for. And the panicking call gets an answer too, because `slots.into_iter().flatten()`
+    // silently dropping it would leave the transcript holding a call with no result.
+    let ok = outcome.produced.iter().find_map(|m| match m {
+        Message::ToolResult(r) if r.tool_call_id == "tc_ok" => Some(r),
+        _ => None,
+    });
+    assert!(
+        ok.is_some_and(|r| !r.is_error),
+        "the surviving call's real work must reach the model: {:?}",
+        outcome.produced
+    );
+    let answered = outcome
+        .produced
+        .iter()
+        .any(|m| matches!(m, Message::ToolResult(r) if r.tool_call_id == "tc_boom"));
+    assert!(
+        answered,
+        "the failed call must still be answered — a call with no result is a hole the \
+         model has to guess at: {:?}",
+        outcome.produced
+    );
+}
+
+/// A tool that succeeds, so the panic comes from the hook rather than from it.
+struct BarrierPanickingHookTool {
+    descriptor: epsilon_contracts::tool::ToolDescriptor,
+}
+
+#[async_trait]
+impl epsilon_contracts::tool::Tool for BarrierPanickingHookTool {
+    fn descriptor(&self) -> &epsilon_contracts::tool::ToolDescriptor {
+        &self.descriptor
+    }
+
+    async fn execute(
+        &self,
+        _call: epsilon_contracts::tool::ToolInvocation,
+        _ctx: epsilon_contracts::tool::ToolContext,
+        _sink: epsilon_contracts::tool::ToolUpdateSink,
+    ) -> Result<epsilon_contracts::tool::ToolOutput, epsilon_contracts::tool::ToolFailure> {
+        Ok(epsilon_contracts::tool::ToolOutput::text("the tool ran"))
+    }
+}
+
 /// Hooks that break the contract and panic on every seam (CORE-02 containment test).
 struct PanickingTurnHooks;
 

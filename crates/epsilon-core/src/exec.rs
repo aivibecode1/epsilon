@@ -649,6 +649,24 @@ pub(super) async fn execute_batch(
         })
         .collect();
 
+    // Identity per slot, captured while `prepared` is still owned: a dead task carries
+    // nothing out, so a call it never reported has to be answered from what was known
+    // about it before it started.
+    let identities: Vec<(String, String)> = prepared
+        .iter()
+        .map(|p| (p.invocation.tool_call_id.clone(), p.ctx_tool_name.clone()))
+        .collect();
+
+    // One spawned conflict-group task, paired with the slot indices it owns.
+    //
+    // The indices ride alongside because a dead task carries nothing out: when one
+    // unwinds, the batch still has to answer exactly the calls that task never
+    // reported — and nobody else's.
+    type GroupTask = (
+        Vec<usize>,
+        tokio::task::JoinHandle<Vec<(usize, ToolResultMessage)>>,
+    );
+
     match plan_batch(&shapes) {
         BatchPlan::Barrier => {
             for p in prepared.iter_mut() {
@@ -666,43 +684,82 @@ pub(super) async fn execute_batch(
             // same thing it meant when the whole batch ran one call at a time.
             let sem = Arc::new(tokio::sync::Semaphore::new(limits.max_parallel_tool_calls));
             let mut queue: Vec<Option<PreparedCall>> = prepared.into_iter().map(Some).collect();
-            let mut tasks = Vec::with_capacity(groups.len());
+            // Each task's own member indices, so a failure answers exactly its calls and
+            // never anybody else's.
+            let mut tasks: Vec<GroupTask> = Vec::with_capacity(groups.len());
             for members in groups {
                 let mut mine: Vec<PreparedCall> = Vec::with_capacity(members.len());
-                for idx in members {
-                    if let Some(p) = queue.get_mut(idx).and_then(Option::take) {
+                for idx in &members {
+                    if let Some(p) = queue.get_mut(*idx).and_then(Option::take) {
                         mine.push(p);
                     }
                 }
                 let agent = Arc::clone(agent);
                 let permit = Arc::clone(&sem);
-                tasks.push(tokio::spawn(async move {
-                    let mut out: Vec<(usize, ToolResultMessage)> = Vec::with_capacity(mine.len());
-                    for mut p in mine {
-                        let idx = p.index;
-                        if let Some(blocked) = p.blocked_result.take() {
-                            out.push((idx, blocked));
-                            continue;
+                tasks.push((
+                    members,
+                    tokio::spawn(async move {
+                        let mut out: Vec<(usize, ToolResultMessage)> =
+                            Vec::with_capacity(mine.len());
+                        for mut p in mine {
+                            let idx = p.index;
+                            if let Some(blocked) = p.blocked_result.take() {
+                                out.push((idx, blocked));
+                                continue;
+                            }
+                            // Cloned per call: the permit is released when the call returns, so a
+                            // group with several calls never holds one while it waits.
+                            let _permit = Arc::clone(&permit)
+                                .acquire_owned()
+                                .await
+                                .expect("semaphore open");
+                            out.push((idx, run_one(&agent, &mut p).await));
                         }
-                        // Cloned per call: the permit is released when the call returns, so a
-                        // group with several calls never holds one while it waits.
-                        let _permit = Arc::clone(&permit)
-                            .acquire_owned()
-                            .await
-                            .expect("semaphore open");
-                        out.push((idx, run_one(&agent, &mut p).await));
-                    }
-                    out
-                }));
+                        out
+                    }),
+                ));
             }
-            for t in tasks {
+            for (members, t) in tasks {
                 match t.await {
                     Ok(pairs) => {
                         for (idx, result) in pairs {
                             slots[idx] = Some(result);
                         }
                     }
+                    Err(join_err) if join_err.is_panic() => {
+                        // **The batch survives a panicking task.** This arm used to return
+                        // `Err`, and `Err` out of `execute_batch` throws away `slots` — the
+                        // results the other groups had already produced, and the results
+                        // this task had already pushed before it died. Every one of those is
+                        // work the loop paid for and the user wants back: "never lose a
+                        // user's work" is the repository's own rule (§6) and this was a
+                        // two-line hole in it.
+                        //
+                        // The calls this task never reported are answered rather than
+                        // dropped, because `slots.into_iter().flatten()` below would
+                        // otherwise leave the transcript holding a tool call with no
+                        // result — a hole the model has to guess at. Same decision as a
+                        // panicking *tool* (round 141): the model is told, and can decide.
+                        let detail = join_err.to_string();
+                        for idx in members {
+                            if slots[idx].is_some() {
+                                continue;
+                            }
+                            let (call_id, name) = &identities[idx];
+                            slots[idx] = Some(error_result(
+                                call_id,
+                                name,
+                                format!(
+                                    "[harness] this call's task panicked and no result was \
+                                     reported for it: {detail}"
+                                ),
+                            ));
+                        }
+                    }
                     Err(join_err) => {
+                        // A cancelled task is not user code misbehaving — the runtime is
+                        // going away, and building tool results nobody will read is work
+                        // that cannot finish. Give up the batch, as before.
                         return Err(RunError::Internal(format!(
                             "tool task join failure: {join_err}"
                         )));
