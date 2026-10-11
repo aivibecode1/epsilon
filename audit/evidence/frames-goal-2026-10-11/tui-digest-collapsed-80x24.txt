@@ -1,0 +1,24 @@
+idle       ?/1.0M · compacted · Faux (offline scripted) • thinking off · offline
+                                                                                
+                                                                                
+                                                                                
+                                                                                
+                                                                                
+                                                                                
+                                                                                
+                                                                                
+                                                                                
+                                                                                
+                                                                                
+                                                                                
+                                                                                
+                                                                                
+                                                                                
+                                                                                
+                                                                                
+                                                                                
+• ── context compacted · from 12k tokens · ↑12k ↓400 · 12k re-read ──           
+│   … 4 more lines (ctrl+x to open)                                             
+❯ ask anything                                                                  
+────────────────────────────────────────────────────────────────────────────────
+insert · enter send · pageup scroll back · pagedown …\Epsilon\crates\epsilon-tui

@@ -4,7 +4,7 @@
 in flight, what is cut, what is broken. The permanent rules live in
 [`../AGENTS.md`](../AGENTS.md), which is locked. Do not put moving state in `AGENTS.md`.
 
-Last updated: 2026-10-10 (the convergence and its rework — rounds 105–128, three audit rejections closed)
+Last updated: 2026-10-11 (goal session: audit, AGENTS.md v3, digest halves, parity verdicts, ADR-037, green battery gate-goal-s3)
 
 > **Picking this up from someone else? Read [`HANDOFF.md`](HANDOFF.md) first**, then
 > [`plans/024-finishing-the-objective.md`](plans/024-finishing-the-objective.md) for what is left and
@@ -15,7 +15,7 @@ Last updated: 2026-10-10 (the convergence and its rework — rounds 105–128, t
 Evolve Epsilon into one coherent agent harness with two front ends on a single core: a
 powerful CLI/TUI agent and a polished **native** desktop IDE.
 
-### Goal session 2026-10-11 (in progress, 8/10 tasks)
+### Goal session 2026-10-11 (complete, 10/10 tasks)
 
 A confirmed goal contract drives this session (audit → gaps → docs → agents-md → core →
 tui → desktop-parity → desktop-stack → hardening → battery). Landed so far:

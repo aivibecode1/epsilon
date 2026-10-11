@@ -192,6 +192,20 @@ TUI theme contrast + high-contrast AAA floors, 5 distinguishable-without-colour
 tests, desktop `contrast_of_a_colour_with_itself_is_one` — all green. Real screen
 reader run + human keyboard pass remain owner-side (R5, carried).
 
+## Frame artifacts (this goal — auditor rework, 2026-10-11)
+
+Looked-at screens for every user-visible slice, produced by temporary tests through
+the production draw paths (removed after producing; the committed suite pins the
+same properties): `audit/evidence/frames-goal-2026-10-11/`.
+
+| File | What it proves (read, not asserted) |
+|---|---|
+| `tui-digest-collapsed-80x24.txt` | Cost row on screen, digest hidden: `── context compacted · from 12k tokens · …` + `… 1 more line` |
+| `tui-digest-collapsed-100x30.txt` | Same at the wide frame |
+| `tui-digest-open-80x24.txt` | Opened digest parsed as markdown: `Done` heading without `#`, gutter `│`, bullet `• shipped it` |
+| `tui-timeline-80x24.txt` | Call-head row `#2 [assistant] [bash]: $ cargo test…` + footer counter `3/3` |
+| `desktop-digest-agent-region-1440x900.txt` | Resumed window: cost row + parsed `Done` heading + body in the agent region |
+
 ## Core task close
 
 `core` is complete: the gap analysis's only implementable core gaps were the digest

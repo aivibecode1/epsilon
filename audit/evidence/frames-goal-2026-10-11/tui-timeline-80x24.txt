@@ -1,0 +1,24 @@
+idle           ?/1.0M · ↑0 ↓0 · Faux (offline scripted) • thinking off · offline
+                                                                                
+E P S I L O N                                                                   
+a coding╭ timeline · default ──────────────────────────────────────────╮        
+        │    #0 [user] ▸ first                                         │        
+Describe│      #1 [user] ▸ second                                      │        
+@ files │ ▎      #2 [assistant] [bash]: $ cargo test -p epsilon-sessi… │        
+        │                                                              │        
+        │ 3/3 · ↑↓ move · enter jump · f filter · / search · +3        │        
+        │                                                              │        
+        │                                                              │        
+        │                                                              │        
+        │                                                              │        
+        │                                                              │        
+        │                                                              │        
+        │                                                              │        
+        │                                                              │        
+        │                                                              │        
+        │                                                              │        
+        │                                                              │        
+        ╰──────────────────────────────────────────────────────────────╯        
+❯ ask anything                                                                  
+────────────────────────────────────────────────────────────────────────────────
+list · type filter · ↑↓ move · enter choose · esc   …\Epsilon\crates\epsilon-tui

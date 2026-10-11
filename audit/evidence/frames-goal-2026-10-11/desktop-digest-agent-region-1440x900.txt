@@ -1,0 +1,9 @@
+Agent
+› <compaction_summary>
+# Done
+
+shipped it
+</compaction_summary>
+  ── context compacted · from 8,000 tokens · no usage reported ──
+  Done
+  shipped it
