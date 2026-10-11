@@ -17111,6 +17111,53 @@ mod tests {
         );
     }
 
+    /// A digest row is named as a record, never as a reply.
+    ///
+    /// The digest draws through the answer's markdown path, so without its own name
+    /// the tree would announce summarizer prose as "Agent said" — a record
+    /// presenting as news. RED first: the row names as the agent's answer.
+    #[test]
+    fn a_digest_row_is_named_a_compaction_summary() {
+        let (dir, _keep) = scratch_workspace("a11y-digest");
+        let mut h = Harness::new(dir.clone());
+        let mut t = Transcript::new(dir);
+        t.apply(
+            &epsilon_contracts::agent_event::AgentEvent::CompactionFinished {
+                usage: None,
+                model_id: None,
+                summary: "earlier work".into(),
+                tokens_before: 8_000,
+            },
+        );
+        h.app.seed_transcript(t);
+        h.paint();
+        let f = h.paint();
+
+        let names: Vec<String> = f
+            .rows
+            .iter()
+            .map(|(_, line)| line.clone())
+            .filter(|l| l.contains("earlier work"))
+            .collect();
+        assert_eq!(
+            names.len(),
+            1,
+            "the digest text must reach the screen exactly once: {:?}",
+            f.rows
+        );
+        let nodes = h.named_nodes();
+        let mine: Vec<&str> = nodes
+            .iter()
+            .filter(|(l, _)| l.contains("earlier work"))
+            .map(|(l, _)| l.as_str())
+            .collect();
+        assert_eq!(
+            mine,
+            vec!["Transcript row · Compaction summary · earlier work"],
+            "one name, and a record's name — never the agent's.\nthe tree held: {nodes:?}"
+        );
+    }
+
     /// **A row off screen is absent — and this is the test that keeps virtualisation honest.**
     ///
     /// Naming rows is one AccessKit node per row per frame, which is why it was blocked
