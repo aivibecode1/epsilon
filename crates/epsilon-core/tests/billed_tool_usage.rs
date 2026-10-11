@@ -167,3 +167,130 @@ async fn a_bill_with_no_model_still_counts_toward_the_total() {
         agent.session_usage_by_model()
     );
 }
+
+/// **A compaction's summarizer call is the session's spend, in the numbers a reader can see.**
+///
+/// The bill reaches the durable `Compaction` entry (M145/F22) and the `CompactionFinished`
+/// event (so the live UI could rebuild it) — and **neither in-memory total**. The session
+/// totals are folded at exactly two points, both inside the run loop (`lib.rs:2686-2688`
+/// and `:2352-2354`), and a compaction happens *outside* that loop: it is the summarizer's
+/// own aux call, which the provider stream never sums. So the summarizer — the call that
+/// resends the whole context, and the most expensive one in a long session — was free in
+/// every number the desktop's cost panel and `get_session_stats` read.
+///
+/// The TUI hid the hole: it re-derives its figures from `usage_accounts()` on hydration
+/// (`state.rs:1701-1708`), so the terminal was right and the window was wrong, which is the
+/// shape of a defect that survives because one front end happens to recover.
+///
+/// **Both halves are asserted** for the reason the tool-billing test states: a total that
+/// counts the bill but files it under nothing, and a map that has the row while the total
+/// omits it, are the two ways this is half-done.
+#[tokio::test]
+async fn a_compaction_bill_is_in_the_sessions_totals() {
+    use epsilon_core::testing::SlowProvider;
+    use epsilon_llm::FauxStep;
+    use epsilon_session::SessionStore;
+
+    let dir = tempfile::tempdir().unwrap();
+    let store = SessionStore::open(dir.path().join("session.jsonl")).unwrap();
+    // An `echo` tool: its arguments become a large tool result, which is what pushes the
+    // estimated context over the threshold. The crate's own fixture, not a second copy.
+    let mut registry = ToolRegistry::new();
+    registry.register(Arc::new(epsilon_core::testing::EchoTool::new()));
+
+    // A summarizer that bills far more than the faux provider's own 100/50 turn, so
+    // "the total includes it" cannot be satisfied by the main loop's turns.
+    let summarizer = Arc::new(SlowProvider::new(
+        FauxProvider::new(vec![
+            FauxStep::say("## Objective\nsummarized state"),
+            FauxStep::say("final answer"),
+        ]),
+        0,
+    ));
+    let provider = Arc::new(epsilon_llm::PanicGuard(SlowProvider::new(
+        FauxProvider::new(vec![
+            FauxStep::call(
+                "tc_1",
+                "echo",
+                serde_json::json!({ "text": "x".repeat(8000) }),
+            ),
+            FauxStep::say("done"),
+        ]),
+        0,
+    )));
+
+    let agent = Agent::new(
+        LoopLimits {
+            compaction_threshold_tokens: 1500,
+            compaction_tail_tokens: 300,
+            max_turns: 8,
+            ..Default::default()
+        },
+        provider,
+        Arc::new(registry),
+        Arc::new(epsilon_core::AutoAllow),
+        dir.path().to_path_buf(),
+    );
+    agent.set_summarizer(summarizer);
+    agent.attach_session_store(Arc::new(std::sync::Mutex::new(store)));
+
+    let outcome = agent.run(user_msg("long task")).await.expect("the run");
+    assert!(
+        !matches!(
+            outcome.reason,
+            epsilon_contracts::agent_event::TurnEndReason::Error { .. }
+        ),
+        "the run must not fail: {outcome:?}"
+    );
+
+    // The compaction really happened, or this test pins nothing. Written as a scan rather
+    // than a nested `matches!` — the shape of the assertion is not the point and a paren
+    // maze in a fixture is how a test ends up testing its own braces.
+    let summarized = agent.history().iter().any(|m| {
+        let epsilon_contracts::message::Message::User(u) = m else {
+            return false;
+        };
+        u.content.iter().any(|c| {
+            matches!(
+                c,
+                epsilon_contracts::content::UserContent::Text { text }
+                    if text.contains("<compaction_summary>")
+            )
+        })
+    });
+    assert!(
+        summarized,
+        "the history must open with the compaction summary, or no summarizer ran"
+    );
+
+    let total = agent.session_usage();
+    assert!(
+        total.input >= MAIN_LOOP_BILL.0 + SUMMARIZER_BILL.0
+            && total.output >= MAIN_LOOP_BILL.1 + SUMMARIZER_BILL.1,
+        "the summarizer's call is the session's spend too: total {total:?}, the run's own \
+         turns bill {MAIN_LOOP_BILL:?} and the summarizer's call {SUMMARIZER_BILL:?}"
+    );
+
+    let by_model = agent.session_usage_by_model();
+    let summarizer_row = by_model.get("faux-1").unwrap_or_else(|| {
+        panic!("the summarizer ran as faux-1, so that row exists: {by_model:?}")
+    });
+    assert!(
+        summarizer_row.input >= MAIN_LOOP_BILL.0 + SUMMARIZER_BILL.0,
+        "and it is filed under the model that answered: {summarizer_row:?}"
+    );
+}
+
+/// What the summarizer's own call bills.
+///
+/// **The faux provider's fixed bill, not an invented figure** (`epsilon-llm/src/faux.rs:167-172`:
+/// every response is 100 in / 50 out). The main loop runs two turns here — the `echo` call and
+/// the final reply — so a broken build reports 200/100 and a fixed one 300/150. The assertion
+/// below is on that arithmetic rather than on a threshold, because a number a test did not
+/// measure is how the first version of this test came to assert 9000/4000 against a provider
+/// that bills 100/50.
+const SUMMARIZER_BILL: (u64, u64) = (100, 50);
+
+/// The main loop's own spend in this fixture: two faux responses, each billed at the
+/// provider's fixed rate.
+const MAIN_LOOP_BILL: (u64, u64) = (200, 100);

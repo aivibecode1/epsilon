@@ -3187,6 +3187,31 @@ impl Agent {
         // from the current source — the store's shadowed view when one is attached — and
         // an overflow retry cannot re-send the request the compaction just fixed.
         self.bump_history_epoch();
+
+        // **The summarizer's own call is spend, in the numbers a reader can see.**
+        //
+        // The bill reached the durable `Compaction` entry and the `CompactionFinished`
+        // event — and neither in-memory total. The session totals are folded at exactly
+        // two points, both inside the run loop (`:2686-2688` and `:2352-2354`), and a
+        // compaction happens *outside* that loop: it is the summarizer's own aux call,
+        // which the provider stream never sums. So the call that resends the whole
+        // context — the most expensive one in a long session — was free in
+        // `session_usage()`, in the desktop's cost panel, and in `get_session_stats`.
+        //
+        // The TUI hid the hole: it re-derives its figures from `usage_accounts()` on
+        // hydration (`state.rs:1701-1708`), so the terminal was right and the window was
+        // wrong — a defect survives when one front end happens to recover.
+        //
+        // Folded here rather than inside the append because the two in-memory totals are
+        // what the run leaves behind, and the poisoned-history path below pops the durable
+        // entry: a bill counted there would outlive the compaction it paid for.
+        if let Ok(mut session) = self.session_usage.lock() {
+            *session = session.combine(answer.usage);
+        }
+        if let Ok(mut by_model) = self.session_usage_by_model.lock() {
+            let row = by_model.entry(answer.model_id.clone()).or_default();
+            *row = row.combine(answer.usage);
+        }
         produced.push(Message::User(epsilon_contracts::message::UserMessage {
             id: epsilon_contracts::new_id("msg"),
             timestamp_ms: now_ms(),
