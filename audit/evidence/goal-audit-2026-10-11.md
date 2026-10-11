@@ -129,6 +129,17 @@ Suites: contracts 93, session 80+42+6, tui 609, core 206+… all green; fmt clea
 clippy clean on all four crates; parity checkers green. Still open: markdown body,
 desktop replay half.
 
+### S2 — Desktop compaction live + replay halves (`18ba19e`, core task)
+
+Reducer folds `CompactionFinished` (`push_compaction_digest`, one builder with the
+terminal); `Transcript::from_history` serves both resume sites; `/compact` channel
+reports only non-success outcomes in the run loop's words. Found in passing: the
+channel printed success on any `Ok`, including `Failed`. Evidence: 3 reducer
+RED-first (arm-removal control on the live one), resume-to-screen 1440×900
+(switch-removal control), `/compact` pins honest skip + no success row. Suites:
+desktop 342 lib + 51 window green; tui 610; fmt/clippy clean. Still open: markdown
+body (both front ends).
+
 ## Next in this task
 
 TUI/desktop surface spot-checks against the matrices, docs-structure contradiction sweep,

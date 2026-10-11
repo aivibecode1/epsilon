@@ -328,12 +328,23 @@ pub(crate) fn event_body(
     theme: &Theme,
     more_key: Option<&str>,
 ) -> Vec<CardRow> {
-    let body: Vec<CardRow> = full
-        .lines()
-        .map(|l| vec![(l.to_string(), theme.text())])
-        .collect();
+    // The count names source lines — what is hidden — and stays put whether the open
+    // body draws plain or parsed: a heading parses to one row but hides one line.
+    let hidden = full.lines().count();
     if open {
-        return body;
+        // The digest is model prose, so the open body is parsed, not printed: headers,
+        // lists and code spans draw as the assistant's own markdown does (same parser,
+        // `md_to_lines`). Plain text parses to itself, so a digest with no markup
+        // draws exactly as it did — the markdown half changes structure, never words.
+        return crate::markdown::md_to_lines(full, theme)
+            .into_iter()
+            .map(|l| {
+                l.spans
+                    .into_iter()
+                    .map(|s| (s.content.to_string(), s.style))
+                    .collect()
+            })
+            .collect();
     }
     vec![vec![(
         format!(
@@ -342,7 +353,7 @@ pub(crate) fn event_body(
             // The digest hides **below**, so the affordance says "more", never
             // "earlier": the reader is looking at the end of the transcript and
             // the key opens what is under the row.
-            more_lines(body.len(), more_key, true)
+            more_lines(hidden, more_key, true)
         ),
         theme.faint(),
     )]]
@@ -941,8 +952,7 @@ mod tests {
         assert_eq!(status_word(CardStatus::Failed, &ASCII).0, ASCII.cross);
     }
 
-    /// A tool's output keeps its line breaks on screen (M312).
-    ///
+    /// A tool's output keeps its line breaks on screen (M312).    ///
     /// Found by rendering a frame with a tool card in it and reading it: a card whose body was
     /// `running 74 tests\ntest result: ok. 74 passed; 0 failed` came out as **one row**,
     /// `running 74 teststest result: ok. 74 passed; 0 failed` — two sentences run together, with
@@ -1016,5 +1026,50 @@ mod tests {
         assert_eq!(super::cols("\t"), 3);
         assert_eq!(super::cols("\ta"), 4);
         assert_eq!(super::cols("ab"), 2);
+    }
+
+    /// An opened digest renders its markdown (P-183, markdown half).
+    ///
+    /// The digest is model prose — headers, lists, code spans — and the open body
+    /// drew it as plain text, so structure the summarizer wrote was flattened on
+    /// the one screen that shows the whole digest. RED first: every span draws
+    /// in the plain body style.
+    #[test]
+    fn an_opened_digest_renders_its_markdown() {
+        use crate::ui::theme::{ColorMode, Theme};
+        let theme = Theme::new(ColorMode::Ansi16, UNICODE);
+        let rows = super::event_body("# Done\n\nshipped it", true, &theme, Some("ctrl+x"));
+        let text: Vec<String> = rows
+            .iter()
+            .map(|r| r.iter().map(|(s, _)| s.clone()).collect::<String>())
+            .collect();
+        assert!(
+            text.iter().any(|r| r.contains("Done"))
+                && text.iter().any(|r| r.contains("shipped it")),
+            "markdown must not eat the words: {text:?}"
+        );
+        assert_ne!(
+            rows[0][0].1,
+            theme.text(),
+            "a heading must not draw as plain body text"
+        );
+    }
+
+    /// The collapsed digest still hides whole behind the affordance.
+    ///
+    /// The control on the markdown half: rendering the open body as markdown must
+    /// not leak structure (or rows) into the closed form, which names only the
+    /// count and the chord.
+    #[test]
+    fn a_collapsed_digest_still_hides_whole() {
+        use crate::ui::theme::{ColorMode, Theme};
+        let theme = Theme::new(ColorMode::Ansi16, UNICODE);
+        let rows = super::event_body("# Done\n\nshipped it", false, &theme, Some("ctrl+x"));
+        assert_eq!(rows.len(), 1, "one affordance row: {rows:?}");
+        assert!(
+            rows[0][0].0.contains("… 3 more lines (ctrl+x to open)"),
+            "count plus chord, nothing else: {:?}",
+            rows[0][0].0
+        );
     }
 }
