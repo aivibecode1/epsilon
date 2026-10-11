@@ -60,7 +60,31 @@ pub(super) fn timeline_snip(e: &epsilon_contracts::SessionEntry) -> String {
                     })
                     .collect::<Vec<_>>()
                     .join(" "),
-                epsilon_contracts::message::Message::Assistant(a) => a.text(),
+                epsilon_contracts::message::Message::Assistant(a) => {
+                    // The calls ride the row, not only the prose: a turn that only
+                    // called tools previewed as `(empty)` — the least informative row
+                    // in a picker whose job is finding "that bash call". Each call is
+                    // named through the shared `call_head` (C-120), so the tree, the
+                    // live card and the window title all describe one call one way.
+                    let calls: Vec<String> = a
+                        .tool_calls()
+                        .map(|(_, name, args)| {
+                            let head = crate::renderers::call_head(name, args, "…");
+                            if head.is_empty() {
+                                format!("[{name}]")
+                            } else {
+                                format!("[{name}]: {head}")
+                            }
+                        })
+                        .collect();
+                    let txt = a.text();
+                    match (txt.trim().is_empty(), calls.is_empty()) {
+                        (true, true) => String::new(),
+                        (true, false) => calls.join(" · "),
+                        (false, true) => txt,
+                        (false, false) => format!("{} · {txt}", calls.join(" · ")),
+                    }
+                }
                 epsilon_contracts::message::Message::ToolResult(t) => t
                     .content
                     .iter()

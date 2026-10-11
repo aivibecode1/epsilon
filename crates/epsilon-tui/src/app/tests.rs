@@ -3988,6 +3988,85 @@ fn a_whitespace_only_entry_reads_as_empty_rather_than_blank() {
     };
     assert_eq!(timeline_snip(&entry), "(empty)");
 }
+
+/// A tool call in the tree names its tool (P-291).
+///
+/// Assistant entries carry their tool calls, and the snip read only the prose — so a
+/// turn that only called tools previewed as `(empty)`, the least informative row in a
+/// picker whose job is finding "that bash call". RED first: the row says `(empty)`.
+#[test]
+fn a_tool_call_row_names_its_tool_and_command() {
+    use epsilon_contracts::content::ContentBlock;
+    use epsilon_contracts::message::{AssistantMessage, Message};
+    let calls = |content: Vec<ContentBlock>| epsilon_contracts::SessionEntry {
+        id: "e1".into(),
+        seq: 0,
+        parent_id: None,
+        timestamp_ms: 0,
+        kind: epsilon_contracts::session_entry::EntryKind::Message {
+            message: Message::Assistant(AssistantMessage {
+                id: "m1".into(),
+                timestamp_ms: 0,
+                provider: "faux".into(),
+                model_id: "faux-1".into(),
+                content,
+                stop_reason: epsilon_contracts::message::StopReason::ToolUse,
+                error_message: None,
+                usage: epsilon_contracts::message::Usage::default(),
+            }),
+            api_request_sha256: None,
+        },
+    };
+    let call = |id: &str, name: &str, args: serde_json::Value| ContentBlock::ToolCall {
+        id: id.into(),
+        name: name.into(),
+        arguments: args,
+    };
+
+    let snip = timeline_snip(&calls(vec![call(
+        "c1",
+        "bash",
+        serde_json::json!({ "command": "cargo test" }),
+    )]));
+    assert!(
+        snip.contains("[bash]") && snip.contains("cargo test"),
+        "a bare call row must name tool and command, not read (empty): {snip:?}"
+    );
+
+    let snip = timeline_snip(&calls(vec![call(
+        "c1",
+        "read",
+        serde_json::json!({ "path": "src/main.rs" }),
+    )]));
+    assert!(
+        snip.contains("[read]") && snip.contains("src/main.rs"),
+        "a read row must name its path: {snip:?}"
+    );
+
+    // Prose beside calls is kept, not replaced: the row is still one entry.
+    let mut with_prose = calls(vec![call(
+        "c1",
+        "bash",
+        serde_json::json!({ "command": "cargo test" }),
+    )]);
+    if let epsilon_contracts::session_entry::EntryKind::Message {
+        message: Message::Assistant(a),
+        ..
+    } = &mut with_prose.kind
+    {
+        a.content.insert(
+            0,
+            ContentBlock::Text {
+                text: "checking the build".into(),
+            },
+        );
+    }
+    let snip = timeline_snip(&with_prose);
+    assert!(
+        snip.contains("[bash]") && snip.contains("checking the build"),
+        "calls and prose share the row: {snip:?}"
+    );
+}
 /// M168: the regression test for the bug the coverage gap was hiding. An agent with no
 /// durable session store is a normal state - a plain `--tui` run, a child before its store
 /// exists - and `Agent::store_handle_for_tests` panics on exactly that. Nine production
