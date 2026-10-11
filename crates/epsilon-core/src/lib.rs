@@ -340,12 +340,30 @@ pub fn retry_notice_text(n: &epsilon_llm::RetryNotice) -> String {
 /// deliberately narrow: a rate limit and a truncated tool call are failures too, and claiming
 /// those never reached the model would be a lie a reader could not act on.
 ///
-/// Public because the TUI needs it to word its own message: the classifier is a fact about
-/// provider errors, and a front end that had to re-derive it would get a second answer.
+/// Public because the TUI and the desktop both need it to word their own message: the
+/// classifier is a fact about provider errors, and a front end that had to re-derive it would
+/// get a second answer.
+///
+/// It matches what the retry policy calls [`epsilon_llm::FailureKind::Auth`]
+/// (`epsilon-llm/src/retry.rs:36-41`), which is the half that decides a failure is never
+/// retried. **The two must agree, and that is the whole rule.** When they disagree the retry
+/// policy correctly gives up while both front ends say nothing — the 2026-10-04 report's
+/// shape reproduced with a different status code.
+///
+/// The matching is deliberately as loose as the sibling's. A tighter rule that demanded a
+/// delimiter around the status code was tried and rejected: `contains("403")` fires on
+/// `{"input": 403}` and so does any delimiter-based version of it, because the two spellings
+/// are structurally identical and only the context differs. Whichever way this is drawn, the
+/// boundary is drawn from *provider error bodies* — this is handed `err`, the message a
+/// provider sent back about a call that did not produce a reply, and never a successful
+/// reply's own usage. A front end that wanted to call it on anything else would need to say
+/// what "403" meant there first.
 pub fn looks_like_auth_failure(msg: &str) -> bool {
-    const NEEDLES: [&str; 6] = [
+    const NEEDLES: [&str; 8] = [
         "401",
+        "403",
         "unauthorized",
+        "forbidden",
         "authentication",
         "invalid api key",
         "invalid_api_key",
@@ -383,16 +401,55 @@ mod auth_classifier_tests {
     }
 
     #[test]
+    fn every_auth_failure_the_retry_policy_recognises_is_reported_too() {
+        // The two classifiers answer different questions about the same failure, and the
+        // pairing is not decoration. `epsilon_llm::classify` decides a failure is never
+        // retried; `looks_like_auth_failure` decides a reader is told the model was never
+        // reached. When they disagree, the retry policy correctly gives up while the front
+        // end says nothing — which is the 2026-10-04 report's own shape reproduced with a
+        // different status code.
+        //
+        // 403 is the common one: a key that is valid but has no access to the model it
+        // named. A user whose plan lapsed or whose tier excludes that model hits it, and
+        // before this nothing on screen said the model was never reached — they were told
+        // a provider error happened and left to work out whether anything was generated.
+        for m in [
+            "HTTP 403 (Auth): forbidden",
+            "HTTP 403: {\"error\":{\"message\":\"You are not authorized to access model X\"}}",
+            "403 Forbidden",
+            "forbidden",
+        ] {
+            assert_eq!(
+                epsilon_llm::classify(m),
+                epsilon_llm::FailureKind::Auth,
+                "precondition: the retry policy calls this Auth — {m}"
+            );
+            assert!(
+                looks_like_auth_failure(m),
+                "the front ends must say the model was never reached too — {m}"
+            );
+        }
+    }
+
+    #[test]
     fn unrelated_failures_are_not_mistaken_for_auth() {
         // A false positive here would claim "your model was never reached" about a run that
         // did reach it, which is worse than saying nothing: the reader would go re-check a key
         // that is fine.
+        //
+        // Every case is a **provider error body**, because that is the only thing this is ever
+        // handed (`err`, the message about a call that produced no reply). A tighter rule than
+        // `contains` was tried for the status-code needles and rejected: any delimiter-based
+        // version of it fires on `{"input": 403}` exactly as often as the loose one does, so
+        // the "usage figure is not a status" guard cannot be written without a context this
+        // function does not have. The exposure is recorded in the doc comment instead.
         for m in [
             "429 rate limit exceeded, retry after 20s",
             "500 internal server error",
             "connection reset by peer",
             "context window exceeded",
             "the model returned an empty response",
+            "request failed: model returned no text",
         ] {
             assert!(!looks_like_auth_failure(m), "wrongly classified: {m}");
         }
