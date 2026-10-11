@@ -15,6 +15,27 @@ Last updated: 2026-10-10 (the convergence and its rework — rounds 105–128, t
 Evolve Epsilon into one coherent agent harness with two front ends on a single core: a
 powerful CLI/TUI agent and a polished **native** desktop IDE.
 
+### Goal session 2026-10-11 (in progress, 8/10 tasks)
+
+A confirmed goal contract drives this session (audit → gaps → docs → agents-md → core →
+tui → desktop-parity → desktop-stack → hardening → battery). Landed so far:
+
+- Audit + gaps banked (`audit/evidence/goal-audit-2026-10-11.md`, `goal-gaps-2026-10-11.md`);
+  F1 (stale `commands.rs` split doc) and F2 (STATUS `## Next` items 1–5 landed-but-open)
+fixed; `AGENTS.md` v3 rewritten from the tree, validated and relocked.
+- Compaction digest halves: TUI replay (`COMPACTION_MARKER`, `compaction_digests`,
+  `hydrate_compaction_digests`), terminal markdown body, window live + replay +
+  markdown (`RowKind::Digest`, speaker-parameterized draw) + a11y naming; `/compact`
+  channel honesty fix (success on `Ok(Failed)` no longer reported). P-183 done;
+  P-054 stays partial (cards are terminal-only).
+- Parity verdicts: P-121 and P-292 deliberately different, P-295 done (footer counter),
+  P-291 call-heads in tree rows; P-153 summary caught up. Pi matrix now 63 / 108 / 141 / 27.
+- ADR-037 keeps egui on fresh measurements with a defined (not started) experiment path.
+- Hardening: goal-read already cached by design; safety 62 + contrast suites green.
+
+Battery pending (fresh label, full gate). Carried owner-side: `auth.json` plaintext (R6),
+real screen-reader run (R5), release tag (R7).
+
 ### Timing
 
 | | |
