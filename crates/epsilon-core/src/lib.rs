@@ -3976,7 +3976,38 @@ impl Agent {
         // not make a child unresumable.
         let mut store =
             SessionStore::open(&file).map_err(|e| format!("open {}: {e}", file.display()))?;
-        let _ = epsilon_session::repair::repair_on_open(&mut store);
+        // **The repair is reported, not discarded.**
+        //
+        // This was a `let _ =`, and it was the one path guaranteed to encounter a repair:
+        // a resumed child is the session that was interrupted, which is exactly the file
+        // `repair_on_open` exists for. Every other open path says something — the runtime's
+        // resume puts each repaired kind into its notices, and `attach_session_store` keeps
+        // the report on `last_repair` — so this was the third place and the silent one.
+        //
+        // What the silence costs is the whole point of repairing. A dangling tool call
+        // means work the model asked for never happened, and the child comes back with a
+        // silently edited transcript: the operator who resumed a task after a crash had no
+        // way to know the resume changed anything, or that the interrupted turn was closed
+        // out rather than answered. The kinds are named rather than counted, because "a
+        // call had no result" and "the session ended mid-run" are different things to have
+        // lost (M75) and an operator who cannot tell them apart cannot decide anything.
+        match epsilon_session::repair::repair_on_open(&mut store) {
+            Ok(report) => {
+                for line in report.summary() {
+                    self.emit(AgentEvent::Notice {
+                        text: format!("task '{id}': resumed its session file and repaired {line}"),
+                    });
+                }
+            }
+            Err(e) => {
+                self.emit(AgentEvent::Notice {
+                    text: format!(
+                        "task '{id}': its session file could not be repaired ({e}) — the \
+                         resumed child's transcript may be missing work"
+                    ),
+                });
+            }
+        }
         let entries = store
             .read_all()
             .map_err(|e| format!("read {}: {e}", file.display()))?;

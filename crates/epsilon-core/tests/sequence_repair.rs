@@ -10,6 +10,7 @@
 
 use std::sync::{Arc, Mutex};
 
+use epsilon_contracts::agent_event::AgentEvent;
 use epsilon_contracts::content::{ContentBlock, UserContent};
 use epsilon_contracts::message::{
     AssistantMessage, Message, StopReason, ToolResultMessage, Usage, UserMessage,
@@ -64,6 +65,33 @@ fn agent() -> Arc<epsilon_core::Agent> {
         Arc::new(AutoAllow),
         std::env::temp_dir(),
     )
+}
+
+/// A resume request with no prompt, which reports the snapshot and stops.
+fn status_request(id: &str) -> epsilon_contracts::tool::TaskRequest {
+    epsilon_contracts::tool::TaskRequest {
+        prompt: String::new(),
+        description: "resume a crashed child".into(),
+        subagent_type: "default".into(),
+        background: false,
+        resume: Some(id.to_string()),
+        model: None,
+    }
+}
+
+/// Every notice on the channel, in order.
+///
+/// The broadcast may already have been lagging before this is called, so a caller that
+/// needs *all* of them subscribes first — every assertion here is over a snapshot taken at
+/// one point in time, which is what `Notice` is for anyway.
+fn drain_notices(rx: &mut tokio::sync::broadcast::Receiver<Arc<AgentEvent>>) -> Vec<String> {
+    let mut out = Vec::new();
+    while let Ok(ev) = rx.try_recv() {
+        if let AgentEvent::Notice { text } = &*ev {
+            out.push(text.clone());
+        }
+    }
+    out
 }
 
 /// Every tool call in the transcript has exactly one result.
@@ -401,4 +429,100 @@ async fn the_repair_is_durable_and_leaves_the_answered_call_untouched() {
         "the transcript and the store carry one repair, not two"
     );
     every_call_has_a_result(&stored).expect("the store's projection is valid after the repair");
+}
+
+/// A child session file whose last turn ended mid-tool-call.
+///
+/// That is the shape `repair_on_open` exists to close: a crash or an abort between the
+/// assistant's calls and their results leaves the reopened file with unanswered-tool-call
+/// holes, and the next request would be invalid for the provider.
+fn child_file_needing_repair(file: &std::path::Path, id: &str) {
+    let dir = file.parent().expect("a child file has a directory");
+    let mut store =
+        SessionStore::open_child_in(file, dir, "parent-filler").expect("seed child file");
+    store
+        .append(EntryKind::Custom {
+            custom_type: "task_meta".to_string(),
+            data: Some(serde_json::json!({
+                "task_id": id,
+                "description": "crashed mid-turn",
+                "subagent_type": "default",
+                "model": null,
+            })),
+        })
+        .expect("meta entry");
+    store
+        .append(EntryKind::Message {
+            message: assistant_with_dangling_calls(),
+            api_request_sha256: None,
+        })
+        .expect("the interrupted turn");
+    // The store drops here: its M61 write lease must be gone before the probe reopens.
+}
+
+/// **A subagent's repair is reported, not discarded.**
+///
+/// `rehydrate_task` called `repair_on_open` and threw the result away (`lib.rs:3979`). A
+/// resumed child is exactly the file that needs one — it is the session that was
+/// interrupted — so the one path guaranteed to encounter a repair was the one path that
+/// said nothing about it.
+///
+/// What the silence costs is the whole point of repairing. A dangling tool call means work
+/// the model asked for never happened, and the child comes back with a silently edited
+/// transcript: the operator resuming a task after a crash has no way to know the resume
+/// changed anything, or that the interrupted turn was closed out rather than answered.
+/// Every other open path reports it — `epsilon-runtime`'s resume puts each repaired kind
+/// into its notices (`epsilon-runtime/src/lib.rs:4948-4955`), and this crate's own
+/// `attach_session_store` keeps the report on `last_repair` (`lib.rs:1235-1251`). This was
+/// the third place and the silent one.
+#[tokio::test]
+async fn a_resumed_childs_repair_reaches_the_operator() {
+    use epsilon_contracts::tool::TaskHost;
+
+    let dir = tempfile::tempdir().unwrap();
+    // A parent file the agent attaches to; the child sits beside it under M58's naming.
+    let parent_file = dir.path().join("tui-parent.jsonl");
+    {
+        let mut parent = SessionStore::open(&parent_file).unwrap();
+        parent
+            .append(EntryKind::Message {
+                message: user("the original task"),
+                api_request_sha256: None,
+            })
+            .unwrap();
+    }
+    let child = dir.path().join("tui-parent-crashed.jsonl");
+    child_file_needing_repair(&child, "crashed");
+
+    let agent = agent();
+    agent
+        .live_resume(&parent_file)
+        .expect("the parent session attaches and opens");
+    let mut rx = agent.subscribe();
+    let host = agent.clone() as Arc<dyn TaskHost>;
+
+    // An empty prompt returns the snapshot straight after the rehydration, so this
+    // exercises the path under test and nothing else.
+    let resumed = host
+        .run_task(status_request("crashed"))
+        .await
+        .expect("the crashed child rehydrates");
+    let snapshot = match resumed {
+        epsilon_contracts::tool::TaskOutcome::Running(s) => s,
+        other => panic!("an empty-prompt resume reports the snapshot, got {other:?}"),
+    };
+    assert_eq!(
+        snapshot.id, "crashed",
+        "the rehydrated task is the one asked for"
+    );
+
+    // **The repair was said out loud**, and the notice names the task and the repair
+    // together — an operator has to be able to tell which child's session was touched.
+    let notices = drain_notices(&mut rx);
+    assert!(
+        notices
+            .iter()
+            .any(|t| t.contains("crashed") && t.contains("repaired")),
+        "the resumed child's repair must reach the operator: {notices:?}"
+    );
 }
