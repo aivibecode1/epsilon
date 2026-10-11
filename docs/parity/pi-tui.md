@@ -75,7 +75,7 @@ this document**, tallied from its own tables — not a projection.
 | 2. Layout and renderer | 10 | 3 | 2 | 4 | 1 |
 | 3. Composer and editor | 24 | 6 | 12 | 4 | 2 |
 | 4. Slash commands and autocomplete | 13 | 2 | 5 | 6 | 0 |
-| 5. Transcript and streaming | 35 | 8 | 4 | 21 | 2 |
+| 5. Transcript and streaming | 35 | 8 | 3 | 21 | 3 |
 | 6. Model picker and thinking | 9 | 0 | 4 | 5 | 0 |
 | 7. Auth, login and permissions | 8 | 0 | 3 | 4 | 1 |
 | 8. Sessions | 17 | 7 | 5 | 3 | 2 |
@@ -89,7 +89,7 @@ this document**, tallied from its own tables — not a projection.
 | 16. Status indicators | 13 | 2 | 5 | 5 | 1 |
 | 17. Footer | 12 | 3 | 4 | 3 | 2 |
 | 18. Selector and overlay components | 79 | 11 | 26 | 36 | 6 |
-| **Total** | **339** | **61** | **112** | **141** | **25** |
+| **Total** | **339** | **61** | **111** | **141** | **26** |
 
 A further **17 rows are not in the counts above**: the 10 `Y-###` rows Pi ships outside its interactive mode (out of
 scope by design) and the 7 `AA-###` rows recording what was never inventoried. Both are listed in full near the end
@@ -298,7 +298,7 @@ in each component.
 | P-057 | Two status messages back to back update the same line instead of appending | `packages/coding-agent/src/modes/interactive/interactive-mode.ts:3761-3781` | missing | none — and the shape argues against it: a notice is a durable transcript row (`crates/epsilon-tui/src/state.rs:1143`), so there is nothing to coalesce onto | — |
 | P-058 | Errors render as `Error: …` and warnings as `Warning: …` in the transcript | `packages/coding-agent/src/modes/interactive/interactive-mode.ts:4536-4546` | deliberately different | `crates/epsilon-tui/src/state.rs` — a dedicated `LineKind::SystemErr` row carries the cross glyph, the danger colour and the error band, so a failure notice is **not** the faintest thing on the page (it used to share `System`'s bullet and `theme.faint()` with a command echo). The M62 `error: …` marker, the auth note and nine command paths (`import/fork/clone/new session/resume/trust accept/export/share failed`, plus a failed session delete) route through it | **Decided, round 106: the fixed `Error: `/`Warning: ` prefix is not adopted, and the difference is the design.** Pi's prefix is its only severity channel for a notice — its notices have no glyph, colour or band to distinguish a failure, so the words carry it. Epsilon's failure row is distinguished four ways (cross glyph, danger colour, error band, its own gutter) and the acid test `every_role_is_distinguishable_without_colour` proves the pair survives `NO_COLOR` and a 16-colour terminal (`ui/transcript.rs`'s test, the failure-vs-notice pair pinned). A literal prefix would be a fifth channel for one fact, and it would sit in front of wording that already names the failure specifically (`restore: cannot restore src/lib.rs: the file changed …` reads better than `Error: restore: cannot restore …`). Evidence: `a_run_failure_draws_with_the_cross_and_not_the_bullet`, `the_error_marker_and_the_auth_note_draw_as_failures`. **A `Warning:` tier is the honest residual and it is not built**: no third severity exists, so a warning notice today draws as a plain `System` row — recorded as a future row rather than claimed by this one |
 | P-060 | Extension-supplied entries and messages render through registered renderers, inserted **above** a streaming component | `packages/coding-agent/src/modes/interactive/interactive-mode.ts:3783-3803`, `:3794-3800`, `:3821-3834` | missing | none | — |
-| P-121 | Assistant prose is markdown indented by `outputPad`, with no vertical padding of its own | `packages/coding-agent/src/modes/interactive/components/assistant-message.ts:114`, `packages/coding-agent/src/modes/interactive/interactive-mode.ts:3893-3900` | partial | `crates/epsilon-tui/src/render_cache.rs:206` — committed as one markdown-carrying row behind a fixed two-column gutter (`crates/epsilon-tui/src/ui/transcript.rs:179`); there is no `outputPad` setting | `a_wrapped_banded_message_keeps_every_row_inside_the_frame` (frame) |
+| P-121 | Assistant prose is markdown indented by `outputPad`, with no vertical padding of its own | `packages/coding-agent/src/modes/interactive/components/assistant-message.ts:114`, `packages/coding-agent/src/modes/interactive/interactive-mode.ts:3893-3900` | deliberately different | `crates/epsilon-tui/src/ui/transcript.rs:25` — a fixed two-column gutter (`GUTTER = 2`): every row aligns its glyph on one column and every body starts at exactly two (`:179`, `:429`); the band fill, the card continuation gutter and the repertoire width math all measure from it. **Decided: no `outputPad` setting, and the difference is structural.** Pi's pad is a 0/1 user toggle (`core/settings-manager.ts:1488-1496`, default 1) indenting message content. Epsilon's gutter is not an indent preference but the alignment column the presentation system is built on (P-136 blocks, the card continuation): 0 would delete the column every row aligns on, and 1 would misalign the glyph-plus-space pairs the repertoire measures in display width (`:174-179`). At 80 columns the two columns cost 2.5% of the width | `a_wrapped_banded_message_keeps_every_row_inside_the_frame` (frame) |
 | P-122 | A blank line precedes an assistant block only when it has visible content | `packages/coding-agent/src/modes/interactive/components/assistant-message.ts:102` | missing | none | — |
 | P-123 | Consecutive thinking blocks render as one joined block | `packages/coding-agent/src/modes/interactive/components/assistant-message.ts:118`, `:147` | done | `crates/epsilon-tui/src/state.rs:1417` — one reasoning row per reply, committed from the single reasoning field, so the blocks never appear separately | `an_answer_and_its_reasoning_are_distinguishable_on_a_real_frame_without_colour` (frame) |
 | P-124 | A hidden thinking block becomes a dim italic `Thinking...` label | `packages/coding-agent/src/modes/interactive/components/assistant-message.ts:145`, `packages/coding-agent/src/modes/interactive/interactive-mode.ts:484` | missing | none — there is no hidden-thinking state | — |
@@ -766,7 +766,7 @@ row says so — that is a gap in the inventory, and closing it is cheap.
 | 2. Layout and renderer | 10 | 3 | 2 | 4 | 1 |
 | 3. Composer and editor | 24 | 6 | 12 | 4 | 2 |
 | 4. Slash commands and autocomplete | 13 | 2 | 5 | 6 | 0 |
-| 5. Transcript and streaming | 35 | 8 | 4 | 21 | 2 |
+| 5. Transcript and streaming | 35 | 8 | 3 | 21 | 3 |
 | 6. Model picker and thinking | 9 | 0 | 4 | 5 | 0 |
 | 7. Auth, login and permissions | 8 | 0 | 3 | 4 | 1 |
 | 8. Sessions | 17 | 7 | 5 | 3 | 2 |
@@ -780,7 +780,7 @@ row says so — that is a gap in the inventory, and closing it is cheap.
 | 16. Status indicators | 13 | 2 | 5 | 5 | 1 |
 | 17. Footer | 12 | 3 | 4 | 3 | 2 |
 | 18. Selector and overlay components | 79 | 11 | 26 | 36 | 6 |
-| **Total** | **339** | **61** | **112** | **141** | **25** |
+| **Total** | **339** | **61** | **111** | **141** | **26** |
 
 ### The `missing` rows — 161
 
@@ -807,7 +807,7 @@ nothing here is a claim that the behaviour cannot be built.
 | Footer (3) | P-197, P-207, P-208 |
 | Selector and overlay components (36) | P-230, P-232, P-234, P-235, P-239, P-242, P-244, P-245, P-248, P-251, P-255, P-256, P-257, P-258, P-259, P-261, P-281, P-283, P-284, P-285, P-286, P-296, P-297, P-300, P-304, P-306, P-307, P-308, P-310, P-311, P-314, P-316, P-317, P-318, P-319, P-323 |
 
-### The `partial` rows — 121
+### The `partial` rows — 120
 
 An `E-` row covers these and something is not finished. The reason column is the shortest honest statement of what.
 
@@ -817,7 +817,7 @@ An `E-` row covers these and something is not finished. The reason column is the
 | Layout and renderer (2) | P-217, P-218 | the jump affordance is a footer badge, not a pill in the viewport; matches are counted, not highlighted in the transcript |
 | Composer and editor (12) | P-025, P-027, P-028, P-034, P-035, P-036, P-209, P-210, L-000, L-001, L-002, L-003 | mostly: the behaviour exists in the source with **no test**, or only one half is built. P-022 has no test typing `!`; P-030 is pinned by no test at all; P-036's tests run the spawner seam and assert no frame; L-000 carries 23 ids, not 47 entries |
 | Slash commands and autocomplete (5) | P-043, P-044, P-046, P-047, P-084 | the `/` menu lists slash items only; no per-command argument completer; no refresh-then-open fallback; `/scoped-models` and `/changelog` are driven only by the all-heads sweep |
-| Transcript and streaming (4) | P-040, P-054, P-121, P-183 | thinking hides on Alt+T, not Ctrl+T, with a narrower affordance; the compaction digest expands live and on replay in the terminal (as markdown when open) and draws fully in the window as plain text; no `outputPad` setting; abort text lands on a system row, not the answer |
+| Transcript and streaming (3) | P-040, P-054, P-183 | thinking hides on Alt+T, not Ctrl+T, with a narrower affordance; the compaction digest expands live and on replay in the terminal (as markdown when open) and draws fully in the window as plain text; abort text lands on a system row, not the answer |
 | Model picker and thinking (4) | P-037, P-038, P-048, P-272 | the `/think` head parses but no row establishes the argument form or a picker; no per-model override submenu; P-037 has no no-reasoning message (the catalog carries no reasoning flag); P-038 cycles favorites, not all models (M23, deliberate) |
 | Auth, login and permissions (3) | P-062, P-064, P-067 | one masked modal instead of an auth-type → provider → dialog chain with `onBack`; one of four dialog event kinds; the TUI path for `/logout <provider>` is unpinned |
 | Sessions (5) | P-070, P-072, P-074, P-077, P-082 | no cross-directory scope / rename / delete in the picker; no branch summarisation; fork is at the leaf, not at a chosen message; no cache-warming status; reload covers four resource kinds, not six |
