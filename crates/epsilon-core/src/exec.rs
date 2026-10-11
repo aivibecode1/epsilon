@@ -801,6 +801,14 @@ async fn run_one(agent: &Arc<Agent>, p: &mut PreparedCall) -> ToolResultMessage 
     // with the hook's reason; `terminate` rides in details for the batch rule.
     // A hook that FAILS (returns Err) blocks the call with its message (pi
     // surfaces hook errors as error results, never loop panics).
+    //
+    // **A hook that PANICS blocks too, with the same reasoning.** The hook is a gate, so a
+    // panic means it said nothing — and the only reading that is not an invented approval
+    // is that it did not approve. That is the approval channel's own rule (§6: "an unknown
+    // capability is `Ask`, never `Allow`") applied to a seam that had no boundary at all:
+    // before this, a panicking hook escaped `run_one` and the batch answered with
+    // "[harness] this call's task panicked", which is true but useless — it names a
+    // symptom two layers away and never says the gate failed.
     let before = {
         let hooks = agent.tool_hooks();
         let ctx = BeforeToolCallContext {
@@ -808,14 +816,23 @@ async fn run_one(agent: &Arc<Agent>, p: &mut PreparedCall) -> ToolResultMessage 
             tool_name: name.clone(),
             args: p.validated_args.clone(),
         };
-        match hooks.before_tool_call(ctx).await {
-            Ok(r) => r,
-            Err(e) => epsilon_contracts::tool::BeforeToolCallResult {
+        crate::contain_panic(hooks.before_tool_call(ctx), |payload| {
+            Ok(epsilon_contracts::tool::BeforeToolCallResult {
                 block: true,
-                reason: Some(e),
+                reason: Some(format!(
+                    "[harness] before_tool_call panicked, so the call was not approved: {payload}"
+                )),
                 terminate: false,
-            },
-        }
+            })
+        })
+        .await
+        // A hook that returns Err keeps its message; the pattern above already gives Err
+        // and this one gives Ok, so both arms need a home.
+        .unwrap_or_else(|e| epsilon_contracts::tool::BeforeToolCallResult {
+            block: true,
+            reason: Some(e),
+            terminate: false,
+        })
     };
     if before.block {
         let reason = before
@@ -957,7 +974,18 @@ async fn apply_after_hook(
         result: base.clone(),
         is_error: base.is_error,
     };
-    let patch: Result<Option<AfterToolCallResult>, String> = hooks.after_tool_call(ctx).await;
+    let patch: Result<Option<AfterToolCallResult>, String> = crate::contain_panic(
+        hooks.after_tool_call(ctx),
+        // **The seam's no-op default: keep the executed result.** The tool already ran and
+        // its output is real work the model needs; a panicking observer has said nothing
+        // about what to change, so discarding that output would lose it. Before this the
+        // panic escaped `run_one` and the batch answered with the panic text in place of
+        // the tool's own result — a failure report standing where the tool's output should
+        // have been, which is the "reports success while the thing did not happen" shape in
+        // reverse.
+        |_| Ok(None),
+    )
+    .await;
     match patch {
         Ok(None) => base,
         Ok(Some(patch)) => ToolResultMessage {

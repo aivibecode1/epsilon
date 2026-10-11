@@ -1695,6 +1695,146 @@ impl epsilon_contracts::tool::Tool for BarrierPanickingHookTool {
     }
 }
 
+/// **A panicking `before_tool_call` blocks the call, it does not run it.**
+///
+/// The hook is a *gate*: it sits between the permission check and the tool, and the
+/// approval channel's own rule is that anything ambiguous fails closed (AGENTS.md §6 —
+/// "an unknown capability is `Ask`, never `Allow`"). A hook that panics has told the loop
+/// nothing, so the only reading that is not an invented approval is that it did not
+/// approve. The `Err` path already does exactly this — `Err` blocks with the message —
+/// and a panic is the same failure with a louder shape.
+///
+/// The containment is the one `contain_hook` gives every turn seam (`lib.rs:532`), and
+/// the tool hooks were the two seams without it.
+#[tokio::test]
+async fn a_panicking_before_tool_hook_blocks_the_call() {
+    let mut registry = ToolRegistry::new();
+    registry.register(Arc::new(EchoTool::new()));
+    let agent = epsilon_core::Agent::new(
+        LoopLimits::default(),
+        Arc::new(SlowProvider::new(
+            FauxProvider::new(vec![
+                epsilon_llm::FauxStep::call("tc_gate", "echo", serde_json::json!({"text": "hi"})),
+                epsilon_llm::FauxStep::say("done"),
+            ]),
+            0,
+        )),
+        Arc::new(registry),
+        Arc::new(AutoAllow),
+        std::env::temp_dir(),
+    );
+    agent.set_tool_hooks(Arc::new(PanickingBeforeHook));
+
+    let outcome = agent
+        .run(user_msg("run the echo"))
+        .await
+        .expect("a panicking gate must not unwind through the run");
+
+    let result = outcome
+        .produced
+        .iter()
+        .find_map(|m| match m {
+            Message::ToolResult(r) if r.tool_call_id == "tc_gate" => Some(r),
+            _ => None,
+        })
+        .expect("the call must have produced a result");
+    assert!(
+        result.is_error,
+        "an ambiguous gate is not an approval: {:?}",
+        result.content
+    );
+    assert!(
+        result.content.iter().any(|c| match c {
+            epsilon_contracts::content::ContentBlock::Text { text } =>
+                text.contains("before_tool_call panicked"),
+            _ => false,
+        }),
+        "the blocked result must name the panic: {:?}",
+        result.content
+    );
+}
+
+/// A before-hook that panics on every call.
+struct PanickingBeforeHook;
+
+#[async_trait]
+impl epsilon_contracts::tool::ToolHooks for PanickingBeforeHook {
+    async fn before_tool_call(
+        &self,
+        _ctx: epsilon_contracts::tool::BeforeToolCallContext,
+    ) -> Result<epsilon_contracts::tool::BeforeToolCallResult, String> {
+        panic!("a before_tool_call hook that panics must block, not approve")
+    }
+}
+
+/// **A panicking `after_tool_call` keeps the result the tool produced.**
+///
+/// The hook's job is to *patch* a settled result, so a panic means it never said what to
+/// change — and the seam's no-op default is "keep the executed value", which is the same
+/// fallback the turn hooks get. The tool had already run and its output is real work the
+/// model needs; discarding it because the observer misbehaved would lose it.
+#[tokio::test]
+async fn a_panicking_after_tool_hook_keeps_the_executed_result() {
+    let mut registry = ToolRegistry::new();
+    registry.register(Arc::new(EchoTool::new()));
+    let agent = epsilon_core::Agent::new(
+        LoopLimits::default(),
+        Arc::new(SlowProvider::new(
+            FauxProvider::new(vec![
+                epsilon_llm::FauxStep::call(
+                    "tc_after",
+                    "echo",
+                    serde_json::json!({"text": "still mine"}),
+                ),
+                epsilon_llm::FauxStep::say("done"),
+            ]),
+            0,
+        )),
+        Arc::new(registry),
+        Arc::new(AutoAllow),
+        std::env::temp_dir(),
+    );
+    // A hook whose after-hook always panics, whatever the tool.
+    struct AlwaysPanicAfter;
+    #[async_trait]
+    impl epsilon_contracts::tool::ToolHooks for AlwaysPanicAfter {
+        async fn after_tool_call(
+            &self,
+            _ctx: epsilon_contracts::tool::AfterToolCallContext,
+        ) -> Result<Option<epsilon_contracts::tool::AfterToolCallResult>, String> {
+            panic!("an after_tool_call hook that panics must keep the executed result")
+        }
+    }
+    agent.set_tool_hooks(Arc::new(AlwaysPanicAfter));
+
+    let outcome = agent
+        .run(user_msg("run the echo"))
+        .await
+        .expect("a panicking observer must not unwind through the run");
+
+    let result = outcome
+        .produced
+        .iter()
+        .find_map(|m| match m {
+            Message::ToolResult(r) if r.tool_call_id == "tc_after" => Some(r),
+            _ => None,
+        })
+        .expect("the call must have produced a result");
+    assert!(
+        !result.is_error,
+        "the tool's real output must survive its observer: {:?}",
+        result.content
+    );
+    assert!(
+        result.content.iter().any(|c| match c {
+            epsilon_contracts::content::ContentBlock::Text { text } => text.contains("still mine"),
+            _ => false,
+        }),
+        "and it must be the tool's own text, not the panic: {:?}",
+        result.content
+    );
+}
+
 /// Hooks that break the contract and panic on every seam (CORE-02 containment test).
 struct PanickingTurnHooks;
 
