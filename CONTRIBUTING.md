@@ -28,14 +28,12 @@ write a proposal in [`docs/AGENTS-PROPOSALS.md`](docs/AGENTS-PROPOSALS.md) — d
 
 ## Build and run it
 
-You need Rust. **1.88 or newer** for everything except the desktop IDE, which needs **1.95**
-(egui declares it).
+You need Rust **1.88 or newer** for everything.
 
 ```sh
 cargo build --workspace
 cargo run -q -p epsilon-cli -- --demo      # offline demo: no API key, no network
 cargo run -q -p epsilon-cli                 # the terminal UI
-cargo run -q -p epsilon-desktop            # the native desktop IDE
 ```
 
 To use a real model you need credentials for a provider — see

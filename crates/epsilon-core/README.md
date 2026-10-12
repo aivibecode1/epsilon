@@ -12,7 +12,7 @@ permission decision (`epsilon-safety`) or composition (`epsilon-runtime`).
 
 - **Depends on:** `epsilon-contracts`, `epsilon-llm`, `epsilon-session`.
 - **Depended on by:** `epsilon-tools`, `epsilon-safety`, `epsilon-mcp`, and through those
-  `epsilon-runtime`, `epsilon-tui`, `epsilon-server`, `epsilon-desktop`, `epsilon-cli`.
+  `epsilon-runtime`, `epsilon-tui`, `epsilon-server`, `epsilon-cli`.
 - Re-exports `SessionStore`, `StoreError` and the search types (`src/lib.rs:140`), so a
   front end need not depend on `epsilon-session` directly.
 
@@ -34,7 +34,7 @@ permission decision (`epsilon-safety`) or composition (`epsilon-runtime`).
 
 ## How to run and test it
 
-No binary of its own — `epsilon-cli`, `epsilon-tui` and `epsilon-desktop` are what run it.
+No binary of its own — `epsilon-cli` and `epsilon-tui` are what run it.
 `tests/` holds `loop_scenarios.rs`, `compaction_scenarios.rs`, `queue_conformance.rs`,
 `task_scenarios.rs`, `guard_scenarios.rs`, `system_overlay.rs` and others.
 

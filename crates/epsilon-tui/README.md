@@ -9,9 +9,9 @@ overlays, and the reducer that turns a key press or an agent event into the next
 does **not** own agent behaviour — the loop, the tools, the permission gates and compaction
 belong to `epsilon-core`.
 
-One thing to know before reading: this crate still *hosts* the shared theme roles
-(`ui::theme`) and `epsilon-desktop` imports them. That is where the code is today; it is not a
-second copy of anything. The **slash-command half moved out**: `parse_command`, `Command`,
+One thing to know before reading: this crate *hosts* the shared theme roles
+(`ui::theme`). The removed desktop window (ADR-039) used to import them; that edge is
+gone. The **slash-command half moved out**: `parse_command`, `Command`,
 `SLASH_ITEMS`, `COMMAND_HEADS` and `ALIAS_HEADS` now live in
 [`epsilon-contracts`](../epsilon-contracts/README.md) (`src/command.rs`) and are re-exported from
 `picker`, so every path below still resolves. The picker half stays here because it needs
@@ -22,7 +22,7 @@ second copy of anything. The **slash-command half moved out**: `parse_command`, 
 Workspace dependencies: `epsilon-contracts`, `epsilon-core`, `epsilon-llm`,
 `epsilon-safety`, `epsilon-session`, `epsilon-runtime`. External: ratatui, crossterm,
 arboard, base64, pulldown-cmark, unicode-width, unicode-segmentation, futures-util, tokio,
-serde_json. Depended on by `epsilon-cli` and `epsilon-desktop`, and by nothing else.
+serde_json. Depended on by `epsilon-cli`, and by nothing else.
 
 ## Entry points
 
@@ -56,8 +56,7 @@ Its tests live inside `src/` — `#[cfg(test)]` modules plus `src/app/tests.rs` 
 - A panic must leave a usable console, so the terminal restore lives in a `Drop` rather than
   an error path (`src/app.rs:1254`). Permission asks travel through
   `epsilon_safety::ChannelApprovalUi`, the channel the HTTP server also answers from.
-- Changing `ui::theme` changes the desktop too: see `crates/epsilon-desktop/src/theme.rs:25`.
-  Changing `parse_command` does **not** go through this crate any more — the desktop reads
+- Changing `parse_command` does **not** go through this crate any more — its readers use
   `epsilon_contracts::command` directly.
 - Rules: [`AGENTS.md`](../../AGENTS.md),
   [`docs/design/epsilon-decisions.md`](../../docs/design/epsilon-decisions.md).

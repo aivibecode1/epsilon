@@ -13,7 +13,7 @@ sessions. It owns storage, not the agent loop, and it draws nothing.
 - **Depends on:** `epsilon-contracts` only, plus `serde` and `serde_json`.
 - **Depended on by:** `epsilon-core` — which re-exports its session types so the front
   ends need no direct edge — and through core, `epsilon-runtime`, `epsilon-tui`,
-  `epsilon-desktop`, `epsilon-cli`.
+  `epsilon-cli`.
 
 ## Entry points
 

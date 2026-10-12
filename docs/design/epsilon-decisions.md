@@ -958,7 +958,8 @@ Four reasons, in order of weight:
 3. **Accessibility is not optional here and almost nothing else has it.** egui exposes roles and
    labels on its widgets and egui's `Harness` test API queries *the same AccessKit tree a screen
    reader consumes*. For a product that claims to be usable, that is the difference between a
-   claim and a feature. It is also why the palette in [`theme.rs`](../../crates/epsilon-desktop/src/theme.rs)
+   claim and a feature. It is also why the palette in `crates/epsilon-desktop/src/theme.rs`
+   (removed with the desktop, ADR-039; link de-linked, prose unchanged)
    is written against a WCAG contrast floor with a test on it, rather than chosen by eye.
 4. **The test story fits this repository.** egui renders into an off-screen `egui::Context`, so
    a frame can be painted in a unit test at any size — the same discipline the terminal frontend
@@ -2892,7 +2893,8 @@ so short content parks at offset 0, and the fixed input dock is a separate `VSta
 Epsilon is a port of pi, so matching it was the default — **and the default was the defect here,
 because our two front ends disagreed**: the desktop follows its tail through egui's
 `ScrollArea::stick_to_bottom`
-([`crates/epsilon-desktop/src/app.rs`](../../crates/epsilon-desktop/src/app.rs)), so the same
+(`crates/epsilon-desktop/src/app.rs` — removed with the desktop, ADR-039;
+link de-linked, prose unchanged), so the same
 conversation sat in two different places depending on which front end you opened it in.
 `AGENTS.md` §2.1 makes that disagreement the defect rather than the difference: a capability one
 front end has, the terminal has, because it is the same machinery behind a different draw call.
@@ -2978,7 +2980,8 @@ evidence of who that was, the window keeps it.
 
 ## ADR-036: egui's weak text is this theme's `dim` role
 
-**Decided (round 135).** [`IdeTheme::visuals`](../../crates/epsilon-desktop/src/theme.rs) — the
+**Decided (round 135).** `IdeTheme::visuals` (`crates/epsilon-desktop/src/theme.rs` —
+removed with the desktop, ADR-039; link de-linked, prose unchanged) — the
 one unavoidable bridge from this theme's tokens onto egui's `Visuals` — sets
 `weak_text_color` to the theme's **`dim`** role.
 
@@ -3093,5 +3096,56 @@ instead of the explanation; every archive asks); L-125 deliberately different. T
 terminal has no archive door yet — its browser lists live sessions only — which is a
 separate round, not a second implementation: the primitive is shared, the door is not
 yet built.
+
+## ADR-039: The desktop frontend is removed; the TUI becomes the IDE
+
+**Status: accepted (goal-directed removal, 2026-10-12).**
+
+**The question.** The project carried two front ends on one core: a terminal UI and a
+native desktop IDE (`crates/epsilon-desktop`, ~31k lines: egui/eframe over winit + wgpu).
+The desktop could never present on the machine that builds it (no wgpu backend presents;
+`audit/evidence/desktop-window-measurement-2026-10-03.md`), so every pixel claim about it
+was inferred or rasterised offscreen and never seen by its owner — while the goal's own
+evidence discipline (`AGENTS.md` §5) requires user-visible changes to be proven on real
+frames that were looked at. The desktop also carried the workspace's only Rust 1.95 floor
+(egui declares it), its own command table (`SUPPORTED`), its own keybinding table, and a
+433-row parity matrix whose workspace citations all pointed into the removed crate. The
+decision is whether to keep paying for a second front end nobody can see, or to remove it
+and put the effort into core solidity plus one full-screen terminal IDE (tree + editor +
+agent, mouse, palette) that meets or beats the reference UX on hardware the project has.
+
+**Decision: remove `crates/epsilon-desktop` and everything that exists only for it.**
+The crate is deleted; the workspace no longer members it; the `eframe`/`egui` pins leave
+with it (no remaining crate reads them). `docs/parity/dsh-desktop.md` is retired, not
+deleted: it keeps its rows frozen as history under a RETIRED banner, and the parity gates
+(`check-parity-citations`, `check-citation-placement`, `check-parity-counts`) read the live
+`pi-tui.md` matrix only. `check-verb-counts` stays a leg and guards the removal itself —
+it fails if the crate, the member entry, the GUI pins, or the retirement banner go missing
+— so the battery keeps its shape (15 legs) and the removal has a permanent control.
+Markdown links into the deleted crate are de-linked to code spans with prose unchanged
+(dated records keep their words; the links would otherwise lie). `/open`, the one command
+head whose only implementation was the window, stays parseable but unoffered until the TUI
+IDE gives it a door; its description says so.
+
+**Considered and rejected.** Keeping the desktop behind a feature flag: a flag keeps the
+31k lines compiling, the 1.95 floor, the second command table and the matrix citations —
+all of the cost — while the window still cannot be seen on the build machine. Archiving
+the crate to `audit/history/`: a second copy of 31k lines that no gate compiles is rot
+with a path, not preservation; git history already keeps every line. Deleting the DSH
+matrix outright: its rows are the evidence trail for two years of rounds, and the checkers
+that read both matrices by name would need larger surgery than repointing them at the
+live one.
+
+**Consequences.** ADR-020 (native desktop on egui) is superseded. The MSRV is uniformly
+1.88. Battery legs stay 15. The TUI-IDE work (Phase 3) inherits the window's honest
+ideas — refusal by name, no silent no-ops, drawn (not stated) states — without inheriting
+its pixels.
+
+**Revisit trigger (any one reopens this ADR).** The owner directs a window back; a
+maintained native stack appears that presents on the project's machines with first-class
+accessibility under a compatible licence; the TUI IDE demonstrably cannot carry a workflow
+the product owes its users and a window can. A return comes back as a new ADR with its own
+battery shape — never as a quiet re-add, which the `check-verb-counts` guard fails on
+purpose.
 
 

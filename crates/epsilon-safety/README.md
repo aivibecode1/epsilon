@@ -14,7 +14,7 @@ front end implements `ApprovalUi` and owns the interaction.
   and `epsilon-tools` are dev-dependencies, so its tests can drive a real loop against a
   real registry.
 - **Depended on by:** `epsilon-tools`, and through it `epsilon-runtime`, `epsilon-tui`,
-  `epsilon-server`, `epsilon-desktop`, `epsilon-cli`.
+  `epsilon-server`, `epsilon-cli`.
 
 ## Entry points
 

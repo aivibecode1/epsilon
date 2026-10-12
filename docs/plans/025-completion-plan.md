@@ -124,7 +124,7 @@ the ones a user hits first, and three of them are already itemised in the matric
 
 | Gap | Rows | Where | State at round 65 |
 |---|---|---|---|
-| Session verbs in the window (all the terminal answers, `/editor` refused with reason) | D-1xx, U-0xx | [`../../crates/epsilon-desktop/src/commands.rs`](../../crates/epsilon-desktop/src/commands.rs) | **Done** — 36 of 37 heads answered, rounds 4–57 |
+| Session verbs in the window (all the terminal answers, `/editor` refused with reason) | D-1xx, U-0xx | `crates/epsilon-desktop/src/commands.rs` (removed with the desktop, ADR-039; link de-linked) | **Done** — 36 of 37 heads answered, rounds 4–57 |
 | A permission-preset surface, so a privilege-raising control has a gate to sit behind | D-080–D-082, I-121, I-131 | `epsilon-safety` + the window | Engine + `/preset` heads + typed gates done (rounds 66–68, ADR-032); select widgets pending |
 | A context menu in editable fields (cut/copy/paste/select-all) | D-007, D-008 | the composer and the editor | **Blocked** — egui 0.36 exposes no cursor/selection or clipboard-read API; needs an `arboard` dependency plus state surgery (recorded in the rows, round 59) |
 | The quit dialog's appearance (M316 tests its behaviour; the rasteriser blanks on it) | — | `app.rs:5141-5150` | **Blocked** — offscreen raster crashes on this machine (Vulkan access-violation, Dx12 hangs; baseline crashes identically); visual QA must happen where the raster works (round 58) |

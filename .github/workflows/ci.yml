@@ -4,10 +4,9 @@
 #   everything. This is the primary development platform.
 # - linux: closes the "Linux confinement verified" acceptance item — the bwrap
 #   integration suite (tests/bwrap_unix.rs) executes against real bubblewrap.
-# - msrv: the workspace declares rust-version = 1.88; prove the twelve crates that
-#   inherit it still compile there. `epsilon-desktop` is excluded on purpose: it needs
-#   1.95 because egui does (ADR-020), and a desktop window is not a reason to make a
-#   headless build on this runner need a newer toolchain.
+# - msrv: the workspace declares rust-version = 1.88; prove every crate still
+#   compiles there. (Before ADR-039 the desktop crate was excluded on purpose:
+#   it needed 1.95 because egui did. That exclusion left with the crate.)
 #
 # All tests are offline by design (faux providers); no secrets are needed or used.
 

@@ -3,7 +3,7 @@
 //!
 //! **Why this is here and not in the terminal.** The command half of the registry was pure
 //! data and pure text-in/enum-out parsing, and it lived in `epsilon-tui/src/picker.rs` — so
-//! `epsilon-desktop` reached across a frontend to read it
+//! the desktop window (removed, ADR-039) used to reach across a frontend to read it
 //! (`crates/epsilon-desktop/src/commands.rs:79`, `use epsilon_tui::picker::{self, Command};`).
 //! That crate's own manifest had already predicted the edge and named the moment it would
 //! break: *"The desktop still draws no terminals and depends on no terminal behaviour… If
@@ -18,7 +18,7 @@
 //!
 //! **What this is not.** `ADR-024` records the larger unification — one `REGISTRY` table with
 //! per-front-end capability as data, replacing `COMMAND_HEADS`, `ALIAS_HEADS`, `SLASH_ITEMS`,
-//! `keybindings::DEFAULTS` and the desktop's `SUPPORTED`/`head_of` — as **designed and not
+//! `keybindings::DEFAULTS` and the removed desktop's `SUPPORTED`/`head_of` — as **designed and not
 //! built** (`docs/design/epsilon-decisions.md:1919-1924`). This module is the host that move
 //! needs, not the move: the rows are still four hand-maintained tables, they just live in
 //! one crate now.
@@ -174,7 +174,7 @@ pub const SLASH_ITEMS: &[SlashItem] = &[
         // `every_offered_command_is_reachable_from_slash_items` exists to close —
         // and the description says who answers it, so the offer never lies.
         value: "/open ",
-        description: "open a workspace directory (desktop window; the terminal refuses by name)",
+        description: "open a workspace directory (no front end offers this yet; the terminal refuses by name)",
     },
     SlashItem {
         // The name is the file and the verb is the argument, because "restore" on its own

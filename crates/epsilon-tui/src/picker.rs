@@ -8,7 +8,7 @@
 //! so **no call site in this workspace changed**.
 //!
 //! It was this crate's own edge that made the move worth making.
-//! `crates/epsilon-desktop/src/commands.rs:79` reads `parse_command` and
+//! The removed desktop window (ADR-039) used to read `parse_command` and
 //! `COMMAND_HEADS` from here — a native IDE importing a terminal crate to learn what a
 //! `/word` means, in the crate whose manifest says it "draws no terminals and depends on
 //! no terminal behaviour". The registry is data both front ends need, and `AGENTS.md` §2.4

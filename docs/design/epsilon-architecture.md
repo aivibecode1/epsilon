@@ -39,8 +39,9 @@ Direct internal production dependencies, as declared in crate manifests:
 | `epsilon-tui` | contracts, core, llm, safety, session | Terminal application, editor, dialogs and transcript |
 | `epsilon-server` | contracts, core, llm, safety, tools | HTTP/SSE frontend |
 | `epsilon-runtime` | contracts, llm, core, tools, lsp, safety, session, ext, mcp | **The one composition point**: a workspace plus a configuration becomes a running agent (`build_runtime`, `resolve_launch`) |
-| `epsilon-desktop` | contracts, core, llm, runtime, session, safety, tools, mcp, tui | Native desktop IDE (egui/eframe over winit + wgpu) |
 | `epsilon-cli` | all other workspace crates | Arguments, configuration and dispatch |
+
+> `epsilon-desktop` was a row here until ADR-039 removed it (2026-10-12) with its crate.
 
 > **Two rows were missing until 2026-10-04, and the omission inverted the architecture.**
 > This table listed neither `epsilon-runtime` nor `epsilon-desktop`, and gave

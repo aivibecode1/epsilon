@@ -1,9 +1,16 @@
-# DSH Desktop — parity matrix for `epsilon-desktop`
+# DSH Desktop — parity matrix for `epsilon-desktop` (RETIRED, ADR-039)
+
+> **RETIRED 2026-10-12 (ADR-039).** The desktop frontend is removed. This matrix is
+> frozen history: its row statuses, counts and workspace citations describe the tree
+> as it was before removal and are **not** updated. Its workspace citations no longer
+> resolve (the crate is gone) and the parity gates no longer read this file. The live
+> matrix is [`pi-tui.md`](pi-tui.md). Revisit trigger: a new ADR reopening a native
+> window re-activates this matrix or charters its replacement.
 
 **Status:** behavioural parity, measured from source on both sides. Every row below was written
 after reading the reference citation and opening the ours citation, or after recording an honest
 `missing`.
-**Our side:** [`crates/epsilon-desktop`](../../crates/epsilon-desktop) — egui/eframe over
+**Our side:** `crates/epsilon-desktop` (removed with the desktop, ADR-039; link de-linked) — egui/eframe over
 winit + wgpu, rendered natively (ADR-020).
 **Evidence the rows were built from:**
 [`audit/evidence/parity-dsh-desktop-reference.md`](../../audit/evidence/parity-dsh-desktop-reference.md).
@@ -57,13 +64,14 @@ and asserted on the frame, or a named screen shows it — never merely that code
 
 ## How the ours column was checked
 
-1. [`crates/epsilon-desktop/tests/window.rs`](../../crates/epsilon-desktop/tests/window.rs) —
+1. `crates/epsilon-desktop/tests/window.rs` (removed with the desktop, ADR-039; link de-linked) —
    **49 end-to-end tests** over a real faux agent, composing through
    `epsilon_runtime::resolve_launch` and asserting on `FrameSummary`, never on state alone. It is
    the strongest evidence available and most `done` rows name a test from it.
 2. The in-crate frame tests in `src/app.rs` and `src/layout.rs`, which assert on rendered
    rectangles, on the accessibility tree, and on a rasterised frame.
-3. [`crates/epsilon-desktop/tests/frame_cost.rs`](../../crates/epsilon-desktop/tests/frame_cost.rs)
+3. `crates/epsilon-desktop/tests/frame_cost.rs` (removed with the desktop, ADR-039; link
+de-linked)
    — frame cost, the accessibility tree the window publishes, and where transcript milliseconds
    go.
 4. The source itself, for anything the tests do not reach. A row whose code exists but which no
@@ -1013,7 +1021,7 @@ from. **A row absent from this document is not a row that was found and dismisse
 ## Reproducing the claims
 
 Every `verified` cell names a test in
-[`crates/epsilon-desktop/tests/window.rs`](../../crates/epsilon-desktop/tests/window.rs) or an
+`crates/epsilon-desktop/tests/window.rs` (removed with the desktop, ADR-039; link de-linked) or an
 in-crate frame test, or a key sequence a person can press. The 49 end-to-end tests in
 `tests/window.rs` compose a real agent through `epsilon_runtime::resolve_launch`, attach the real
 bridge, submit a real turn to the offline scripted provider, pump real frames and assert on

@@ -46,7 +46,7 @@ between those two descriptions is the whole finding.
 |---|---|
 | HEAD | `67dde17` (2026-10-05), *"feat(m312): the desktop can change its own colour scheme"* |
 | Working tree | **18 modified tracked files, +2,397 / −320 lines, 48 untracked entries** — M313, M314, M315 and M316 exist only on disk. *(Measured before this review's own four documentation edits, which bring the same counts to 19 / +2,515 / −322 / 51.)* |
-| Newest source edit | [`../../crates/epsilon-desktop/src/app.rs`](../../crates/epsilon-desktop/src/app.rs), 2026-10-05 17:36 |
+| Newest source edit | `crates/epsilon-desktop/src/app.rs` (removed with the desktop, ADR-039; link de-linked), 2026-10-05 17:36 |
 | The battery that describes this tree | [`../../audit/evidence/gate-m316d-2026-10-05.txt`](../../audit/evidence/gate-m316d-2026-10-05.txt) — 10 legs, all `[exit=0]`, **2,088 passed / 0 failed / 12 ignored across 78 binaries**, `GATE PASS`, 2026-10-05 19:07 |
 | The battery `STATUS.md` cites | `gate-m315b`, 2026-10-05 **16:29** — which **predates** the newest source edit, so it describes a tree that no longer exists |
 | Source | 138,489 lines under `crates/*/src` (185 files); 165,806 `.rs` lines in total; ≈2,120 declared test functions |
@@ -70,7 +70,7 @@ the project's record.
 | "a unique harness" | **Met** | One core, two front ends, one composition point: `build_runtime` and `resolve_launch` are called from `epsilon-cli`, `epsilon-desktop` and `epsilon-runtime`'s own tests and nowhere else; no crate depends on `epsilon-cli`. It is genuinely one engine. |
 | "combines the best features of Pi and DSH" | **Met as research, partly as product** | Six vendored references, [`../references/`](../references/README.md), 869 source-cited inventory rows, [`../../CREDITS.md`](../../CREDITS.md), [`../references/TUI-DECISION.md`](../references/TUI-DECISION.md). The *integration* is real: permissions, goals, checkpoints, MCP and skills come from the references and exist here. |
 | "the terminal is a direct port of Pi Agent" | **Not met** | [`../parity/pi-tui.md`](../parity/pi-tui.md): 339 rows → **39 done / 121 partial / 161 missing / 18 deliberately different**. One Pi behaviour in nine is exercised here. |
-| "the desktop is a direct port of DSH Desktop" | **Not met** | [`../parity/dsh-desktop.md`](../parity/dsh-desktop.md): 433 rows → **11 done / 88 partial / 292 missing / 42 deliberately different**. Seven of 37 shared command heads are answered ([`../../crates/epsilon-desktop/src/commands.rs`](../../crates/epsilon-desktop/src/commands.rs), `SUPPORTED`). The window cannot present on this machine. |
+| "the desktop is a direct port of DSH Desktop" | **Not met** | [`../parity/dsh-desktop.md`](../parity/dsh-desktop.md): 433 rows → **11 done / 88 partial / 292 missing / 42 deliberately different**. Seven of 37 shared command heads are answered (`crates/epsilon-desktop/src/commands.rs`, `SUPPORTED` — removed with the desktop, ADR-039; link de-linked). The window cannot present on this machine. |
 | "the references are there to integrate the best aspects" | **Met** | This is the strongest part of the work, and the only clause that is fully closed. |
 
 **A "direct port" of both was never possible, and the project proved that itself.** Pi is a
@@ -131,7 +131,7 @@ closed on 2026-10-05 by M316.
   machine or any other. `audit/evidence/desktop-reader-walk-2026-10-05b.txt` says of itself: *"This
   is the script a reader would be handed, not a recording of one speaking."*
 - **It cannot be seen.** *"No wgpu backend presents on this machine"*
-  ([`../../crates/epsilon-desktop/src/frame_raster.rs`](../../crates/epsilon-desktop/src/frame_raster.rs),
+  (`crates/epsilon-desktop/src/frame_raster.rs` — removed with the desktop, ADR-039; link de-linked,
   [`../HANDOFF.md`](../HANDOFF.md) §4). Every desktop pixel claim comes from a **test-only** offscreen
   rasteriser (`#[ignore]`d, needs a GPU adapter), not from the production present path.
 
@@ -172,7 +172,7 @@ it); corrected in `STATUS.md` by this review.
 
 **F2 — the cited "latest green battery" describes a tree that no longer exists.** *(high)*
 `STATUS.md` cited `gate-m315b` (16:29:58) as *"the tree this file describes"*, but
-[`../../crates/epsilon-desktop/src/app.rs`](../../crates/epsilon-desktop/src/app.rs) was edited at
+`crates/epsilon-desktop/src/app.rs` (removed with the desktop, ADR-039; link de-linked) was edited at
 17:36:19 — after it. The log that describes the tree is `gate-m316d` (19:07:54, 2,088 passed), which
 sat in `target/` with nothing pointing at it.
 *Evidence:* mtimes of both logs against the newest `.rs`; `test result:` sums recomputed for both.

@@ -4,7 +4,7 @@
 in flight, what is cut, what is broken. The permanent rules live in
 [`../AGENTS.md`](../AGENTS.md), which is locked. Do not put moving state in `AGENTS.md`.
 
-Last updated: 2026-10-12 (goal session: window workspace switching, session rename/archive doors, quit-dialog leftovers, Pi tree/transcript partials, green battery gate-goal-s4)
+Last updated: 2026-10-12 (revised goal: desktop removed, TUI-as-IDE; Phase 1 in progress)
 
 > **Picking this up from someone else? Read [`HANDOFF.md`](HANDOFF.md) first**, then
 > [`plans/024-finishing-the-objective.md`](plans/024-finishing-the-objective.md) for what is left and
@@ -12,8 +12,11 @@ Last updated: 2026-10-12 (goal session: window workspace switching, session rena
 
 ## Current task
 
-Evolve Epsilon into one coherent agent harness with two front ends on a single core: a
-powerful CLI/TUI agent and a polished **native** desktop IDE.
+Revised goal (2026-10-12): remove the desktop frontend and focus on core solidity,
+docs/navigability, and an opencode-style full-screen TUI (tree + editor + agent, mouse,
+palette) that meets or beats the reference UX. Native terminal stack only.
+Phase 1 (this session): delete `crates/epsilon-desktop`, rewire workspace/gates/docs,
+record ADR-039 with its revisit trigger, battery green with the tree clean.
 
 ### Goal session 2026-10-11 (complete, 10/10 tasks)
 
@@ -362,11 +365,24 @@ instead of newlining, and the sessions sidebar being a keyboard trap. What remai
 
 ## Verification (what is actually true)
 
-**Latest green battery: [`gate-goal-s4-20261012.txt`](../audit/evidence/gate-goal-s4-20261012.txt),
+**Latest green battery: [`gate-removal-r2-20261012.txt`](../audit/evidence/gate-removal-r2-20261012.txt),
 2026-10-12 — the tree this file describes, and it is the one HEAD holds.** Fifteen legs, all
-`[exit=0]`, `GATE PASS`. **2,385 passed / 0 failed / 19 ignored across 78 binaries**, summed from
+`[exit=0]`, `GATE PASS`. **1,975 passed / 0 failed / 10 ignored across 73 binaries**, summed from
 that one log's `test result:` lines. `CARGO_BUILD_JOBS=1`, single build owner, no edits during
-the run, green first time. (Previous: `gate-goal-s3-20261011`, 2,355/0/19.)
+the run. The drop from 2,385/19/78 is the removed desktop crate itself (~410 window tests,
+5 test binaries incl. its ignored raster fixtures). (Previous: `gate-goal-s4-20261012`, 2,385/0/19.)
+
+> **Revised goal, Phase 1 (2026-10-12, this session).** The desktop frontend is removed
+> (ADR-039): `crates/epsilon-desktop` (~31k lines) deleted, workspace member + `eframe`/`egui`
+> pins gone, `Cargo.lock` re-derived with none of the three, `cargo run -p epsilon-desktop`
+> now fails `not found in workspace` (removal control). Parity gates read the live `pi-tui.md`
+> matrix only (`dsh-desktop.md` retired, frozen); `check-verb-counts` guards the removal
+> (crate/member/pins/banner). Twelve doc links into the deleted crate de-linked to code
+> spans, prose unchanged; crate READMEs re-derived. RED proof: the new guard failed 5-deep
+> before the deletion, and the first full battery (`gate-removal-r1`, preserved as
+> `gate-removal-r1-20261012-FAIL-lost-tests-guard.txt`) failed on the no-lost-tests guard
+> naming every window test — closed by a scoped ADR-039 exception for that one retired path,
+> with the guard's own classifier control still green.
 
 > **Ten findings closed in a row** (rounds 138–147). Rounds 138–144 were things that *happened*
 > wrongly, 145–146 were things that *went unsaid*, and 147 is the first one that **adds a
@@ -1346,7 +1362,8 @@ unstated gap.
 
 #### What replaced it, and why it is not the same thing
 
-[`../scripts/desktop-reader-walk.ps1`](../scripts/desktop-reader-walk.ps1) walks the platform tree
+`scripts/desktop-reader-walk.ps1` (removed with the desktop, ADR-039; link de-linked)
+walks the platform tree
 the way a reader walks it and prints the **sentence each node would produce** — role, name, value,
 and the states that change what is said — then reports the findings that are defects rather than
 style:

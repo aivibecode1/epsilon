@@ -12,7 +12,7 @@ the tools or the permission decision.
 
 - **Depends on:** `epsilon-contracts` only.
 - **Depended on by:** `epsilon-core`, and through it `epsilon-runtime`, `epsilon-tui`,
-  `epsilon-server`, `epsilon-desktop`, `epsilon-cli`. `epsilon-safety` depends on it for
+  `epsilon-server`, `epsilon-cli`. `epsilon-safety` depends on it for
   its tests only.
 
 ## Entry points

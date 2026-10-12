@@ -2,8 +2,8 @@
 
 Why this is a gate and not a one-off repair
 -------------------------------------------
-The parity matrices (`docs/parity/pi-tui.md`, `docs/parity/dsh-desktop.md`) are
-the evidence trail for the whole port: every row names the production lines
+The parity matrix (`docs/parity/pi-tui.md`) is
+the evidence trail for the port: every row names the production lines
 that establish it.  Moving code — even a pure 53-line deletion, as the export
 move in round 14 did — silently re-points every citation below it, and a row
 that cites the wrong lines is a claim that cannot be followed.  Round 14
@@ -12,15 +12,16 @@ instead.
 
 Scope and deliberate exclusions
 -------------------------------
-* Only the two matrices are scanned.  Other documents cite code too, but the
-  matrices are the tables whose rows are counted, so they are where a dangling
-  citation corrupts a number.
+* Only the live matrix is scanned. `docs/parity/dsh-desktop.md` is retired
+  (ADR-039): its rows are frozen history whose workspace citations no longer
+  resolve, so this gate does not read it. Other documents cite code too, but
+  the live matrix is the table whose rows are counted, so it is where a
+  dangling citation corrupts a number.
 * Only workspace-owned paths (`crates/`, `docs/`, `scripts/`, `audit/`) are
   checked.  Reference-side citations (`packages/`, `ui-*/`, `apps/`) point
   into `references/`, which is not committed — like `check-links.py`, this
   gate does not depend on it.
-* Directories count as resolved: a bare `` `crates/epsilon-desktop` `` names a
-  crate, not a file.
+* Bare crate names (no line) are crate-level citations and resolve as dirs.
 * This checks that the cited lines *exist*, not that they still say what the
   row claims.  Existence catches moves and deletions; meaning stays a
   reviewer's job, and the script says so wherever it reports.
@@ -40,7 +41,6 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 MATRICES = (
     os.path.join(ROOT, "docs", "parity", "pi-tui.md"),
-    os.path.join(ROOT, "docs", "parity", "dsh-desktop.md"),
 )
 
 # A backticked workspace path with an optional :line or :start-end suffix.

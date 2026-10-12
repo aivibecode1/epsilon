@@ -1,73 +1,44 @@
-"""Fail the build on a verb-count claim that drifted from SUPPORTED.
+"""Guard the desktop removal (ADR-039): the verb-count gate is retired, not deleted.
 
-Why this is a gate and not care
--------------------------------
-The window's verb count is stated in prose in four places
-(`docs/parity/dsh-desktop.md`, the `SUPPORTED` doc comment,
-`docs/plans/025-completion-plan.md`), and every verb round updates them by
-hand. Four rounds running each missed at least one site (a paragraph still
-said 20/17 three rounds later), and no other gate reads prose numbers. This
-is the check that means nobody has to.
+Why this script still exists
+----------------------------
+`check-verb-counts.py` used to hold the window's verb prose
+(`docs/parity/dsh-desktop.md`, the desktop `SUPPORTED` table,
+`docs/plans/025-completion-plan.md`) against the shared `COMMAND_HEADS`.
+The desktop crate is removed, so there is no `SUPPORTED` table left to hold
+prose against — and a gate leg that always passes would be the silent no-op
+`AGENTS.md` §2.7 forbids. Deleting the leg instead would silently shrink the
+battery, which is worse: a missing leg does not lie, but nobody would notice
+it left.
 
-Scope and deliberate exclusions
--------------------------------
-* Only CURRENT claims are checked. Dated records — the ADR amendments
-  ("N of 37" per round) and the STATUS phase log — describe the tree on the
-  day they were written and must never change, so this script does not read
-  those files at all.
-* Only the exact claim shapes below. A new sentence with a new shape is the
-  author's job to add here, and the script says so when it finds a number it
-  does not recognise near the word "heads".
-* The guard test (`the_window_runs_exactly_the_heads_it_declares_supported`)
-  already holds SUPPORTED against the arms; this holds the prose against
-  SUPPORTED. Neither covers the other.
+So the leg stays and checks the removal itself. It fails when:
+
+* `crates/epsilon-desktop/` exists again (the crate was re-added without
+  reopening ADR-039 and restoring the gates that read it);
+* the workspace still members `epsilon-desktop` or still pins the
+  desktop-only GUI stack (`eframe`, `egui`);
+* the retired matrix no longer carries its retirement banner (history must
+  say it is history, or a reader will cite frozen rows as current).
+
+This is the removal control for the deletion: it was written first, failed
+against the tree that still had the desktop (RED), and passes only when the
+removal it guards is real.
 
     python scripts/check-verb-counts.py            # report, exit 1 on drift
-    python scripts/check-verb-counts.py --quiet   # summary line only
+    python scripts/check-verb-counts.py --quiet    # summary line only
 """
 
 from __future__ import annotations
 
 import argparse
 import os
-import re
 import sys
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
-WORDS = {
-    "twenty": 20,
-    "twenty-one": 21,
-    "twenty-two": 22,
-    "twenty-three": 23,
-    "twenty-four": 24,
-    "twenty-five": 25,
-    "twenty-six": 26,
-    "twenty-seven": 27,
-    "twenty-eight": 28,
-    "twenty-nine": 29,
-    "thirty": 30,
-    "thirty-one": 31,
-    "thirty-two": 32,
-    "thirty-three": 33,
-    "thirty-four": 34,
-    "thirty-five": 35,
-    "thirty-six": 36,
-    "thirty-seven": 37,
-    "thirty-eight": 38,
-}
-
-
-def read(rel: str) -> str:
-    with open(os.path.join(ROOT, rel), encoding="utf-8") as f:
-        return f.read()
-
-
-def parse_array(source: str, name: str) -> list[str]:
-    """One quoted string per line between `pub const NAME` and the closing."""
-    start = source.index(f"pub const {name}")
-    end = source.index("];", start)
-    return re.findall(r'"([a-z0-9_-]+)"', source[start:end])
+RETIRED_MATRIX = os.path.join(ROOT, "docs", "parity", "dsh-desktop.md")
+BANNER = "RETIRED"
+ADR = "ADR-039"
 
 
 def main() -> int:
@@ -77,64 +48,47 @@ def main() -> int:
 
     problems: list[str] = []
 
-    contracts = read("crates/epsilon-contracts/src/command.rs")
-    heads = parse_array(contracts, "COMMAND_HEADS")
-    total = len(heads)
-
-    desktop = read("crates/epsilon-desktop/src/commands.rs")
-    supported = parse_array(desktop, "SUPPORTED")
-    have = len(supported)
-
-    def check(cond: bool, message: str) -> None:
-        if not cond:
-            problems.append(message)
-
-    parity = read("docs/parity/dsh-desktop.md")
-    for m in re.finditer(r"answers (\d+) of the (\d+) heads", parity):
-        check(
-            int(m.group(1)) == have and int(m.group(2)) == total,
-            f"dsh-desktop.md says {m.group(1)} of {m.group(2)} heads; "
-            f"SUPPORTED holds {have} of {total}",
-        )
-    for m in re.finditer(r"refuses the other (\d+) by name", parity):
-        check(
-            int(m.group(1)) == total - have,
-            f"dsh-desktop.md says {m.group(1)} refused; {total} - {have} = "
-            f"{total - have}",
-        )
-    for m in re.finditer(r"over ((?:twenty|thirty)[a-z-]*) verbs", parity):
-        check(
-            WORDS.get(m.group(1)) == have,
-            f"dsh-desktop.md says '{m.group(1)} verbs'; SUPPORTED holds {have}",
-        )
-    for m in re.finditer(r"is one of the ((?:twenty|thirty)[a-z-]*) heads", parity):
-        check(
-            WORDS.get(m.group(1)) == have,
-            f"dsh-desktop.md says 'one of the {m.group(1)}'; SUPPORTED holds {have}",
-        )
-    for m in re.finditer(r"SUPPORTED.* is ((?:twenty|thirty)[a-z-]*) names", desktop):
-        check(
-            WORDS.get(m.group(1)) == have,
-            f"commands.rs doc says '{m.group(1)} names'; SUPPORTED holds {have}",
+    if os.path.exists(os.path.join(ROOT, "crates", "epsilon-desktop")):
+        problems.append(
+            "crates/epsilon-desktop exists; the desktop is removed (ADR-039)"
         )
 
-    plan = read("docs/plans/025-completion-plan.md")
-    for m in re.finditer(r"answers (\d+) of (\d+) commands", plan):
-        check(
-            int(m.group(1)) == have and int(m.group(2)) == total,
-            f"025-completion-plan.md says {m.group(1)} of {m.group(2)}; "
-            f"SUPPORTED holds {have} of {total}",
+    with open(os.path.join(ROOT, "Cargo.toml"), encoding="utf-8") as f:
+        workspace = f.read()
+    workspace_lines = [
+        line for line in workspace.splitlines() if not line.strip().startswith("#")
+    ]
+    workspace_code = "\n".join(workspace_lines)
+    if "epsilon-desktop" in workspace_code:
+        problems.append("Cargo.toml still names epsilon-desktop")
+    for pin in ("eframe", "egui"):
+        # A crate name in a comment is fine; a dependency pin is the removal.
+        for line in workspace_lines:
+            text = line.strip()
+            if text.startswith("#"):
+                continue
+            if pin in text and "=" in text:
+                problems.append(f"Cargo.toml still pins desktop-only '{pin}'")
+                break
+
+    try:
+        with open(RETIRED_MATRIX, encoding="utf-8") as f:
+            matrix = f.read()
+    except OSError:
+        problems.append("docs/parity/dsh-desktop.md is missing entirely")
+        matrix = ""
+    if matrix and (BANNER not in matrix or ADR not in matrix):
+        problems.append(
+            "docs/parity/dsh-desktop.md carries no retirement banner "
+            f"('{BANNER}' + '{ADR}')"
         )
 
     if problems and not args.quiet:
-        print("verb-count drift:")
+        print("desktop-removal drift:")
         for p in problems:
             print(f"  - {p}")
     if args.quiet:
-        print(
-            f"verb-counts: SUPPORTED holds {have} of {total}; "
-            f"{len(problems)} problem(s)"
-        )
+        print(f"verb-counts: desktop-removal guard, {len(problems)} problem(s)")
     return 1 if problems else 0
 
 

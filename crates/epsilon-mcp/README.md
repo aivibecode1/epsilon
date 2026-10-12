@@ -18,7 +18,7 @@ types: those stay inside `src/stdio.rs`; the rest of the crate sees only `Connec
 Workspace dependencies: `epsilon-contracts`, `epsilon-core`. External: serde, serde_json,
 async-trait, tokio, rmcp 3.1.4. Dev: rmcp with its `server` and `transport-io` features.
 Depended on by `epsilon-cli` (the `--mcp` flag), `epsilon-runtime` (wiring servers into a
-composed agent) and `epsilon-desktop` (for `McpServerConfig`, a `RunParams` field).
+composed agent) — `McpServerConfig` is a `RunParams` field, so naming it here is unavoidable.
 
 ## Entry points
 

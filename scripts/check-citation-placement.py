@@ -25,7 +25,7 @@ import re
 import sys
 from pathlib import Path
 
-MATRICES = ["docs/parity/pi-tui.md", "docs/parity/dsh-desktop.md"]
+MATRICES = ["docs/parity/pi-tui.md"]
 CITATION = re.compile(r"((?:crates/)?[\w./-]+\.rs):(\d+)(?:-(\d+))?")
 # The inline test module: `#[cfg(test)]` immediately followed by `mod tests {`.
 # A `#[cfg(test)] mod name;` declaration is a submodule whose content lives in
@@ -37,11 +37,11 @@ MOD_TESTS = re.compile(r"^\s*mod tests \{")
 def basename_map(matrix: str) -> dict[str, str]:
     """`app.rs` -> the full `crates/...` path with that basename **in this matrix**.
 
-    Per matrix, because each matrix's ours column names one front end's code:
-    the DSH matrix's paths are all `epsilon-desktop`, the Pi matrix's all
-    `epsilon-tui`/`epsilon-cli`. A map built across both would hold two
-    `app.rs` entries and refuse both; built per document, each basename is
-    unique and a bare continuation resolves. One match, or leave it alone.
+    Per matrix, because the ours column names one front end's code:
+    the Pi matrix's paths are all `epsilon-tui`/`epsilon-cli`. A map built
+    across two front ends would hold two `app.rs` entries and refuse both;
+    built per document, each basename is unique and a bare continuation
+    resolves. One match, or leave it alone.
     """
     by_base: dict[str, set[str]] = {}
     full = re.findall(r"(crates/[\w./-]+\.rs)", Path(matrix).read_text(encoding="utf-8"))

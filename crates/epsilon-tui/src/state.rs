@@ -637,9 +637,9 @@ impl TranscriptLine {
 /// no usage (pi v1 files carry none) reads "no usage reported" rather than a number
 /// that was never reported.
 ///
-/// `pub` because the desktop window draws the same row: both front ends read one
-/// builder rather than each owning the wording (the `epsilon-tui` → `epsilon-desktop`
-/// edge already carries theme roles and metrics, and a cost line is presentation).
+/// `pub` because the removed desktop window used to draw the same row (ADR-039): one front end
+/// reads one builder rather than each owning the wording (the old `epsilon-tui` → `epsilon-desktop`
+/// edge already carried theme roles and metrics, and a cost line is presentation).
 pub fn compaction_cost_line(
     tokens_before: u64,
     usage: Option<epsilon_contracts::message::Usage>,

@@ -13,7 +13,7 @@ parses a command line; what a front end does with the agent is its own business.
 - **Depends on:** all nine library crates — `epsilon-contracts`, `epsilon-llm`,
   `epsilon-core`, `epsilon-tools`, `epsilon-lsp`, `epsilon-safety`, `epsilon-session`,
   `epsilon-ext`, `epsilon-mcp`.
-- **Depended on by:** the three front ends, `epsilon-cli`, `epsilon-tui`, `epsilon-desktop`.
+- **Depended on by:** the two front ends, `epsilon-cli` and `epsilon-tui`.
 
 ## Entry points
 
@@ -38,7 +38,7 @@ parses a command line; what a front end does with the agent is its own business.
 
 ## How to run and test it
 
-No binary of its own — `epsilon-cli`, `epsilon-tui` and `epsilon-desktop` are what call it.
+No binary of its own — `epsilon-cli` and `epsilon-tui` are what call it.
 Integration tests: `tests/goal_round_gates.rs`, `tests/goal_gated_completion.rs`; an
 offline run through a composed agent is `cargo run -q -p epsilon-cli -- --demo`.
 

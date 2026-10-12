@@ -6,7 +6,7 @@
 
 Epsilon is a coding-agent **harness** — the program that runs an agent: it talks to a model,
 offers it tools, decides what it is allowed to do, and keeps the conversation — written in Rust,
-with a native desktop IDE, a terminal UI, a headless mode, an HTTP/SSE server and a stdio RPC
+with a full-screen terminal UI (an opencode-style tree + editor + agent IDE), a headless mode, an HTTP/SSE server and a stdio RPC
 frontend over one agent core. It began as a port of
 [pi-agent](https://github.com/earendil-works/pi) and has since taken execution, permission and
 recovery ideas from DeepSeek Harness, Hermes Agent and opencode.
@@ -38,21 +38,12 @@ It is a single binary with no required Node or Python runtime.
 
 ## Install
 
-Rust 1.88 or newer for the CLI and the server. The desktop IDE needs **1.95**, because egui
-declares it; see [ADR-020](docs/design/epsilon-decisions.md) for why that is one crate's floor
-and not the workspace's.
+Rust 1.88 or newer for everything (the removed desktop IDE was the one crate that needed 1.95;
+see ADR-039 in [the decisions log](docs/design/epsilon-decisions.md)).
 
 ```sh
 cargo install --path crates/epsilon-cli --force
 epsilon --help
-```
-
-The desktop IDE is a second binary, so it installs separately:
-
-```sh
-cargo install --path crates/epsilon-desktop --force
-epsilon-desktop            # opens the IDE on the current directory
-epsilon-desktop C:\work\my-repo
 ```
 
 From a clone, without installing:
@@ -60,7 +51,6 @@ From a clone, without installing:
 ```sh
 cargo run -q -p epsilon-cli -- --demo     # offline, scripted, no provider needed
 cargo run -q -p epsilon-cli               # the terminal UI
-cargo run -q -p epsilon-desktop           # the desktop IDE
 ```
 
 Platform notes, shell requirements and what each confinement backend does and
@@ -71,7 +61,6 @@ does not do are in [Install](docs/user/install.md) and
 
 | Command | What it does |
 |---|---|
-| `epsilon-desktop` | The desktop IDE, in a native window |
 | `epsilon` | Interactive terminal UI |
 | `epsilon -p "summarize this repo"` | One prompt, headless; approvals default to denial |
 | `epsilon doctor` | Report configuration and available capabilities without running a model |
@@ -137,7 +126,6 @@ edge nobody meant to add.
 | `epsilon-runtime` | Composition: the one place a workspace and a configuration become a running agent |
 | `epsilon-tui` | Terminal frontend |
 | `epsilon-server` | HTTP/SSE frontend |
-| `epsilon-desktop` | Native desktop IDE: a real window, rendered natively |
 | `epsilon-cli` | The binary: argument parsing and mode dispatch |
 
 The [architecture guide](docs/design/epsilon-architecture.md) maps the real edges

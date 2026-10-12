@@ -3355,8 +3355,19 @@ mod protocol_doc_tests {
         // hunks tight enough that the block is not padded with unrelated lines.
         let collect = |sign: &str| -> std::collections::BTreeSet<String> {
             let mut out = std::collections::BTreeSet::new();
+            // ADR-039 retired the whole desktop crate: its ~400 tests left with the
+            // crate, not one by one, and the battery proved this guard fires on that
+            // diff (gate-removal-r1: `no_source_file_lost_a_test_since_head` FAILED
+            // naming every window test). Exempt removals from that one retired path —
+            // and only that path, so a test lost anywhere else still fails. A future
+            // crate removal needs its own ADR line here, never a wider net.
+            let mut retired = false;
             let lines: Vec<&str> = text.lines().collect();
             for (index, line) in lines.iter().enumerate() {
+                if let Some(rest) = line.strip_prefix("diff --git ") {
+                    retired = rest.contains("crates/epsilon-desktop/");
+                    continue;
+                }
                 let Some(rest) = line.strip_prefix(sign) else {
                     continue;
                 };
@@ -3410,6 +3421,9 @@ mod protocol_doc_tests {
                             || t.starts_with("#[bench")
                     });
                 if is_test {
+                    if sign == "-" && retired {
+                        continue;
+                    }
                     out.insert(name.to_string());
                 }
             }

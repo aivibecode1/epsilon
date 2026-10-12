@@ -14,7 +14,6 @@ members = [
     "crates/epsilon-tui",
     "crates/epsilon-server",
     "crates/epsilon-cli",
-    "crates/epsilon-desktop",
 ]
 
 [workspace.package]
@@ -109,29 +108,9 @@ base64 = "=0.23.1"
 # transitively at this exact version (via tempfile/ring); pinned exact.
 getrandom = "=0.3.4"
 
-# ---------------------------------------------------------------------------
-# Native desktop IDE (ADR-020)
-# ---------------------------------------------------------------------------
-#
-# egui is the only native, non-webview Rust GUI toolkit that clears every bar
-# this project needs at once: it renders natively (winit + wgpu, no embedded
-# browser), it is MIT-OR-Apache-2.0 so the workspace licence is unchanged, it
-# ships AccessKit in its default features so the app is actually reachable by a
-# screen reader, and its dependency tree contains **no `bindgen`, `clang-sys` or
-# `embed-resource`** -- which matters on a machine whose documented build
-# failures are all `cl.exe` / `c1.dll` / NASM problems.
-#
-# Pinned exact per ADR-016. `wgpu` is selected over `glow` deliberately: DX12 is
-# present on every Windows machine this project supports, so the surface comes up
-# on a machine with no usable OpenGL driver, which is a real failure mode for
-# `glutin` on Windows.
-eframe = "=0.36.2"
-egui = "=0.36.2"
-# `egui_extras` was declared here (with the `syntect` feature, a full syntax-highlighting
-# engine) and read by nothing: a search of every `.rs` in the workspace found no
-# reference. It is gone rather than left as an unused dependency with a build cost —
-# if highlighting is ever wanted, it is `egui_extras::syntax_highlighting` plus the
-# palette roles `theme.rs` already defines, and that is a change with a reason attached.
+# ADR-039 retired the native desktop IDE (and ADR-020 with it): `eframe`/`egui`
+# left with `crates/epsilon-desktop`. No remaining crate reads them, so no pin
+# remains here. If a native window ever returns, its ADR re-adds its own pins.
 
 [workspace.lints.rust]
 unsafe_code = "forbid"

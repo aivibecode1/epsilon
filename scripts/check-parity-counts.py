@@ -2,7 +2,7 @@
 
 Why this is a gate and not care
 -------------------------------
-Both matrices (`docs/parity/pi-tui.md`, `docs/parity/dsh-desktop.md`) carry
+The live parity matrix (`docs/parity/pi-tui.md`) carries
 summary tables, grand totals, and open-row lists that are updated by hand
 every parity round -- and section headings that embed counts
 (`### The missing rows -- 161`, still saying 161 three rounds after it
@@ -23,12 +23,11 @@ What it verifies, per file
 
 Scope and deliberate exclusions
 -------------------------------
-* Per-section placement is verified for pi-tui (its `## N. Name` headers
-  match its summary rows verbatim) but NOT for dsh-desktop, whose `##`
-  headers, summary areas, and list areas use three different namings for
-  the same sections. A hand-map would be a fourth list to keep in step;
-  the script verifies that file's arithmetic, totals, and list unions
-  instead, and says so.
+* Section placement is verified: the matrix's `## N. Name` headers
+  match its summary rows verbatim. (`docs/parity/dsh-desktop.md` is retired
+  by ADR-039 and no longer read: its `##` headers, summary areas and list
+  areas used three different namings for the same sections, and its rows are
+  frozen history now.)
 * Dated records (ADR amendments, the STATUS log) are not read -- see
   `check-verb-counts.py`.
 * Meaning is a reviewer's job: a row with the wrong status but consistent
@@ -207,18 +206,14 @@ def main() -> int:
 
     problems: list[str] = []
     pi = check_file("docs/parity/pi-tui.md", problems, map_sections=True)
-    dsh = check_file("docs/parity/dsh-desktop.md", problems, map_sections=False)
 
     if problems and not args.quiet:
         print("parity-count drift:")
         for p in problems:
             print(f"  - {p}")
     if args.quiet:
-        pi_n, dsh_n = sum(pi.values()), sum(dsh.values())
-        print(
-            f"parity-counts: pi-tui {pi_n} rows, dsh-desktop {dsh_n} rows; "
-            f"{len(problems)} problem(s)"
-        )
+        pi_n = sum(pi.values())
+        print(f"parity-counts: pi-tui {pi_n} rows; {len(problems)} problem(s)")
     return 1 if problems else 0
 
 

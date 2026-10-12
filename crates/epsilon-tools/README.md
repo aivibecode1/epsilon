@@ -11,7 +11,7 @@ registers; that is `epsilon-runtime`.
 ## How it connects
 
 - **Depends on:** `epsilon-contracts`, `epsilon-core`, `epsilon-safety`.
-- **Depended on by:** `epsilon-runtime`, `epsilon-server`, `epsilon-desktop`, `epsilon-cli`.
+- **Depended on by:** `epsilon-runtime`, `epsilon-server`, `epsilon-cli`.
   `epsilon-tui` depends on it for tests only.
 
 ## Entry points

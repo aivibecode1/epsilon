@@ -416,6 +416,10 @@ pub const TERMINAL: &[(&str, &[&str])] = &[
 
 /// The desktop window's default bindings.
 ///
+/// Retained deliberately after the desktop's removal (ADR-039): the table is data,
+/// not code — no dependency, no build cost — and the TUI IDE (Phase 3) will adopt,
+/// adapt or retire its ids with both sides cited rather than re-derive them.
+///
 /// **Every one of these was a literal `consume_key` read before M315.** Ids are per **action**,
 /// not per key, because `Escape` means four different things in a window depending on which
 /// surface holds the keyboard — and it is the *drawing order* that decides, not the table. That

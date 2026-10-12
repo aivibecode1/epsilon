@@ -1,15 +1,17 @@
 # Parity matrices
 
-**What this folder is.** Epsilon has two front ends, and each one is a *port* of somebody else's
-work. The terminal UI is a port of [Pi](https://github.com/earendil-works/pi)'s interactive
-terminal mode. The desktop window is a port of **DSH Desktop**, the desktop application of
-[DeepSeek Harness](https://github.com/deepseek-ai). "Port" here means **behavioural parity**: the
+**What this folder is.** Epsilon's terminal UI is a *port* of somebody else's
+work: [Pi](https://github.com/earendil-works/pi)'s interactive
+terminal mode. "Port" here means **behavioural parity**: the
 same thing happens, in the same way, at the same moment — not a rebranded copy of the pixels.
+
+[`dsh-desktop.md`](dsh-desktop.md) is **retired** (ADR-039): the desktop frontend it measured
+is removed, and the file is frozen history, not a live matrix.
 
 | Matrix | The target | Our side |
 |---|---|---|
 | [`pi-tui.md`](pi-tui.md) | Pi's interactive terminal mode | `crates/epsilon-tui`, `crates/epsilon-cli` |
-| [`dsh-desktop.md`](dsh-desktop.md) | DSH Desktop | `crates/epsilon-desktop` |
+| [`dsh-desktop.md`](dsh-desktop.md) | DSH Desktop | RETIRED (ADR-039): `crates/epsilon-desktop` is removed; frozen history |
 
 ## The one thing to understand first
 

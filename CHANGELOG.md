@@ -5,6 +5,16 @@ All notable changes to Epsilon, grouped by milestone. Most milestones have a dev
 
 ## [Unreleased]
 
+### Removed
+
+- **The desktop frontend is removed (ADR-039).** `crates/epsilon-desktop` (~31k lines,
+  egui/eframe) is deleted: the window could never present on the machine that builds it,
+  so its pixels were never seen by their owner, and it carried the workspace's only Rust
+  1.95 floor, a second command table and a 433-row matrix. The workspace is 1.88
+  everywhere again; `docs/parity/dsh-desktop.md` is retired (frozen history, gates read
+  `pi-tui.md` only); `check-verb-counts` guards the removal; `/open` stays parseable but
+  unoffered until the TUI IDE gives it a door. Revisit trigger lives in the ADR.
+
 ### Added
 
 - **The desktop window's shortcuts can be rebound, from the same file the terminal already reads.**
