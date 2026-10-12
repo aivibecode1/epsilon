@@ -406,6 +406,15 @@ the run. The drop from 2,385/19/78 is the removed desktop crate itself (~410 win
 > RED-first (no-field compile error), 5 pure unit tests + 3 app tests, clippy/fmt/checkers
 > green. Deliberately deferred: embedded viewer (Enter currently inserts `@`), mouse
 > clicks (capture stays OFF for drag-copy; wheel scrolls), both recorded follow-ups.
+>
+> **Phase 3 slice 2 (this session, landed): read-only file viewer.** Enter on a tree file
+> opens a centered overlay panel (title = path, scroll window, key footer); arrows/page
+> keys/Home/End scroll with measured capacity, Esc closes back to the tree, `@` inserts
+> the `@path` reference instead (reading vs referencing are two gestures). Refuses
+> directories, unreadable files and non-text with a notice rather than guessing; empty
+> files named; >2000-line files capped and noted. Frames read at 80x24 and 100x30
+> (`audit/evidence/frames-viewer-20261012/`). RED-first (no-method compile error),
+> scroll/capped/empty states covered, clippy/fmt/checkers green.
 
 > **Ten findings closed in a row** (rounds 138–147). Rounds 138–144 were things that *happened*
 > wrongly, 145–146 were things that *went unsaid*, and 147 is the first one that **adds a

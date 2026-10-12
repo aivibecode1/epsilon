@@ -413,6 +413,15 @@ impl App {
             } else {
                 Hints::approval_deny_only()
             }
+        } else if self.viewer.is_some() {
+            Hints {
+                mode: Some("view".into()),
+                keys: vec![
+                    ("arrows/pgup/pgdn".into(), "scroll".into()),
+                    ("esc".into(), "close".into()),
+                ],
+                ..Hints::default()
+            }
         } else if self.tree_open {
             // The tree has no filter box, so the generic overlay hints' "type
             // filter" would advertise a key the tree does not act on. Its own
@@ -423,7 +432,8 @@ impl App {
             );
             let mut keys = vec![
                 (arrows, "move".into()),
-                ("enter".into(), "open".into()),
+                ("enter".into(), "view".into()),
+                ("@".into(), "refer".into()),
                 ("esc".into(), "close".into()),
             ];
             if let Some(toggle) = self.keybindings.key_text("app.tree.toggle") {
@@ -509,6 +519,7 @@ impl App {
             || self.auth_pick_open
             || self.timeline_open
             || self.tree_open
+            || self.viewer.is_some()
             || self.session_browser.is_some()
             || self.pending_ask.is_some()
     }

@@ -381,6 +381,10 @@ pub(crate) struct App {
     tree_collapsed: std::collections::BTreeSet<String>,
     /// Whether the last refresh hit the row budget (drawn as a capped note).
     tree_capped: bool,
+    /// Read-only file viewer opened from the tree (Phase 3, second slice).
+    viewer: Option<crate::tree::FileViewer>,
+    /// Visible viewer lines measured at the last draw (page keys read it).
+    viewer_capacity: usize,
     /// Rows in the `/tree` + `/timeline` picker, in display order.
     ///
     /// M196: this was `(seq, kind, snippet)` built from `branch_entries()` — the
@@ -1876,6 +1880,11 @@ fn draw(f: &mut Frame<'_>, app: &mut App) {
             app.tree_cursor,
             app.tree_capped,
         );
+    }
+    if let Some(viewer) = app.viewer.as_ref() {
+        // Disjoint field borrows: the viewer read and the capacity write touch
+        // different fields, so no clone crosses the frame.
+        crate::tree::draw_viewer(f, f.area(), &app.theme, viewer, &mut app.viewer_capacity);
     }
     draw_at_file(f, app, transcript_area);
     draw_slash_autocomplete(f, app, transcript_area);

@@ -8581,7 +8581,7 @@ async fn f6_opens_the_workspace_tree_showing_its_files() {
     );
 }
 
-/// The tree navigates, collapses, and Enter on a file inserts `@path` and closes.
+/// The tree navigates, collapses, opens the viewer, and `@` inserts `@path`.
 #[tokio::test]
 async fn tree_navigate_collapse_and_enter_inserts_at_path() {
     let (mut app, agent, _receivers, dir) = test_app_with_store();
@@ -8612,14 +8612,22 @@ async fn tree_navigate_collapse_and_enter_inserts_at_path() {
         "collapsed src hides its child: {:?}",
         app.tree_rows
     );
-    // Right re-expands; Enter on the file inserts `@main.rs ` and closes.
+    // Right re-expands; Enter on the file opens the viewer, Esc closes it,
+    // and `@` inserts `@main.rs ` and closes the tree.
     handle_key(&mut app, &agent, key(KeyCode::Right));
     assert!(!app.tree_collapsed.contains("src"));
     handle_key(&mut app, &agent, key(KeyCode::Down));
     handle_key(&mut app, &agent, key(KeyCode::Down));
     let quit = handle_key(&mut app, &agent, key(KeyCode::Enter));
     assert!(!quit);
-    assert!(!app.tree_open, "Enter on a file closes the tree");
+    assert!(app.viewer_open(), "Enter on a file opens the viewer");
+    let quit = handle_key(&mut app, &agent, key(KeyCode::Esc));
+    assert!(!quit);
+    assert!(!app.viewer_open(), "Esc closes the viewer");
+    assert!(app.tree_open, "closing the viewer returns to the tree");
+    let quit = handle_key(&mut app, &agent, key(KeyCode::Char('@')));
+    assert!(!quit);
+    assert!(!app.tree_open, "@ closes the tree");
     assert_eq!(
         app.input, "@main.rs ",
         "file inserts an @-reference, got {:?}",
@@ -8680,5 +8688,71 @@ async fn quitting_with_a_pending_ask_denies_it_fail_closed() {
     assert!(
         matches!(response.await.unwrap(), PermissionDecision::Deny),
         "a quit-dropped ask must resolve Deny — never hang, never allow"
+    );
+}
+
+/// Enter on a file opens a read-only viewer showing its content; Esc closes it.
+#[tokio::test]
+async fn tree_enter_opens_a_read_only_viewer_and_esc_closes_it() {
+    let (mut app, agent, _receivers, dir) = test_app_with_store();
+    std::fs::write(dir.path().join("notes.txt"), "first line\nsecond line\n").unwrap();
+    handle_key(&mut app, &agent, key(KeyCode::F(6)));
+    assert!(app.tree_open);
+    // Single file: cursor is already on it.
+    assert_eq!(app.tree_rows.len(), 1);
+    handle_key(&mut app, &agent, key(KeyCode::Enter));
+    assert!(app.viewer_open(), "Enter on a file must open the viewer");
+    let frame = render_rows(&mut app, 100, 30).join("\n");
+    assert!(
+        frame.contains("first line") && frame.contains("notes.txt"),
+        "viewer must show the file's content and name: {frame}"
+    );
+    let quit = handle_key(&mut app, &agent, key(KeyCode::Esc));
+    assert!(!quit);
+    assert!(!app.viewer_open(), "Esc must close the viewer");
+}
+
+/// The viewer scrolls with page keys and names an empty file honestly.
+#[tokio::test]
+async fn viewer_pages_down_and_names_an_empty_file() {
+    let (mut app, agent, _receivers, dir) = test_app_with_store();
+    let many: String = (0..60).map(|i| format!("line {i:02}\n")).collect();
+    std::fs::write(dir.path().join("many.txt"), &many).unwrap();
+    std::fs::write(dir.path().join("empty.txt"), "").unwrap();
+    handle_key(&mut app, &agent, key(KeyCode::F(6)));
+    // Rows are dirs-first single files in walk order; find many.txt.
+    let idx = app
+        .tree_rows
+        .iter()
+        .position(|r| r.rel == "many.txt")
+        .expect("many.txt listed");
+    app.tree_cursor = idx;
+    handle_key(&mut app, &agent, key(KeyCode::Enter));
+    assert!(app.viewer_open());
+    // Measure capacity with a real frame, then page.
+    let _ = render_rows(&mut app, 100, 30);
+    assert!(app.viewer_capacity > 1, "capacity must be measured");
+    handle_key(&mut app, &agent, key(KeyCode::PageDown));
+    let scrolled = app.viewer.as_ref().map(|v| v.scroll).unwrap_or(0);
+    assert!(
+        scrolled > 0,
+        "PageDown must advance, capacity {}",
+        app.viewer_capacity
+    );
+    handle_key(&mut app, &agent, key(KeyCode::Home));
+    assert_eq!(app.viewer.as_ref().map(|v| v.scroll), Some(0));
+    handle_key(&mut app, &agent, key(KeyCode::Esc));
+    // Empty file names itself rather than showing a blank box.
+    let idx = app
+        .tree_rows
+        .iter()
+        .position(|r| r.rel == "empty.txt")
+        .expect("empty.txt listed");
+    app.tree_cursor = idx;
+    handle_key(&mut app, &agent, key(KeyCode::Enter));
+    let frame = render_rows(&mut app, 100, 30).join("\n");
+    assert!(
+        frame.contains("(empty file)"),
+        "empty file must say so: {frame}"
     );
 }

@@ -138,6 +138,8 @@ impl App {
             tree_rows: Vec::new(),
             tree_collapsed: std::collections::BTreeSet::new(),
             tree_capped: false,
+            viewer: None,
+            viewer_capacity: 0,
             jump_mode: None,
             tree_filter: crate::app::TreeFilter::default(),
             tree_query: String::new(),
@@ -260,6 +262,11 @@ impl App {
         if self.tree_cursor >= self.tree_rows.len() {
             self.tree_cursor = self.tree_rows.len().saturating_sub(1);
         }
+    }
+
+    /// Whether the read-only file viewer is open.
+    pub(super) fn viewer_open(&self) -> bool {
+        self.viewer.is_some()
     }
 
     /// M59: ask the event loop to open `$EDITOR` on the current draft.

@@ -553,6 +553,52 @@ pub(crate) fn handle_key(app: &mut App, agent: &Arc<Agent>, key: KeyEvent) -> bo
     if app.search.is_some() && !app.keybindings.matches("app.exit", &key) {
         return handle_search_key(app, key);
     }
+    // Phase 3 (TUI as IDE): the file viewer owns the keyboard while open —
+    // Esc closes, arrows and page keys scroll. Placed above the tree branch:
+    // the viewer opens from the tree, so the tree would otherwise eat Esc.
+    if app.viewer_open() && !app.keybindings.matches("app.exit", &key) {
+        match key.code {
+            KeyCode::Esc => {
+                app.viewer = None;
+            }
+            KeyCode::Up => {
+                if let Some(v) = app.viewer.as_mut() {
+                    v.scroll = v.scroll.saturating_sub(1);
+                }
+            }
+            KeyCode::Down => {
+                if let Some(v) = app.viewer.as_mut() {
+                    let max = v.lines.len().saturating_sub(1);
+                    v.scroll = (v.scroll + 1).min(max);
+                }
+            }
+            KeyCode::PageUp => {
+                let capacity = app.viewer_capacity.max(1);
+                if let Some(v) = app.viewer.as_mut() {
+                    v.scroll = v.scroll.saturating_sub(capacity);
+                }
+            }
+            KeyCode::PageDown => {
+                let capacity = app.viewer_capacity.max(1);
+                if let Some(v) = app.viewer.as_mut() {
+                    let max = v.lines.len().saturating_sub(1);
+                    v.scroll = (v.scroll + capacity).min(max);
+                }
+            }
+            KeyCode::Home => {
+                if let Some(v) = app.viewer.as_mut() {
+                    v.scroll = 0;
+                }
+            }
+            KeyCode::End => {
+                if let Some(v) = app.viewer.as_mut() {
+                    v.scroll = v.lines.len().saturating_sub(1);
+                }
+            }
+            _ => {}
+        }
+        return false;
+    }
     // Phase 3 (TUI as IDE): the workspace tree owns the keyboard while open,
     // like every other overlay. Esc/F6 always closes, so there is no trap;
     // anything unhandled is swallowed, not typed into a composer the reader
@@ -626,16 +672,34 @@ pub(crate) fn handle_key(app: &mut App, agent: &Arc<Agent>, key: KeyEvent) -> bo
                             app.tree_cursor = i;
                         }
                     } else {
-                        // A file reference the model's own read tool will honour
-                        // (same workspace-relative spelling `@` completion and
-                        // the tools use), inserted at the caret; the tree closes
-                        // so the composer owns the keyboard again.
-                        let insert = format!("@{} ", row.rel);
-                        for c in insert.chars() {
-                            app.insert_char(c);
+                        // A viewer for reading; `@` (below) inserts the
+                        // reference instead. Reading and referencing are two
+                        // gestures because they are two intentions.
+                        match crate::tree::open_viewer(&app.workspace_root, &row.rel) {
+                            Ok(viewer) => {
+                                app.viewer = Some(viewer);
+                                app.viewer_capacity = 0;
+                            }
+                            Err(e) => {
+                                app.ui.push_notice(e);
+                            }
                         }
-                        app.tree_open = false;
                     }
+                }
+            }
+            // `@` inserts a file reference the model's own read tool will
+            // honour (same workspace-relative spelling `@` completion and the
+            // tools use), at the caret; the tree closes so the composer owns
+            // the keyboard again.
+            KeyCode::Char('@') => {
+                if let Some(row) = app.tree_rows.get(app.tree_cursor).cloned()
+                    && !row.is_dir
+                {
+                    let insert = format!("@{} ", row.rel);
+                    for c in insert.chars() {
+                        app.insert_char(c);
+                    }
+                    app.tree_open = false;
                 }
             }
             _ => {}
