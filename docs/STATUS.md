@@ -424,6 +424,15 @@ the run. The drop from 2,385/19/78 is the removed desktop crate itself (~410 win
 > deliberately absent: mouse capture remains OFF so drag-select copies, the same
 > stance pi, opencode and Hermes take (run-loop comment cites all three); wheel
 > needs no capture on any terminal. Recorded as judged-different, not missing.
+>
+> **tui-rows (this session, landed): no in-scope row changes.** The Phase-3 surfaces
+> (file tree, viewer, wheel routing, tree/view footer modes) touch no pi behaviour:
+> pi has no file-explorer or wheel rows to disposition — the tree/viewer are beyond-pi
+> capability, recorded here rather than as matrix rows. Verified: counts 339 rows green,
+> all 266 citations resolve, placement 242/0, no matrix prose claims anything the new
+> surfaces contradict, footer/hint rows P-198/P-199/P-229 still hold (tree toggle hint
+> resolves live via `key_text`; viewer/tree literal hints match the overlay convention),
+> click rows P-003/P-125/P-143/P-185/P-223 unchanged (capture still OFF).
 
 > **Ten findings closed in a row** (rounds 138–147). Rounds 138–144 were things that *happened*
 > wrongly, 145–146 were things that *went unsaid*, and 147 is the first one that **adds a
