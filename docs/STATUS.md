@@ -365,12 +365,12 @@ instead of newlining, and the sessions sidebar being a keyboard trap. What remai
 
 ## Verification (what is actually true)
 
-**Latest green battery: [`gate-removal-r2-20261012.txt`](../audit/evidence/gate-removal-r2-20261012.txt),
+**Latest green battery: [`gate-goal-tui-20261012.txt`](../audit/evidence/gate-goal-tui-20261012.txt),
 2026-10-12 — the tree this file describes, and it is the one HEAD holds.** Fifteen legs, all
-`[exit=0]`, `GATE PASS`. **1,975 passed / 0 failed / 10 ignored across 73 binaries**, summed from
+`[exit=0]`, `GATE PASS`. **1,993 passed / 0 failed / 10 ignored across 73 binaries**, summed from
 that one log's `test result:` lines. `CARGO_BUILD_JOBS=1`, single build owner, no edits during
-the run. The drop from 2,385/19/78 is the removed desktop crate itself (~410 window tests,
-5 test binaries incl. its ignored raster fixtures). (Previous: `gate-goal-s4-20261012`, 2,385/0/19.)
+the run. Up from 1,975: the tree sidebar, viewer and wheel-routing tests. (Previous:
+`gate-removal-r2-20261012`, 1,975/0/10.)
 
 > **Revised goal, Phase 1 (2026-10-12, this session).** The desktop frontend is removed
 > (ADR-039): `crates/epsilon-desktop` (~31k lines) deleted, workspace member + `eframe`/`egui`
