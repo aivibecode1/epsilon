@@ -622,6 +622,10 @@ the run. Up from 1,997: the checkpoint round-trip and restore-undo tests. (Previ
 > **P-103 judged (this session): layout geometry is constants, not settings.** Padding
 > knobs with coercion ranges have nothing to turn. Counts now 81/111/49/98.
 >
+> **Transformer pair judged (this session): P-167/P-168 dd.** One direct rendering
+> pass, no plugin seam — a chain would be speculative generality for one caller.
+> T-010 stays `missing`. Counts now 81/111/47/100.
+>
 > **Goal 3, Phase 1 (landed): AGENTS.md v4 draft for owner application.** Every v3
 > clause audited against the tree (13 crates, uniform 1.88, TERMINAL+WINDOW tables,
 > 15 legs, SUPPORTED only in a historical comment); the complete v4 text sits in

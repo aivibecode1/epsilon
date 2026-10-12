@@ -66,7 +66,7 @@ back; it is a reading of the test's source, not a report of a run.
 
 **339 rows** are paired here: Pi's 323 `P-###` behaviours, the 4 `L-###` rows of its inherited `tui.*` keybinding
 table, and the 12 `T-###` rows of its text-measurement core. Every one carries a reference citation; 200 of them
-carry an `ours` citation and 50 do not, and those 50 say so. The counts below are the rows **actually written in
+carry an `ours` citation and 48 do not, and those 48 say so. The counts below are the rows **actually written in
 this document**, tallied from its own tables — not a projection.
 
 | area | rows | done | partial | missing | deliberately different |
@@ -85,18 +85,18 @@ this document**, tallied from its own tables — not a projection.
 | 12. Tool cards | 16 | 3 | 6 | 0 | 7 |
 | 13. Bash cards | 11 | 5 | 6 | 0 | 0 |
 | 14. Diffs | 6 | 6 | 0 | 0 | 0 |
-| 15. Markdown, mermaid and truncation | 22 | 6 | 7 | 3 | 6 |
+| 15. Markdown, mermaid and truncation | 22 | 6 | 7 | 1 | 8 |
 | 16. Status indicators | 13 | 2 | 5 | 1 | 5 |
 | 17. Footer | 12 | 4 | 4 | 1 | 3 |
 | 18. Selector and overlay components | 79 | 22 | 19 | 25 | 13 |
-| **Total** | **339** | **81** | **111** | **49** | **98** |
+| **Total** | **339** | **81** | **111** | **47** | **100** |
 
 A further **17 rows are not in the counts above**: the 10 `Y-###` rows Pi ships outside its interactive mode (out of
 scope by design) and the 7 `AA-###` rows recording what was never inventoried. Both are listed in full near the end
 of this document, because a row that is silently dropped is how a rule goes unowned.
 
-The shape of that table is the honest shape of a port from a 356-row inventory to a 290-row one: **49 rows have no
-counterpart established on our side, 111 are half-built, 81 are exercised, and 98 are decisions.** The 49 are not
+The shape of that table is the honest shape of a port from a 356-row inventory to a 292-row one: **47 rows have no
+counterpart established on our side, 111 are half-built, 81 are exercised, and 100 are decisions.** The 47 are not
 69/339 failures; most of them sit in Pi's extension, settings-overlay, mermaid, image and tree-navigation surface,
 much of which Epsilon deliberately does not have. Read [Open rows](#open-rows) before reading the table.
 
@@ -558,8 +558,8 @@ with its contract about message type, streaming flag and available width, has no
 
 | id | behaviour | reference | status | ours | verified |
 |---|---|---|---|---|---|
-| P-167 | Every markdown block passes a transformer chain told the message type, the streaming flag and the **available** width | `packages/coding-agent/src/modes/interactive/components/markdown-transform.ts:9`, `packages/coding-agent/src/modes/interactive/interactive-mode.ts:2186-2188` | missing | none — markdown rendering exists (`crates/epsilon-tui/src/markdown.rs`) but no `E-` row establishes a transform contract | — |
-| P-168 | A transformer returning a non-string is ignored and one that throws is skipped; the rest still run | `packages/coding-agent/src/modes/interactive/components/markdown-transform.ts:21-22`, `:24-26` | missing | none | — |
+| P-167 | Every markdown block passes a transformer chain told the message type, the streaming flag and the **available** width | `packages/coding-agent/src/modes/interactive/components/markdown-transform.ts:9`, `packages/coding-agent/src/modes/interactive/interactive-mode.ts:2186-2188` | deliberately different | One direct pass, no plugin seam: `md_to_lines_in` takes the width tables need (`crates/epsilon-tui/src/markdown.rs:179`) plus a LaTeX preprocess, and that is the whole pipeline — a transformer chain would be speculative generality for one caller | — |
+| P-168 | A transformer returning a non-string is ignored and one that throws is skipped; the rest still run | `packages/coding-agent/src/modes/interactive/components/markdown-transform.ts:21-22`, `:24-26` | deliberately different | As P-167: with no transformers there is nothing to ignore, skip, or keep running — total Rust functions cannot throw | — |
 | P-169 | A ```` ```mermaid ```` fence is replaced by a Unicode box diagram | `packages/coding-agent/src/modes/interactive/components/mermaid.ts:60`, `:75` | deliberately different | Mermaid is excluded scope: fences render as plain code blocks, so there is no diagram to draw, clip, colour, space or gate | — |
 | P-170 | A diagram wider than the terminal is left as the original code block rather than clipped | `packages/coding-agent/src/modes/interactive/components/mermaid.ts:76`, `:74` | deliberately different | As P-169: with no diagram renderer the wide-diagram question cannot arise | — |
 | P-171 | Each mermaid span class maps to a named theme colour, so a diagram follows the theme | `packages/coding-agent/src/modes/interactive/components/mermaid.ts:38`, `:49` | deliberately different | As P-169: no diagram spans exist to colour | — |
@@ -776,13 +776,13 @@ row says so — that is a gap in the inventory, and closing it is cheap.
 | 12. Tool cards | 16 | 3 | 6 | 0 | 7 |
 | 13. Bash cards | 11 | 5 | 6 | 0 | 0 |
 | 14. Diffs | 6 | 6 | 0 | 0 | 0 |
-| 15. Markdown, mermaid and truncation | 22 | 6 | 7 | 3 | 6 |
+| 15. Markdown, mermaid and truncation | 22 | 6 | 7 | 1 | 8 |
 | 16. Status indicators | 13 | 2 | 5 | 1 | 5 |
 | 17. Footer | 12 | 4 | 4 | 1 | 3 |
 | 18. Selector and overlay components | 79 | 22 | 19 | 25 | 13 |
-| **Total** | **339** | **81** | **111** | **49** | **98** |
+| **Total** | **339** | **81** | **111** | **47** | **100** |
 
-### The `missing` rows — 49
+### The `missing` rows — 47
 
 Every row below has **no** `E-` row establishing the behaviour. Nothing here was found by browsing `crates/`, and
 nothing here is a claim that the behaviour cannot be built.
@@ -796,7 +796,7 @@ nothing here is a claim that the behaviour cannot be built.
 | Sessions (1) | P-081 |
 | Themes (2) | P-096, P-098 |
 | Settings (7) | P-111, P-113, P-114, P-267, P-268, P-275, P-277 |
-| Markdown, mermaid and truncation (3) | P-167, P-168, T-010 |
+| Markdown, mermaid and truncation (1) | T-010 |
 | Status indicators (1) | P-194 |
 | Footer (1) | P-208 |
 | Selector and overlay components (25) | P-230, P-239, P-251, P-256, P-257, P-258, P-259, P-261, P-281, P-283, P-284, P-285, P-286, P-300, P-304, P-306, P-307, P-308, P-311, P-314, P-316, P-317, P-318, P-319, P-323 |
