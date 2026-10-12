@@ -48,6 +48,25 @@ fn a_whole_file_read_does_not_announce_a_range_it_covered_everything_in() {
 }
 
 #[test]
+fn a_skill_call_names_the_skill_it_loads() {
+    // P-056: a skill invocation renders as a card like every tool call, and
+    // the collapsed head must name WHICH skill — the generic fallback reads
+    // no `name` key, so without this arm the card carries no identity at all.
+    assert_eq!(
+        call_head(
+            "skill",
+            &args(json!({"name": "ratatui-tui"})),
+            UNICODE.ellipsis
+        ),
+        "ratatui-tui"
+    );
+    assert_eq!(
+        call_head("skill", &args(json!({"name": ""})), UNICODE.ellipsis),
+        ""
+    );
+}
+
+#[test]
 fn a_read_call_with_a_window_names_its_range() {
     // Pi's tree prefix (`tree-selector.ts:946-960`): the range comes from the CALL's
     // `offset`/`limit` — `start = offset ?? 1`, `end = start + limit - 1` — which the

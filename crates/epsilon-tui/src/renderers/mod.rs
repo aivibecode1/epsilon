@@ -51,6 +51,10 @@ pub fn call_head(name: &str, args: &Value, ellipsis: &str) -> String {
                 None => path,
             }
         }
+        // P-056: the skill tool takes `{"name": ...}`, which no generic
+        // fallback key reads — without this the collapsed card carries no
+        // identity at all.
+        "skill" => str_arg(args, "name").unwrap_or_default(),
         "ls" | "write" | "edit" | "glob" | "find" | "webfetch" | "web_fetch" => {
             str_arg(args, "path")
                 .or_else(|| str_arg(args, "file_path"))

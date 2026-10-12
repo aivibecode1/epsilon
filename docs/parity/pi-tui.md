@@ -75,7 +75,7 @@ this document**, tallied from its own tables — not a projection.
 | 2. Layout and renderer | 10 | 3 | 2 | 0 | 5 |
 | 3. Composer and editor | 24 | 6 | 12 | 0 | 6 |
 | 4. Slash commands and autocomplete | 13 | 2 | 5 | 0 | 6 |
-| 5. Transcript and streaming | 35 | 12 | 5 | 2 | 16 |
+| 5. Transcript and streaming | 35 | 12 | 6 | 1 | 16 |
 | 6. Model picker and thinking | 9 | 0 | 5 | 0 | 4 |
 | 7. Auth, login and permissions | 8 | 2 | 4 | 0 | 2 |
 | 8. Sessions | 17 | 7 | 6 | 0 | 4 |
@@ -89,14 +89,14 @@ this document**, tallied from its own tables — not a projection.
 | 16. Status indicators | 13 | 2 | 5 | 0 | 6 |
 | 17. Footer | 12 | 4 | 4 | 0 | 4 |
 | 18. Selector and overlay components | 79 | 25 | 22 | 0 | 32 |
-| **Total** | **339** | **86** | **114** | **4** | **135** |
+| **Total** | **339** | **86** | **115** | **3** | **135** |
 
 A further **17 rows are not in the counts above**: the 10 `Y-###` rows Pi ships outside its interactive mode (out of
 scope by design) and the 7 `AA-###` rows recording what was never inventoried. Both are listed in full near the end
 of this document, because a row that is silently dropped is how a rule goes unowned.
 
 The shape of that table is the honest shape of a port from a 356-row inventory to a 315-row one: **4 rows have no
-counterpart established on our side, 114 are half-built, 86 are exercised, and 135 are decisions.** The 4 are not
+counterpart established on our side, 115 are half-built, 86 are exercised, and 135 are decisions.** The 3 are not
 69/339 failures; most of them sit in Pi's extension, settings-overlay, mermaid, image and tree-navigation surface,
 much of which Epsilon deliberately does not have. Read [Open rows](#open-rows) before reading the table.
 
@@ -294,7 +294,7 @@ in each component.
 | P-052 | A cache miss is explained: `Cache miss: 18.2K tokens re-billed (~$0.42)` | `packages/coding-agent/src/modes/interactive/interactive-mode.ts:4100-4126` | partial | The miss is marked, not priced: tokens moved in an unpriced bucket floor the total and the header carries a trailing `+` (`crates/epsilon-tui/src/ui/cost.rs:152`) — no per-miss rebill sentence with dollars | `unpriced_bucket_movement_marks_the_total_a_floor` (floor-forced-false control fails it) |
 | P-053 | Anthropic's silently dropped thinking blocks are reported with a delta-based count | `packages/coding-agent/src/modes/interactive/interactive-mode.ts:4070-4098`, `:4054-4068` | missing | none — redaction-deltas are not detected on any provider; thinking visibility is governed by the hide flag, not by provider redaction | — |
 | P-054 | Compaction rebuilds the transcript and inserts a summary card plus a billed-cost line | `packages/coding-agent/src/modes/interactive/interactive-mode.ts:3623-3673`, `:4041-4052` | partial | The billed-cost line is `crates/epsilon-tui/src/state.rs:1639`'s `CompactionFinished` arm — now `── context compacted · from 96k tokens · ↑12k ↓310 · 21k re-read ──` — and the digest rides the row as its expandable payload (the arm; the row predicate at `crates/epsilon-tui/src/state.rs:627`; `render_cache.rs`'s event-row branch; `ui/card.rs:325`'s `event_body`). **Replay half landed for the terminal**, and **both halves landed for the window** (same slice): the reducer folds `CompactionFinished` into a cost-plus-summary notice (`push_compaction_digest`, one builder with the terminal), resume/jump paths reattach via `Transcript::from_history`, and the `/compact` channel reports only non-success outcomes — it used to print "context compacted" on any `Ok`, including `Failed` | `a_compaction_row_reports_the_same_tokens_it_records`, `a_compaction_row_opens_to_the_summary_it_carried` (collapsed names the chord and the count; `ctrl+x` opens the digest whole, nested under the continuation gutter; frames read at 80×24 and 100×30), `a_resumed_compaction_marker_regains_its_digest`, `a_marker_without_a_digest_stays_a_plain_line`, `resume_reattaches_the_compaction_digest` (end to end through real `/resume`, with a wire-removal control), `a_replayed_compaction_row_renders_like_the_live_one` (same drawn rows at 80 and 100; frame read); window: `a_live_compaction_draws_its_cost_row_with_the_digest` (arm-removal control), `replayed_history_reattaches_the_compaction_digest`, `a_marker_without_a_digest_stays_a_user_row`, `resumed_compaction_digest_reaches_the_screen` (painted 1440×900, switch-removal control), `compact_from_the_typed_line_compacts_and_reports` (now pins the honest skip report, never a success row for failed work) |
-| P-056 | A skill invocation renders as its own collapsible card, separate from the remaining user text | `packages/coding-agent/src/modes/interactive/interactive-mode.ts:3857-3876` | missing | none — skills load as prompt context (catalog-in-prompt), never as visible invocations; listed and toggled (`crates/epsilon-tui/src/app/commands.rs:321`) but an invocation has no card | — |
+| P-056 | A skill invocation renders as its own collapsible card, separate from the remaining user text | `packages/coding-agent/src/modes/interactive/interactive-mode.ts:3857-3876` | partial | Corrected inventory: invocations DO render — model skill use runs through the `skill` tool (`crates/epsilon-tools/src/skill.rs:87`), so every invocation is a normal collapsible tool card, listed and toggled (`crates/epsilon-tui/src/app/commands.rs:321`). What was missing is identity in the collapsed head: the generic fallback reads no `name` key, so the card carried nothing naming the skill. New `skill` arm (`crates/epsilon-tui/src/renderers/mod.rs`) names it. What stays missing is a bespoke skill-card type — the shared generic card is the shape | `a_skill_call_names_the_skill_it_loads` (head names the skill; empty name stays empty) |
 | P-057 | Two status messages back to back update the same line instead of appending | `packages/coding-agent/src/modes/interactive/interactive-mode.ts:3761-3781` | deliberately different | A notice is a durable transcript row (`crates/epsilon-tui/src/state.rs:1143`) — updating one line in place would rewrite history the reader may have already read, so consecutive notices append rather than coalesce | — |
 | P-058 | Errors render as `Error: …` and warnings as `Warning: …` in the transcript | `packages/coding-agent/src/modes/interactive/interactive-mode.ts:4536-4546` | deliberately different | `crates/epsilon-tui/src/state.rs` — a dedicated `LineKind::SystemErr` row carries the cross glyph, the danger colour and the error band, so a failure notice is **not** the faintest thing on the page (it used to share `System`'s bullet and `theme.faint()` with a command echo). The M62 `error: …` marker, the auth note and nine command paths (`import/fork/clone/new session/resume/trust accept/export/share failed`, plus a failed session delete) route through it | **Decided, round 106: the fixed `Error: `/`Warning: ` prefix is not adopted, and the difference is the design.** Pi's prefix is its only severity channel for a notice — its notices have no glyph, colour or band to distinguish a failure, so the words carry it. Epsilon's failure row is distinguished four ways (cross glyph, danger colour, error band, its own gutter) and the acid test `every_role_is_distinguishable_without_colour` proves the pair survives `NO_COLOR` and a 16-colour terminal (`ui/transcript.rs`'s test, the failure-vs-notice pair pinned). A literal prefix would be a fifth channel for one fact, and it would sit in front of wording that already names the failure specifically (`restore: cannot restore src/lib.rs: the file changed …` reads better than `Error: restore: cannot restore …`). Evidence: `a_run_failure_draws_with_the_cross_and_not_the_bullet`, `the_error_marker_and_the_auth_note_draw_as_failures`. **A `Warning:` tier is the honest residual and it is not built**: no third severity exists, so a warning notice today draws as a plain `System` row — recorded as a future row rather than claimed by this one |
 | P-060 | Extension-supplied entries and messages render through registered renderers, inserted **above** a streaming component | `packages/coding-agent/src/modes/interactive/interactive-mode.ts:3783-3803`, `:3794-3800`, `:3821-3834` | deliberately different | As P-020/P-021: extensions have no render surface in this protocol — nothing to register a renderer against, no streaming component to insert above | — |
@@ -766,7 +766,7 @@ row says so — that is a gap in the inventory, and closing it is cheap.
 | 2. Layout and renderer | 10 | 3 | 2 | 0 | 5 |
 | 3. Composer and editor | 24 | 6 | 12 | 0 | 6 |
 | 4. Slash commands and autocomplete | 13 | 2 | 5 | 0 | 6 |
-| 5. Transcript and streaming | 35 | 12 | 5 | 2 | 16 |
+| 5. Transcript and streaming | 35 | 12 | 6 | 1 | 16 |
 | 6. Model picker and thinking | 9 | 0 | 5 | 0 | 4 |
 | 7. Auth, login and permissions | 8 | 2 | 4 | 0 | 2 |
 | 8. Sessions | 17 | 7 | 6 | 0 | 4 |
@@ -780,9 +780,9 @@ row says so — that is a gap in the inventory, and closing it is cheap.
 | 16. Status indicators | 13 | 2 | 5 | 0 | 6 |
 | 17. Footer | 12 | 4 | 4 | 0 | 4 |
 | 18. Selector and overlay components | 79 | 25 | 22 | 0 | 32 |
-| **Total** | **339** | **86** | **114** | **4** | **135** |
+| **Total** | **339** | **86** | **115** | **3** | **135** |
 
-### The `missing` rows — 4
+### The `missing` rows — 3
 
 Every row below has **no** `E-` row establishing the behaviour. Nothing here was found by browsing `crates/`, and
 nothing here is a claim that the behaviour cannot be built.
@@ -790,10 +790,10 @@ nothing here is a claim that the behaviour cannot be built.
 | area | ids |
 |---|---|
 | Startup, header and resources (1) | P-004 |
-| Transcript and streaming (2) | P-053, P-056 |
+| Transcript and streaming (1) | P-053 |
 | Markdown, mermaid and truncation (1) | T-010 |
 
-### The `partial` rows — 114
+### The `partial` rows — 115
 
 An `E-` row covers these and something is not finished. The reason column is the shortest honest statement of what.
 
@@ -803,7 +803,7 @@ An `E-` row covers these and something is not finished. The reason column is the
 | Layout and renderer (2) | P-217, P-218 | the jump affordance is a footer badge, not a pill in the viewport; matches are counted, not highlighted in the transcript |
 | Composer and editor (12) | P-025, P-027, P-028, P-034, P-035, P-036, P-209, P-210, L-000, L-001, L-002, L-003 | mostly: the behaviour exists in the source with **no test**, or only one half is built. P-022 has no test typing `!`; P-030 is pinned by no test at all; P-036's tests run the spawner seam and assert no frame; L-000 carries 23 ids, not 47 entries |
 | Slash commands and autocomplete (5) | P-043, P-044, P-046, P-047, P-084 | the `/` menu lists slash items only; no per-command argument completer; no refresh-then-open fallback; `/scoped-models` and `/changelog` are driven only by the all-heads sweep |
-| Transcript and streaming (5) | P-040, P-051, P-052, P-054, P-184 | thinking hides on Alt+T, not Ctrl+T, with a narrower affordance; stopped answers marked but in-flight tool cards not retro-fitted and no `/bug` to suggest; unpriced-bucket spend floors the total with a trailing `+` but no per-miss rebill sentence; compaction count reported, branch/skill wordings moot; the compaction digest expands live and on replay in the terminal (as markdown when open) and draws as cost notice plus markdown digest in the window — the card concept itself is terminal-only; abort text lands on a system row, not the answer |
+| Transcript and streaming (6) | P-040, P-051, P-052, P-054, P-056, P-184 | thinking hides on Alt+T, not Ctrl+T, with a narrower affordance; stopped answers marked but in-flight tool cards not retro-fitted and no `/bug` to suggest; unpriced-bucket spend floors the total with a trailing `+` but no per-miss rebill sentence; compaction count reported, branch/skill wordings moot; the compaction digest expands live and on replay in the terminal (as markdown when open) and draws as cost notice plus markdown digest in the window — the card concept itself is terminal-only; abort text lands on a system row, not the answer; skill invocations render as generic tool cards with the skill named in the head, but no bespoke skill-card type |
 | Model picker and thinking (5) | P-037, P-038, P-048, P-272, P-273 | the `/think` head parses but no row establishes the argument form or a picker; no per-model override submenu; P-037 has no no-reasoning message (the catalog carries no reasoning flag); P-038 cycles favorites, not all models (M23, deliberate); no explicit clear-override entry, but the marked `· default` row reverts by selection | the `/think` head parses but no row establishes the argument form or a picker; no per-model override submenu; P-037 has no no-reasoning message (the catalog carries no reasoning flag); P-038 cycles favorites, not all models (M23, deliberate) |
 | Auth, login and permissions (4) | P-062, P-064, P-065, P-067 | one masked modal instead of an auth-type → provider → dialog chain with `onBack`; one of four dialog event kinds; the TUI path for `/logout <provider>` is unpinned; bedrock resolves through the ambient chain with the marker-never-a-key rule pinned, but no dialog states the profiles hint in words |
 | Sessions (6) | P-070, P-072, P-074, P-077, P-080, P-082 | no cross-directory scope / rename / delete in the picker; no branch summarisation; fork is at the leaf, not at a chosen message; no cache-warming status; reload covers four resource kinds, not six; share exports HTML and tries gh gist but has no Radius preference and no dedicated happy-path test |

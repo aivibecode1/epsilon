@@ -755,6 +755,14 @@ the run. Matrix at 81/111/24/123. (Previous: `gate-goal3-phase6-20261012`, 2,011
 > with layer modifiers — access is permission presets, not enable lists.
 > Counts now 86/114/4/135.
 >
+> **P-056 partial (this session): skill invocations render — as generic tool
+> cards.** Corrected the inventory: model skill use runs through the `skill`
+> tool, so every invocation already renders as a normal collapsible card.
+> What was missing is identity in the collapsed head (the generic fallback
+> reads no `name` key) — new `skill` arm names it. One renderer test
+> (RED-first, fails with empty head); full renderer suite green, clippy clean.
+> A bespoke skill-card type stays missing by design. Counts now 86/115/3/135.
+>
 > **Trio judged (this session): P-316/P-317 Radius shimmer, P-323 images
 > gate.** Zero Radius references anywhere (P-066's rule,
 > re-verified); image blobs collapse to a one-line deferred fallback that is
