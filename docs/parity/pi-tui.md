@@ -66,7 +66,7 @@ back; it is a reading of the test's source, not a report of a run.
 
 **339 rows** are paired here: Pi's 323 `P-###` behaviours, the 4 `L-###` rows of its inherited `tui.*` keybinding
 table, and the 12 `T-###` rows of its text-measurement core. Every one carries a reference citation; 200 of them
-carry an `ours` citation and 87 do not, and those 87 say so. The counts below are the rows **actually written in
+carry an `ours` citation and 84 do not, and those 84 say so. The counts below are the rows **actually written in
 this document**, tallied from its own tables — not a projection.
 
 | area | rows | done | partial | missing | deliberately different |
@@ -88,15 +88,15 @@ this document**, tallied from its own tables — not a projection.
 | 15. Markdown, mermaid and truncation | 22 | 6 | 7 | 3 | 6 |
 | 16. Status indicators | 13 | 2 | 5 | 1 | 5 |
 | 17. Footer | 12 | 4 | 4 | 1 | 3 |
-| 18. Selector and overlay components | 79 | 21 | 17 | 32 | 9 |
-| **Total** | **339** | **77** | **105** | **86** | **71** |
+| 18. Selector and overlay components | 79 | 21 | 17 | 29 | 12 |
+| **Total** | **339** | **77** | **105** | **83** | **74** |
 
 A further **17 rows are not in the counts above**: the 10 `Y-###` rows Pi ships outside its interactive mode (out of
 scope by design) and the 7 `AA-###` rows recording what was never inventoried. Both are listed in full near the end
 of this document, because a row that is silently dropped is how a rule goes unowned.
 
-The shape of that table is the honest shape of a port from a 356-row inventory to a 253-row one: **86 rows have no
-counterpart established on our side, 105 are half-built, 77 are exercised, and 71 are decisions.** The 86 are not
+The shape of that table is the honest shape of a port from a 356-row inventory to a 256-row one: **83 rows have no
+counterpart established on our side, 105 are half-built, 77 are exercised, and 74 are decisions.** The 83 are not
 69/339 failures; most of them sit in Pi's extension, settings-overlay, mermaid, image and tree-navigation surface,
 much of which Epsilon deliberately does not have. Read [Open rows](#open-rows) before reading the table.
 
@@ -662,7 +662,7 @@ the per-selector ones.
 | P-232 | `Ctrl+N` filters the list to named sessions only | `packages/coding-agent/src/modes/interactive/components/session-selector.ts:571`, `:1017` | missing | none | — |
 | P-233 | `Ctrl+P` toggles a column showing each session's file path | `packages/coding-agent/src/modes/interactive/components/session-selector.ts:577`, `:479` | partial | `crates/epsilon-tui/src/app/panels.rs:209` — the file name is in every row's meta string and is always present; there is no toggle | `session_rows_list_newest_first_and_mark_the_current_file`, `sessions_command_browses_and_enter_switches_the_session` |
 | P-234 | Deleting a session takes over the overlay and swallows every other key while confirming | `packages/coding-agent/src/modes/interactive/components/session-selector.ts:158`, `:402`, `:556` | done | Adapted — stricter: `ctrl+d` arms `confirming_delete` inline, Enter deletes, and *any* other key cancels and closes (`crates/epsilon-tui/src/app/keys.rs:1357`); the active session is refused by name, shown in the panel and as a notice | `ctrl_d_in_the_browser_asks_before_it_deletes`, `confirming_the_delete_removes_the_file_and_says_which_happened`, `escape_cancels_the_delete_and_keeps_the_file`, `deleting_the_active_session_is_refused_by_name` |
-| P-235 | `Ctrl+Backspace` deletes only when the search box is empty, because some terminals cannot distinguish it from Backspace | `packages/coding-agent/src/modes/interactive/components/session-selector.ts:600-601`, `:583` | missing | none | — |
+| P-235 | `Ctrl+Backspace` deletes only when the search box is empty, because some terminals cannot distinguish it from Backspace | `packages/coding-agent/src/modes/interactive/components/session-selector.ts:600-601`, `:583` | deliberately different | Every Backspace spelling edits the browser filter and nothing else (`crates/epsilon-tui/src/app/keys.rs:1438`) — since no destructive act hangs on telling the two apart, the compat guard has nothing to protect | — |
 | P-236 | The active session cannot be deleted; the refusal is shown for three seconds | `packages/coding-agent/src/modes/interactive/components/session-selector.ts:407`, `:836`, `:415` | partial | `crates/epsilon-tui/src/app/panels.rs:209` — the current file is marked `you are here`; there is no delete to protect | `session_rows_list_newest_first_and_mark_the_current_file` |
 | P-237 | Deletion prefers the system trash and falls back to unlink; success says which happened | `packages/coding-agent/src/modes/interactive/components/session-selector.ts:659`, `:857`, `:862`, `:675` | partial | `crates/epsilon-session/src/delete.rs` — Pi's algorithm ported verbatim: spawn the `trash` CLI (with the `--` guard for a `-`-leading path), fall back to a permanent unlink, and carry the outcome through `DeleteOutcome::message` so `"Session moved to trash"` / `"Session deleted"` are Pi's words in one place. Wired end to end in the terminal's browser: `ctrl+d` arms, every key is intercepted while confirming, Enter deletes, anything else cancels, and the attached session is refused with Pi's sentence. **Two deliberate divergences, both in the module docs:** a *missing* file is an error (Pi's `:675` would report it as trashed, claiming a recoverable copy that never existed), and a zero-exit `trash` is verified by the file actually leaving rather than trusted. **One stated platform limit:** Windows has no `trash` command, so the preferred branch is dead code here and every delete is the unlink fallback — reached only behind a confirmation, which is the only undo there is. The desktop has no delete surface (`AGENTS.md` invariant 1) | `deleting_a_session_file_removes_it_and_says_which_happened`, `deleting_a_missing_session_file_is_an_error_not_a_success`, `a_path_that_looks_like_an_option_is_still_deleted` (units), `ctrl_d_in_the_browser_asks_before_it_deletes`, `confirming_the_delete_removes_the_file_and_says_which_happened`, `escape_cancels_the_delete_and_keeps_the_file`, `deleting_the_active_session_is_refused_by_name` (frames; the trash branch is named as untestable here rather than faked with a PATH stub) |
 | P-238 | `Ctrl+R` replaces the list with a prefilled rename panel; Enter saves, Esc returns | `packages/coding-agent/src/modes/interactive/components/session-selector.ts:590`, `:885`, `:904`, `:918` | partial | `crates/epsilon-tui/src/app/commands.rs:692` — renaming exists as `/name`, outside the picker | `none found` per E-069 |
@@ -671,8 +671,8 @@ the per-selector ones.
 | P-241 | A quoted segment is an exact substring match; a `re:` prefix switches to regular expressions | `packages/coding-agent/src/modes/interactive/components/session-selector-search.ts:136`, `:75`, `:46` | partial | `crates/epsilon-tui/src/search.rs:93`, `:102` — plain matching over the rendered transcript, wrapping in both directions; no phrase or regex mode | `an_open_search_reports_itself_and_the_matches_it_found` (frame), `next_and_previous_wrap_rather_than_stop` |
 | P-242 | In Fuzzy sort results are ordered by match score ascending with newest-first tie-breaks; in Recent the query filters but preserves order | `packages/coding-agent/src/modes/interactive/components/session-selector-search.ts:180`, `:171`, `:125` | missing | none | — |
 | P-243 | An empty list names the exact key to press (`No named sessions in current folder. Press <Ctrl+N>…`) | `packages/coding-agent/src/modes/interactive/components/session-selector.ts:429`, `:443`, `:431` | done | `crates/epsilon-tui/src/app/panels.rs` — empty dir opens (not refuses) on `No sessions in this workspace yet — Ctrl+N starts one`; `app.session.new` (`ctrl+n`, both front ends' gesture) routes through the `/new` head. Filtered-empty keeps the widen hint | `ctrl_n_starts_a_new_session_file` (file appears), `empty_browser_names_the_new_session_key` (frame; draw-miss control), `ctrl_n_inside_the_browser_starts_a_session` (the named key works where named; arm-miss control), updated `sessions_command_says_when_there_is_nothing_to_browse` (opens, not refuses) |
-| P-244 | The header shows `Loading n/total` while sessions are read, and a stale load cannot overwrite a fast one | `packages/coding-agent/src/modes/interactive/components/session-selector.ts:142`, `:956`, `:955` | missing | none | — |
-| P-245 | A failed load is shown for 4000 ms with an empty list | `packages/coding-agent/src/modes/interactive/components/session-selector.ts:1003-1004` | missing | none | — |
+| P-244 | The header shows `Loading n/total` while sessions are read, and a stale load cannot overwrite a fast one | `packages/coding-agent/src/modes/interactive/components/session-selector.ts:142`, `:956`, `:955` | deliberately different | The scan is synchronous (`SessionBrowser::build` over `session_rows`, rebuilt per keystroke) — there is no async load to count, and no stale load to guard against; an empty directory opens on the P-243 empty state instead | — |
+| P-245 | A failed load is shown for 4000 ms with an empty list | `packages/coding-agent/src/modes/interactive/components/session-selector.ts:1003-1004` | deliberately different | As P-244: an unreadable directory reads as an empty list (`list_sessions` returns `Vec::new()`, `crates/epsilon-session/src/discover.rs:228`), and a missing directory is refused with a notice before the browser opens — there is no failed async load to time out on screen | — |
 | P-246 | Each row ends with a message count and a relative age (`now` / `5m` / `3h` / `2d` / `2w`), with the active session accent-coloured | `packages/coding-agent/src/modes/interactive/components/session-selector.ts:35`, `:494`, `:515` | partial | `crates/epsilon-tui/src/picker.rs:918` — `age · size · [task child] · [in use] · <file name>`; there is no message count | `session_rows_list_newest_first_and_mark_the_current_file` |
 | P-247 | `Ctrl+L` or `/model <text>` opens the model selector with the argument already in its search box | `packages/coding-agent/src/modes/interactive/components/model-selector.ts:117`, `:118`, `:155` | done | `crates/epsilon-tui/src/app/keys.rs` — hybrid: one candidate applies instantly, zero or many open the picker pre-filled (same resolution a run uses, so apply and run never disagree); `ctrl+l` joins `app.model.select` | `slash_model_direct_applies_instantly` (exact; retargeted to a test-catalog id when blind apply was removed), `model_partial_opens_the_picker_prefilled` (ambiguous family; old-arm RED), `ctrl_l_opens_the_model_picker` (chord-removal control) |
 | P-248 | Tab switches between all models and the cycling scope, with a warning in place of the line when nothing is scoped | `packages/coding-agent/src/modes/interactive/components/model-selector.ts:248`, `:364`, `:94` | missing | none — the picker has two stages, providers then models, and no scope toggle (`crates/epsilon-tui/src/app/keys.rs:1270`) | — |
@@ -779,10 +779,10 @@ row says so — that is a gap in the inventory, and closing it is cheap.
 | 15. Markdown, mermaid and truncation | 22 | 6 | 7 | 3 | 6 |
 | 16. Status indicators | 13 | 2 | 5 | 1 | 5 |
 | 17. Footer | 12 | 4 | 4 | 1 | 3 |
-| 18. Selector and overlay components | 79 | 21 | 17 | 32 | 9 |
-| **Total** | **339** | **77** | **105** | **86** | **71** |
+| 18. Selector and overlay components | 79 | 21 | 17 | 29 | 12 |
+| **Total** | **339** | **77** | **105** | **83** | **74** |
 
-### The `missing` rows — 86
+### The `missing` rows — 83
 
 Every row below has **no** `E-` row establishing the behaviour. Nothing here was found by browsing `crates/`, and
 nothing here is a claim that the behaviour cannot be built.
@@ -801,7 +801,7 @@ nothing here is a claim that the behaviour cannot be built.
 | Markdown, mermaid and truncation (3) | P-167, P-168, T-010 |
 | Status indicators (1) | P-194 |
 | Footer (1) | P-208 |
-| Selector and overlay components (32) | P-230, P-232, P-235, P-239, P-242, P-244, P-245, P-248, P-251, P-255, P-256, P-257, P-258, P-259, P-261, P-281, P-283, P-284, P-285, P-286, P-300, P-304, P-306, P-307, P-308, P-311, P-314, P-316, P-317, P-318, P-319, P-323 |
+| Selector and overlay components (29) | P-230, P-232, P-239, P-242, P-248, P-251, P-255, P-256, P-257, P-258, P-259, P-261, P-281, P-283, P-284, P-285, P-286, P-300, P-304, P-306, P-307, P-308, P-311, P-314, P-316, P-317, P-318, P-319, P-323 |
 
 ### The `partial` rows — 105
 

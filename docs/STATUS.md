@@ -517,6 +517,11 @@ the run. Up from 1,997: the checkpoint round-trip and restore-undo tests. (Previ
 > in the `/tree` picker forks the chosen ancestry with a fresh header (test green).
 > Counts now 76/105/87/71.
 >
+> **Browser-behavior trio judged (this session): P-235/P-244/P-245 dd.** Every
+> Backspace edits the filter so the compat distinction guards nothing; the scan
+> is synchronous so loading counters, stale guards and timed failure displays
+> have no target. Counts now 77/105/83/74.
+>
 > **P-234 done (this session): delete confirms inline, stricter.** `ctrl+d` arms,
 > Enter deletes, any other key cancels and closes; active session refused by name
 > (three cited tests re-run green). Also corrected a stale ours cell claiming the
