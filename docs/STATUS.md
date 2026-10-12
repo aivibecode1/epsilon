@@ -517,6 +517,11 @@ the run. Up from 1,997: the checkpoint round-trip and restore-undo tests. (Previ
 > in the `/tree` picker forks the chosen ancestry with a fresh header (test green).
 > Counts now 76/105/87/71.
 >
+> **P-234 done (this session): delete confirms inline, stricter.** `ctrl+d` arms,
+> Enter deletes, any other key cancels and closes; active session refused by name
+> (three cited tests re-run green). Also corrected a stale ours cell claiming the
+> browser cannot delete. Counts now 77/105/86/71.
+>
 > **Startup trio (this session): P-005 partial, P-008/P-119 judged.** The model scope
 > lives persistently in the header rather than printed once to scrollback; extension
 > slash commands cannot collide (closed static vocabulary); extension failures are
