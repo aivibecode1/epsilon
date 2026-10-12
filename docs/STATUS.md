@@ -307,7 +307,7 @@ inventories are inventories.
 | Matrix | Rows | done | partial | missing | deliberately different |
 |---|---|---|---|---|---|
 | [`parity/pi-tui.md`](parity/pi-tui.md) | **339** | 63 | 108 | 141 | 27 |
-| [`parity/dsh-desktop.md`](parity/dsh-desktop.md) | **433** | 32 | 93 | 261 | 47 |
+| [`parity/dsh-desktop.md`](parity/dsh-desktop.md) | **433** | 32 | 95 | 257 | 49 |
 
 > **Corrected 2026-10-06 by [an independent review](reviews/2026-10-06-objective-review.md).** The
 > DSH row above read `11 / 85 / 295 / 42` and was wrong in two columns. Recounted from the matrix's

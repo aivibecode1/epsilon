@@ -16544,6 +16544,76 @@ mod tests {
         );
     }
 
+    /// **Enter with the quit dialog up does not take the destructive answer (D-033).**
+    ///
+    /// The reference makes Quit the default button; this window deliberately does
+    /// not — `Keep working` takes focus, because a dialog a reflexive Enter
+    /// dismisses destructively is the case `AGENTS.md` §6 exists for. Proven
+    /// stronger than "reaches nothing": the control run showed Enter activates
+    /// the focused Keep, so both asserts below are live — the dialog resolves
+    /// through Keep, and no `Close` is on the frame. The commands are
+    /// read off the key frame's own output (`chord_full`), because a frame's
+    /// viewport commands die with the frame that sent them — reading the next
+    /// frame instead would pass against a dialog that quit and closed on the
+    /// Enter frame. Pinned, not built.
+    /// Control run: a Keep path that also sends `Close` fails both asserts.
+    #[test]
+    fn enter_with_the_quit_dialog_up_does_not_close() {
+        let (ws, _keep) = scratch_workspace("quit-enter");
+        let (session, notices) = faux_session(&ws);
+        let mut h = Harness::with_session(ws, session, notices);
+        assert!(!h.request_close());
+        let _ = h.paint();
+        let (frame, mut full) = h.chord_full(egui::Modifiers::NONE, egui::Key::Enter);
+        let commands = std::mem::take(
+            &mut full
+                .viewport_output
+                .get_mut(&egui::ViewportId::ROOT)
+                .expect("the root viewport is always present")
+                .commands,
+        );
+        assert!(
+            h.app.quit_confirm.is_none(),
+            "Enter resolves through the focused Keep.\n{}",
+            frame.describe()
+        );
+        assert!(
+            !h.close_was_accepted(&commands),
+            "and Keep keeps the window open.\n{}",
+            frame.describe()
+        );
+    }
+
+    /// **A second request joins the open decision instead of re-inspecting (D-034).**
+    ///
+    /// The reference joins repeated requests onto the pending confirmation; this
+    /// window keeps the `QuitAsk` it already computed — work that starts or ends
+    /// while the dialog is open does not change its copy. Compared by value, so
+    /// a re-inspection that recomputed it is the failure this names. Pinned, not
+    /// built: the guard never re-armed. Control run: a second request that
+    /// clears and returns `true` fails both asserts below.
+    #[test]
+    fn a_second_request_joins_the_open_decision() {
+        let (ws, _keep) = scratch_workspace("quit-join");
+        let (session, notices) = faux_session(&ws);
+        let mut h = Harness::with_session(ws, session, notices);
+        assert!(!h.request_close());
+        let first = h.app.quit_confirm.clone();
+        assert!(first.is_some(), "the first request arms the question");
+        let frame = h.paint();
+        assert!(
+            !h.request_close(),
+            "the second request is still refused.\n{}",
+            frame.describe()
+        );
+        assert_eq!(
+            h.app.quit_confirm,
+            first,
+            "the second request joins the open decision; it must not re-inspect.\n{}",
+            frame.describe()
+        );
+    }
+
     /// **A window with nothing in flight is not told a turn is running.**
     ///
     /// The other arm of the same rule, and the one that keeps the guard usable: a dialog that

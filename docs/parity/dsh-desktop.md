@@ -112,7 +112,7 @@ measurements taken here at all.
 
 | area | rows | done | partial | missing | deliberately different |
 |---|---|---|---|---|---|
-| Electron shell (`apps/desktop/**`) | 70 | 1 | 10 | 43 | 16 |
+| Electron shell (`apps/desktop/**`) | 70 | 1 | 12 | 39 | 18 |
 | Approvals and permission presets | 14 | 5 | 7 | 2 | 0 |
 | Transcript, streaming and tool cards | 82 | 4 | 16 | 56 | 6 |
 | Keyboard, settings, themes, locale, account, models, plugins | 68 | 11 | 8 | 44 | 5 |
@@ -120,7 +120,7 @@ measurements taken here at all.
 | Layout, sidebars, files tree, terminal, browser, preview, sessions | 65 | 3 | 23 | 32 | 7 |
 | Approvals, questions, schedule, jobs, goal, plan, subagents, models | 50 | 4 | 10 | 36 | 0 |
 | Un-numbered reference rows | 30 | 2 | 4 | 16 | 8 |
-| **Total** | **433** | **32** | **93** | **261** | **47** |
+| **Total** | **433** | **32** | **95** | **257** | **49** |
 
 ---
 
@@ -165,10 +165,10 @@ do are written out.
 | D-030 | Closing the last window quits everywhere except macOS. | `apps/desktop/src/main.ts:1237-1239` | partial | `crates/epsilon-desktop/src/lib.rs:199` | `eframe::run_native` returns when the last window closes, so the product half is right. The macOS exception is not implemented and is not planned. |
 | D-031 | Every ordinary quit asks the Host what it would interrupt; if the Host reports nothing interruptible the quit proceeds with no dialog. | `apps/desktop/src/quit-confirmation.ts:68-77` | partial | `crates/epsilon-desktop/src/app.rs` — `inspect_quit` asks what a close would interrupt (turn, parked asks, on-screen conversation) and `answer_close_request` refuses with a dialog naming it; since round 17 the refusal cancels the platform close in the same function (`CancelClose` — before that the dialog could never appear in production, eframe closes uncancelled viewports). The second half stays open deliberately, not by omission: a tested product rule says closing is the reader's decision even for an empty window, and overturning it solo would trade the reference's frictionless close for that rule | `closing_the_window_asks_before_it_loses_a_turn`, `refusing_a_close_cancels_the_platform_close` (CancelClose observed on the frame), `a_typed_draft_keeps_its_guard` |
 | D-032 | Three localized explanations exist — running tasks, scheduled tasks, or both — and a failed or timed-out inspection is treated as "running tasks" rather than a silent quit. | `apps/desktop/src/quit-confirmation.ts:15-21`, `:71-74` | partial | `crates/epsilon-desktop/src/app.rs` — **three explanations now, where there were two.** `QuitAsk` gained `queued`, measured from the real agent's steering *and* follow-up queues, so a reader who typed a message while a turn was running is told `1 queued message is waiting, and it is dropped` instead of `Nothing is in flight` while a message sat in a queue nothing would deliver. The steered and follow-up forms are counted together because from a reader's point of view they are the same thing — a message the harness agreed to deliver later. **Still open:** Epsilon has no scheduled-task concept, so the reference's third *kind* (as against third *count*) has no target here, and a failed/timed-out inspection cannot occur because the measurement reads in-process rather than over IPC | `a_quit_with_queued_work_names_it_on_the_frame`, `a_quit_with_a_steered_message_also_names_it` (both drive the real agent queue, not a hand-set field) |
-| D-033 | Quit is the default button and Cancel answers Esc; macOS places Cancel left of Quit, Windows places Quit left of Cancel. | `apps/desktop/src/quit-confirmation.ts:79-90` | missing | — | As D-031. |
-| D-034 | A second quit request while the box is open joins it; on macOS it also raises the application. | `apps/desktop/src/quit-confirmation.ts:52-55`, `apps/desktop/src/main.ts:1003` | missing | — | As D-031. |
-| D-035 | The confirmation is skipped when the OS is ending the session. | `apps/desktop/src/main.ts:1082-1090`, `:1240` | missing | — | As D-031. |
-| D-036 | Cancelling a quit that closing the welcome window started brings the welcome window back. | `apps/desktop/src/main.ts:1278-1279` | missing | — | As D-031 and D-027. |
+| D-033 | Quit is the default button and Cancel answers Esc; macOS places Cancel left of Quit, Windows places Quit left of Cancel. | `apps/desktop/src/quit-confirmation.ts:79-90` | partial | `crates/epsilon-desktop/src/app.rs:9047` (Keep takes focus), `:5149-5151` (Escape dismisses from the top of `paint`), `:8854-8873` (every request cancels the platform close) | Two of three clauses hold. **Escape answers Cancel: done** — the dialog owns Escape before the composer can clear a draft with it, and the window stays open (`escape_keeps_the_window_open`). **Quit is not the default: deliberately different** — `Keep working` takes focus, so Enter resolves through Keep (`enter_with_the_quit_dialog_up_does_not_close` proves Enter activates Keep and no `Close` is on the frame); a dialog a reflexive Enter dismisses destructively is the case `AGENTS.md` §6 exists for. **Order matches macOS and differs Windows, deliberately:** Keep-left / Close-right is Cancel-left / Quit-right, while DSH's Windows rule puts Quit first — the destructive action under a reflexive Enter, which is exactly what the focus rule refuses |
+| D-034 | A second quit request while the box is open joins it; on macOS it also raises the application. | `apps/desktop/src/quit-confirmation.ts:52-55`, `apps/desktop/src/main.ts:1003` | partial | `crates/epsilon-desktop/src/app.rs:8854-8873` (join: armed once, cancelled again, never re-inspected) | **Joining holds: done** — a request arriving with the dialog up keeps the computed `QuitAsk` by value and cancels the platform close again, so holding the close button cannot fall through (`a_second_close_request_does_not_fall_through`, `a_second_request_joins_the_open_decision`). **Raising is deliberately different:** one native window, and the dialog is an in-window overlay already front-and-center — no second window, no hidden app, nothing to raise (`main.ts:1003` raises only because the native box can sit behind other apps) |
+| D-035 | The confirmation is skipped when the OS is ending the session. | `apps/desktop/src/main.ts:1082-1090`, `:1240` | deliberately different | `crates/epsilon-desktop/src/app.rs:8854-8873` (every request is asked and cancelled) | No signal exists to key the skip off: winit 0.30.13's `WindowEvent` carries only `CloseRequested` and `Destroyed` (`winit-0.30.13/src/event.rs:171-174`), and egui-winit forwards only those two (`egui-winit-0.36.2/src/lib.rs:515-520`) — `WM_QUERYENDSESSION` / `WM_ENDSESSION` never reaches the app on any backend. So the guard always asks, which is also the fails-closed direction: skipping the guard exactly when the machine is going away is the silent quit `AGENTS.md` §6 forbids |
+| D-036 | Cancelling a quit that closing the welcome window started brings the welcome window back. | `apps/desktop/src/main.ts:1278-1279` | deliberately different | `crates/epsilon-desktop/src/app.rs:8879-8884` (`ask_quit`: the same in-window dialog from the head) | Both halves moot. There is no welcome window (D-027, D-040: composition resolves the agent before any window opens), so no quit can start from closing one. And asking destroys nothing: the dialog is an in-window overlay over the window that never left, so cancelling returns to it by construction — there is nothing to bring back (`main.ts:1278-1279` restores only because the reference's ask destroyed the window that asked) |
 | D-037 | The welcome window is a fixed 600 x 700 **content size**, centred, and not resizable, maximizable or fullscreenable. | `apps/desktop/src/welcome-window.ts:16-27` | missing | — | No welcome window. |
 | D-038 | Welcome uses macOS menu vibrancy, or Windows acrylic with a 42 DIP transparent caption. | `apps/desktop/src/welcome-window.ts:28-38` | missing | — | As D-037. |
 | D-039 | Welcome loads a local React document through an isolated preload with a locale passed as an argument; navigation and window opening are denied. | `apps/desktop/src/welcome-window.ts:39-46`, `:117-120` | missing | — | As D-037. |
@@ -715,10 +715,11 @@ single-instance lock to arbitrate.
 **This is the group where "deliberately different" is doing less work than it looks, and the
 matrix should say so.** The reference's quit rules are a genuine improvement on closing a window
 mid-turn, and nothing about a single-process design makes them unnecessary — it only makes them
-ours to build instead of inherited. D-032 to D-036 are still recorded as `missing`; D-031 moved
-to `partial` in round 17 (inspection, dialog, enforced cancel, silent empty close), and they
-appear at the top of [Open rows](#open-rows). The tray and the connection
-indicator are genuinely moot.
+ours to build instead of inherited. D-031 and D-032 are `partial` (inspection, dialog,
+enforced cancel, three explanations); D-033 and D-034 are `partial` with the platform-order,
+default-button and raise halves recorded as decisions; D-035 and D-036 are deliberately
+different (no session-end signal on this stack; no welcome window to bring back). The tray
+and the connection indicator are genuinely moot.
 
 ### Group 3 — The window's own keyboard and overlay model
 
@@ -784,7 +785,7 @@ of the document**, so it lists ids rather than paraphrasing cells — the cell i
 
 | area | partial rows |
 |---|---|
-| Electron shell | D-001, D-021, D-030, D-031, D-032, D-045, D-058, D-061, D-062, D-064, D-066 |
+| Electron shell | D-001, D-021, D-030, D-031, D-032, D-033, D-034, D-045, D-058, D-061, D-062, D-064, D-066 |
 | Approvals and presets | D-074, D-075, D-076, D-080, D-081, D-082, D-083 |
 | Transcript and tool cards | C-107, C-109, C-121, C-123, C-126, C-132, C-141, C-143, C-145, C-147, C-157, C-160, C-162, C-163, C-168, C-169 |
 | Keyboard and settings | S-109, S-113, S-115, S-117, S-119, S-126, S-159, S-164 |
@@ -825,7 +826,7 @@ rather than merely underserved:
 
 | area | missing rows |
 |---|---|
-| Electron shell | D-007, D-008, D-009, D-012, D-013, D-014, D-017, D-018, D-019, D-020, D-022, D-024, D-025, D-026, D-027, D-028, D-029, D-033, D-034, D-035, D-036, D-037, D-038, D-039, D-040, D-041, D-042, D-043, D-044, D-047, D-052, D-053, D-054, D-055, D-056, D-057, D-059, D-060, D-063, D-068, D-069, D-070 |
+| Electron shell | D-007, D-008, D-009, D-012, D-013, D-014, D-017, D-018, D-019, D-020, D-022, D-024, D-025, D-026, D-027, D-028, D-029, D-037, D-038, D-039, D-040, D-041, D-042, D-043, D-044, D-047, D-052, D-053, D-054, D-055, D-056, D-057, D-059, D-060, D-063, D-068, D-069, D-070 |
 | Approvals and presets | D-077, D-079 |
 | Transcript and tool cards | C-101, C-102, C-103, C-104, C-105, C-106, C-108, C-112, C-113, C-114, C-115, C-116, C-117, C-118, C-119, C-122, C-124, C-125, C-128, C-129, C-130, C-131, C-133, C-134, C-136, C-137, C-138, C-139, C-142, C-144, C-146, C-148, C-149, C-150, C-151, C-154, C-155, C-156, C-158, C-159, C-161, C-164, C-165, C-166, C-167, C-171, C-172, C-173, C-175, C-176, C-177, C-178, C-179, C-180, C-181, C-182 |
 | Keyboard and settings | S-102, S-104, S-110, S-111, S-112, S-114, S-116, S-121, S-128, S-130, S-129, S-131, S-132, S-133, S-134, S-136, S-137, S-138, S-139, S-140, S-141, S-142, S-143, S-144, S-145, S-146, S-147, S-148, S-149, S-150, S-151, S-152, S-153, S-155, S-156, S-157, S-158, S-160, S-161, S-162, S-163, S-166, S-167, S-168 |
@@ -857,6 +858,14 @@ nothing would deliver.
    Windows-order rule puts the destructive action first. Closing the window while a turn is running
    no longer ends the process (M316), and a reader who has not pressed `/clear` is told the
    conversation is on screen only.
+   **CLOSED this round:** D-033 `partial` (Escape done, pinned; Keep-default and the
+   macOS-matching order recorded as decisions, with Enter resolving through Keep proven on
+   the frame), D-034 `partial` (joining done, pinned by value; the macOS raise has no
+   target in one window), D-035 deliberately different (winit carries no session-end
+   event on any backend, so there is nothing to key the skip off — and skipping the
+   guard when the machine is going away is the silent quit §6 forbids), D-036
+   deliberately different (no welcome window; the ask destroys nothing, so cancelling
+   returns by construction).
 2. **The keybinding registry — closed, round 108 (S-122, S-123, S-125 all `done`).**
    [`AGENTS.md`](../../AGENTS.md) §2.4 says slash commands, palette entries **and keybindings** are
    "declared once and read by every front end, with per-front-end capability declared as data".
