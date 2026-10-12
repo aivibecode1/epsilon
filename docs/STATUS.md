@@ -640,6 +640,12 @@ the run. Up from 1,997: the checkpoint round-trip and restore-undo tests. (Previ
 > **P-135 judged (this session): no transformer chain, no flag.** User text is never
 > parsed (P-134), so streaming/not has no reader. Counts now 81/111/42/105.
 >
+> **Goal 3, Phase 5 verdict (this session): docs tree verified, not pruned.** Map audit:
+> `docs/README.md` indexes every top-level entry; START-HERE order resolves;
+> milestones/plans/audit stay as dated evidence by convention; `glossary.md` +
+> `handoff/` indexed and linked. Nothing qualifies for deletion (the `.draft`
+> awaits its recorded human decision). Naming/sequencing holds.
+>
 > **Settings pair judged (this session): P-267/P-268 dd.** Excluded images need no
 > conditional settings; nine fixed-or-keyed behaviors need no toggles. Counts now
 > 81/111/40/107.
