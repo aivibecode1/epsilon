@@ -66,7 +66,7 @@ back; it is a reading of the test's source, not a report of a run.
 
 **339 rows** are paired here: Pi's 323 `P-###` behaviours, the 4 `L-###` rows of its inherited `tui.*` keybinding
 table, and the 12 `T-###` rows of its text-measurement core. Every one carries a reference citation; 200 of them
-carry an `ours` citation and 125 do not, and those 125 say so. The counts below are the rows **actually written in
+carry an `ours` citation and 123 do not, and those 123 say so. The counts below are the rows **actually written in
 this document**, tallied from its own tables — not a projection.
 
 | area | rows | done | partial | missing | deliberately different |
@@ -83,20 +83,20 @@ this document**, tallied from its own tables — not a projection.
 | 10. Settings | 22 | 1 | 9 | 11 | 1 |
 | 11. Project trust | 4 | 1 | 2 | 0 | 1 |
 | 12. Tool cards | 16 | 3 | 6 | 0 | 7 |
-| 13. Bash cards | 11 | 3 | 6 | 2 | 0 |
+| 13. Bash cards | 11 | 5 | 6 | 0 | 0 |
 | 14. Diffs | 6 | 6 | 0 | 0 | 0 |
 | 15. Markdown, mermaid and truncation | 22 | 6 | 7 | 9 | 0 |
 | 16. Status indicators | 13 | 2 | 5 | 5 | 1 |
 | 17. Footer | 12 | 4 | 4 | 1 | 3 |
 | 18. Selector and overlay components | 79 | 18 | 17 | 36 | 8 |
-| **Total** | **339** | **72** | **102** | **124** | **41** |
+| **Total** | **339** | **74** | **102** | **122** | **41** |
 
 A further **17 rows are not in the counts above**: the 10 `Y-###` rows Pi ships outside its interactive mode (out of
 scope by design) and the 7 `AA-###` rows recording what was never inventoried. Both are listed in full near the end
 of this document, because a row that is silently dropped is how a rule goes unowned.
 
-The shape of that table is the honest shape of a port from a 356-row inventory to a 214-row one: **124 rows have no
-counterpart established on our side, 102 are half-built, 72 are exercised, and 41 are decisions.** The 138 are not
+The shape of that table is the honest shape of a port from a 356-row inventory to a 216-row one: **122 rows have no
+counterpart established on our side, 102 are half-built, 74 are exercised, and 41 are decisions.** The 138 are not
 69/339 failures; most of them sit in Pi's extension, settings-overlay, mermaid, image and tree-navigation surface,
 much of which Epsilon deliberately does not have. Read [Open rows](#open-rows) before reading the table.
 
@@ -529,8 +529,8 @@ is required of both programs, and Epsilon's evidence does not yet show a full-ou
 | P-157 | The hidden-lines hint names the expansion key live and flips wording between expand and collapse | `packages/coding-agent/src/modes/interactive/components/bash-execution.ts:177`, `:184` | done | `crates/epsilon-tui/src/ui/card.rs:291` — `… 29 more lines (ctrl+x to open)`, carrying the true count and the live text of the binding; an expanded card prints no affordance | `a_long_diff_is_capped_and_says_which_key_opens_it` (frame) |
 | P-158 | A cancelled command shows `(cancelled)` and a failed one `(exit N)` | `packages/coding-agent/src/modes/interactive/components/bash-execution.ts:189`, `:192` | partial | `crates/epsilon-tui/src/renderers/mod.rs` — the exit **number** rides the headline (`$ cargo test · exit 101`) from `details.exit_code`, which the shell tool already reports (`epsilon-tools/src/shell.rs:466`, `:612`); zero and absent grow nothing. The `(cancelled)` half stays open: no `CardStatus` names a cancellation, so an aborted command is still only `pending` | `a_failed_shell_card_names_its_exit_code`, `a_successful_shell_card_grows_no_exit_code` (units, with a zero/absent control), `a_failed_shell_card_shows_its_exit_code_on_the_frame` (frame at 80 and 100) |
 | P-159 | When output was truncated for context but a full copy was saved, the card names the file | `packages/coding-agent/src/modes/interactive/components/bash-execution.ts:196`, `packages/coding-agent/src/modes/interactive/interactive-mode.ts:6991-6997` | done | `crates/epsilon-tui/src/renderers/mod.rs` — `result_head` appends `· full output: <path>` from `details.full_output_path` (set only when truncation actually spilled; small outputs carry no key) | `truncated_shell_result_names_its_spill_file` (names it; small outputs grow none; append-removal control) |
-| P-160 | The card shows at most what the model saw, truncated to the bash tool's own limits | `packages/coding-agent/src/modes/interactive/components/bash-execution.ts:122-124` | missing | none | — |
-| P-024 | Bash output started while the agent is streaming is deferred above the composer and moved into the transcript on the next submission | `packages/coding-agent/src/modes/interactive/interactive-mode.ts:6966-6976`, `:4774-4780`, `:3330` | missing | none | — |
+| P-160 | The card shows at most what the model saw, truncated to the bash tool's own limits | `packages/coding-agent/src/modes/interactive/components/bash-execution.ts:122-124` | done | Adapted to shared limits: the model sees tool output capped at `MAX_TOOL_OUTPUT_BYTES` (`crates/epsilon-tools/src/util.rs:18`, head+tail with spill), and the card shows a 40-line tail of the same result (`CARD_STREAM_TAIL_LINES`, `crates/epsilon-tui/src/state.rs:705`) plus the spill locator — a subset of the model view by construction, never more | `truncate_spills_and_notes_locator`, `truncated_shell_result_names_its_spill_file` |
+| P-024 | Bash output started while the agent is streaming is deferred above the composer and moved into the transcript on the next submission | `packages/coding-agent/src/modes/interactive/interactive-mode.ts:6966-6976`, `:4774-4780`, `:3330` | done | Adapted: no defer/move dance exists because streaming rows already ARE transcript rows above the composer — the tail arrives next to the composer live and the settled result replaces it in place (`crates/epsilon-tui/src/state.rs:1691`) | `a_streaming_tail_arrives_next_to_the_composer` (frame), `the_result_replaces_the_streamed_tail_rather_than_joining_it` |
 | P-177 | The bash **tool** prints an elapsed/duration line and its own truncation warning with `... (N earlier lines, KEY to expand)` | `packages/coding-agent/src/core/tools/renderers/bash.ts:98`, `:104`, `:18`, `:72` | partial | `crates/epsilon-tui/src/state.rs:361` — a duration appears on a finished card as `ended - started`, and sub-second work reads as `412ms` rather than `0s`; **the keep-end half of the warning is closed**: the card's own affordance now reads `… N earlier lines (ctrl+x to open)` when the tail is kept, which is Pi's wording. There is still no byte- or line-limit warning from the tool itself — the tool's own truncation marker sits *between* the head and tail halves of a spilled body and stays hidden under any cap | `only_a_finished_card_carries_a_duration`, `a_running_call_shows_its_time_in_the_header_not_on_the_card` (frame), `a_capped_text_body_keeps_its_tail_and_says_so` (frame) |
 
 ## 14. Diffs
@@ -774,15 +774,15 @@ row says so — that is a gap in the inventory, and closing it is cheap.
 | 10. Settings | 22 | 1 | 9 | 11 | 1 |
 | 11. Project trust | 4 | 1 | 2 | 0 | 1 |
 | 12. Tool cards | 16 | 3 | 6 | 0 | 7 |
-| 13. Bash cards | 11 | 3 | 6 | 2 | 0 |
+| 13. Bash cards | 11 | 5 | 6 | 0 | 0 |
 | 14. Diffs | 6 | 6 | 0 | 0 | 0 |
 | 15. Markdown, mermaid and truncation | 22 | 6 | 7 | 9 | 0 |
 | 16. Status indicators | 13 | 2 | 5 | 5 | 1 |
 | 17. Footer | 12 | 4 | 4 | 1 | 3 |
 | 18. Selector and overlay components | 79 | 18 | 17 | 36 | 8 |
-| **Total** | **339** | **72** | **102** | **124** | **41** |
+| **Total** | **339** | **74** | **102** | **122** | **41** |
 
-### The `missing` rows — 124
+### The `missing` rows — 122
 
 Every row below has **no** `E-` row establishing the behaviour. Nothing here was found by browsing `crates/`, and
 nothing here is a claim that the behaviour cannot be built.
@@ -799,7 +799,6 @@ nothing here is a claim that the behaviour cannot be built.
 | Sessions (1) | P-081 |
 | Themes (8) | P-092, P-094, P-095, P-096, P-098, P-101, P-270, P-271 |
 | Settings (11) | P-103, P-105, P-106, P-111, P-112, P-113, P-114, P-267, P-268, P-275, P-277 |
-| Bash cards (2) | P-024, P-160 |
 | Markdown, mermaid and truncation (9) | P-167, P-168, P-169, P-170, P-171, P-172, P-173, T-010, T-012 |
 | Status indicators (5) | P-019, P-191, P-192, P-193, P-194 |
 | Footer (1) | P-208 |
