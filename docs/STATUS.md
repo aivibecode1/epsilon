@@ -434,6 +434,14 @@ the run. Up from 1,997: the checkpoint round-trip and restore-undo tests. (Previ
 > resolves live via `key_text`; viewer/tree literal hints match the overlay convention),
 > click rows P-003/P-125/P-143/P-185/P-223 unchanged (capture still OFF).
 >
+> **Goal 3, Phase 1 (landed): AGENTS.md v4 draft for owner application.** Every v3
+> clause audited against the tree (13 crates, uniform 1.88, TERMINAL+WINDOW tables,
+> 15 legs, SUPPORTED only in a historical comment); the complete v4 text sits in
+> `docs/AGENTS-v4-DRAFT.md` for verbatim owner application + relock (agents never
+> touch the file). `check-links` now skips fenced code blocks — a link in a fence
+> is quoted text, proven by audit that only the draft's 7 verbatim links are skipped.
+> Mapped in `docs/README.md`; links 995/0.
+>
 > **Goal 2026-10-12: one undo for agent and human edits (landed).** The viewer editor
 > saved through a `.tui-bak` sidecar while agent edits go through `CheckpointStore`,
 > so `/restore` could not undo a human save. Decided by probe (ADR-040):

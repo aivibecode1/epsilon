@@ -24,6 +24,7 @@ curated open-work notes, evidence pointers and safe resumption steps, not produc
 |---|---|---|
 | [`../AGENTS.md`](../AGENTS.md) | **the rules for anyone writing code here** — locked, maintainer-owned, enforced by a SHA-256 check | before your first change |
 | [`AGENTS-PROPOSALS.md`](AGENTS-PROPOSALS.md) | proposed changes to `AGENTS.md`, which no agent may make directly | you think a rule is wrong |
+| [`AGENTS-v4-DRAFT.md`](AGENTS-v4-DRAFT.md) | the complete v4 rewrite draft for owner application (desktop retired) — apply verbatim, then re-issue the lock | you are the maintainer relocking the rules |
 | [`design/`](design) | **how and why**: the architecture tour, the ADR log, the skills design | you are changing behaviour |
 | [`../scripts/README.md`](../scripts/README.md) | the verification battery and every repository check: what each one fails on, and why it exists | you want to know what CI actually enforces |
 | [`references/`](references/README.md) | **the six reference harnesses**: one page each — what it is, who made it, its licence, what we took and what we skipped — plus [the TUI stack decision](references/TUI-DECISION.md) and a one-table summary | you want to know where an idea came from, or are proposing a terminal toolkit |

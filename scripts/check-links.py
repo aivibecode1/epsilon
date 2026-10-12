@@ -77,7 +77,18 @@ def main() -> int:
     for path in sorted(markdown_files()):
         rel = os.path.relpath(path, ROOT).replace("\\", "/")
         with open(path, encoding="utf-8", errors="replace") as fh:
+            in_fence = False
             for lineno, line in enumerate(fh, 1):
+                # A link inside a fenced code block is quoted text, not a link:
+                # no renderer navigates it. Skipping fences keeps a verbatim
+                # copy (e.g. the v4 draft of AGENTS.md, whose root-relative
+                # links are correct at the root but unresolvable from `docs/`)
+                # from failing the gate it must satisfy once applied.
+                if line.lstrip().startswith("```"):
+                    in_fence = not in_fence
+                    continue
+                if in_fence:
+                    continue
                 for match in LINK.finditer(line):
                     target = strip_angle(match.group(1))
                     if is_external(target):
