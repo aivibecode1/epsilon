@@ -5256,6 +5256,12 @@ impl IdeApp {
         // does.
         self.layout = IdeLayout::new(screen, self.prefs);
         let l = self.layout;
+        // **The page, before the panes.** The gutters between panes show whatever
+        // the window was cleared with, and eframe's default clear is white: an
+        // unpainted gutter reads as a white gash in the dark theme, which is the
+        // "overlapping panes" report. The panes paint the raised surface over
+        // this; the page follows the runtime theme, so `/theme` repaints it too.
+        ui.painter().rect_filled(screen, 0.0, self.theme.background);
         let mut summary = FrameSummary {
             tier: l.tier,
             size: [screen.width(), screen.height()],
@@ -12513,11 +12519,67 @@ mod tests {
             "a pane must paint the raised surface.\n{}",
             h.paint().describe()
         );
+        // Refined past the page fill: the page spans the window, so a background
+        // rect is only wrong when a pane interior holds one. The page containing
+        // panes is the design; a pane containing the page is a hole in it.
+        let layout = h.app.layout();
+        for pane in [layout.sidebar, layout.center, layout.agent] {
+            if pane.width() <= 0.0 {
+                continue;
+            }
+            assert!(
+                !fills(theme.background)
+                    .iter()
+                    .any(|r| pane.shrink(2.0).contains_rect(*r)),
+                "and must not paint the flat page colour inside a pane: {:?}",
+                fills(theme.background)
+            );
+        }
+    }
+
+    /// The page is painted behind the panes, so the gutters show the theme.
+    ///
+    /// The gutters between panes show whatever the window was cleared with, and
+    /// eframe's default clear is white: unpainted gutters read as white gashes
+    /// in the dark theme, which is the "overlapping panes" report. The design
+    /// system already says panes are a raised surface OVER the page — this pins
+    /// the page half: a background fill spanning the window must reach the
+    /// renderer, in the runtime theme, every frame. RED first: no background
+    /// fill reaches the renderer today.
+    #[test]
+    fn the_page_is_painted_behind_the_panes() {
+        let (ws, _keep) = scratch_workspace("page-behind-panes");
+        let mut h = Harness::new(ws);
+        let full = h.full_frame();
+        let background = h.app.theme.background;
+        let page: Vec<egui::Rect> = full
+            .shapes
+            .iter()
+            .filter_map(|clipped| match &clipped.shape {
+                egui::Shape::Rect(r) if r.fill == background => Some(r.rect),
+                _ => None,
+            })
+            .collect();
         assert!(
-            fills(theme.background).is_empty(),
-            "and must not paint the flat page colour where a pane belongs: {:?}",
-            fills(theme.background)
+            !page.is_empty(),
+            "a background fill must reach the renderer, or the gutters show the clear color"
         );
+        // And it must actually span the window — a stray chip of background
+        // somewhere is not the page. Every drawn pane sits on it.
+        let layout = h.app.layout();
+        for (name, pane) in [
+            ("sidebar", layout.sidebar),
+            ("center", layout.center),
+            ("agent", layout.agent),
+        ] {
+            if pane.width() <= 0.0 {
+                continue;
+            }
+            assert!(
+                page.iter().any(|r| r.contains_rect(pane)),
+                "the page fill must span the {name} pane: {page:?}"
+            );
+        }
     }
 
     /// `/resume <path>` switches to that session file.
