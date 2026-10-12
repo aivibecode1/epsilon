@@ -633,6 +633,10 @@ the run. Up from 1,997: the checkpoint round-trip and restore-undo tests. (Previ
 > **P-208 judged (this session): no experimental flags anywhere.** No mode to mark,
 > so no marker. Counts now 81/111/44/103.
 >
+> **P-194 judged (this session): extensions load synchronously.** Discovery and
+> spawn run inside composition — no async loader to border, nothing to cancel.
+> Counts now 81/111/43/104.
+>
 > **Goal 3, Phase 1 (landed): AGENTS.md v4 draft for owner application.** Every v3
 > clause audited against the tree (13 crates, uniform 1.88, TERMINAL+WINDOW tables,
 > 15 legs, SUPPORTED only in a historical comment); the complete v4 text sits in

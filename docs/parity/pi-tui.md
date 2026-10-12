@@ -66,7 +66,7 @@ back; it is a reading of the test's source, not a report of a run.
 
 **339 rows** are paired here: Pi's 323 `P-###` behaviours, the 4 `L-###` rows of its inherited `tui.*` keybinding
 table, and the 12 `T-###` rows of its text-measurement core. Every one carries a reference citation; 200 of them
-carry an `ours` citation and 45 do not, and those 45 say so. The counts below are the rows **actually written in
+carry an `ours` citation and 44 do not, and those 44 say so. The counts below are the rows **actually written in
 this document**, tallied from its own tables — not a projection.
 
 | area | rows | done | partial | missing | deliberately different |
@@ -86,17 +86,17 @@ this document**, tallied from its own tables — not a projection.
 | 13. Bash cards | 11 | 5 | 6 | 0 | 0 |
 | 14. Diffs | 6 | 6 | 0 | 0 | 0 |
 | 15. Markdown, mermaid and truncation | 22 | 6 | 7 | 1 | 8 |
-| 16. Status indicators | 13 | 2 | 5 | 1 | 5 |
+| 16. Status indicators | 13 | 2 | 5 | 0 | 6 |
 | 17. Footer | 12 | 4 | 4 | 0 | 4 |
 | 18. Selector and overlay components | 79 | 22 | 19 | 25 | 13 |
-| **Total** | **339** | **81** | **111** | **44** | **103** |
+| **Total** | **339** | **81** | **111** | **43** | **104** |
 
 A further **17 rows are not in the counts above**: the 10 `Y-###` rows Pi ships outside its interactive mode (out of
 scope by design) and the 7 `AA-###` rows recording what was never inventoried. Both are listed in full near the end
 of this document, because a row that is silently dropped is how a rule goes unowned.
 
-The shape of that table is the honest shape of a port from a 356-row inventory to a 295-row one: **44 rows have no
-counterpart established on our side, 111 are half-built, 81 are exercised, and 103 are decisions.** The 44 are not
+The shape of that table is the honest shape of a port from a 356-row inventory to a 296-row one: **43 rows have no
+counterpart established on our side, 111 are half-built, 81 are exercised, and 104 are decisions.** The 43 are not
 69/339 failures; most of them sit in Pi's extension, settings-overlay, mermaid, image and tree-navigation surface,
 much of which Epsilon deliberately does not have. Read [Open rows](#open-rows) before reading the table.
 
@@ -614,7 +614,7 @@ counterpart here and why the kind-scoped clear is not needed.
 | P-191 | A branch summary is its own status kind, so clearing compaction will not remove it | `packages/coding-agent/src/modes/interactive/components/status-indicator.ts:109`, `packages/coding-agent/src/modes/interactive/interactive-mode.ts:3715` | deliberately different | There are no branch summaries to protect (P-072): fork executes without summarising, so the clear-compaction-must-not-remove-it question cannot arise | — |
 | P-192 | `renderInBorder` renders the loader at `width + 2` and takes line 1, because the loader always prepends a blank line | `packages/coding-agent/src/modes/interactive/components/status-indicator.ts:25`, `packages/tui/src/components/loader.ts:44` | deliberately different | With no border-embedded status there is no such coupling to get wrong: the header spinner owns its row and the loader geometry it prescribes has no target | — |
 | P-193 | An embedded working indicator takes the editor's border colour so spinner and border agree | `packages/coding-agent/src/modes/interactive/interactive-mode.ts:2298-2311`, `packages/coding-agent/src/modes/interactive/components/status-indicator.ts:43` | deliberately different | The header's spinner is drawn in the accent role (`crates/epsilon-tui/src/ui/header.rs:86`) and there is no bordered editor for it to agree with — agreement with a nonexistent border is vacuous, and the thinking level is not encoded in one | — |
-| P-194 | An extension loader is wrapped in borders with a `cancel` hint, omitted when the operation is not cancellable | `packages/coding-agent/src/modes/interactive/components/bordered-loader.ts:36`, `:39`, `:25`, `:46` | missing | none | — |
+| P-194 | An extension loader is wrapped in borders with a `cancel` hint, omitted when the operation is not cancellable | `packages/coding-agent/src/modes/interactive/components/bordered-loader.ts:36`, `:39`, `:25`, `:46` | deliberately different | Extension discovery and spawn run synchronously inside composition (`crates/epsilon-runtime/src/lib.rs:870`) — there is no async loader to border and nothing to cancel | — |
 | P-195 | A dynamic border emits exactly `width` dashes with a floor of one, so it re-fits on every resize | `packages/coding-agent/src/modes/interactive/components/dynamic-border.ts:23` | done | `crates/epsilon-tui/src/app.rs:1733`, `:1597` — ratatui composes borders per frame and the cache key includes the width, so a resize invalidates every cached row wholesale | `resizing_mid_session_keeps_every_row_inside_the_new_width` (frame, renders 120×30, 50×14, 120×30, 44×10 on one app) |
 | P-196 | A themed text line rebuilds from a callback on invalidate, so a theme change repaints it | `packages/coding-agent/src/modes/interactive/components/themed-text.ts:26`, `packages/coding-agent/src/modes/interactive/interactive-mode.ts:3749` | done | `crates/epsilon-tui/src/ui/theme.rs:1062` — roles resolve per frame and no repaint call is made, so a stored styled string cannot go stale | `switching_the_palette_redraws_the_transcript_and_not_just_the_chrome` (frame) |
 
@@ -777,12 +777,12 @@ row says so — that is a gap in the inventory, and closing it is cheap.
 | 13. Bash cards | 11 | 5 | 6 | 0 | 0 |
 | 14. Diffs | 6 | 6 | 0 | 0 | 0 |
 | 15. Markdown, mermaid and truncation | 22 | 6 | 7 | 1 | 8 |
-| 16. Status indicators | 13 | 2 | 5 | 1 | 5 |
+| 16. Status indicators | 13 | 2 | 5 | 0 | 6 |
 | 17. Footer | 12 | 4 | 4 | 0 | 4 |
 | 18. Selector and overlay components | 79 | 22 | 19 | 25 | 13 |
-| **Total** | **339** | **81** | **111** | **44** | **103** |
+| **Total** | **339** | **81** | **111** | **43** | **104** |
 
-### The `missing` rows — 44
+### The `missing` rows — 43
 
 Every row below has **no** `E-` row establishing the behaviour. Nothing here was found by browsing `crates/`, and
 nothing here is a claim that the behaviour cannot be built.
@@ -796,7 +796,6 @@ nothing here is a claim that the behaviour cannot be built.
 | Themes (2) | P-096, P-098 |
 | Settings (7) | P-111, P-113, P-114, P-267, P-268, P-275, P-277 |
 | Markdown, mermaid and truncation (1) | T-010 |
-| Status indicators (1) | P-194 |
 | Selector and overlay components (25) | P-230, P-239, P-251, P-256, P-257, P-258, P-259, P-261, P-281, P-283, P-284, P-285, P-286, P-300, P-304, P-306, P-307, P-308, P-311, P-314, P-316, P-317, P-318, P-319, P-323 |
 
 ### The `partial` rows — 111
