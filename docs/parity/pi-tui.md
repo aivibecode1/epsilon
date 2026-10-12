@@ -66,7 +66,7 @@ back; it is a reading of the test's source, not a report of a run.
 
 **339 rows** are paired here: Pi's 323 `P-###` behaviours, the 4 `L-###` rows of its inherited `tui.*` keybinding
 table, and the 12 `T-###` rows of its text-measurement core. Every one carries a reference citation; 200 of them
-carry an `ours` citation and 66 do not, and those 66 say so. The counts below are the rows **actually written in
+carry an `ours` citation and 65 do not, and those 65 say so. The counts below are the rows **actually written in
 this document**, tallied from its own tables — not a projection.
 
 | area | rows | done | partial | missing | deliberately different |
@@ -76,7 +76,7 @@ this document**, tallied from its own tables — not a projection.
 | 3. Composer and editor | 24 | 6 | 12 | 2 | 4 |
 | 4. Slash commands and autocomplete | 13 | 2 | 5 | 5 | 1 |
 | 5. Transcript and streaming | 35 | 10 | 4 | 11 | 10 |
-| 6. Model picker and thinking | 9 | 0 | 4 | 1 | 4 |
+| 6. Model picker and thinking | 9 | 0 | 5 | 0 | 4 |
 | 7. Auth, login and permissions | 8 | 0 | 4 | 2 | 2 |
 | 8. Sessions | 17 | 7 | 6 | 1 | 3 |
 | 9. Themes | 18 | 0 | 6 | 3 | 9 |
@@ -89,14 +89,14 @@ this document**, tallied from its own tables — not a projection.
 | 16. Status indicators | 13 | 2 | 5 | 1 | 5 |
 | 17. Footer | 12 | 4 | 4 | 1 | 3 |
 | 18. Selector and overlay components | 79 | 22 | 19 | 25 | 13 |
-| **Total** | **339** | **79** | **109** | **65** | **86** |
+| **Total** | **339** | **79** | **110** | **64** | **86** |
 
 A further **17 rows are not in the counts above**: the 10 `Y-###` rows Pi ships outside its interactive mode (out of
 scope by design) and the 7 `AA-###` rows recording what was never inventoried. Both are listed in full near the end
 of this document, because a row that is silently dropped is how a rule goes unowned.
 
-The shape of that table is the honest shape of a port from a 356-row inventory to a 274-row one: **65 rows have no
-counterpart established on our side, 109 are half-built, 78 are exercised, and 86 are decisions.** The 65 are not
+The shape of that table is the honest shape of a port from a 356-row inventory to a 275-row one: **64 rows have no
+counterpart established on our side, 110 are half-built, 79 are exercised, and 86 are decisions.** The 64 are not
 69/339 failures; most of them sit in Pi's extension, settings-overlay, mermaid, image and tree-navigation surface,
 much of which Epsilon deliberately does not have. Read [Open rows](#open-rows) before reading the table.
 
@@ -341,7 +341,7 @@ is recorded in the rows below as a gap in the inventory rather than a claim that
 | P-264 | `Ctrl+S` in the thinking panel persists the level as the default; without a save callback the chord is typed into the search box | `packages/coding-agent/src/modes/interactive/components/thinking-selector.ts:131`, `:114` | deliberately different | As P-262, plus the chord is taken: `ctrl+s` persists the *model* default (`app.model.saveDefault`) — one chord, one promise. Thinking levels apply immediately via cycle or `/think`; there is no draft state to save | — |
 | P-265 | The thinking panel advertises the cycle key, resolved live | `packages/coding-agent/src/modes/interactive/components/thinking-selector.ts:80`, `packages/coding-agent/src/modes/interactive/interactive-mode.ts:5070` | deliberately different | As P-262: no panel, so the advertisement lives in `/hotkeys` (`Ctrl+T think`, `crates/epsilon-tui/src/app/commands.rs:2162`) beside the live effective-bindings list that follows a rebind | — |
 | P-272 | Per-model thinking is a two-step submenu that **loops** back to step 1 after each save | `packages/coding-agent/src/modes/interactive/components/settings-selector.ts:609`, `:701`, `:649`, `packages/coding-agent/src/modes/interactive/components/settings-submenu.ts:226-227` | partial | `crates/epsilon-tui/src/app/commands.rs:2097` — `/settings` reports the current thinking level; there is no per-model override submenu | `no_slash_command_panics_when_typed` |
-| P-273 | An existing override gains a `(clear override)` entry described as a revert to the global default | `packages/coding-agent/src/modes/interactive/components/settings-selector.ts:666`, `:686`, `:188` | missing | none | — |
+| P-273 | An existing override gains a `(clear override)` entry described as a revert to the global default | `packages/coding-agent/src/modes/interactive/components/settings-selector.ts:666`, `:686`, `:188` | partial | No explicit entry — but the revert path exists: the saved default is marked `· default` and ordered second (`crates/epsilon-tui/src/picker.rs:58`), so picking it returns to the default without a dedicated row | `saved_default_orders_second_and_is_flagged` |
 
 ## 7. Auth, login and permissions
 
@@ -676,7 +676,7 @@ the per-selector ones.
 | P-246 | Each row ends with a message count and a relative age (`now` / `5m` / `3h` / `2d` / `2w`), with the active session accent-coloured | `packages/coding-agent/src/modes/interactive/components/session-selector.ts:35`, `:494`, `:515` | partial | `crates/epsilon-tui/src/picker.rs:918` — `age · size · [task child] · [in use] · <file name>`; there is no message count | `session_rows_list_newest_first_and_mark_the_current_file` |
 | P-247 | `Ctrl+L` or `/model <text>` opens the model selector with the argument already in its search box | `packages/coding-agent/src/modes/interactive/components/model-selector.ts:117`, `:118`, `:155` | done | `crates/epsilon-tui/src/app/keys.rs` — hybrid: one candidate applies instantly, zero or many open the picker pre-filled (same resolution a run uses, so apply and run never disagree); `ctrl+l` joins `app.model.select` | `slash_model_direct_applies_instantly` (exact; retargeted to a test-catalog id when blind apply was removed), `model_partial_opens_the_picker_prefilled` (ambiguous family; old-arm RED), `ctrl_l_opens_the_model_picker` (chord-removal control) |
 | P-248 | Tab switches between all models and the cycling scope, with a warning in place of the line when nothing is scoped | `packages/coding-agent/src/modes/interactive/components/model-selector.ts:248`, `:364`, `:94` | partial | No Tab scope toggle (providers→models stages instead, `crates/epsilon-tui/src/app/keys.rs:1270`); but the empty-scope warning exists twice — `f2` guides when no favorites are starred and `/scoped-models` names the Ctrl+F path | `f2_cycles_favorites_and_guides_when_empty` |
-| P-249 | The list puts the current model first, the default second, then sorts by provider, marking `✓` and ` · default` | `packages/coding-agent/src/modes/interactive/components/model-selector.ts:231`, `:323`, `:329` | done | `crates/epsilon-tui/src/picker.rs` — empty-filter comparator is current → default → favorites → score → id (`None` provably order-preserving); the default row carries `is_default` and both front ends mark it (`· default` TUI, `(default)` window) | `saved_default_orders_second_and_is_flagged` (decoy control), `saved_default_orders_second_and_reads_as_default` (window; label-removal control) |
+| P-249 | The list puts the current model first, the default second, then sorts by provider, marking `✓` and ` · default` | `packages/coding-agent/src/modes/interactive/components/model-selector.ts:231`, `:323`, `:329` | done | `crates/epsilon-tui/src/picker.rs` — empty-filter comparator is current → default → favorites → score → id (`None` provably order-preserving); the default row carries `is_default` and both front ends mark it (`· default` TUI) | `saved_default_orders_second_and_is_flagged` (decoy control) |
 | P-250 | The model selector ranks over `provider provider/id provider id name`; the scoped selector uses the opposite order, id first | `packages/coding-agent/src/modes/interactive/model-search.ts:17`, `:7-11`, `packages/coding-agent/src/modes/interactive/components/scoped-models-selector.ts:222` | partial | `crates/epsilon-tui/src/picker.rs` — one picker over one haystack, so it takes the **selector's** provider-first order (`{provider} {provider}/{id} {id} {label}`), and the scoped overlay's opposite order is deliberately not built: Epsilon has one picker, not two, and a second order for the same list would be a choice nobody can see. **The selector half is proven:** the query `openai` ranked `groq`'s `openai/gpt-oss-120b` first before this (`left: "groq"`, `right: "openai"`), and stage 2 answered its own provider's name with nothing at all — its haystack was `id label` with the provider absent, so descending into `groq` and typing `groq` drew the widen hint | `a_provider_query_ranks_that_providers_own_models_first` (RED `got openai/gpt-oss-120b`), `stage_two_answers_its_own_providers_name` (the sharper half) |
 | P-251 | Typing any prefix of `default` moves all default models to the top — even a single `d` | `packages/coding-agent/src/modes/interactive/components/model-selector.ts:262`, `:285` | missing | none | — |
 | P-252 | Entering a query resets the selection to row 0 so the best match is highlighted | `packages/coding-agent/src/modes/interactive/components/model-selector.ts:301` | done | `crates/epsilon-tui/src/app/keys.rs:1456` — a printable character filters and the highlight resets | `typing_a_query_resets_the_picker_selection_to_row_zero` (descends, moves to row 1, types `x`, asserts row 0 with the filter kept; negative control run — without the reset it fails `left: 1, right: 0`) |
@@ -767,7 +767,7 @@ row says so — that is a gap in the inventory, and closing it is cheap.
 | 3. Composer and editor | 24 | 6 | 12 | 2 | 4 |
 | 4. Slash commands and autocomplete | 13 | 2 | 5 | 5 | 1 |
 | 5. Transcript and streaming | 35 | 10 | 4 | 11 | 10 |
-| 6. Model picker and thinking | 9 | 0 | 4 | 1 | 4 |
+| 6. Model picker and thinking | 9 | 0 | 5 | 0 | 4 |
 | 7. Auth, login and permissions | 8 | 0 | 4 | 2 | 2 |
 | 8. Sessions | 17 | 7 | 6 | 1 | 3 |
 | 9. Themes | 18 | 0 | 6 | 3 | 9 |
@@ -780,9 +780,9 @@ row says so — that is a gap in the inventory, and closing it is cheap.
 | 16. Status indicators | 13 | 2 | 5 | 1 | 5 |
 | 17. Footer | 12 | 4 | 4 | 1 | 3 |
 | 18. Selector and overlay components | 79 | 22 | 19 | 25 | 13 |
-| **Total** | **339** | **79** | **109** | **65** | **86** |
+| **Total** | **339** | **79** | **110** | **64** | **86** |
 
-### The `missing` rows — 65
+### The `missing` rows — 64
 
 Every row below has **no** `E-` row establishing the behaviour. Nothing here was found by browsing `crates/`, and
 nothing here is a claim that the behaviour cannot be built.
@@ -793,7 +793,6 @@ nothing here is a claim that the behaviour cannot be built.
 | Composer and editor (2) | P-212, P-213 |
 | Slash commands and autocomplete (5) | P-042, P-045, P-221, P-222, P-224 |
 | Transcript and streaming (11) | P-053, P-056, P-122, P-126, P-135, P-178, P-179, P-180, P-181, P-182, P-184 |
-| Model picker and thinking (1) | P-273 |
 | Auth, login and permissions (2) | P-061, P-063 |
 | Sessions (1) | P-081 |
 | Themes (3) | P-096, P-098, P-101 |
@@ -803,7 +802,7 @@ nothing here is a claim that the behaviour cannot be built.
 | Footer (1) | P-208 |
 | Selector and overlay components (25) | P-230, P-239, P-251, P-256, P-257, P-258, P-259, P-261, P-281, P-283, P-284, P-285, P-286, P-300, P-304, P-306, P-307, P-308, P-311, P-314, P-316, P-317, P-318, P-319, P-323 |
 
-### The `partial` rows — 109
+### The `partial` rows — 110
 
 An `E-` row covers these and something is not finished. The reason column is the shortest honest statement of what.
 
@@ -814,7 +813,7 @@ An `E-` row covers these and something is not finished. The reason column is the
 | Composer and editor (12) | P-025, P-027, P-028, P-034, P-035, P-036, P-209, P-210, L-000, L-001, L-002, L-003 | mostly: the behaviour exists in the source with **no test**, or only one half is built. P-022 has no test typing `!`; P-030 is pinned by no test at all; P-036's tests run the spawner seam and assert no frame; L-000 carries 23 ids, not 47 entries |
 | Slash commands and autocomplete (5) | P-043, P-044, P-046, P-047, P-084 | the `/` menu lists slash items only; no per-command argument completer; no refresh-then-open fallback; `/scoped-models` and `/changelog` are driven only by the all-heads sweep |
 | Transcript and streaming (4) | P-040, P-051, P-052, P-054 | thinking hides on Alt+T, not Ctrl+T, with a narrower affordance; stopped answers marked but in-flight tool cards not retro-fitted and no `/bug` to suggest; unpriced-bucket spend floors the total with a trailing `+` but no per-miss rebill sentence; the compaction digest expands live and on replay in the terminal (as markdown when open) and draws as cost notice plus markdown digest in the window — the card concept itself is terminal-only; abort text lands on a system row, not the answer |
-| Model picker and thinking (4) | P-037, P-038, P-048, P-272 | the `/think` head parses but no row establishes the argument form or a picker; no per-model override submenu; P-037 has no no-reasoning message (the catalog carries no reasoning flag); P-038 cycles favorites, not all models (M23, deliberate) |
+| Model picker and thinking (5) | P-037, P-038, P-048, P-272, P-273 | the `/think` head parses but no row establishes the argument form or a picker; no per-model override submenu; P-037 has no no-reasoning message (the catalog carries no reasoning flag); P-038 cycles favorites, not all models (M23, deliberate); no explicit clear-override entry, but the marked `· default` row reverts by selection | the `/think` head parses but no row establishes the argument form or a picker; no per-model override submenu; P-037 has no no-reasoning message (the catalog carries no reasoning flag); P-038 cycles favorites, not all models (M23, deliberate) |
 | Auth, login and permissions (4) | P-062, P-064, P-065, P-067 | one masked modal instead of an auth-type → provider → dialog chain with `onBack`; one of four dialog event kinds; the TUI path for `/logout <provider>` is unpinned; bedrock resolves through the ambient chain with the marker-never-a-key rule pinned, but no dialog states the profiles hint in words |
 | Sessions (6) | P-070, P-072, P-074, P-077, P-080, P-082 | no cross-directory scope / rename / delete in the picker; no branch summarisation; fork is at the leaf, not at a chosen message; no cache-warming status; reload covers four resource kinds, not six; share exports HTML and tries gh gist but has no Radius preference and no dedicated happy-path test |
 | Themes (6) | P-091, P-093, P-097, P-099, P-102, P-269 | three palettes and no file-loaded themes; the measured contrast floor is asserted for `high-contrast` only; an unknown name is refused rather than silently reverted; no theme-token language; the ASCII repertoire is overridable but colour depth is not; no theme submenu |

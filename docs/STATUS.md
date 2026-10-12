@@ -594,6 +594,11 @@ the run. Up from 1,997: the checkpoint round-trip and restore-undo tests. (Previ
 > cut-off reading as complete is the failure). Cited tests green. Counts now
 > 78/109/67/85.
 >
+> **P-273 partial (this session): revert via the marked default.** No explicit
+> clear-override entry, but picking the `· default` row returns to it (test green).
+> Also removed a deleted desktop test from P-249's citations. Counts now
+> 79/110/64/86.
+>
 > **Goal 3, Phase 1 (landed): AGENTS.md v4 draft for owner application.** Every v3
 > clause audited against the tree (13 crates, uniform 1.88, TERMINAL+WINDOW tables,
 > 15 legs, SUPPORTED only in a historical comment); the complete v4 text sits in
