@@ -66,7 +66,7 @@ back; it is a reading of the test's source, not a report of a run.
 
 **339 rows** are paired here: Pi's 323 `P-###` behaviours, the 4 `L-###` rows of its inherited `tui.*` keybinding
 table, and the 12 `T-###` rows of its text-measurement core. Every one carries a reference citation; 200 of them
-carry an `ours` citation and 41 do not, and those 41 say so. The counts below are the rows **actually written in
+carry an `ours` citation and 38 do not, and those 38 say so. The counts below are the rows **actually written in
 this document**, tallied from its own tables — not a projection.
 
 | area | rows | done | partial | missing | deliberately different |
@@ -80,7 +80,7 @@ this document**, tallied from its own tables — not a projection.
 | 7. Auth, login and permissions | 8 | 0 | 4 | 2 | 2 |
 | 8. Sessions | 17 | 7 | 6 | 1 | 3 |
 | 9. Themes | 18 | 0 | 6 | 2 | 10 |
-| 10. Settings | 22 | 1 | 10 | 5 | 6 |
+| 10. Settings | 22 | 1 | 10 | 2 | 9 |
 | 11. Project trust | 4 | 1 | 2 | 0 | 1 |
 | 12. Tool cards | 16 | 3 | 6 | 0 | 7 |
 | 13. Bash cards | 11 | 5 | 6 | 0 | 0 |
@@ -89,14 +89,14 @@ this document**, tallied from its own tables — not a projection.
 | 16. Status indicators | 13 | 2 | 5 | 0 | 6 |
 | 17. Footer | 12 | 4 | 4 | 0 | 4 |
 | 18. Selector and overlay components | 79 | 22 | 19 | 25 | 13 |
-| **Total** | **339** | **81** | **111** | **40** | **107** |
+| **Total** | **339** | **81** | **111** | **37** | **110** |
 
 A further **17 rows are not in the counts above**: the 10 `Y-###` rows Pi ships outside its interactive mode (out of
 scope by design) and the 7 `AA-###` rows recording what was never inventoried. Both are listed in full near the end
 of this document, because a row that is silently dropped is how a rule goes unowned.
 
-The shape of that table is the honest shape of a port from a 356-row inventory to a 299-row one: **40 rows have no
-counterpart established on our side, 111 are half-built, 81 are exercised, and 107 are decisions.** The 40 are not
+The shape of that table is the honest shape of a port from a 356-row inventory to a 302-row one: **37 rows have no
+counterpart established on our side, 111 are half-built, 81 are exercised, and 110 are decisions.** The 37 are not
 69/339 failures; most of them sit in Pi's extension, settings-overlay, mermaid, image and tree-navigation surface,
 much of which Epsilon deliberately does not have. Read [Open rows](#open-rows) before reading the table.
 
@@ -456,14 +456,14 @@ surface, and it is why most rows below are `missing` rather than `partial`: ther
 | P-108 | Keybindings live in a separate file and legacy short ids migrate on load | `packages/coding-agent/src/core/keybindings.ts:379-383`, `:240-300`, `:320-340` | partial | `crates/epsilon-tui/src/app/commands.rs:1522-1524` — `keybindings.json` is a separate file re-read by `/reload`, and every id is declared once; there is no migration table and a malformed value is not silently dropped by a migration pass | `a_rebound_submit_key_is_the_key_that_submits` |
 | P-109 | One predicate decides the Windows-flavoured defaults: `win32`, or Linux with `WSL_DISTRO_NAME`/`WSL_INTEROP` set | `packages/coding-agent/src/core/keybindings.ts:62-67`, `:73` | partial | `crates/epsilon-tui/src/ui/theme.rs:462`, `:481` — a Windows predicate exists for the **glyph repertoire**, not for chords; no binding is rebound per platform | `the_repertoire_default_is_ascii_on_a_legacy_windows_console` |
 | P-110 | Pi declares 44 app-level actions plus the `tui.*` set, four of which have no default key at all | `packages/coding-agent/src/core/keybindings.ts:75-238`, `:146-149` | partial | `crates/epsilon-contracts/src/keybind.rs:242` — 23 ids, every one with a `keybindings.matches(...)` arm; `app.transcript.halfUp` / `halfDown` have handlers (`crates/epsilon-tui/src/app/keys.rs:1893`, `:1691`) but no table entry at all — bindable by hand, with the reason at `crates/epsilon-contracts/src/keybind.rs:337-346` | `no_chord_is_bound_to_two_ids_by_default`, `a_hint_label_parses_back_to_the_chord_it_names` |
-| P-111 | Every outbound warning is individually switchable under `warnings`, and the whole object is editable in `/settings` | `packages/coding-agent/src/core/settings-manager.ts:90-92`, `:1524`, `:716-729` | missing | none | — |
+| P-111 | Every outbound warning is individually switchable under `warnings`, and the whole object is editable in `/settings` | `packages/coding-agent/src/core/settings-manager.ts:90-92`, `:1524`, `:716-729` | deliberately different | No toggles surface exists (`/settings` is guidance notices): warnings are always on, and an on/off switch over them would be a knob with one position | — |
 | P-112 | Steering and follow-up delivery are one-at-a-time by default, each switchable to deliver all at once | `packages/coding-agent/src/core/settings-manager.ts:830-832`, `:840-842` | partial | Both delivery modes exist and are tested (`QueueMode::OneAtATime` default, `QueueMode::All` explicit — `crates/epsilon-contracts/src/queue_mode.rs:40`); what is missing is the user-facing switch (no setting or command moves between them, only code) | `default_followups_wait_for_separate_stop_boundaries`, `explicit_all_followups_share_one_stop_boundary` |
 | P-113 | Cache warming is readable only from the **global** settings layer, because a cache refresh costs money | `packages/coding-agent/src/core/settings-manager.ts:1023-1026`, `:182` | missing | none | — |
 | P-114 | The startup tool set is four tools, and a settings layer listing only `+name`/`-name` **modifies** the inherited set; an empty array means "no tools" | `packages/coding-agent/src/core/settings-manager.ts:215`, `:236-247`, `:225-230` | missing | none | — |
 | P-274 | With no configured providers the per-model list shows one actionable entry naming the next step, not a bare emptiness | `packages/coding-agent/src/modes/interactive/components/settings-selector.ts:634`, `:636` | partial | `crates/epsilon-tui/src/app/commands.rs:1967` — `/templates` with nothing installed names the two directories to drop files into, which is the same actionable-empty-state rule applied somewhere else | `templates_command_explains_where_to_put_files_when_empty` |
-| P-275 | A `Warnings` row opens a nested list of toggles, displaying the literal word `configure` as its value | `packages/coding-agent/src/modes/interactive/components/settings-selector.ts:594`, `:156`, `:593` | missing | none | — |
+| P-275 | A `Warnings` row opens a nested list of toggles, displaying the literal word `configure` as its value | `packages/coding-agent/src/modes/interactive/components/settings-selector.ts:594`, `:156`, `:593` | deliberately different | As P-111: with no toggles there is no nested list to open and no value to display | — |
 | P-276 | Enum settings are edited by label and mapped back to values; an unmapped label is silently ignored | `packages/coding-agent/src/modes/interactive/components/settings-selector.ts:558`, `:923-924`, `:929`, `:931` | partial | `crates/epsilon-tui/src/app/commands.rs:1605`, `:1536` — one enum is edited by name (case-insensitive, `_` standing in for `-`) and a miss is refused with the options listed rather than silently ignored | `every_palette_the_description_advertises_is_one_the_product_has`, `theme_command_toggles_and_names_the_palette` |
-| P-277 | Fullscreen-only settings are listed with descriptions saying they have no effect in regular mode | `packages/coding-agent/src/modes/interactive/components/settings-selector.ts:712`, `:739`, `:722`, `:850` | missing | none | — |
+| P-277 | Fullscreen-only settings are listed with descriptions saying they have no effect in regular mode | `packages/coding-agent/src/modes/interactive/components/settings-selector.ts:712`, `:739`, `:722`, `:850` | deliberately different | As P-111: the TUI is always fullscreen and has no settings — a mode-conditional list over an empty set | — |
 | P-278 | A submenu renders a title, an optional description and a list capped at ten rows, with a footer naming Enter and Esc | `packages/coding-agent/src/modes/interactive/components/settings-submenu.ts:88`, `:95`, `:120`, `:134` | partial | `crates/epsilon-tui/src/app/panels.rs:58` — overlays are titled and their capacity is **measured from the frame** rather than a fixed ten, so a page grows on a tall terminal and shrinks on a short one | `a_page_key_moves_by_the_window_the_list_actually_drew` (frame, renders 100×44 and 100×14) |
 | P-279 | With `searchable: true`, typing fuzzy-filters on label + description and the rebuilt list has an empty preselect | `packages/coding-agent/src/modes/interactive/components/settings-submenu.ts:110`, `:115`, `:120` | done | `crates/epsilon-tui/src/app/keys.rs:1478` — a printable character goes into the editor buffer, which the picker reads as its filter, and the highlight resets | `two_stage_picker_descends_and_applies_model`, `filtered_results_are_ranked_by_fuzzy_score_best_first` |
 | P-280 | A multi-step submenu prefixes each description with `Step N/M` and Esc walks back one step, deleting that step's selection | `packages/coding-agent/src/modes/interactive/components/settings-submenu.ts:204`, `:149`, `:234`, `:236` | partial | `crates/epsilon-tui/src/app/keys.rs:1242` — Esc walks back a stage and clears the filter; the stage is named by the panel title (`models — deepseek: filter ''`) rather than by a `Step N/M` prefix | `two_stage_picker_descends_and_applies_model` (covers both Esc steps) |
@@ -771,7 +771,7 @@ row says so — that is a gap in the inventory, and closing it is cheap.
 | 7. Auth, login and permissions | 8 | 0 | 4 | 2 | 2 |
 | 8. Sessions | 17 | 7 | 6 | 1 | 3 |
 | 9. Themes | 18 | 0 | 6 | 2 | 10 |
-| 10. Settings | 22 | 1 | 10 | 5 | 6 |
+| 10. Settings | 22 | 1 | 10 | 2 | 9 |
 | 11. Project trust | 4 | 1 | 2 | 0 | 1 |
 | 12. Tool cards | 16 | 3 | 6 | 0 | 7 |
 | 13. Bash cards | 11 | 5 | 6 | 0 | 0 |
@@ -780,9 +780,9 @@ row says so — that is a gap in the inventory, and closing it is cheap.
 | 16. Status indicators | 13 | 2 | 5 | 0 | 6 |
 | 17. Footer | 12 | 4 | 4 | 0 | 4 |
 | 18. Selector and overlay components | 79 | 22 | 19 | 25 | 13 |
-| **Total** | **339** | **81** | **111** | **40** | **107** |
+| **Total** | **339** | **81** | **111** | **37** | **110** |
 
-### The `missing` rows — 40
+### The `missing` rows — 37
 
 Every row below has **no** `E-` row establishing the behaviour. Nothing here was found by browsing `crates/`, and
 nothing here is a claim that the behaviour cannot be built.
@@ -794,7 +794,7 @@ nothing here is a claim that the behaviour cannot be built.
 | Auth, login and permissions (2) | P-061, P-063 |
 | Sessions (1) | P-081 |
 | Themes (2) | P-096, P-098 |
-| Settings (5) | P-111, P-113, P-114, P-275, P-277 |
+| Settings (2) | P-113, P-114 |
 | Markdown, mermaid and truncation (1) | T-010 |
 | Selector and overlay components (25) | P-230, P-239, P-251, P-256, P-257, P-258, P-259, P-261, P-281, P-283, P-284, P-285, P-286, P-300, P-304, P-306, P-307, P-308, P-311, P-314, P-316, P-317, P-318, P-319, P-323 |
 

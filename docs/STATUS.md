@@ -644,6 +644,10 @@ the run. Up from 1,997: the checkpoint round-trip and restore-undo tests. (Previ
 > conditional settings; nine fixed-or-keyed behaviors need no toggles. Counts now
 > 81/111/40/107.
 >
+> **Warnings trio judged (this session): P-111/P-275/P-277 dd.** Warnings always on
+> with no toggles surface; no nested list, no mode-conditional set. Counts now
+> 81/111/37/110.
+>
 > **Goal 3, Phase 1 (landed): AGENTS.md v4 draft for owner application.** Every v3
 > clause audited against the tree (13 crates, uniform 1.88, TERMINAL+WINDOW tables,
 > 15 legs, SUPPORTED only in a historical comment); the complete v4 text sits in
