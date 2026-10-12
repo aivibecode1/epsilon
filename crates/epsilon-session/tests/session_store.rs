@@ -4275,3 +4275,61 @@ fn the_last_label_change_wins() {
         "the clear is last, so there is no label"
     );
 }
+
+/// A failed append leaves no phantom: the file, the leaf and the branch are exactly
+/// as before, and the next successful append chains to the same parent — no fork,
+/// no gap in `seq`.
+///
+/// `append` writes + fsyncs before touching the index, but only a test proves the
+/// order. If the index moved first, the store would serve an entry the file does not
+/// hold, and everything after it would mis-parent on resume — a silent fork in the
+/// session tree. The fault seam (`FaultOp::Append`) fails the write the way a full
+/// disk would, without needing one.
+#[test]
+fn a_failed_append_leaves_no_phantom_entry_behind() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("s.jsonl");
+    let mut store = SessionStore::open(&path).unwrap();
+    let e0 = store
+        .append(EntryKind::Message {
+            message: user_msg("hello"),
+            api_request_sha256: None,
+        })
+        .unwrap();
+    let bytes_before = std::fs::read(&path).unwrap();
+    let leaf_before = store.leaf_id();
+    let len_before = store.branch_entries().unwrap().len();
+
+    store.set_write_fault_for_tests(epsilon_session::FaultOp::Append, "disk full", 1, 1);
+    let err = store
+        .append(EntryKind::Message {
+            message: user_msg("lost"),
+            api_request_sha256: None,
+        })
+        .expect_err("the faulted append must fail");
+    assert!(
+        err.to_string().contains("disk full"),
+        "the error must carry the disk's own reason: {err:?}"
+    );
+    assert_eq!(
+        std::fs::read(&path).unwrap(),
+        bytes_before,
+        "a failed append must not touch the file"
+    );
+    assert_eq!(store.leaf_id(), leaf_before, "the leaf must not move");
+    assert_eq!(
+        store.branch_entries().unwrap().len(),
+        len_before,
+        "no phantom entry may be served"
+    );
+
+    // The fault plan is spent: the next append succeeds and chains to e0 directly.
+    let e1 = store
+        .append(EntryKind::Message {
+            message: user_msg("next"),
+            api_request_sha256: None,
+        })
+        .unwrap();
+    assert_eq!(e1.parent_id.as_deref(), Some(e0.id.as_str()));
+    assert_eq!(e1.seq, e0.seq + 1, "no gap in the sequence");
+}

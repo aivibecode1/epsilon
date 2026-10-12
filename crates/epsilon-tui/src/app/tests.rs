@@ -8559,3 +8559,37 @@ fn bang_prefix_switches_the_footer_to_bash_mode() {
         "clearing the `!` must restore insert mode: {frame}"
     );
 }
+
+/// Quitting with a parked approval ask denies it — fail closed.
+///
+/// `handle_key` documents "quitting drops the parked ask, which resolves to Deny".
+/// The quit path replies nothing, so the denial has to come from the channel's
+/// dropped-responder rule (`channel_ui.rs`: an unanswered `ask()` resolves `Deny`),
+/// not from this file. Without that rule the tool would hang forever waiting for an
+/// answer from a UI that no longer exists — or worse, a future quit path could
+/// answer `AllowOnce` on the way out and this test is what would say so.
+#[tokio::test]
+async fn quitting_with_a_pending_ask_denies_it_fail_closed() {
+    let (mut app, agent, _receivers) = test_app();
+    let approvals = ChannelApprovalUi::new();
+    let requester = approvals.clone();
+    let response = tokio::spawn(async move {
+        requester
+            .ask(PermissionRequest {
+                request_id: "quit-test".into(),
+                capability: "write".into(),
+                pattern: "work.txt".into(),
+                detail: serde_json::json!({}),
+            })
+            .await
+    });
+    app.pending_ask = approvals.next_ask().await;
+    assert!(app.pending_ask.is_some(), "the ask never parked");
+    let quit = handle_key(&mut app, &agent, ctrl(KeyCode::Char('q')));
+    assert!(quit, "ctrl+q must quit even with a pending ask");
+    drop(app);
+    assert!(
+        matches!(response.await.unwrap(), PermissionDecision::Deny),
+        "a quit-dropped ask must resolve Deny — never hang, never allow"
+    );
+}

@@ -383,6 +383,15 @@ the run. The drop from 2,385/19/78 is the removed desktop crate itself (~410 win
 > `gate-removal-r1-20261012-FAIL-lost-tests-guard.txt`) failed on the no-lost-tests guard
 > naming every window test — closed by a scoped ADR-039 exception for that one retired path,
 > with the guard's own classifier control still green.
+>
+> **Revised goal, Phase 2 (in progress, this session).** Hardest paths first, each with a
+> control-proven regression test: (1) permissions — `quitting_with_a_pending_ask_denies_it_fail_closed`
+> (`epsilon-tui/src/app/tests.rs`): ctrl+q with a parked ask quits AND the ask resolves
+> `Deny` via the channel's dropped-responder rule; control (quit replies `AllowOnce`) fails
+> it. (2) session durability — `a_failed_append_leaves_no_phantom_entry_behind`
+> (`epsilon-session/tests/session_store.rs`): faulted append leaves file/leaf/branch
+> untouched and the next append chains with no `seq` gap; control (early index push)
+> fails it. Baselines green: safety+session+tools+core suites, tui 624+9 ignored.
 
 > **Ten findings closed in a row** (rounds 138–147). Rounds 138–144 were things that *happened*
 > wrongly, 145–146 were things that *went unsaid*, and 147 is the first one that **adds a
