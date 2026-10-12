@@ -599,6 +599,10 @@ the run. Up from 1,997: the checkpoint round-trip and restore-undo tests. (Previ
 > Also removed a deleted desktop test from P-249's citations. Counts now
 > 79/110/64/86.
 >
+> **Blank-rule pair done (this session): P-122/P-126.** One funnel rule — blank
+> exactly at kind change, never first/twice/inside continuations — pinned by a
+> new unit test (no-separation control fails it). Counts now 81/110/62/86.
+>
 > **Goal 3, Phase 1 (landed): AGENTS.md v4 draft for owner application.** Every v3
 > clause audited against the tree (13 crates, uniform 1.88, TERMINAL+WINDOW tables,
 > 15 legs, SUPPORTED only in a historical comment); the complete v4 text sits in

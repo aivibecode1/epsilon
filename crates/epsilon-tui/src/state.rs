@@ -3814,4 +3814,22 @@ mod tests {
             "hydration clears the rows, so bills added first are discarded"
         );
     }
+
+    /// Block separation (P-122/P-126): a blank row between blocks, never before
+    /// the first line, never twice, and never inside one kind's continuation —
+    /// so an assistant block after user text is separated, back-to-back user
+    /// lines are not, and nothing dangles at either end.
+    #[test]
+    fn blocks_separate_on_kind_change_only() {
+        let mut st = UiState::new();
+        st.push_line(TranscriptLine::plain(LineKind::User, "hi"));
+        st.push_line(TranscriptLine::plain(LineKind::User, "again"));
+        st.push_line(TranscriptLine::plain(LineKind::Assistant, "hello"));
+        let kinds: Vec<LineKind> = st.lines().iter().map(|l| l.kind).collect();
+        assert_eq!(
+            kinds,
+            vec![LineKind::User, LineKind::User, LineKind::Blank, LineKind::Assistant],
+            "blank exactly at the kind change: {kinds:?}"
+        );
+    }
 }
