@@ -532,6 +532,11 @@ the run. Up from 1,997: the checkpoint round-trip and restore-undo tests. (Previ
 > P-230 (cross-directory scope) and P-239 (threaded tree) stay `missing`.
 > Counts now 77/105/82/75.
 >
+> **Scoped pair partial (this session): P-248/P-255.** No Tab scope toggle, but
+> empty-scope warnings exist twice; favorites apply immediately and globally
+> with no session-only layer (both cited tests green). P-251/P-256 stay `missing`.
+> Counts now 78/107/73/81.
+>
 > **Theme auto-mode quintet judged (this session): P-092/P-094/P-095/P-270/P-271 dd.**
 > Named palettes by explicit choice — detectors misread over SSH/tmux/consoles,
 > and there is no automatic mode to follow, configure, or cancel out of.

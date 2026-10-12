@@ -66,7 +66,7 @@ back; it is a reading of the test's source, not a report of a run.
 
 **339 rows** are paired here: Pi's 323 `P-###` behaviours, the 4 `L-###` rows of its inherited `tui.*` keybinding
 table, and the 12 `T-###` rows of its text-measurement core. Every one carries a reference citation; 200 of them
-carry an `ours` citation and 76 do not, and those 76 say so. The counts below are the rows **actually written in
+carry an `ours` citation and 74 do not, and those 74 say so. The counts below are the rows **actually written in
 this document**, tallied from its own tables — not a projection.
 
 | area | rows | done | partial | missing | deliberately different |
@@ -88,15 +88,15 @@ this document**, tallied from its own tables — not a projection.
 | 15. Markdown, mermaid and truncation | 22 | 6 | 7 | 3 | 6 |
 | 16. Status indicators | 13 | 2 | 5 | 1 | 5 |
 | 17. Footer | 12 | 4 | 4 | 1 | 3 |
-| 18. Selector and overlay components | 79 | 22 | 17 | 27 | 13 |
-| **Total** | **339** | **78** | **105** | **75** | **81** |
+| 18. Selector and overlay components | 79 | 22 | 19 | 25 | 13 |
+| **Total** | **339** | **78** | **107** | **73** | **81** |
 
 A further **17 rows are not in the counts above**: the 10 `Y-###` rows Pi ships outside its interactive mode (out of
 scope by design) and the 7 `AA-###` rows recording what was never inventoried. Both are listed in full near the end
 of this document, because a row that is silently dropped is how a rule goes unowned.
 
-The shape of that table is the honest shape of a port from a 356-row inventory to a 264-row one: **75 rows have no
-counterpart established on our side, 105 are half-built, 78 are exercised, and 81 are decisions.** The 75 are not
+The shape of that table is the honest shape of a port from a 356-row inventory to a 266-row one: **73 rows have no
+counterpart established on our side, 107 are half-built, 78 are exercised, and 81 are decisions.** The 73 are not
 69/339 failures; most of them sit in Pi's extension, settings-overlay, mermaid, image and tree-navigation surface,
 much of which Epsilon deliberately does not have. Read [Open rows](#open-rows) before reading the table.
 
@@ -675,14 +675,14 @@ the per-selector ones.
 | P-245 | A failed load is shown for 4000 ms with an empty list | `packages/coding-agent/src/modes/interactive/components/session-selector.ts:1003-1004` | deliberately different | As P-244: an unreadable directory reads as an empty list (`list_sessions` returns `Vec::new()`, `crates/epsilon-session/src/discover.rs:228`), and a missing directory is refused with a notice before the browser opens — there is no failed async load to time out on screen | — |
 | P-246 | Each row ends with a message count and a relative age (`now` / `5m` / `3h` / `2d` / `2w`), with the active session accent-coloured | `packages/coding-agent/src/modes/interactive/components/session-selector.ts:35`, `:494`, `:515` | partial | `crates/epsilon-tui/src/picker.rs:918` — `age · size · [task child] · [in use] · <file name>`; there is no message count | `session_rows_list_newest_first_and_mark_the_current_file` |
 | P-247 | `Ctrl+L` or `/model <text>` opens the model selector with the argument already in its search box | `packages/coding-agent/src/modes/interactive/components/model-selector.ts:117`, `:118`, `:155` | done | `crates/epsilon-tui/src/app/keys.rs` — hybrid: one candidate applies instantly, zero or many open the picker pre-filled (same resolution a run uses, so apply and run never disagree); `ctrl+l` joins `app.model.select` | `slash_model_direct_applies_instantly` (exact; retargeted to a test-catalog id when blind apply was removed), `model_partial_opens_the_picker_prefilled` (ambiguous family; old-arm RED), `ctrl_l_opens_the_model_picker` (chord-removal control) |
-| P-248 | Tab switches between all models and the cycling scope, with a warning in place of the line when nothing is scoped | `packages/coding-agent/src/modes/interactive/components/model-selector.ts:248`, `:364`, `:94` | missing | none — the picker has two stages, providers then models, and no scope toggle (`crates/epsilon-tui/src/app/keys.rs:1270`) | — |
+| P-248 | Tab switches between all models and the cycling scope, with a warning in place of the line when nothing is scoped | `packages/coding-agent/src/modes/interactive/components/model-selector.ts:248`, `:364`, `:94` | partial | No Tab scope toggle (providers→models stages instead, `crates/epsilon-tui/src/app/keys.rs:1270`); but the empty-scope warning exists twice — `f2` guides when no favorites are starred and `/scoped-models` names the Ctrl+F path | `f2_cycles_favorites_and_guides_when_empty` |
 | P-249 | The list puts the current model first, the default second, then sorts by provider, marking `✓` and ` · default` | `packages/coding-agent/src/modes/interactive/components/model-selector.ts:231`, `:323`, `:329` | done | `crates/epsilon-tui/src/picker.rs` — empty-filter comparator is current → default → favorites → score → id (`None` provably order-preserving); the default row carries `is_default` and both front ends mark it (`· default` TUI, `(default)` window) | `saved_default_orders_second_and_is_flagged` (decoy control), `saved_default_orders_second_and_reads_as_default` (window; label-removal control) |
 | P-250 | The model selector ranks over `provider provider/id provider id name`; the scoped selector uses the opposite order, id first | `packages/coding-agent/src/modes/interactive/model-search.ts:17`, `:7-11`, `packages/coding-agent/src/modes/interactive/components/scoped-models-selector.ts:222` | partial | `crates/epsilon-tui/src/picker.rs` — one picker over one haystack, so it takes the **selector's** provider-first order (`{provider} {provider}/{id} {id} {label}`), and the scoped overlay's opposite order is deliberately not built: Epsilon has one picker, not two, and a second order for the same list would be a choice nobody can see. **The selector half is proven:** the query `openai` ranked `groq`'s `openai/gpt-oss-120b` first before this (`left: "groq"`, `right: "openai"`), and stage 2 answered its own provider's name with nothing at all — its haystack was `id label` with the provider absent, so descending into `groq` and typing `groq` drew the widen hint | `a_provider_query_ranks_that_providers_own_models_first` (RED `got openai/gpt-oss-120b`), `stage_two_answers_its_own_providers_name` (the sharper half) |
 | P-251 | Typing any prefix of `default` moves all default models to the top — even a single `d` | `packages/coding-agent/src/modes/interactive/components/model-selector.ts:262`, `:285` | missing | none | — |
 | P-252 | Entering a query resets the selection to row 0 so the best match is highlighted | `packages/coding-agent/src/modes/interactive/components/model-selector.ts:301` | done | `crates/epsilon-tui/src/app/keys.rs:1456` — a printable character filters and the highlight resets | `typing_a_query_resets_the_picker_selection_to_row_zero` (descends, moves to row 1, types `x`, asserts row 0 with the filter kept; negative control run — without the reset it fails `left: 1, right: 0`) |
 | P-253 | The selector paints the cached snapshot immediately, refreshes behind it, and reports success, timeout or per-provider failure | `packages/coding-agent/src/modes/interactive/components/model-selector.ts:154`, `:185`, `:196`, `:216` | done | `crates/epsilon-tui/src/app.rs` — opening starts the silent fetch over the bundled snapshot; `record_live_result` merges and reports (`live listing: N models merged`, `live listing failed: …`), surfaced by the event loop; `Ctrl+G` forces with its own notices (no fetcher, no endpoint, no key all named) | `ctrl_g_reports_unavailable_without_the_real_feature` (real key path; notice-mutation control), `finished_refresh_reports_success_and_failure` (merge + report, both halves; notice-mutation control) |
 | P-254 | Enter applies to the session, `Ctrl+S` applies **and** writes settings, Esc cancels and aborts the refresh | `packages/coding-agent/src/modes/interactive/components/model-selector.ts:399`, `:387`, `:394`, `:137` | done | `crates/epsilon-tui/src/app/keys.rs` — `app.model.saveDefault` (`ctrl+s`, rebindable) saves the highlighted stage-2 row via `save_model_id_in` (override dir in tests, global in production) and refreshes memory; Enter applies, Esc cancels (unchanged) | `ctrl_s_in_the_picker_saves_the_default` (real key path, file + memory; binding-miss control). Window Ctrl+S deferred (no picker save surface yet) |
-| P-255 | The scoped-models overlay says `Session-only. Ctrl+S to save to settings.` and applies every edit immediately | `packages/coding-agent/src/modes/interactive/components/scoped-models-selector.ts:137`, `:86-89` | missing | none | — |
+| P-255 | The scoped-models overlay says `Session-only. Ctrl+S to save to settings.` and applies every edit immediately | `packages/coding-agent/src/modes/interactive/components/scoped-models-selector.ts:137`, `:86-89` | partial | Favorites are the scoped set (persisted in config `[picker] favorite`, applied the moment Ctrl+F toggles) — immediacy holds, but there is no session-only layer: everything persists globally | `ctrl_f_in_the_model_picker_toggles_a_favorite_instead_of_panicking` |
 | P-256 | Enter toggles a model and "all enabled" materialises into an explicit list on the first toggle | `packages/coding-agent/src/modes/interactive/components/scoped-models-selector.ts:320`, `:30`, `:26` | missing | none | — |
 | P-257 | `Ctrl+A` and `Ctrl+X` act only on the filtered rows when the search box has text | `packages/coding-agent/src/modes/interactive/components/scoped-models-selector.ts:332`, `:342`, `:48` | missing | none | — |
 | P-258 | `Ctrl+P` enables every model of the highlighted row's provider, or clears them if already enabled | `packages/coding-agent/src/modes/interactive/components/scoped-models-selector.ts:352`, `:357` | missing | none | — |
@@ -779,10 +779,10 @@ row says so — that is a gap in the inventory, and closing it is cheap.
 | 15. Markdown, mermaid and truncation | 22 | 6 | 7 | 3 | 6 |
 | 16. Status indicators | 13 | 2 | 5 | 1 | 5 |
 | 17. Footer | 12 | 4 | 4 | 1 | 3 |
-| 18. Selector and overlay components | 79 | 22 | 17 | 27 | 13 |
-| **Total** | **339** | **78** | **105** | **75** | **81** |
+| 18. Selector and overlay components | 79 | 22 | 19 | 25 | 13 |
+| **Total** | **339** | **78** | **107** | **73** | **81** |
 
-### The `missing` rows — 75
+### The `missing` rows — 73
 
 Every row below has **no** `E-` row establishing the behaviour. Nothing here was found by browsing `crates/`, and
 nothing here is a claim that the behaviour cannot be built.
@@ -801,9 +801,9 @@ nothing here is a claim that the behaviour cannot be built.
 | Markdown, mermaid and truncation (3) | P-167, P-168, T-010 |
 | Status indicators (1) | P-194 |
 | Footer (1) | P-208 |
-| Selector and overlay components (27) | P-230, P-239, P-248, P-251, P-255, P-256, P-257, P-258, P-259, P-261, P-281, P-283, P-284, P-285, P-286, P-300, P-304, P-306, P-307, P-308, P-311, P-314, P-316, P-317, P-318, P-319, P-323 |
+| Selector and overlay components (25) | P-230, P-239, P-251, P-256, P-257, P-258, P-259, P-261, P-281, P-283, P-284, P-285, P-286, P-300, P-304, P-306, P-307, P-308, P-311, P-314, P-316, P-317, P-318, P-319, P-323 |
 
-### The `partial` rows — 105
+### The `partial` rows — 107
 
 An `E-` row covers these and something is not finished. The reason column is the shortest honest statement of what.
 
@@ -825,7 +825,7 @@ An `E-` row covers these and something is not finished. The reason column is the
 | Markdown, mermaid and truncation (7) | P-176, T-003, T-004, T-005, T-006, T-008, T-011 | hint placement has no keep-last mode; stripping established at two boundaries, not one central measure; hyperlink/reset closing held by a different mechanism with a re-measure backstop; span-dropping, not column slicing; style is per-`Span`, so no reset ladder; row caching, but no ASCII fast path or bounded width cache; CJK as a word character unestablished for completion |
 | Status indicators (5) | P-018, P-186, P-188, P-189, P-190 | a drawn spinner rather than the terminal's progress state; one run-state slot rather than four kinds; whole-gauge dropping rather than a four-step border ladder; a retry notice and elapsed seconds rather than a cancelable countdown; one compaction wording rather than three |
 | Footer (4) | P-200, P-203, P-205, P-206 | no `~` substitution and no `• session-name` segment; no routed-model `→ id`; the footer's own recompute trigger unestablished; the no-spawn `.git/HEAD` read unestablished |
-| Selector and overlay components (17) | P-226, P-228, P-231, P-233, P-236, P-237, P-238, P-241, P-246, P-250, P-260, P-282, P-288, P-294, P-309, P-313, P-315 | per-overlay focus targets; no overlay-scoped id space; fixed sort, path always shown, current session marked not protected, rename outside the picker, no phrase/regex search, no message count, no resource overlay, capacity derived, no tree-specific key list, no provider-selector empty state, provider badges in this window's visual language rather than Pi's literals; the picker's provider-first order is built and pinned, the scoped overlay's opposite order is not (one picker, one order); the transcript filter cycles three of five modes (`ctrl+o`/`shift+ctrl+o`), the other two not being representable on a live transcript; an uncatalogued configured model is struck and badged, but there is no unsaved state to mark because the saving actions write through |
+| Selector and overlay components (19) | P-226, P-228, P-231, P-233, P-236, P-237, P-238, P-241, P-246, P-248, P-250, P-255, P-260, P-282, P-288, P-294, P-309, P-313, P-315 | per-overlay focus targets; no overlay-scoped id space; fixed sort, path always shown, current session marked not protected, rename outside the picker, no phrase/regex search, no message count, no resource overlay, capacity derived, no tree-specific key list, no provider-selector empty state, provider badges in this window's visual language rather than Pi's literals; the picker's provider-first order is built and pinned, the scoped overlay's opposite order is not (one picker, one order); no Tab scope toggle but empty-scope warnings exist; favorites apply immediately and globally with no session-only layer; the transcript filter cycles three of five modes (`ctrl+o`/`shift+ctrl+o`), the other two not being representable on a live transcript; an uncatalogued configured model is struck and badged, but there is no unsaved state to mark because the saving actions write through |
 
 ### Four gaps that are not about features at all
 
