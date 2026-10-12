@@ -3542,3 +3542,74 @@ async fn a_turn_whose_session_lease_was_taken_is_refused_and_reported() {
         "and the turn must not be half-recorded: a refused write is not a lost one"
     );
 }
+
+/// P-032 probe: a manual `compact_now` racing a submitted run. The TUI submits
+/// straight through during a compaction (no separate queue), so the engine must
+/// tolerate the overlap: both sides complete, the store stays valid JSONL that
+/// reopens, and nothing panics. If this fails, Pi's separate queue is load-bearing
+/// and the row is not judgable — fix first, judge after.
+#[tokio::test]
+async fn a_run_racing_a_manual_compaction_leaves_a_valid_session() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = epsilon_session::SessionStore::open(dir.path().join("session.jsonl")).unwrap();
+    let provider = FauxProvider::new(vec![
+        epsilon_llm::FauxStep::say("first answer"),
+        epsilon_llm::FauxStep::say("second answer"),
+        epsilon_llm::FauxStep::say("## Objective\nsummarized state"),
+    ]);
+    let agent = epsilon_core::Agent::new(
+        LoopLimits::default(),
+        Arc::new(epsilon_llm::PanicGuard(provider)),
+        Arc::new(ToolRegistry::new()),
+        Arc::new(AutoAllow),
+        dir.path().to_path_buf(),
+    );
+    agent.set_summarizer(Arc::new(epsilon_llm::PanicGuard(SlowProvider::new(
+        epsilon_llm::FauxProvider::new(vec![epsilon_llm::FauxStep::say(
+            "## Objective\nsummarized state",
+        )]),
+        // Slow on purpose: the compaction must still be in flight when the
+        // run below executes, or this proves sequential luck, not overlap.
+        500,
+    ))));
+    agent.attach_session_store(Arc::new(Mutex::new(store)));
+
+    // History to compact: one real turn first.
+    agent
+        .run(user_msg("first"))
+        .await
+        .expect("the setup turn runs");
+
+    // The race: Enter during compaction submits normally in the TUI.
+    let a = Arc::clone(&agent);
+    let b = Arc::clone(&agent);
+    let (compacted, ran) = tokio::join!(
+        async move {
+            let mut produced = Vec::new();
+            a.compact_now(&mut produced).await
+        },
+        async move { b.run(user_msg("second")).await }
+    );
+    let _ = compacted;
+    let outcome = ran.expect("the racing run must not fail the harness");
+    assert_eq!(outcome.reason, TurnEndReason::Completed);
+
+    // The store is the thing that must survive: every line parses on reopen.
+    drop(agent);
+    let reopened =
+        epsilon_session::SessionStore::open(dir.path().join("session.jsonl")).expect("reopens");
+    let all = reopened.read_all().expect("every line parses");
+    assert!(
+        all.iter().any(|e| matches!(
+            e.kind,
+            epsilon_contracts::session_entry::EntryKind::Compaction { .. }
+        )),
+        "the compaction really committed mid-race, not before or after it"
+    );
+    let all = reopened.read_all().expect("every line parses");
+    assert!(
+        all.len() >= 4,
+        "both turns and their echoes are on disk: {} entries",
+        all.len()
+    );
+}

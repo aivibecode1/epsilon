@@ -66,14 +66,14 @@ back; it is a reading of the test's source, not a report of a run.
 
 **339 rows** are paired here: Pi's 323 `P-###` behaviours, the 4 `L-###` rows of its inherited `tui.*` keybinding
 table, and the 12 `T-###` rows of its text-measurement core. Every one carries a reference citation; 200 of them
-carry an `ours` citation and 138 do not, and those 138 say so. The counts below are the rows **actually written in
+carry an `ours` citation and 137 do not, and those 137 say so. The counts below are the rows **actually written in
 this document**, tallied from its own tables — not a projection.
 
 | area | rows | done | partial | missing | deliberately different |
 |---|---|---|---|---|---|
 | 1. Startup, header and resources | 20 | 1 | 6 | 12 | 1 |
 | 2. Layout and renderer | 10 | 3 | 2 | 4 | 1 |
-| 3. Composer and editor | 24 | 6 | 12 | 3 | 3 |
+| 3. Composer and editor | 24 | 6 | 12 | 2 | 4 |
 | 4. Slash commands and autocomplete | 13 | 2 | 5 | 5 | 1 |
 | 5. Transcript and streaming | 35 | 9 | 2 | 19 | 5 |
 | 6. Model picker and thinking | 9 | 0 | 4 | 5 | 0 |
@@ -89,14 +89,14 @@ this document**, tallied from its own tables — not a projection.
 | 16. Status indicators | 13 | 2 | 5 | 5 | 1 |
 | 17. Footer | 12 | 3 | 4 | 3 | 2 |
 | 18. Selector and overlay components | 79 | 18 | 17 | 36 | 8 |
-| **Total** | **339** | **69** | **100** | **137** | **33** |
+| **Total** | **339** | **69** | **100** | **136** | **34** |
 
 A further **17 rows are not in the counts above**: the 10 `Y-###` rows Pi ships outside its interactive mode (out of
 scope by design) and the 7 `AA-###` rows recording what was never inventoried. Both are listed in full near the end
 of this document, because a row that is silently dropped is how a rule goes unowned.
 
-The shape of that table is the honest shape of a port from a 356-row inventory to a 202-row one: **137 rows have no
-counterpart established on our side, 100 are half-built, 69 are exercised, and 33 are decisions.** The 138 are not
+The shape of that table is the honest shape of a port from a 356-row inventory to a 203-row one: **136 rows have no
+counterpart established on our side, 100 are half-built, 69 are exercised, and 34 are decisions.** The 138 are not
 69/339 failures; most of them sit in Pi's extension, settings-overlay, mermaid, image and tree-navigation surface,
 much of which Epsilon deliberately does not have. Read [Open rows](#open-rows) before reading the table.
 
@@ -234,7 +234,7 @@ destination — steering — rather than steer-or-follow-up chosen by key.
 | P-029 | `Ctrl+Z` suspends with `SIGTSTP` and restarts on `SIGCONT`; on Windows it prints that it is unsupported | `packages/coding-agent/src/modes/interactive/interactive-mode.ts:4351-4386`, `:4352-4355`, `packages/coding-agent/src/core/keybindings.ts:96-99` | deliberately different | `crates/epsilon-contracts/src/keybind.rs:370` — `Ctrl+Z` is undo, pinned by `ctrl_z_undoes_backspace_and_kills`; Pi itself prints `Suspend to background is not supported on Windows` on win32 (verified at `:4352`), which is this platform — there is no suspend to port, only an editor chord to keep | — |
 | P-030 | `Alt+Enter` queues a follow-up that waits for the turn; when idle it is plain Enter | `packages/coding-agent/src/modes/interactive/interactive-mode.ts:4388-4418`, `packages/coding-agent/src/core/keybindings.ts:134-137` | done | `crates/epsilon-tui/src/app.rs` — `submit_editor` takes a follow-up flag (Pi's `app.message.followUp`, `alt+enter` only; `ctrl+q` skipped as quit-smelling); running diverts to `follow_up`, idle submits normally, every gate first | `alt_enter_while_streaming_queues_a_follow_up` (real key path; notice + follow-up queue, steering untouched; arm-miss control) |
 | P-031 | Enter while streaming steers the running turn rather than queueing behind it | `packages/coding-agent/src/modes/interactive/interactive-mode.ts:3317-3326` | done | `crates/epsilon-tui/src/app.rs:1050`, `:882` — the queue decision and its transcript notice are both in the source | `enter_while_streaming_steers_rather_than_queueing` (staged through the `running` seam; asserts the notice and the steer-queue length, with a flag-off control) |
-| P-032 | Enter during compaction queues into a separate list, flushed in order when compaction ends | `packages/coding-agent/src/modes/interactive/interactive-mode.ts:3306-3315`, `:4676-4682`, `:4694-4771` | missing | none — `/compact` is queued behind a live turn (`crates/epsilon-tui/src/app/commands.rs:1633`), which is the reverse direction | — |
+| P-032 | Enter during compaction queues into a separate list, flushed in order when compaction ends | `packages/coding-agent/src/modes/interactive/interactive-mode.ts:3306-3315`, `:4676-4682`, `:4694-4771` | deliberately different | No separate queue exists by design: Enter submits into the normal path (`crates/epsilon-tui/src/app/keys.rs` submit arm — steering while streaming, a fresh run otherwise), and the engine tolerates the overlap. Proven, not reasoned: `a_run_racing_a_manual_compaction_leaves_a_valid_session` runs a real turn mid-`compact_now` (slow summarizer, so the overlap is real) and the session reopens with every line parsing plus the committed compaction entry. A second queue would duplicate the steering queue for a window of seconds | `a_run_racing_a_manual_compaction_leaves_a_valid_session` (always-refuse control fails it) |
 | P-033 | One key pulls every queued message back into the composer and reports the count | `packages/coding-agent/src/modes/interactive/interactive-mode.ts:4420-4427`, `:4655-4674` | done | `crates/epsilon-tui/src/app/keys.rs` — `app.message.dequeue` (`alt+q`, `alt+up`, both free) drains `drain_steering_all` into the draft (user text parts joined) and reports the count; empty says `No queued messages` | `alt_q_restores_queued_messages_with_a_count` (seeded queue, real key path, pulled-not-copied + empty case; chord-miss control) |
 | P-034 | `Ctrl+X` copies the live selection in fullscreen, otherwise the last assistant message; the confirmation is a flash in fullscreen and a status line in regular mode | `packages/coding-agent/src/modes/interactive/interactive-mode.ts:6556-6585`, `packages/coding-agent/src/core/settings-manager.ts:1379-1381` | partial | `crates/epsilon-tui/src/app/commands.rs:2403`; chord `f4` at `crates/epsilon-contracts/src/keybind.rs:377` — the last-assistant-message half is done; the selection half is a deliberate divergence (mouse capture is off so drag-select still copies, `crates/epsilon-tui/src/app.rs:1549`) | `the_copy_key_reaches_the_clipboard_path`, `copy_parks_a_sequence_that_carries_the_message_and_the_notice_names_the_path` |
 | P-035 | One paste key tries clipboard **file paths**, then a clipboard **image**, then clipboard **text** | `packages/coding-agent/src/modes/interactive/interactive-mode.ts:3093-3133` | partial | `crates/epsilon-tui/src/app/keys.rs:2028`; `crates/epsilon-tui/src/app.rs:879` — text paste works and a large paste becomes a `[paste #N …]` marker expanded on submit; no clipboard file or image path | `paste_marker_expands_to_payload_on_submit` |
@@ -764,7 +764,7 @@ row says so — that is a gap in the inventory, and closing it is cheap.
 |---|---|---|---|---|---|
 | 1. Startup, header and resources | 20 | 1 | 6 | 12 | 1 |
 | 2. Layout and renderer | 10 | 3 | 2 | 4 | 1 |
-| 3. Composer and editor | 24 | 6 | 12 | 3 | 3 |
+| 3. Composer and editor | 24 | 6 | 12 | 2 | 4 |
 | 4. Slash commands and autocomplete | 13 | 2 | 5 | 5 | 1 |
 | 5. Transcript and streaming | 35 | 9 | 2 | 19 | 5 |
 | 6. Model picker and thinking | 9 | 0 | 4 | 5 | 0 |
@@ -780,9 +780,9 @@ row says so — that is a gap in the inventory, and closing it is cheap.
 | 16. Status indicators | 13 | 2 | 5 | 5 | 1 |
 | 17. Footer | 12 | 3 | 4 | 3 | 2 |
 | 18. Selector and overlay components | 79 | 18 | 17 | 36 | 8 |
-| **Total** | **339** | **69** | **100** | **137** | **33** |
+| **Total** | **339** | **69** | **100** | **136** | **34** |
 
-### The `missing` rows — 137
+### The `missing` rows — 136
 
 Every row below has **no** `E-` row establishing the behaviour. Nothing here was found by browsing `crates/`, and
 nothing here is a claim that the behaviour cannot be built.
@@ -791,7 +791,7 @@ nothing here is a claim that the behaviour cannot be built.
 |---|---|
 | Startup, header and resources (12) | P-002, P-004, P-005, P-008, P-009, P-011, P-012, P-059, P-088, P-089, P-119, P-216 |
 | Layout and renderer (4) | P-015, P-020, P-021, P-220 |
-| Composer and editor (3) | P-032, P-212, P-213 |
+| Composer and editor (2) | P-212, P-213 |
 | Slash commands and autocomplete (5) | P-042, P-045, P-221, P-222, P-224 |
 | Transcript and streaming (19) | P-051, P-052, P-053, P-056, P-057, P-060, P-122, P-124, P-126, P-129, P-132, P-134, P-135, P-178, P-179, P-180, P-181, P-182, P-184 |
 | Model picker and thinking (5) | P-262, P-263, P-264, P-265, P-273 |

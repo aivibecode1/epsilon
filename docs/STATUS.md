@@ -442,6 +442,13 @@ the run. Up from 1,997: the checkpoint round-trip and restore-undo tests. (Previ
 > honestly: the first needs a run×compaction race probe, the second a protocol
 > decision, and neither is judged on an unproven claim.
 >
+> **P-032 judged (this session): no separate queue by design.** `compact_now` never
+> takes the run flag, so Enter submits into the normal path — and the race test proves
+> the engine tolerates it (slow summarizer forces real overlap; the store reopens
+> with every line parsing plus the committed entry; always-refuse control fails it).
+> Counts now 69/100/136/34. P-212/P-213 stay `missing`: extensions have no keybinding
+> surface in the protocol, and inventing a reason would be the dressing-up rule.
+>
 > **Goal 3, Phase 1 (landed): AGENTS.md v4 draft for owner application.** Every v3
 > clause audited against the tree (13 crates, uniform 1.88, TERMINAL+WINDOW tables,
 > 15 legs, SUPPORTED only in a historical comment); the complete v4 text sits in
