@@ -619,6 +619,9 @@ the run. Up from 1,997: the checkpoint round-trip and restore-undo tests. (Previ
 > **P-101 judged (this session): no settings picker to preview from.** `/settings` is guidance notices; `/theme` applies immediately. P-096/P-098 stay `missing`.
 > Counts now 81/111/50/97.
 >
+> **P-103 judged (this session): layout geometry is constants, not settings.** Padding
+> knobs with coercion ranges have nothing to turn. Counts now 81/111/49/98.
+>
 > **Goal 3, Phase 1 (landed): AGENTS.md v4 draft for owner application.** Every v3
 > clause audited against the tree (13 crates, uniform 1.88, TERMINAL+WINDOW tables,
 > 15 legs, SUPPORTED only in a historical comment); the complete v4 text sits in
