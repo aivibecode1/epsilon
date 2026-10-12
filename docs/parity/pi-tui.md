@@ -66,7 +66,7 @@ back; it is a reading of the test's source, not a report of a run.
 
 **339 rows** are paired here: Pi's 323 `P-###` behaviours, the 4 `L-###` rows of its inherited `tui.*` keybinding
 table, and the 12 `T-###` rows of its text-measurement core. Every one carries a reference citation; 200 of them
-carry an `ours` citation and 100 do not, and those 100 say so. The counts below are the rows **actually written in
+carry an `ours` citation and 96 do not, and those 96 say so. The counts below are the rows **actually written in
 this document**, tallied from its own tables — not a projection.
 
 | area | rows | done | partial | missing | deliberately different |
@@ -86,17 +86,17 @@ this document**, tallied from its own tables — not a projection.
 | 13. Bash cards | 11 | 5 | 6 | 0 | 0 |
 | 14. Diffs | 6 | 6 | 0 | 0 | 0 |
 | 15. Markdown, mermaid and truncation | 22 | 6 | 7 | 3 | 6 |
-| 16. Status indicators | 13 | 2 | 5 | 5 | 1 |
+| 16. Status indicators | 13 | 2 | 5 | 1 | 5 |
 | 17. Footer | 12 | 4 | 4 | 1 | 3 |
 | 18. Selector and overlay components | 79 | 18 | 17 | 36 | 8 |
-| **Total** | **339** | **74** | **104** | **99** | **62** |
+| **Total** | **339** | **74** | **104** | **95** | **66** |
 
 A further **17 rows are not in the counts above**: the 10 `Y-###` rows Pi ships outside its interactive mode (out of
 scope by design) and the 7 `AA-###` rows recording what was never inventoried. Both are listed in full near the end
 of this document, because a row that is silently dropped is how a rule goes unowned.
 
-The shape of that table is the honest shape of a port from a 356-row inventory to a 240-row one: **99 rows have no
-counterpart established on our side, 104 are half-built, 74 are exercised, and 62 are decisions.** The 99 are not
+The shape of that table is the honest shape of a port from a 356-row inventory to a 244-row one: **95 rows have no
+counterpart established on our side, 104 are half-built, 74 are exercised, and 66 are decisions.** The 95 are not
 69/339 failures; most of them sit in Pi's extension, settings-overlay, mermaid, image and tree-navigation surface,
 much of which Epsilon deliberately does not have. Read [Open rows](#open-rows) before reading the table.
 
@@ -605,15 +605,15 @@ counterpart here and why the kind-scoped clear is not needed.
 | id | behaviour | reference | status | ours | verified |
 |---|---|---|---|---|---|
 | P-018 | With `showTerminalProgress` on, Pi sets the terminal's progress state on turn start, compaction start and streaming, and clears it at the end | `packages/coding-agent/src/modes/interactive/interactive-mode.ts:3365-3368`, `:3590-3593`, `packages/coding-agent/src/core/settings-manager.ts:1335-1337` | partial | `crates/epsilon-tui/src/ui/header.rs:79`, `:86` — progress is signalled by a drawn spinner and elapsed seconds, not by the terminal's own progress state | `a_running_call_shows_its_time_in_the_header_not_on_the_card` (frame), `idle_and_running_read_differently` (frame) |
-| P-019 | `clearOnShrink` decides whether a residual idle row is left under the last message | `packages/coding-agent/src/modes/interactive/interactive-mode.ts:2277-2296`, `:2039-2066`, `:2055` | missing | none — Epsilon's header states the run condition permanently (`crates/epsilon-tui/src/ui/header.rs:79`), so there is no residual status row to clear and no setting to decide it | — |
+| P-019 | `clearOnShrink` decides whether a residual idle row is left under the last message | `packages/coding-agent/src/modes/interactive/interactive-mode.ts:2277-2296`, `:2039-2066`, `:2055` | deliberately different | The header states the run condition permanently (`crates/epsilon-tui/src/ui/header.rs:79`), so there is no residual status row to clear and no setting to decide it | — |
 | P-186 | Four status kinds exist and clearing by kind only clears a matching indicator | `packages/coding-agent/src/modes/interactive/components/status-indicator.ts:7`, `packages/coding-agent/src/modes/interactive/interactive-mode.ts:2277-2280` | partial | `crates/epsilon-tui/src/ui/header.rs:79` — one run-state slot, so there is no kind for a late clear to wipe the wrong thing | `idle_and_running_read_differently` (frame) |
 | P-187 | The status is drawn inside the composer's top border, so it costs no height | `packages/coding-agent/src/modes/interactive/interactive-mode.ts:2257-2275`, `packages/coding-agent/src/modes/interactive/components/custom-editor.ts:41` | deliberately different | `crates/epsilon-tui/src/ui/layout.rs:84`, `crates/epsilon-tui/src/ui/header.rs:86` — the run state lives in the one-row header band, which is part of Epsilon's fixed five-band rule; it costs a row and never has to degrade | `the_shell_shows_a_header_a_body_and_a_footer_at_every_supported_size` (frame), `idle_and_running_read_differently` (frame) |
 | P-188 | The embedded status degrades through four steps — spinner glyph, status only, width-fitted spinner — as the border narrows | `packages/coding-agent/src/modes/interactive/components/custom-editor.ts:45`, `:57`, `:51`, `:71` | partial | `crates/epsilon-tui/src/ui/header.rs:160` — the header's right half drops whole gauges from the tail, so no half-written measurement reaches the screen; the ladder itself has no counterpart because the status is not in the border | `a_narrow_terminal_drops_whole_gauges_rather_than_cutting_one` (frame) |
 | P-189 | A retry shows `Retrying (attempt/max) in Ns... (KEY to cancel)` with a live whole-second countdown | `packages/coding-agent/src/modes/interactive/components/status-indicator.ts:56`, `:64`, `packages/coding-agent/src/modes/interactive/interactive-mode.ts:3681-3683` | partial | `crates/epsilon-tui/src/state.rs:1143` — a retry lands as a transcript notice and the header shows the run's elapsed seconds; there is no per-second countdown and no cancel key in the countdown | `retry_notices_land_in_the_transcript_and_the_status_line` |
 | P-190 | The compaction indicator reads differently for manual, auto-threshold and overflow starts | `packages/coding-agent/src/modes/interactive/components/status-indicator.ts:88`, `:91`, `packages/coding-agent/src/modes/interactive/interactive-mode.ts:3618` | partial | `crates/epsilon-tui/src/ui/header.rs:93`, `crates/epsilon-tui/src/state.rs:1405` — the header phase reads `compacting context…`; the manual / auto / overflow wording split is absent | `run_lifecycle_renders_in_order` |
-| P-191 | A branch summary is its own status kind, so clearing compaction will not remove it | `packages/coding-agent/src/modes/interactive/components/status-indicator.ts:109`, `packages/coding-agent/src/modes/interactive/interactive-mode.ts:3715` | missing | none — Epsilon does not summarise branches (P-072) | — |
-| P-192 | `renderInBorder` renders the loader at `width + 2` and takes line 1, because the loader always prepends a blank line | `packages/coding-agent/src/modes/interactive/components/status-indicator.ts:25`, `packages/tui/src/components/loader.ts:44` | missing | none — with no border-embedded status there is no such coupling to get wrong | — |
-| P-193 | An embedded working indicator takes the editor's border colour so spinner and border agree | `packages/coding-agent/src/modes/interactive/interactive-mode.ts:2298-2311`, `packages/coding-agent/src/modes/interactive/components/status-indicator.ts:43` | missing | none — the header's spinner is drawn in the accent role (`crates/epsilon-tui/src/ui/header.rs:86`), and the thinking level is not encoded in a border | — |
+| P-191 | A branch summary is its own status kind, so clearing compaction will not remove it | `packages/coding-agent/src/modes/interactive/components/status-indicator.ts:109`, `packages/coding-agent/src/modes/interactive/interactive-mode.ts:3715` | deliberately different | There are no branch summaries to protect (P-072): fork executes without summarising, so the clear-compaction-must-not-remove-it question cannot arise | — |
+| P-192 | `renderInBorder` renders the loader at `width + 2` and takes line 1, because the loader always prepends a blank line | `packages/coding-agent/src/modes/interactive/components/status-indicator.ts:25`, `packages/tui/src/components/loader.ts:44` | deliberately different | With no border-embedded status there is no such coupling to get wrong: the header spinner owns its row and the loader geometry it prescribes has no target | — |
+| P-193 | An embedded working indicator takes the editor's border colour so spinner and border agree | `packages/coding-agent/src/modes/interactive/interactive-mode.ts:2298-2311`, `packages/coding-agent/src/modes/interactive/components/status-indicator.ts:43` | deliberately different | The header's spinner is drawn in the accent role (`crates/epsilon-tui/src/ui/header.rs:86`) and there is no bordered editor for it to agree with — agreement with a nonexistent border is vacuous, and the thinking level is not encoded in one | — |
 | P-194 | An extension loader is wrapped in borders with a `cancel` hint, omitted when the operation is not cancellable | `packages/coding-agent/src/modes/interactive/components/bordered-loader.ts:36`, `:39`, `:25`, `:46` | missing | none | — |
 | P-195 | A dynamic border emits exactly `width` dashes with a floor of one, so it re-fits on every resize | `packages/coding-agent/src/modes/interactive/components/dynamic-border.ts:23` | done | `crates/epsilon-tui/src/app.rs:1733`, `:1597` — ratatui composes borders per frame and the cache key includes the width, so a resize invalidates every cached row wholesale | `resizing_mid_session_keeps_every_row_inside_the_new_width` (frame, renders 120×30, 50×14, 120×30, 44×10 on one app) |
 | P-196 | A themed text line rebuilds from a callback on invalidate, so a theme change repaints it | `packages/coding-agent/src/modes/interactive/components/themed-text.ts:26`, `packages/coding-agent/src/modes/interactive/interactive-mode.ts:3749` | done | `crates/epsilon-tui/src/ui/theme.rs:1062` — roles resolve per frame and no repaint call is made, so a stored styled string cannot go stale | `switching_the_palette_redraws_the_transcript_and_not_just_the_chrome` (frame) |
@@ -777,12 +777,12 @@ row says so — that is a gap in the inventory, and closing it is cheap.
 | 13. Bash cards | 11 | 5 | 6 | 0 | 0 |
 | 14. Diffs | 6 | 6 | 0 | 0 | 0 |
 | 15. Markdown, mermaid and truncation | 22 | 6 | 7 | 3 | 6 |
-| 16. Status indicators | 13 | 2 | 5 | 5 | 1 |
+| 16. Status indicators | 13 | 2 | 5 | 1 | 5 |
 | 17. Footer | 12 | 4 | 4 | 1 | 3 |
 | 18. Selector and overlay components | 79 | 18 | 17 | 36 | 8 |
-| **Total** | **339** | **74** | **104** | **99** | **62** |
+| **Total** | **339** | **74** | **104** | **95** | **66** |
 
-### The `missing` rows — 99
+### The `missing` rows — 95
 
 Every row below has **no** `E-` row establishing the behaviour. Nothing here was found by browsing `crates/`, and
 nothing here is a claim that the behaviour cannot be built.
@@ -800,7 +800,7 @@ nothing here is a claim that the behaviour cannot be built.
 | Themes (8) | P-092, P-094, P-095, P-096, P-098, P-101, P-270, P-271 |
 | Settings (8) | P-103, P-111, P-113, P-114, P-267, P-268, P-275, P-277 |
 | Markdown, mermaid and truncation (3) | P-167, P-168, T-010 |
-| Status indicators (5) | P-019, P-191, P-192, P-193, P-194 |
+| Status indicators (1) | P-194 |
 | Footer (1) | P-208 |
 | Selector and overlay components (36) | P-230, P-232, P-234, P-235, P-239, P-242, P-244, P-245, P-248, P-251, P-255, P-256, P-257, P-258, P-259, P-261, P-281, P-283, P-284, P-285, P-286, P-296, P-297, P-300, P-304, P-306, P-307, P-308, P-310, P-311, P-314, P-316, P-317, P-318, P-319, P-323 |
 

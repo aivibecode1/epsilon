@@ -494,6 +494,11 @@ the run. Up from 1,997: the checkpoint round-trip and restore-undo tests. (Previ
 > (vowel decomposition) stay `missing`: no such machinery, no decision. Counts now
 > 74/104/99/62.
 >
+> **Status-indicator quartet judged (this session): P-019/P-191/P-192/P-193 dd.**
+> Permanent header, no branch summaries, no border-embedded status, accent-role
+> spinner with no bordered editor to agree with. P-194 stays `missing`: no
+> extension loading indicator exists. Counts now 74/104/95/66.
+>
 > **Startup trio (this session): P-005 partial, P-008/P-119 judged.** The model scope
 > lives persistently in the header rather than printed once to scrollback; extension
 > slash commands cannot collide (closed static vocabulary); extension failures are
