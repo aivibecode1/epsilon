@@ -29,8 +29,8 @@ pub use archive::{
 };
 pub use delete::{DeleteOutcome, delete_session_file};
 pub use discover::{
-    SessionSummary, count_sessions_for_cwd, latest_session, latest_session_for_cwd, list_sessions,
-    list_sessions_for_cwd, summarize,
+    SessionScope, SessionSummary, count_sessions_for_cwd, latest_session, latest_session_for_cwd,
+    list_sessions, list_sessions_all, list_sessions_for_cwd, summarize,
 };
 pub use import::{
     ImportReport, import_output_path, import_pi_session, is_pi_v2_entry_shape,

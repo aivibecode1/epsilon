@@ -160,7 +160,16 @@ pub(super) fn draw_session_browser(f: &mut Frame<'_>, app: &mut App, outer: Rect
     };
     let width = Width::PANEL.resolve(outer);
     let height = 15u16.min(outer.height.saturating_sub(2));
-    let title = format!("sessions — filter '{}'", app.input);
+    // P-230: the title names the scope Tab switches, so the key has a visible
+    // state — a toggle whose position is invisible is a mode error waiting.
+    let scope_word = match browser.scope {
+        epsilon_session::SessionScope::Workspace => "this workspace",
+        epsilon_session::SessionScope::All => "all workspaces",
+    };
+    let title = format!(
+        "sessions \u{2014} {scope_word} \u{b7} filter '{}'",
+        app.input
+    );
     let panel = Panel {
         theme: &app.theme,
         // Top-aligned like the palette and the picker: the browser opens at the
@@ -188,11 +197,20 @@ pub(super) fn draw_session_browser(f: &mut Frame<'_>, app: &mut App, outer: Rect
     if browser.rows.is_empty() {
         // Empty directory vs filtered-out (P-243): an empty filter with no
         // rows means no sessions exist yet, so the message names the way to
-        // make one; a non-empty filter means the filter hides them.
+        // make one; a non-empty filter means the filter hides them. The scope
+        // rides along (P-230): "in this workspace" when the reader may only
+        // need to press Tab.
         let empty = if app.input.trim().is_empty() {
-            "No sessions in this workspace yet — Ctrl+N starts one, Esc closes"
+            match browser.scope {
+                epsilon_session::SessionScope::Workspace => {
+                    "No sessions in this workspace yet \u{2014} Ctrl+N starts one, Tab sees all, Esc closes"
+                }
+                epsilon_session::SessionScope::All => {
+                    "No sessions anywhere yet \u{2014} Ctrl+N starts one, Esc closes"
+                }
+            }
         } else {
-            "no matches — Backspace to widen, Esc closes"
+            "no matches \u{2014} Backspace to widen, Esc closes"
         };
         lines.push(Line::from(Span::styled(empty, app.theme.dim())));
     }
@@ -224,12 +242,19 @@ pub(super) fn draw_session_browser(f: &mut Frame<'_>, app: &mut App, outer: Rect
         format!("{} of {}", browser.index + 1, browser.rows.len()),
         app.theme.dim(),
     )];
-    footer.push(Span::styled(" · ", app.theme.faint()));
+    // P-230: the footer names the scope Tab moves TO, not the one showing —
+    // the toggle's destination is what the reader needs before pressing.
+    let other_scope = match browser.scope {
+        epsilon_session::SessionScope::Workspace => "all sessions",
+        epsilon_session::SessionScope::All => "this workspace",
+    };
+    footer.push(Span::styled(" \u{b7} ", app.theme.faint()));
     footer.extend(
         overlay::hint_row(
             &app.theme,
             &[
                 ("enter", "resumes"),
+                ("tab", other_scope),
                 // The bound key, named so a reader can learn it exists — §2.7.
                 // Resolved from the table rather than typed, so a rebind moves
                 // the hint with it.

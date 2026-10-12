@@ -88,15 +88,15 @@ this document**, tallied from its own tables — not a projection.
 | 15. Markdown, mermaid and truncation | 22 | 6 | 7 | 1 | 8 |
 | 16. Status indicators | 13 | 2 | 5 | 0 | 6 |
 | 17. Footer | 12 | 4 | 4 | 0 | 4 |
-| 18. Selector and overlay components | 79 | 22 | 19 | 11 | 27 |
-| **Total** | **339** | **81** | **111** | **22** | **125** |
+| 18. Selector and overlay components | 79 | 23 | 19 | 10 | 27 |
+| **Total** | **339** | **82** | **111** | **21** | **125** |
 
 A further **17 rows are not in the counts above**: the 10 `Y-###` rows Pi ships outside its interactive mode (out of
 scope by design) and the 7 `AA-###` rows recording what was never inventoried. Both are listed in full near the end
 of this document, because a row that is silently dropped is how a rule goes unowned.
 
-The shape of that table is the honest shape of a port from a 356-row inventory to a 315-row one: **22 rows have no
-counterpart established on our side, 111 are half-built, 81 are exercised, and 125 are decisions.** The 22 are not
+The shape of that table is the honest shape of a port from a 356-row inventory to a 315-row one: **21 rows have no
+counterpart established on our side, 111 are half-built, 82 are exercised, and 125 are decisions.** The 21 are not
 69/339 failures; most of them sit in Pi's extension, settings-overlay, mermaid, image and tree-navigation surface,
 much of which Epsilon deliberately does not have. Read [Open rows](#open-rows) before reading the table.
 
@@ -657,7 +657,7 @@ the per-selector ones.
 | P-227 | Every bordered overlay re-renders its border as `"─" × width` on each frame | `packages/coding-agent/src/modes/interactive/components/dynamic-border.ts:23`, `packages/coding-agent/src/modes/interactive/components/model-selector.ts:100`, `:151` | done | `crates/epsilon-tui/src/app.rs:1733`; capacity measured per frame at `crates/epsilon-tui/src/app/panels.rs:79` | `resizing_mid_session_keeps_every_row_inside_the_new_width` (frame), `a_page_key_moves_by_the_window_the_list_actually_drew` (frame) |
 | P-228 | The same physical chord means different things in different overlays (`Ctrl+S` sorts, saves models, saves a default) | `packages/coding-agent/src/core/keybindings.ts:186`, `:210`, `:199`, `:178` | partial | `crates/epsilon-contracts/src/keybind.rs:242` — every chord is declared **once** (invariant 4) and scoped by state in one handler (`crates/epsilon-tui/src/app/keys.rs:550`); the mode badge names which keyboard is live (`crates/epsilon-tui/src/ui/footer.rs:367`) | `approval_preempts_palette_and_picker_without_changing_filter` |
 | P-229 | Overlay hints are generated from the current keybindings and follow a rebind | `packages/coding-agent/src/modes/interactive/components/keybinding-hints.ts:34` | done | `crates/epsilon-tui/src/ui/footer.rs:294`; the search panel ships its own key row inside the panel (`crates/epsilon-tui/src/app.rs:1918`) | `an_open_search_reports_itself_and_the_matches_it_found` (frame), `idle_hints_name_only_keys_that_do_something` (frame) |
-| P-230 | Tab toggles the session picker between current-folder and all sessions | `packages/coding-agent/src/modes/interactive/components/session-selector.ts:144`, `:1031` | missing | none — Epsilon's browser covers this workspace only (`crates/epsilon-tui/src/picker.rs:918`) | — |
+| P-230 | Tab toggles the session picker between current-folder and all sessions | `packages/coding-agent/src/modes/interactive/components/session-selector.ts:144`, `:1031` | done | Bare Tab flips `SessionScope::Workspace`/`All` and rescans under the same filter (`crates/epsilon-tui/src/app.rs:642`, armed at `crates/epsilon-tui/src/app/keys.rs:1502`); the All scope lists every per-cwd directory plus the flat root newest-first (`crates/epsilon-session/src/discover.rs:317`, `:301`) with each foreign row naming its workspace (`crates/epsilon-tui/src/picker.rs:852`), and the title/footer name the scope and Tab's destination | `all_scope_lists_every_workspace_newest_first` (discover) + `all_scope_lists_foreign_sessions_with_their_workspace_named` (picker) + `tab_in_the_browser_toggles_workspace_and_all_scopes` (frames at 80x24 and 100x30; arm-removal control fails it) |
 | P-231 | `Ctrl+S` cycles Threaded → Recent → Fuzzy, with the header label matching | `packages/coding-agent/src/modes/interactive/components/session-selector.ts:566`, `:1009`, `:134`, `:714` | partial | `crates/epsilon-tui/src/picker.rs:918` — newest-first is fixed; there is no sort cycle | `session_rows_list_newest_first_and_mark_the_current_file` |
 | P-232 | `Ctrl+N` filters the list to named sessions only | `packages/coding-agent/src/modes/interactive/components/session-selector.ts:571`, `:1017` | deliberately different | The chord is taken — `ctrl+n` starts a new session (`app.session.new`, `crates/epsilon-contracts/src/keybind.rs:388`) — and the browser's free-text filter (`sessions — filter`, `crates/epsilon-tui/src/app/panels.rs:163`) already narrows to a name when one is typed; a second named-only toggle would be a mode over a filter | — |
 | P-233 | `Ctrl+P` toggles a column showing each session's file path | `packages/coding-agent/src/modes/interactive/components/session-selector.ts:577`, `:479` | partial | `crates/epsilon-tui/src/app/panels.rs:209` — the file name is in every row's meta string and is always present; there is no toggle | `session_rows_list_newest_first_and_mark_the_current_file`, `sessions_command_browses_and_enter_switches_the_session` |
@@ -779,10 +779,10 @@ row says so — that is a gap in the inventory, and closing it is cheap.
 | 15. Markdown, mermaid and truncation | 22 | 6 | 7 | 1 | 8 |
 | 16. Status indicators | 13 | 2 | 5 | 0 | 6 |
 | 17. Footer | 12 | 4 | 4 | 0 | 4 |
-| 18. Selector and overlay components | 79 | 22 | 19 | 11 | 27 |
-| **Total** | **339** | **81** | **111** | **22** | **125** |
+| 18. Selector and overlay components | 79 | 23 | 19 | 10 | 27 |
+| **Total** | **339** | **82** | **111** | **21** | **125** |
 
-### The `missing` rows — 22
+### The `missing` rows — 21
 
 Every row below has **no** `E-` row establishing the behaviour. Nothing here was found by browsing `crates/`, and
 nothing here is a claim that the behaviour cannot be built.
@@ -796,7 +796,7 @@ nothing here is a claim that the behaviour cannot be built.
 | Themes (2) | P-096, P-098 |
 | Settings (2) | P-113, P-114 |
 | Markdown, mermaid and truncation (1) | T-010 |
-| Selector and overlay components (11) | P-230, P-239, P-304, P-306, P-307, P-311, P-316, P-317, P-318, P-319, P-323 |
+| Selector and overlay components (10) | P-239, P-304, P-306, P-307, P-311, P-316, P-317, P-318, P-319, P-323 |
 
 ### The `partial` rows — 111
 

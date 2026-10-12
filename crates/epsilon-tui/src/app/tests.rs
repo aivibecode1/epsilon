@@ -1159,7 +1159,14 @@ async fn new_command_starts_a_new_session_file_and_keeps_the_old_one() {
         2,
         "one file per conversation: the planted one and the one /new just started"
     );
-    let rows = crate::picker::session_rows(&sessions, workspace, "", None, u64::MAX);
+    let rows = crate::picker::session_rows(
+        &sessions,
+        workspace,
+        epsilon_session::SessionScope::Workspace,
+        "",
+        None,
+        u64::MAX,
+    );
     assert_eq!(rows.len(), 2, "both sessions are listed: {rows:?}");
     assert!(
         rows.iter().any(|r| r.path == old),
@@ -8434,6 +8441,63 @@ fn ctrl_n_inside_the_browser_starts_a_session() {
         after.len(),
         before.len() + 1,
         "and a session file appears: {after:?}"
+    );
+}
+
+/// Tab toggles the session browser between this workspace and all sessions (P-230).
+///
+/// A foreign session (another cwd's directory, a real store file, never
+/// attached): workspace scope hides it, one Tab shows it with its workspace
+/// named, a second Tab hides it again — all through the real key path.
+#[test]
+fn tab_in_the_browser_toggles_workspace_and_all_scopes() {
+    let (mut app, agent, _rx, dir) = test_app_with_store();
+    let sessions = dir.path().join(".epsilon").join("sessions");
+    let foreign_dir =
+        epsilon_session::time::session_dir_for(&sessions, std::path::Path::new("/elsewhere"));
+    std::fs::create_dir_all(&foreign_dir).expect("the foreign session directory");
+    let _foreign = epsilon_session::SessionStore::open_in(
+        foreign_dir.join("other.jsonl"),
+        std::path::Path::new("/elsewhere"),
+    )
+    .expect("a foreign session opens");
+    app.open_session_browser(&agent);
+    assert!(
+        app.session_browser.is_some(),
+        "the browser must open to press in"
+    );
+    let frame = render_rows(&mut app, 80, 24).join("\n");
+    assert!(
+        !frame.contains("elsewhere"),
+        "workspace scope hides it first: {frame}"
+    );
+    assert!(
+        frame.contains("this workspace"),
+        "the title names the starting scope: {frame}"
+    );
+
+    handle_key(&mut app, &agent, key(KeyCode::Tab));
+    let frame = render_rows(&mut app, 80, 24).join("\n");
+    assert!(
+        frame.contains("elsewhere"),
+        "one Tab shows every scope with the workspace named: {frame}"
+    );
+    assert!(
+        frame.contains("all workspaces"),
+        "the title names the scope Tab switched to: {frame}"
+    );
+    // The same frame at the wide size: scope words must survive the width.
+    let wide = render_rows(&mut app, 100, 30).join("\n");
+    assert!(
+        wide.contains("all workspaces") && wide.contains("elsewhere"),
+        "scope and foreign label hold at 100x30: {wide}"
+    );
+
+    handle_key(&mut app, &agent, key(KeyCode::Tab));
+    let frame = render_rows(&mut app, 80, 24).join("\n");
+    assert!(
+        !frame.contains("elsewhere"),
+        "a second Tab returns to the workspace: {frame}"
     );
 }
 

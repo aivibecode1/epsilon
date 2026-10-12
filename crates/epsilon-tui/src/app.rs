@@ -556,6 +556,9 @@ struct SessionBrowser {
     /// root's files whose header names this workspace. Carried rather than re-read so a filter
     /// keystroke cannot change which sessions the browser is looking at.
     cwd: std::path::PathBuf,
+    /// Which sessions the browser lists (P-230): this workspace, or every
+    /// workspace under the root. Tab flips it; the filter survives the flip.
+    scope: epsilon_session::SessionScope,
     /// The session this app is attached to (marked `●` in the list).
     current: Option<std::path::PathBuf>,
     /// Filtered rows, newest first.
@@ -595,10 +598,18 @@ impl SessionBrowser {
         current: Option<std::path::PathBuf>,
         filter: &str,
     ) -> Self {
-        let rows = crate::picker::session_rows(&dir, &cwd, filter, current.as_deref(), now_ms());
+        let rows = crate::picker::session_rows(
+            &dir,
+            &cwd,
+            epsilon_session::SessionScope::Workspace,
+            filter,
+            current.as_deref(),
+            now_ms(),
+        );
         Self {
             dir,
             cwd,
+            scope: epsilon_session::SessionScope::Workspace,
             current,
             rows,
             index: 0,
@@ -613,6 +624,7 @@ impl SessionBrowser {
         self.rows = crate::picker::session_rows(
             &self.dir,
             &self.cwd,
+            self.scope,
             filter,
             self.current.as_deref(),
             now_ms(),
@@ -620,6 +632,20 @@ impl SessionBrowser {
         if self.index >= self.rows.len() {
             self.index = self.index.min(self.rows.len().saturating_sub(1));
         }
+    }
+
+    /// Flip workspace/all scope and rescan under the same filter (P-230).
+    ///
+    /// The highlight restarts at the top: the row it pointed at may not exist
+    /// in the other scope, and clamping to a same-index row would land on an
+    /// unrelated session.
+    fn toggle_scope(&mut self, filter: &str) {
+        self.scope = match self.scope {
+            epsilon_session::SessionScope::Workspace => epsilon_session::SessionScope::All,
+            epsilon_session::SessionScope::All => epsilon_session::SessionScope::Workspace,
+        };
+        self.index = 0;
+        self.rebuild(filter);
     }
 
     /// The path a delete key press names, or `None` when it must not delete.

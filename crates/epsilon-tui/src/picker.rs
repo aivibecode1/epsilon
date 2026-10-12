@@ -852,6 +852,7 @@ pub fn age_label(now_ms: u64, then_ms: u64) -> String {
 pub fn session_rows(
     dir: &std::path::Path,
     cwd: &std::path::Path,
+    scope: epsilon_session::SessionScope,
     filter: &str,
     current: Option<&std::path::Path>,
     now_ms: u64,
@@ -862,7 +863,13 @@ pub fn session_rows(
         .filter(|t| !t.is_empty())
         .collect();
     let mut scored: Vec<(i64, SessionRow)> = Vec::new();
-    for session in epsilon_session::list_sessions_for_cwd(dir, cwd) {
+    let sessions = match scope {
+        epsilon_session::SessionScope::Workspace => {
+            epsilon_session::list_sessions_for_cwd(dir, cwd)
+        }
+        epsilon_session::SessionScope::All => epsilon_session::list_sessions_all(dir),
+    };
+    for session in sessions {
         let title = session.title();
         let file = session
             .path
@@ -910,12 +917,20 @@ pub fn session_rows(
             continue;
         }
         let is_current = current.is_some_and(|c| same_session_file(c, &session.path));
+        // All-scope rows name the workspace they belong to (P-230): without
+        // it, sessions from elsewhere are indistinguishable, which is the
+        // whole reason to leave the workspace scope.
+        let ws = if scope == epsilon_session::SessionScope::All && !session.cwd.is_empty() {
+            format!(" \u{b7} {}", workspace_label(&session.cwd))
+        } else {
+            String::new()
+        };
         scored.push((
             score,
             SessionRow {
                 path: session.path.clone(),
                 title,
-                meta: format!("{meta_head} · {file}"),
+                meta: format!("{meta_head}{ws} · {file}"),
                 is_current,
             },
         ));
@@ -924,6 +939,15 @@ pub fn session_rows(
         scored.sort_by_key(|(s, _)| *s);
     }
     scored.into_iter().map(|(_, r)| r).collect()
+}
+
+/// Last path segment of a session's recorded cwd for all-scope row labels.
+/// Falls back to the raw string when it has no file name (a filesystem root).
+fn workspace_label(cwd: &str) -> String {
+    std::path::Path::new(cwd)
+        .file_name()
+        .map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or_else(|| cwd.to_string())
 }
 
 /// Same file, tolerating relative/absolute and `.`-segment differences between
@@ -988,23 +1012,123 @@ mod tests {
         std::fs::write(dir.join("notes.txt"), "x").unwrap();
 
         let now = 10_000_000_000u64;
-        let rows = session_rows(dir, dir, "", None, now);
+        let rows = session_rows(
+            dir,
+            dir,
+            epsilon_session::SessionScope::Workspace,
+            "",
+            None,
+            now,
+        );
         assert_eq!(rows.len(), 2, "only session files: {rows:?}");
         assert_eq!(rows[0].title, "second task", "newest first");
         assert!(rows[0].meta.contains("new.jsonl"));
         assert!(!rows[0].is_current);
 
         // The current file is marked, and the filter matches title, file, or cwd.
-        let rows = session_rows(dir, dir, "", Some(&dir.join("new.jsonl")), now);
+        let rows = session_rows(
+            dir,
+            dir,
+            epsilon_session::SessionScope::Workspace,
+            "",
+            Some(&dir.join("new.jsonl")),
+            now,
+        );
         assert!(rows[0].is_current, "the attached session is marked");
         assert!(!rows[1].is_current);
-        assert_eq!(session_rows(dir, dir, "old", None, now).len(), 1);
         assert_eq!(
-            session_rows(dir, dir, "second", None, now).len(),
+            session_rows(
+                dir,
+                dir,
+                epsilon_session::SessionScope::Workspace,
+                "old",
+                None,
+                now
+            )
+            .len(),
+            1
+        );
+        assert_eq!(
+            session_rows(
+                dir,
+                dir,
+                epsilon_session::SessionScope::Workspace,
+                "second",
+                None,
+                now
+            )
+            .len(),
             1,
             "title matches"
         );
-        assert!(session_rows(dir, dir, "zzz-nothing", None, now).is_empty());
+        assert!(
+            session_rows(
+                dir,
+                dir,
+                epsilon_session::SessionScope::Workspace,
+                "zzz-nothing",
+                None,
+                now
+            )
+            .is_empty()
+        );
+    }
+
+    #[test]
+    fn all_scope_lists_foreign_sessions_with_their_workspace_named() {
+        // P-230: the All scope sees every workspace; rows from elsewhere name
+        // their workspace, or the toggle answers nothing.
+        use epsilon_session::SessionScope;
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = tmp.path();
+        let header = |id: &str, cwd: &str| {
+            format!(
+                "{}\n",
+                serde_json::json!({
+                    "type": "session", "version": 3, "id": id,
+                    "timestamp": "2026-09-14T10:00:00Z", "cwd": cwd,
+                })
+            )
+        };
+        let home = epsilon_session::time::session_dir_for(dir, std::path::Path::new("/w"));
+        let away = epsilon_session::time::session_dir_for(dir, std::path::Path::new("/elsewhere"));
+        std::fs::create_dir_all(&home).unwrap();
+        std::fs::create_dir_all(&away).unwrap();
+        std::fs::write(home.join("a.jsonl"), header("ses_home", "/w")).unwrap();
+        std::fs::write(away.join("b.jsonl"), header("ses_away", "/elsewhere")).unwrap();
+
+        let now = 10_000_000_000u64;
+        let ws = session_rows(
+            dir,
+            std::path::Path::new("/w"),
+            SessionScope::Workspace,
+            "",
+            None,
+            now,
+        );
+        assert_eq!(
+            ws.len(),
+            1,
+            "workspace scope hides other workspaces: {ws:?}"
+        );
+        let all = session_rows(
+            dir,
+            std::path::Path::new("/w"),
+            SessionScope::All,
+            "",
+            None,
+            now,
+        );
+        assert_eq!(all.len(), 2, "all scope sees both workspaces: {all:?}");
+        let foreign = all
+            .iter()
+            .find(|r| r.path == away.join("b.jsonl"))
+            .expect("the foreign session is listed");
+        assert!(
+            foreign.meta.contains("elsewhere"),
+            "the foreign row names its workspace: {}",
+            foreign.meta
+        );
     }
 
     #[test]
@@ -1017,7 +1141,14 @@ mod tests {
         let _ = epsilon_session::SessionStore::open_in(&parent, dir).unwrap();
         let _ = epsilon_session::SessionStore::open_child_in(&child, dir, "ses_parent").unwrap();
 
-        let rows = session_rows(dir, dir, "", None, 1_000_000);
+        let rows = session_rows(
+            dir,
+            dir,
+            epsilon_session::SessionScope::Workspace,
+            "",
+            None,
+            1_000_000,
+        );
         assert_eq!(rows.len(), 2);
         let child_row = rows.iter().find(|r| r.path == child).expect("child listed");
         let parent_row = rows
@@ -1038,7 +1169,14 @@ mod tests {
         let dir = tempfile::tempdir().expect("tmp");
         let path = dir.path().join("ses_busy.jsonl");
         let _store = epsilon_session::SessionStore::open_in(&path, dir.path()).expect("writer");
-        let rows = session_rows(dir.path(), dir.path(), "", None, 0);
+        let rows = session_rows(
+            dir.path(),
+            dir.path(),
+            epsilon_session::SessionScope::Workspace,
+            "",
+            None,
+            0,
+        );
         let row = rows.first().expect("the session is listed");
         assert!(row.meta.contains("in use"), "{}", row.meta);
     }
@@ -1575,7 +1713,14 @@ mod tests {
         )
         .unwrap();
         let now = 10_000_000_000u64;
-        let rows = session_rows(dir, dir, "task", None, now);
+        let rows = session_rows(
+            dir,
+            dir,
+            epsilon_session::SessionScope::Workspace,
+            "task",
+            None,
+            now,
+        );
         assert_eq!(rows.len(), 2);
         assert_eq!(
             rows[0].title,
@@ -1597,7 +1742,14 @@ mod tests {
             format!("{}{}", header("ses_new"), user("same words")),
         )
         .unwrap();
-        let rows = session_rows(dir, dir, "same", None, now);
+        let rows = session_rows(
+            dir,
+            dir,
+            epsilon_session::SessionScope::Workspace,
+            "same",
+            None,
+            now,
+        );
         assert_eq!(rows.len(), 2);
         assert!(
             rows[0].meta.contains("new.jsonl"),

@@ -295,6 +295,42 @@ pub fn list_sessions_for_cwd(root: &Path, cwd: &Path) -> Vec<SessionSummary> {
     out
 }
 
+/// Which sessions the `/sessions` browser looks at (P-230, pi's scope toggle:
+/// `◉ Current Folder | ○ All`, `session-selector.ts:144`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum SessionScope {
+    /// This workspace only — the per-cwd directory plus the flat root's files
+    /// whose header names it (M217). The default: a browser that opens on
+    /// other workspaces' sessions would answer a question nobody asked.
+    #[default]
+    Workspace,
+    /// Every session under the root, whatever workspace started it.
+    All,
+}
+
+/// Every session under `root` regardless of workspace: the flat root plus
+/// every per-cwd subdirectory, newest first (P-230: the "all sessions" scope).
+///
+/// Non-session files are skipped by [`list_sessions`]; a subdirectory that
+/// cannot be read contributes nothing rather than failing the whole scan.
+#[must_use]
+pub fn list_sessions_all(root: &Path) -> Vec<SessionSummary> {
+    let mut out = list_sessions(root);
+    if let Ok(entries) = std::fs::read_dir(root) {
+        for entry in entries.filter_map(Result::ok) {
+            if entry.path().is_dir() {
+                out.extend(list_sessions(&entry.path()));
+            }
+        }
+    }
+    out.sort_by(|a, b| {
+        b.modified_ms
+            .cmp(&a.modified_ms)
+            .then_with(|| b.path.cmp(&a.path))
+    });
+    out
+}
+
 /// How many sessions belong to `cwd` — **without summarizing them** (M231).
 ///
 /// A caller that only needs a *count* must not pay for summaries. Measured at 500 sessions in one
@@ -624,6 +660,33 @@ mod tests {
             count_sessions_for_cwd(&root, cwd),
             3,
             "two in the directory, one legacy file, and nothing from another workspace"
+        );
+    }
+
+    /// P-230: the all-sessions scope sees every workspace — the flat root plus
+    /// every per-cwd directory, newest first, foreign files skipped.
+    #[test]
+    fn all_scope_lists_every_workspace_newest_first() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path();
+        let home = time::session_dir_for(root, Path::new("/w"));
+        let away = time::session_dir_for(root, Path::new("/elsewhere"));
+        std::fs::create_dir_all(&home).unwrap();
+        std::fs::create_dir_all(&away).unwrap();
+        write_session(&home, "a.jsonl", "ses_home", "/w", &[]);
+        std::thread::sleep(std::time::Duration::from_millis(30));
+        write_session(&away, "b.jsonl", "ses_away", "/elsewhere", &[]);
+        std::thread::sleep(std::time::Duration::from_millis(30));
+        // Pre-M217 layout, and a foreign file that must not inflate the list.
+        write_session(root, "legacy.jsonl", "ses_legacy", "/w", &[]);
+        std::fs::write(home.join("notes.txt"), "hello").unwrap();
+
+        let all = list_sessions_all(root);
+        let ids: Vec<&str> = all.iter().map(|s| s.id.as_str()).collect();
+        assert_eq!(
+            ids,
+            vec!["ses_legacy", "ses_away", "ses_home"],
+            "every workspace, newest first, no stowaways: {ids:?}"
         );
     }
 }

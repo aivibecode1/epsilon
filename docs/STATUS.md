@@ -690,6 +690,15 @@ the run. Matrix at 81/111/24/123. (Previous: `gate-goal3-phase6-20261012`, 2,011
 > warn about a configuration nothing reads. Revisit if a default chord ever needs
 > CSI-u/kitty sequences. Counts now 81/111/22/125.
 >
+> **P-230 adapted (this session): Tab toggles workspace/all session scopes.** Bare
+> Tab flips `SessionScope` and rescans under the same filter (highlight restarts
+> at the top — the row it pointed at may not exist in the other scope); the All
+> scope lists every per-cwd directory plus the flat root newest-first, foreign
+> rows naming their workspace, title/footer naming the scope and Tab's
+> destination. Three tests (discover unit, picker scope+label, TUI toggle with
+> 80x24 + 100x30 frames; arm-removal control fails it); epsilon-session +
+> epsilon-tui suites green, fmt + clippy clean. Counts now 82/111/21/125.
+>
 > **Goal 3, Phase 1 (landed): AGENTS.md v4 draft for owner application.** Every v3
 > clause audited against the tree (13 crates, uniform 1.88, TERMINAL+WINDOW tables,
 > 15 legs, SUPPORTED only in a historical comment); the complete v4 text sits in

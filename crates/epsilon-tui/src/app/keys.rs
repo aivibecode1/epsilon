@@ -1493,6 +1493,18 @@ pub(crate) fn handle_key(app: &mut App, agent: &Arc<Agent>, key: KeyEvent) -> bo
                     app.ui.push_notice(why);
                 }
             }
+            // P-230: Tab toggles the browser between this workspace and all
+            // sessions. Bare Tab, not a binding id: the browser owns the
+            // keyboard while open (M57), and at the composer Tab already
+            // means "apply the slash candidate" — a shared id would make one
+            // key promise two things. Only the bare Tab the footer names
+            // acts; modified Tabs fall through to `_` and do nothing.
+            KeyCode::Tab if key.modifiers.is_empty() => {
+                let filter = app.input.clone();
+                if let Some(b) = app.session_browser.as_mut() {
+                    b.toggle_scope(&filter);
+                }
+            }
             _ => {}
         }
         return false;
