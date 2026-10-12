@@ -66,7 +66,7 @@ back; it is a reading of the test's source, not a report of a run.
 
 **339 rows** are paired here: Pi's 323 `P-###` behaviours, the 4 `L-###` rows of its inherited `tui.*` keybinding
 table, and the 12 `T-###` rows of its text-measurement core. Every one carries a reference citation; 200 of them
-carry an `ours` citation and 91 do not, and those 91 say so. The counts below are the rows **actually written in
+carry an `ours` citation and 89 do not, and those 89 say so. The counts below are the rows **actually written in
 this document**, tallied from its own tables — not a projection.
 
 | area | rows | done | partial | missing | deliberately different |
@@ -88,15 +88,15 @@ this document**, tallied from its own tables — not a projection.
 | 15. Markdown, mermaid and truncation | 22 | 6 | 7 | 3 | 6 |
 | 16. Status indicators | 13 | 2 | 5 | 1 | 5 |
 | 17. Footer | 12 | 4 | 4 | 1 | 3 |
-| 18. Selector and overlay components | 79 | 18 | 17 | 36 | 8 |
-| **Total** | **339** | **74** | **105** | **90** | **70** |
+| 18. Selector and overlay components | 79 | 19 | 17 | 34 | 9 |
+| **Total** | **339** | **75** | **105** | **88** | **71** |
 
 A further **17 rows are not in the counts above**: the 10 `Y-###` rows Pi ships outside its interactive mode (out of
 scope by design) and the 7 `AA-###` rows recording what was never inventoried. Both are listed in full near the end
 of this document, because a row that is silently dropped is how a rule goes unowned.
 
-The shape of that table is the honest shape of a port from a 356-row inventory to a 249-row one: **90 rows have no
-counterpart established on our side, 105 are half-built, 74 are exercised, and 70 are decisions.** The 90 are not
+The shape of that table is the honest shape of a port from a 356-row inventory to a 251-row one: **88 rows have no
+counterpart established on our side, 105 are half-built, 75 are exercised, and 71 are decisions.** The 88 are not
 69/339 failures; most of them sit in Pi's extension, settings-overlay, mermaid, image and tree-navigation surface,
 much of which Epsilon deliberately does not have. Read [Open rows](#open-rows) before reading the table.
 
@@ -704,8 +704,8 @@ the per-selector ones.
 | P-293 | Five filter modes on direct keys: `Ctrl+D` sets the default, `Ctrl+T`/`Ctrl+U`/`Ctrl+L`/`Ctrl+A` toggle; a filter change clears folded branches | `packages/coding-agent/src/modes/interactive/components/tree-selector.ts:1047`, `:1052`, `:359`, `:374`, `:1049` | done | `crates/epsilon-tui/src/app.rs:2111-2145` (all five modes in pi's cycle order), `crates/epsilon-tui/src/app/keys.rs:869-873` (`f` cycles and clears folds) — adapted: the modes cycle on `f`, not on pi's direct keys. `ctrl+d` deletes a session, `ctrl+t` cycles thinking, `ctrl+l` opens the model picker (`keybind.rs:254,260,388`), so pi's chords would fire unrelated verbs. The second half is built, not judged: a filter change clears folds (`tree-selector.ts:1049`) | `cycling_the_tree_filter_clears_folded_branches` (mode advances in pi's order, folds clear, stays open), `timeline_picker_opens_and_enter_jumps` |
 | P-294 | `Ctrl+O` cycles filters forward and `Shift+Ctrl+O` backward through default → no-tools → user-only → labeled-only → all | `packages/coding-agent/src/modes/interactive/components/tree-selector.ts:1079`, `:1072`, `:1074` | partial | `crates/epsilon-tui/src/state.rs` — a real cycle exists now: `ctrl+o` / `shift+ctrl+o` over `default → no-tools → user-only` (Pi's order), applied in `RenderCache::reconcile` beside `hide_thinking` and carried in the cache key so a row is never served under a filter it was not rendered under. **Three of Pi's five, and the other two are not representable here:** `labeled-only` needs an entry id and a label `TranscriptLine` does not carry (hydration takes `&[Message]`), and `all` is identical to `default` because Epsilon's transcript holds none of the bookkeeping kinds Pi's selector also lists. `ctrl+o` was taken by `app.editor.external`, which already listed `alt+e`; narrowing it costs nothing a reader was promised. Escape does **not** reset the filter — Pi's rule too (`:1039-1046`) | `ctrl_o_filters_the_transcript_on_a_real_frame`, `shift_ctrl_o_steps_back_and_escape_keeps_the_filter`, `a_filter_round_trip_through_the_cache_restores_every_row` (all frames; the third is the cache-staleness guard), `the_transcript_filter_cycles_in_pis_order_and_wraps` and two more units |
 | P-295 | The status line names the filter with a bracketed tag, and `(n/total)` | `packages/coding-agent/src/modes/interactive/components/tree-selector.ts:647`, `:765`, `:674` | done | `crates/epsilon-tui/src/app/panels.rs` — both halves present, split across title and footer: the title names the filter verbatim (`timeline · <filter>`), and the footer shares the `{index + 1}/{total}` counter with the key hints ("the counter stays where the reader looks for it"). Pi brackets the tag; a bracket adds nothing a reader can act on once the name is shown | `the_timeline_footer_names_its_position` (frames at 80×24 and 100×30; opens on the leaf at 3/3, Up moves to 2/3; frozen-numerator control) |
-| P-296 | `Shift+L` opens an inline label input whose empty value removes the label and its timestamp | `packages/coding-agent/src/modes/interactive/components/tree-selector.ts:1092`, `:1322`, `:1412` | missing | none — Epsilon has no entry labels | — |
-| P-297 | `Shift+T` toggles label timestamps in three date formats keyed on recency | `packages/coding-agent/src/modes/interactive/components/tree-selector.ts:1097`, `:862`, `:641` | missing | none | — |
+| P-296 | `Shift+L` opens an inline label input whose empty value removes the label and its timestamp | `packages/coding-agent/src/modes/interactive/components/tree-selector.ts:1092`, `:1322`, `:1412` | done | Adapted: `Shift+L` opens the label editor on the selected timeline row (pi's chord), writes through the store, and an empty box clears (`crates/epsilon-tui/src/app/keys.rs:935`, `set_label` normalises `""` to clear). Timestamps do not exist on labels here, so there is none to remove alongside | `the_label_editor_writes_through_the_store_and_clears_on_empty` |
+| P-297 | `Shift+T` toggles label timestamps in three date formats keyed on recency | `packages/coding-agent/src/modes/interactive/components/tree-selector.ts:1097`, `:862`, `:641` | deliberately different | Labels carry no timestamps (`Label` entries are id+text, `set_label`), so three recency formats would format a field that does not exist | — |
 | P-298 | Tree search drops characters below 0x20, `0x7f` and `0x80-0x9f` as they are typed | `packages/coding-agent/src/modes/interactive/components/tree-selector.ts:1099`, `:1086` | done | `crates/epsilon-tui/src/state.rs:1403` — Epsilon strips at the state boundary with `display_safe`, which also removes bidi overrides, and strips again before a panel row is drawn (`crates/epsilon-tui/src/app/golden.rs:3294`); that is a stronger guarantee than a per-component filter | `a_panel_row_is_stripped_before_it_is_drawn` (frame), `a_bidi_override_in_streaming_model_output_never_reaches_the_frame` (frame) |
 | P-299 | Esc clears the search query and all folded branches first; a second Esc exits | `packages/coding-agent/src/modes/interactive/components/tree-selector.ts:1039-1043` | done | `crates/epsilon-tui/src/app/keys.rs:787-797` (outer Esc: query and folds clear first, the emptied Esc closes; the search-mode arm above already cleared the query this way) — the tree's Esc is two-stage now, matching the search field's own rule and the model picker's back-a-stage habit | `esc_in_the_tree_unfolds_first_and_only_then_closes` (unfold-plus-clear stays open, second Esc closes), `two_stage_picker_descends_and_applies_model` |
 | P-300 | `Ctrl+Left` folds a foldable branch and otherwise jumps to the previous segment start; `Ctrl+Right` unfolds or jumps forward | `packages/coding-agent/src/modes/interactive/components/tree-selector.ts:1010`, `:1018`, `:1117`, `:1139` | missing | none | — |
@@ -779,10 +779,10 @@ row says so — that is a gap in the inventory, and closing it is cheap.
 | 15. Markdown, mermaid and truncation | 22 | 6 | 7 | 3 | 6 |
 | 16. Status indicators | 13 | 2 | 5 | 1 | 5 |
 | 17. Footer | 12 | 4 | 4 | 1 | 3 |
-| 18. Selector and overlay components | 79 | 18 | 17 | 36 | 8 |
-| **Total** | **339** | **74** | **105** | **90** | **70** |
+| 18. Selector and overlay components | 79 | 19 | 17 | 34 | 9 |
+| **Total** | **339** | **75** | **105** | **88** | **71** |
 
-### The `missing` rows — 90
+### The `missing` rows — 88
 
 Every row below has **no** `E-` row establishing the behaviour. Nothing here was found by browsing `crates/`, and
 nothing here is a claim that the behaviour cannot be built.
@@ -801,7 +801,7 @@ nothing here is a claim that the behaviour cannot be built.
 | Markdown, mermaid and truncation (3) | P-167, P-168, T-010 |
 | Status indicators (1) | P-194 |
 | Footer (1) | P-208 |
-| Selector and overlay components (36) | P-230, P-232, P-234, P-235, P-239, P-242, P-244, P-245, P-248, P-251, P-255, P-256, P-257, P-258, P-259, P-261, P-281, P-283, P-284, P-285, P-286, P-296, P-297, P-300, P-304, P-306, P-307, P-308, P-310, P-311, P-314, P-316, P-317, P-318, P-319, P-323 |
+| Selector and overlay components (34) | P-230, P-232, P-234, P-235, P-239, P-242, P-244, P-245, P-248, P-251, P-255, P-256, P-257, P-258, P-259, P-261, P-281, P-283, P-284, P-285, P-286, P-300, P-304, P-306, P-307, P-308, P-310, P-311, P-314, P-316, P-317, P-318, P-319, P-323 |
 
 ### The `partial` rows — 105
 

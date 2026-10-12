@@ -509,6 +509,10 @@ the run. Up from 1,997: the checkpoint round-trip and restore-undo tests. (Previ
 > ours — a stranger must not redraw the permission boundary); one renderer needs
 > no forwarding proxy. Counts now 74/105/90/70.
 >
+> **Label pair (this session): P-296 done, P-297 judged.** The Shift+L editor writes
+> through the store with empty-clears semantics (test green); labels carry no
+> timestamps, so recency formats have no target. Counts now 75/105/88/71.
+>
 > **Startup trio (this session): P-005 partial, P-008/P-119 judged.** The model scope
 > lives persistently in the header rather than printed once to scrollback; extension
 > slash commands cannot collide (closed static vocabulary); extension failures are
