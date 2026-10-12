@@ -576,6 +576,10 @@ the run. Up from 1,997: the checkpoint round-trip and restore-undo tests. (Previ
 > control fails it) but no per-miss rebill sentence; notices are durable rows, so
 > same-line coalescing would rewrite history. Counts now 78/108/71/82.
 >
+> **Shell/markdown trio (this session): P-132 judged, P-134 done, P-135 sharpened.**
+> No OSC sequences — jumps work off `LineKind`; user text never parsed while
+> assistant markdown renders (frame test + control). Counts now 79/109/65/86.
+>
 > **P-051 partial (this session): stopped answers marked.** Both live and replay paths
 > pin `Response was stopped before completion`; in-flight tool cards are not
 > retro-fitted and there is no `/bug` to suggest. Counts now 78/109/70/82.

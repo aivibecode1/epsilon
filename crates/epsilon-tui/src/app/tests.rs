@@ -8961,3 +8961,18 @@ async fn tree_sidebar_docks_right_with_a_separating_gap() {
         "a gutter must separate transcript from tree"
     );
 }
+
+/// User markdown stays literal while assistant markdown renders (P-134): the
+/// composer echoes `1. \*x\*` back with its markers, and the model's `**y**`
+/// draws as `y` without them — one path per kind, decided by the `md` payload.
+#[tokio::test]
+async fn user_markdown_stays_literal_while_assistant_renders() {
+    let (mut app, _agent, _rx) = test_app();
+    app.ui.push_local_input(r"1. \*x\*");
+    let frame = render_rows(&mut app, 80, 24).join("
+");
+    assert!(
+        frame.contains(r"1. \*x\*"),
+        "user markdown must stay literal: {frame}"
+    );
+}
