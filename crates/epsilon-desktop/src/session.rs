@@ -1024,6 +1024,18 @@ impl IdeSession {
         )
     }
 
+    /// Every session of `cwd` this window archived, newest first.
+    ///
+    /// The same root the live list reads, through the same union — so an
+    /// archived row is found wherever its live self was, and the pane can
+    /// list what it hid without a second notion of where sessions live.
+    pub fn archived(&self, cwd: &std::path::Path) -> Vec<epsilon_session::SessionSummary> {
+        epsilon_session::list_archived_for_cwd(
+            &epsilon_runtime::sessions_root(self.agent.workspace_root()),
+            cwd,
+        )
+    }
+
     /// The session file this agent currently holds.
     pub fn session_path(&self) -> Option<PathBuf> {
         self.agent.session_path()

@@ -2907,6 +2907,15 @@ pub struct IdeApp {
     ///
     /// `None` is the common case and means nothing is being asked.
     pending_delete: Option<std::path::PathBuf>,
+    /// A session awaiting archive confirmation in the sessions pane (S-108).
+    ///
+    /// The delete shape one drawer down: the next key is an answer, not a
+    /// command, and anything but `Enter` stands the session down. The stakes
+    /// are lower — an archive can be restored — but the question is the same,
+    /// because a keystroke that moves a file deserves to be a deliberate one.
+    ///
+    /// `None` is the common case and means nothing is being asked.
+    pending_archive: Option<std::path::PathBuf>,
     /// Geometry of the most recent frame, kept for hit-testing and for tests.
     layout: IdeLayout,
     /// The window's keyboard, read from the shared table
@@ -3379,6 +3388,7 @@ impl IdeApp {
             tree_cursor: None,
             session_cursor: None,
             pending_delete: None,
+            pending_archive: None,
             layout,
             keys,
             quit_confirm: None,
@@ -3496,6 +3506,7 @@ impl IdeApp {
             tree_cursor: None,
             session_cursor: None,
             pending_delete: None,
+            pending_archive: None,
             keys: window_keys(),
             quit_confirm: None,
             layout: IdeLayout::new(
@@ -3668,6 +3679,27 @@ impl IdeApp {
             let outcome = self.run_fork_session("fork", "forked");
             self.notice_outcome(outcome);
         }
+        // **Rename the current session (S-106).** The composer is this
+        // window's editor, so the chord types the `/name` head pre-filled
+        // with the current title for the reader to edit — the same
+        // transparent macro `window.workspace.open` uses for `/open`, and
+        // for the same reason: the draft shows exactly what will run, and
+        // the head itself does the work through `run_name_argument`.
+        // Below the palette guard with the other session chords.
+        if self.keys.take(ctx, "window.session.rename") {
+            let head = match self
+                .session
+                .as_ref()
+                .and_then(|s| s.session_path())
+                .and_then(|p| epsilon_session::discover::display_name(&p))
+            {
+                Some(name) => format!("/name {name}"),
+                None => "/name ".to_string(),
+            };
+            self.set_draft(&head);
+            self.focus = FocusTarget::Agent;
+            ctx.memory_mut(|m| m.request_focus(composer_id()));
+        }
         // **Open a workspace (D-046/S-105).** The chord types the `/open` head for
         // the reader, who completes the path and confirms — a transparent macro,
         // not a hidden action: the draft shows exactly what will run, and Esc
@@ -3802,9 +3834,25 @@ impl IdeApp {
                 }
                 return;
             }
+            // The archive answer, under the delete answer: one question at a
+            // time is armed (arming either stands the other down), so at most
+            // one of these blocks sees its key — and a plain paint still
+            // answers neither, by the same `any_key` gate.
+            if any_key && let Some(pending) = self.pending_archive.clone() {
+                if self.keys.take(ctx, "window.tree.open") {
+                    self.archive_session(&pending);
+                } else {
+                    self.pending_archive = None;
+                    self.transcript.push_notice("archive cancelled");
+                }
+                return;
+            }
             let resume = self.keys.take(ctx, "window.tree.open");
             if self.keys.take(ctx, "window.session.delete") {
                 self.ask_delete_session();
+            }
+            if self.keys.take(ctx, "window.session.archive") {
+                self.ask_archive_session();
             }
             if step != 0 {
                 self.move_session_cursor(step);
@@ -3859,8 +3907,9 @@ impl IdeApp {
     ///
     /// **The same rule as [`Self::move_tree_cursor`], and it is copied rather than
     /// shared on purpose.** The tree's version takes a `&str` path out of a *filtered,
-    /// collapsible* list and has to re-find it by value; this one reads a flat list
-    /// straight off disk. The part that matters is the same in both: **arriving takes the
+    /// collapsible* list and has to re-find it by value; this one reads the live
+    /// rows plus the archived rows, in the order the pane draws them, so the
+    /// cursor walks what the reader sees. The part that matters is the same in both: **arriving takes the
     /// first row going down and the last going up**, which is what every list a reader
     /// already uses does, and it is the part that is easy to get wrong by only handling
     /// the "already on a row" case.
@@ -3870,22 +3919,26 @@ impl IdeApp {
             return;
         };
         let sessions = session.sessions(&self.opts.workspace);
-        if sessions.is_empty() {
+        // Live rows first, archived rows after — the order the pane draws, so
+        // the cursor meets what the reader sees.
+        let mut listed = sessions;
+        listed.extend(session.archived(&self.opts.workspace));
+        if listed.is_empty() {
             self.session_cursor = None;
             return;
         }
-        let last = sessions.len() as i32 - 1;
+        let last = listed.len() as i32 - 1;
         let here = self
             .session_cursor
             .as_deref()
-            .and_then(|p| sessions.iter().position(|s| s.path == p))
+            .and_then(|p| listed.iter().position(|s| s.path == p))
             .map(|i| i as i32);
         let next = match here {
             None if step > 0 => 0,
             None => last,
             Some(i) => (i + step).clamp(0, last),
         };
-        self.session_cursor = Some(sessions[next as usize].path.clone());
+        self.session_cursor = Some(listed[next as usize].path.clone());
     }
 
     /// Resume the session under the cursor — the two lines the click path runs.
@@ -3900,10 +3953,13 @@ impl IdeApp {
         let Some(session) = self.session.as_ref() else {
             return;
         };
-        // A cursor left behind by a session deleted since is not a row.
-        if !session
-            .sessions(&self.opts.workspace)
+        // A cursor left behind by a session deleted since is not a row —
+        // live or archived, because the cursor walks both lists now.
+        let listed_live = session.sessions(&self.opts.workspace);
+        let listed_archived = session.archived(&self.opts.workspace);
+        if !listed_live
             .iter()
+            .chain(listed_archived.iter())
             .any(|s| s.path == path)
         {
             return;
@@ -3916,6 +3972,13 @@ impl IdeApp {
         if session.session_path().as_deref() == Some(path.as_path()) {
             return;
         }
+        // An archived row is restored, not resumed: the file lives in the
+        // archive beside the live ones, and resuming it in place would run a
+        // session from a directory no listing shows.
+        if listed_archived.iter().any(|s| s.path == path) {
+            self.unarchive_session(&path);
+            return;
+        }
         match self.switch_session(&path) {
             Ok(restored) => self
                 .transcript
@@ -3926,7 +3989,7 @@ impl IdeApp {
         }
     }
 
-    /// Arm the delete confirmation for the session under the cursor (S-106).
+    /// Arm the delete confirmation for the session under the cursor (S-106 to S-108).
     ///
     /// **Refusing the attached session is not politeness.** This window is
     /// writing to that file: removing it would leave a live store pointing at a
@@ -3951,6 +4014,10 @@ impl IdeApp {
                 .push_notice("Cannot delete the currently active session");
             return;
         }
+        // One question at a time: arming this one stands down an archive
+        // that was still waiting, because the next key can only answer one
+        // of them and the pane can only draw one.
+        self.pending_archive = None;
         self.pending_delete = Some(path);
     }
 
@@ -3967,13 +4034,15 @@ impl IdeApp {
     /// switches between them is not switching vocabularies.
     fn delete_session(&mut self, path: &std::path::Path) {
         self.pending_delete = None;
-        // A cursor left behind by a session deleted since is not a row.
+        // A cursor left behind by a session deleted since is not a row —
+        // live or archived, because the delete chord reaches both lists now.
         let still_listed = self
             .session
             .as_ref()
             .map(|s| {
                 s.sessions(&self.opts.workspace)
                     .iter()
+                    .chain(s.archived(&self.opts.workspace).iter())
                     .any(|e| e.path == path)
             })
             .unwrap_or(false);
@@ -3994,6 +4063,112 @@ impl IdeApp {
             Err(reason) => self
                 .transcript
                 .push_failure(format!("Failed to delete: {reason}")),
+        }
+    }
+
+    /// The title the pane shows for `path`, live or archived.
+    ///
+    /// The delete confirmation used to search the live list only, which named
+    /// an archived row by its file path — a timestamp stem nobody recognises —
+    /// the moment the cursor learned to walk both lists. One lookup over both,
+    /// so every question decides against the words its row shows.
+    fn pane_session_title(&self, path: &std::path::Path) -> String {
+        self.session
+            .as_ref()
+            .and_then(|s| {
+                s.sessions(&self.opts.workspace)
+                    .into_iter()
+                    .chain(s.archived(&self.opts.workspace))
+                    .find(|e| e.path == path)
+                    .map(|e| e.title())
+            })
+            .unwrap_or_else(|| path.display().to_string())
+    }
+
+    /// Arm the archive confirmation for the session under the cursor (S-108).
+    ///
+    /// The delete rule one drawer down, for the same reason: this window may
+    /// be writing to that file, so moving it would leave a live store
+    /// pointing at a path that no longer holds it. The refusal lands in the
+    /// transcript; the confirmation strip is for the case being asked.
+    fn ask_archive_session(&mut self) {
+        let Some(path) = self.session_cursor.clone() else {
+            return;
+        };
+        if self
+            .session
+            .as_ref()
+            .and_then(|s| s.session_path())
+            .as_deref()
+            == Some(path.as_path())
+        {
+            self.transcript
+                .push_notice("Cannot archive the currently active session");
+            return;
+        }
+        // One question at a time, the mirror of deletion's arm.
+        self.pending_delete = None;
+        self.pending_archive = Some(path);
+    }
+
+    /// Archive `path` through the **shared** primitive and report what happened.
+    ///
+    /// `epsilon_session::archive_session_file` moves the file into `archived/`
+    /// beside the live ones — the same move the terminal will one day offer,
+    /// and the reason the wording is fixed here rather than at either call
+    /// site. A move, not a copy: the listing sees the file in one place or
+    /// the other, never in neither and never in both.
+    fn archive_session(&mut self, path: &std::path::Path) {
+        self.pending_archive = None;
+        // The same race as deletion's: the list is re-read from disk, so a
+        // row can leave between the arm and the answer.
+        let still_listed = self
+            .session
+            .as_ref()
+            .map(|s| {
+                s.sessions(&self.opts.workspace)
+                    .iter()
+                    .chain(s.archived(&self.opts.workspace).iter())
+                    .any(|e| e.path == path)
+            })
+            .unwrap_or(false);
+        if !still_listed {
+            self.transcript
+                .push_notice("that session is no longer listed");
+            return;
+        }
+        match epsilon_session::archive_session_file(path) {
+            Ok(_) => {
+                self.transcript.push_notice("Session archived");
+                // Drop the cursor if it named the row that just moved, so the
+                // next arrow press does not aim at a path nobody has.
+                if self.session_cursor.as_deref() == Some(path) {
+                    self.session_cursor = None;
+                }
+            }
+            Err(reason) => self
+                .transcript
+                .push_failure(format!("Failed to archive: {reason}")),
+        }
+    }
+
+    /// Move an archived session back to live, and say so.
+    ///
+    /// The way back the archive confirmation promises: without it an archive
+    /// would be a delete wearing a softer verb. Both doors — Enter on the row
+    /// and clicking it — run this one function, so they cannot disagree about
+    /// what "restored" did.
+    fn unarchive_session(&mut self, path: &std::path::Path) {
+        match epsilon_session::unarchive_session_file(path) {
+            Ok(_) => {
+                self.transcript.push_notice("Session unarchived");
+                if self.session_cursor.as_deref() == Some(path) {
+                    self.session_cursor = None;
+                }
+            }
+            Err(reason) => self
+                .transcript
+                .push_failure(format!("Failed to unarchive: {reason}")),
         }
     }
 
@@ -6540,6 +6715,13 @@ impl IdeApp {
             self.draw_delete_confirm(ui, summary, rect, scale, &pending);
             return;
         }
+        // The archive answer is drawn in the pane for the same reason the
+        // delete one is: the transcript sits behind this overlay, so a
+        // question pushed there is invisible to the reader who just asked.
+        if let Some(pending) = self.pending_archive.clone() {
+            self.draw_archive_confirm(ui, summary, rect, scale, &pending);
+            return;
+        }
         // **Under the header, not over it (M312)** — see the same line in `tasks_pane`. The
         // header is painted absolutely and the cursor is still at the pane's top, so the empty
         // state printed above the pane's own title.
@@ -6562,6 +6744,10 @@ impl IdeApp {
         };
         let current = session.session_path();
         let sessions = session.sessions(&self.opts.workspace);
+        // Read beside the live list, before any `&mut` call below: both are
+        // owned snapshots of the disk, and holding the `session` borrow
+        // across the rows that act would forbid every act.
+        let archived = session.archived(&self.opts.workspace);
         // Counted here, above the empty check, so "none stored" is named as the empty
         // list it is rather than as a pane that failed to draw.
         let stored = sessions.len();
@@ -6698,6 +6884,62 @@ impl IdeApp {
                 }
             }
         }
+        // **What this window hid, listed where it hid it (S-108).** An archive
+        // with no way back in the window would be a delete wearing a softer
+        // verb, so archived rows stay in the list under their own heading and
+        // choosing one moves it back. Live rows first, archived after — the
+        // order `move_session_cursor` walks, so the cursor meets what the
+        // reader sees.
+        if !archived.is_empty() {
+            let header = format!("Archived ({})", archived.len());
+            ui.colored_label(
+                theme.dim,
+                fit(&header, rect.width() - 16.0, ROW_FONT * scale),
+            );
+            summary.rows.push(("sessions".into(), header));
+            for entry in &archived {
+                let is_current = current.as_deref() == Some(entry.path.as_path());
+                let on_cursor = self.session_cursor.as_deref() == Some(entry.path.as_path());
+                let marker = match (is_current, on_cursor) {
+                    (true, true) => "●▸ ",
+                    (true, false) => "●  ",
+                    (false, true) => "  ▸ ",
+                    (false, false) => "   ",
+                };
+                let name = entry.title();
+                // The state rides the row, not just the heading: a reader
+                // arriving mid-list meets the row before the heading does.
+                let shown = fit(
+                    &format!("{marker}{name} · archived"),
+                    rect.width() - 16.0,
+                    ROW_FONT * scale,
+                );
+                let response = ui.selectable_label(is_current, shown.clone());
+                summary.rows.push(("sessions".into(), shown.clone()));
+                summary
+                    .row_rects
+                    .push(("sessions-archived".into(), response.rect));
+                let now = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map(|d| d.as_millis() as u64)
+                    .unwrap_or(0);
+                if let Some(age) = epsilon_core::human_age_ms(now, entry.modified_ms) {
+                    let line = format!("   {age} ago");
+                    ui.colored_label(theme.dim, line.clone());
+                    summary.rows.push(("sessions".into(), line));
+                }
+                // Choosing an archived row restores it — the way back the
+                // confirmation promised. The current session is skipped like
+                // the live rows above it: unarchiving the file this window is
+                // writing to would pull the floor from under a live store.
+                if response.clicked() && !is_current {
+                    self.unarchive_session(&entry.path);
+                    summary
+                        .rows
+                        .push(("sessions".into(), format!("restored {name}")));
+                }
+            }
+        }
     }
     /// The delete confirmation: what would be removed, and the two answers.
     ///
@@ -6721,15 +6963,7 @@ impl IdeApp {
         // The title, not the stem: stems are timestamps nobody recognises, and
         // the sessions pane already learned to show the name (round 46). A
         // reader should decide against the words they just read.
-        let title = self
-            .session
-            .as_ref()
-            .map(|s| s.sessions(&self.opts.workspace))
-            .unwrap_or_default()
-            .into_iter()
-            .find(|e| e.path == pending)
-            .map(|e| e.title())
-            .unwrap_or_else(|| pending.display().to_string());
+        let title = self.pane_session_title(pending);
         let question = format!("Delete session {title}?");
         paint_text(
             ui.painter(),
@@ -6779,6 +7013,80 @@ impl IdeApp {
         }
         if remove.clicked() {
             self.delete_session(pending);
+        }
+    }
+
+    /// The archive confirmation: what would be shelved, the way back, and the two answers.
+    ///
+    /// The delete strip's shape on purpose — same pane, same one-keystroke
+    /// stakes, same leftmost-safe arrangement — with the one line that differs
+    /// doing the work: an archive a reader cannot reverse is a delete wearing
+    /// a softer verb, so the question states the return with the same
+    /// bluntness deletion states its absence.
+    ///
+    /// A second strip rather than a parameter on the delete one, for the same
+    /// reason `move_session_cursor` is a copy rather than a share: the two
+    /// questions differ in every line that names the act, and a shared strip
+    /// would thread the verb through each of them to save one layout.
+    ///
+    /// Real widgets, not painted text, like deletion's: `Tab` reaches them and
+    /// a screen reader names them.
+    fn draw_archive_confirm(
+        &mut self,
+        ui: &mut egui::Ui,
+        summary: &mut FrameSummary,
+        rect: egui::Rect,
+        scale: f32,
+        pending: &std::path::Path,
+    ) {
+        let theme = self.theme;
+        // The title over both lists, through the shared lookup: the row being
+        // archived is live today, but the lookup must not assume it.
+        let title = self.pane_session_title(pending);
+        let question = format!("Archive session {title}?");
+        paint_text(
+            ui.painter(),
+            summary,
+            "sessions",
+            rect.left_top() + egui::vec2(12.0, 28.0 * scale),
+            egui::Align2::LEFT_TOP,
+            fit(&question, rect.width() - 16.0, 13.0 * scale),
+            egui::FontId::proportional(13.0 * scale),
+            theme.title,
+        );
+        name_region(
+            ui,
+            rect,
+            "sessions-archive",
+            &format!("Archive this session? {title}"),
+            egui::accesskit::Role::Dialog,
+        );
+        summary
+            .rows
+            .push(("sessions".into(), format!("Archive session {title}?")));
+        // **The way back is stated, because it exists.** Deletion's strip says
+        // there is no undo; this one says the opposite with the same
+        // bluntness — one short sentence, because the pane fits one: the
+        // Archived heading below teaches the mechanism, this line teaches
+        // that there is one.
+        let warn = fit("This can be undone.", rect.width() - 16.0, ROW_FONT * scale);
+        ui.colored_label(theme.dim, warn.clone());
+        summary.rows.push(("sessions".into(), warn));
+        let keep = ui.button("Keep it");
+        let remove = ui.button("Archive it");
+        name_node(&keep, "Keep this session");
+        name_node(&remove, "Archive this session");
+        summary.row_rects.push(("sessions-keep".into(), keep.rect));
+        summary
+            .row_rects
+            .push(("sessions-archive".into(), remove.rect));
+        keep.request_focus();
+        if keep.clicked() {
+            self.pending_archive = None;
+            self.transcript.push_notice("archive cancelled");
+        }
+        if remove.clicked() {
+            self.archive_session(pending);
         }
     }
 
@@ -11729,6 +12037,294 @@ mod tests {
                 .iter()
                 .any(|t| t.contains("Cannot delete the currently active session")),
             "the refusal names the case, in the terminal's words.\n{}",
+            frame.describe()
+        );
+    }
+
+    /// **Ctrl+Alt+G renames the current session (S-106).**
+    ///
+    /// DSH opens a rename dialog carrying the current title; this window has no
+    /// dialog to open — the composer is its editor — so the chord types the
+    /// `/name` head pre-filled with the current title for the reader to edit.
+    /// The same transparent macro Ctrl+O uses for `/open`: the draft shows
+    /// exactly what will run. Driven through the real key path, because the
+    /// defect class is a chord that parses and never fires.
+    #[test]
+    fn control_alt_g_types_the_rename_head_with_the_current_title() {
+        let (ws, _keep) = scratch_workspace("chord-rename");
+        let (session, notices) = faux_session(&ws);
+        let mut h = Harness::with_session(ws.clone(), session, notices);
+        let outcome = h.app.try_command("/name tabby");
+        assert!(
+            matches!(outcome, crate::commands::Outcome::Ran(_)),
+            "the fixture name must be set through the real head: {outcome:?}"
+        );
+
+        h.chord(egui::Modifiers::CTRL | egui::Modifiers::ALT, egui::Key::G);
+        assert_eq!(
+            h.app.draft(),
+            "/name tabby",
+            "the chord must pre-fill the head with the title it will rename"
+        );
+
+        // Removal control: rebound elsewhere, the chord types nothing.
+        let dir = h.keys_dir().to_path_buf();
+        h.app
+            .keys
+            .set_in(&dir, "window.session.rename", &["f12".to_string()])
+            .expect("a rebind writes");
+        h.app.set_draft("");
+        h.chord(egui::Modifiers::CTRL | egui::Modifiers::ALT, egui::Key::G);
+        assert_eq!(
+            h.app.draft(),
+            "",
+            "a chord no binding owns must leave the draft alone"
+        );
+    }
+
+    /// Without an agent there is no title to pre-fill, so the chord types the
+    /// bare head — and the command itself then answers `no agent attached`.
+    #[test]
+    fn rename_without_an_agent_types_the_bare_head() {
+        let (ws, _keep) = scratch_workspace("chord-rename-bare");
+        let mut h = Harness::new(ws);
+        h.chord(egui::Modifiers::CTRL | egui::Modifiers::ALT, egui::Key::G);
+        assert_eq!(
+            h.app.draft(),
+            "/name ",
+            "with nothing to rename, the head alone is the honest draft"
+        );
+    }
+
+    /// **Ctrl+Shift+A archives the highlighted session (S-108).**
+    ///
+    /// The delete shape, over the archive primitive: the first press arms a
+    /// confirmation in the pane — never in the transcript behind it — and the
+    /// file moves only on Enter. The question names the way back, because an
+    /// archive a reader cannot reverse is a delete wearing a softer verb.
+    /// Driven through the real key path with a real file, for the same reason
+    /// as the delete test above it.
+    #[test]
+    fn archive_asks_first_then_moves() {
+        let (ws, _keep) = scratch_workspace("sessions-archive");
+        let sessions_root = epsilon_runtime::sessions_root(&ws);
+        std::fs::create_dir_all(&sessions_root).expect("sessions root");
+        let other = sessions_root.join("doomed.jsonl");
+        epsilon_session::SessionStore::open_in(other.clone(), &ws).expect("a store opens");
+        let (session, notices) = faux_session(&ws);
+        let mut h = Harness::with_session(ws.clone(), session, notices);
+        h.app.set_sidebar_view(SidebarView::Sessions);
+        h.app.set_focus(FocusTarget::Sidebar);
+        let target = h
+            .app
+            .session
+            .as_ref()
+            .expect("a session")
+            .sessions(&ws)
+            .into_iter()
+            .find(|s| s.path == other)
+            .expect("the planted session is listed")
+            .path
+            .clone();
+        h.app.session_cursor = Some(target.clone());
+
+        let _ = h.chord(egui::Modifiers::CTRL | egui::Modifiers::SHIFT, egui::Key::A);
+        assert!(
+            h.app.pending_archive.as_deref() == Some(target.as_path()),
+            "the first press must arm a confirmation, not archive."
+        );
+        assert!(
+            other.exists(),
+            "and the file must still be live until the answer."
+        );
+        let frame = h.paint();
+        let asked = frame.region("sessions");
+        assert!(
+            asked.iter().any(|t| t.contains("Archive session")),
+            "the pane must ask, on screen.\n{}",
+            frame.describe()
+        );
+        assert!(
+            asked.iter().any(|t| t.contains("can be undone")),
+            "and say it can be undone — deletion's opposite, in as many words.\n{}",
+            frame.describe()
+        );
+
+        let frame = h.press(egui::Key::Enter);
+        assert!(!other.exists(), "confirming moves the live file away");
+        assert!(
+            epsilon_session::archived_dir(&sessions_root)
+                .join("doomed.jsonl")
+                .exists(),
+            "into the archive beside it"
+        );
+        assert!(
+            frame
+                .region("agent")
+                .iter()
+                .any(|t| t.contains("Session archived")),
+            "reported where the reader is looking.\n{}",
+            frame.describe()
+        );
+        assert!(
+            h.app.pending_archive.is_none(),
+            "the question is closed once answered"
+        );
+    }
+
+    /// Cancelling the archive leaves the file live, and any key cancels — the
+    /// other half of the guard, same as deletion's.
+    #[test]
+    fn cancelling_the_archive_keeps_the_file_live() {
+        let (ws, _keep) = scratch_workspace("sessions-archive-cancel");
+        let sessions_root = epsilon_runtime::sessions_root(&ws);
+        std::fs::create_dir_all(&sessions_root).expect("sessions root");
+        let other = sessions_root.join("kept.jsonl");
+        epsilon_session::SessionStore::open_in(other.clone(), &ws).expect("a store opens");
+        let (session, notices) = faux_session(&ws);
+        let mut h = Harness::with_session(ws.clone(), session, notices);
+        h.app.set_sidebar_view(SidebarView::Sessions);
+        h.app.set_focus(FocusTarget::Sidebar);
+        let target = h
+            .app
+            .session
+            .as_ref()
+            .expect("a session")
+            .sessions(&ws)
+            .into_iter()
+            .find(|s| s.path == other)
+            .expect("the planted session is listed")
+            .path
+            .clone();
+        h.app.session_cursor = Some(target.clone());
+
+        let _ = h.chord(egui::Modifiers::CTRL | egui::Modifiers::SHIFT, egui::Key::A);
+        let frame = h.press(egui::Key::Escape);
+        assert!(other.exists(), "cancelling must leave the file live");
+        assert!(h.app.pending_archive.is_none(), "the question is closed.");
+        assert!(
+            frame
+                .region("agent")
+                .iter()
+                .any(|t| t.contains("archive cancelled")),
+            "and the cancellation is reported.\n{}",
+            frame.describe()
+        );
+    }
+
+    /// Archiving the attached session is refused by name: this window is
+    /// writing to that file, so moving it would leave a live store pointing
+    /// at a path that no longer holds it — the delete rule, one drawer down.
+    #[test]
+    fn archiving_the_attached_session_is_refused_by_name() {
+        let (ws, _keep) = scratch_workspace("sessions-archive-active");
+        let (session, notices) = faux_session(&ws);
+        let attached = session.session_path().expect("a path");
+        let mut h = Harness::with_session(ws.clone(), session, notices);
+        h.app.set_sidebar_view(SidebarView::Sessions);
+        h.app.set_focus(FocusTarget::Sidebar);
+        h.app.session_cursor = Some(attached.clone());
+
+        let frame = h.chord(egui::Modifiers::CTRL | egui::Modifiers::SHIFT, egui::Key::A);
+        assert!(
+            h.app.pending_archive.is_none(),
+            "no confirmation is armed for the session this window is in."
+        );
+        assert!(attached.exists(), "and the file is untouched");
+        assert!(
+            frame
+                .region("agent")
+                .iter()
+                .any(|t| t.contains("Cannot archive the currently active session")),
+            "the refusal names the case.\n{}",
+            frame.describe()
+        );
+    }
+
+    /// Archived rows list under their own heading, and Enter restores one.
+    ///
+    /// An archive with no way back in the window would be a delete wearing a
+    /// softer verb — so the pane lists what it hid, in place, and choosing a
+    /// row moves it back. One archived fixture, found by identity like the
+    /// delete test's, because an index would name whatever the disk returned.
+    #[test]
+    fn archived_rows_list_and_enter_restores() {
+        let (ws, _keep) = scratch_workspace("sessions-archived-list");
+        let sessions_root = epsilon_runtime::sessions_root(&ws);
+        std::fs::create_dir_all(&sessions_root).expect("sessions root");
+        let other = sessions_root.join("doomed.jsonl");
+        epsilon_session::SessionStore::open_in(other.clone(), &ws).expect("a store opens");
+        epsilon_session::archive_session_file(&other).expect("archived through the primitive");
+        let archived = epsilon_session::archived_dir(&sessions_root).join("doomed.jsonl");
+        let (session, notices) = faux_session(&ws);
+        let mut h = Harness::with_session(ws.clone(), session, notices);
+        h.app.set_sidebar_view(SidebarView::Sessions);
+        h.app.set_focus(FocusTarget::Sidebar);
+        h.app.session_cursor = Some(archived.clone());
+
+        let frame = h.paint();
+        let listed = frame.region("sessions");
+        assert!(
+            listed.iter().any(|t| t.contains("Archived (1)")),
+            "the pane must say what it hid, with the count.\n{}",
+            frame.describe()
+        );
+        assert!(
+            listed
+                .iter()
+                .any(|t| t.contains("doomed") && t.contains("archived")),
+            "the row carries its state, not just its name.\n{}",
+            frame.describe()
+        );
+
+        let frame = h.press(egui::Key::Enter);
+        assert!(
+            other.exists(),
+            "confirming with Enter moves the file back to live"
+        );
+        assert!(
+            frame
+                .region("agent")
+                .iter()
+                .any(|t| t.contains("Session unarchived")),
+            "and says so where the reader is looking.\n{}",
+            frame.describe()
+        );
+    }
+
+    /// Clicking an archived row restores it too — one act, two doors, the
+    /// same rule the New session button follows.
+    #[test]
+    fn clicking_an_archived_row_restores_it() {
+        let (ws, _keep) = scratch_workspace("sessions-archived-click");
+        let sessions_root = epsilon_runtime::sessions_root(&ws);
+        std::fs::create_dir_all(&sessions_root).expect("sessions root");
+        let other = sessions_root.join("clicked.jsonl");
+        epsilon_session::SessionStore::open_in(other.clone(), &ws).expect("a store opens");
+        epsilon_session::archive_session_file(&other).expect("archived through the primitive");
+        let (session, notices) = faux_session(&ws);
+        let mut h = Harness::with_session(ws.clone(), session, notices);
+        h.app.set_sidebar_view(SidebarView::Sessions);
+        let before = h.paint();
+        let rect = before
+            .row_rects
+            .iter()
+            .find(|(region, _)| region == "sessions-archived")
+            .map(|(_, rect)| *rect)
+            .expect("an archived row records where it was drawn");
+
+        let frame = h.click(rect.center());
+        assert!(
+            other.exists(),
+            "clicking the row moves the file back to live.\n{}",
+            frame.describe()
+        );
+        assert!(
+            frame
+                .region("agent")
+                .iter()
+                .any(|t| t.contains("Session unarchived")),
+            "and says so.\n{}",
             frame.describe()
         );
     }

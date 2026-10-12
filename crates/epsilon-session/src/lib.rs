@@ -5,6 +5,7 @@
 //! the model-visible history is a derived view where compaction entries shadow the ranges they
 //! summarize (DSH's surface-shadowing principle over pi's entry format).
 
+pub mod archive;
 pub mod delete;
 pub mod discover;
 /// Session export rendering (HTML/JSON writers over read entries), shared by
@@ -22,6 +23,10 @@ mod store;
 /// module docs for why it is not written twice.
 pub mod time;
 
+pub use archive::{
+    ARCHIVED_DIR, archive_session_file, archived_dir, list_archived, list_archived_for_cwd,
+    unarchive_session_file,
+};
 pub use delete::{DeleteOutcome, delete_session_file};
 pub use discover::{
     SessionSummary, count_sessions_for_cwd, latest_session, latest_session_for_cwd, list_sessions,

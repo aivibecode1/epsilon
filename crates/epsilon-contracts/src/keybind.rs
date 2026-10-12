@@ -517,18 +517,24 @@ pub const WINDOW: &[(&str, &[&str])] = &[
     ("window.composer.escape", &["escape"]),
     ("window.approval.allow", &["enter"]),
     ("window.approval.deny", &["escape"]),
-    // Session verbs with a keyboard route (S-103, S-107): the composer spells
-    // them `/new` and `/fork`; these chords do the same through the same
+    // Session verbs with a keyboard route (S-103, S-106, S-107): the composer spells
+    // them `/new`, `/name` and `/fork`; these chords do the same through the same
     // dispatch. Rebindable like every other row in this table.
     ("window.session.new", &["ctrl+n"]),
     ("window.session.fork", &["ctrl+alt+f"]),
+    // Rename the current session (S-106): the chord types the `/name` head
+    // pre-filled with the current title, the same transparent macro
+    // `window.workspace.open` uses for `/open`. `ctrl+alt+g` is the reference's
+    // own chord (`Mod+Alt+G`); like S-109's `Ctrl+B`, it names `Ctrl` rather
+    // than the platform `Mod`, so macOS parity is stated, not claimed.
+    ("window.session.rename", &["ctrl+alt+g"]),
     // Open a workspace directory from inside the window (D-046/S-105): the chord
     // types the `/open` head for the reader, who completes the path and confirms.
     // `ctrl+o` is free in this table (the terminal's filter cycle lives in TERMINAL).
     ("window.workspace.open", &["ctrl+o"]),
-    // Ask to delete the highlighted session (S-106 to S-108, and the asymmetry
-    // round 96 left behind). The terminal's browser grew a delete in round 96
-    // over `epsilon_session::delete_session_file`; this is the *same* primitive
+    // Ask to delete the highlighted session (S-106 to S-108: delete landed in
+    // round 99). The terminal's browser grew a delete in round 96 over
+    // `epsilon_session::delete_session_file`; this is the *same* primitive
     // reached through the other front end, which is what `AGENTS.md` invariant 1
     // asks for — the window is not a second agent implementation, and a
     // capability the smaller front end has is one the window should not lack.
@@ -537,6 +543,13 @@ pub const WINDOW: &[(&str, &[&str])] = &[
     // the other session chords are: outside the pane `ctrl+d` is not this
     // window's chord at all.
     ("window.session.delete", &["ctrl+d"]),
+    // Ask to archive the highlighted session (S-108): the delete shape over
+    // `epsilon_session::archive_session_file` — a move into `archived/`, not a
+    // second delete. `ctrl+shift+a` is the reference's own chord
+    // (`Mod+Shift+A`), with the same `Ctrl`-for-`Mod` reading as above. Scoped
+    // to the sessions pane like the delete beside it: the chord acts on the
+    // cursor, and outside the pane there is no cursor to act on.
+    ("window.session.archive", &["ctrl+shift+a"]),
 ];
 
 /// The default chords for `id` in `table`, or an empty slice.

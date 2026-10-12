@@ -3059,4 +3059,39 @@ compatible licence with no native-code build host; the hardened frame budget (po
 `goal()`-read fix) still misses 60 fps on the reference transcript while a measured
 prototype does not; the owner directs otherwise.
 
+## ADR-038: Archived sessions are a directory, not a flag
+
+**Status: accepted (S-108 round, 2026-10-12).**
+
+**The question.** DSH's `session.archive` hides a session behind archived state with a
+filter, an explanation for archived rows, and undo on a toast. This tree had no
+archive state anywhere: the only removal was the unrecoverable delete. The decision
+is what "archived" is stored as — and, following from that, what surface restores it.
+
+**Decision: a move into `archived/`, and the listing as the undo.**
+`epsilon-session/src/archive.rs` moves the file into an `archived/` subdirectory of
+the sessions directory it lives in, by rename — same volume by construction, so the
+move is atomic and the listing sees the file in one place or the other, never in
+neither. `list_sessions` reads one directory non-recursively, so the move *is* the
+filter: `--continue`, the per-workspace union and both front ends' browsers lose the
+file with no code changed at any call site and no flag any reader must honour. A
+second archive of the same file is refused rather than clobbered, on either platform.
+The window lists archived rows in place under an `Archived (N)` heading and restores
+on Enter or click; the toast-with-undo is deliberately not reproduced (L-125), because
+this project has no toast surface and a 6-second banner is the vanishing message
+`AGENTS.md` §2.7 forbids.
+
+**Considered and rejected.** A boolean on the session or a sidecar set would keep the
+file in place behind a flag every reader must check — a filter nobody can forget, and
+a sidecar nobody can lose — which is strictly more machinery for a weaker guarantee:
+forgetting the flag in one reader resurrects the session there. Reusing the system
+trash (the delete path) would confuse two verbs with different promises: trash is
+where files go to be emptied, `archived/` is where sessions go to be restored.
+
+**Consequences.** S-108 `done`; L-123/L-124 `partial` (in-place rows with restore
+instead of the explanation; every archive asks); L-125 deliberately different. The
+terminal has no archive door yet — its browser lists live sessions only — which is a
+separate round, not a second implementation: the primitive is shared, the door is not
+yet built.
+
 

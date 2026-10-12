@@ -115,12 +115,12 @@ measurements taken here at all.
 | Electron shell (`apps/desktop/**`) | 70 | 1 | 10 | 43 | 16 |
 | Approvals and permission presets | 14 | 5 | 7 | 2 | 0 |
 | Transcript, streaming and tool cards | 82 | 4 | 16 | 56 | 6 |
-| Keyboard, settings, themes, locale, account, models, plugins | 68 | 9 | 8 | 46 | 5 |
+| Keyboard, settings, themes, locale, account, models, plugins | 68 | 11 | 8 | 44 | 5 |
 | Palette, quick open, composer, connection, design system | 54 | 2 | 14 | 33 | 5 |
-| Layout, sidebars, files tree, terminal, browser, preview, sessions | 65 | 3 | 21 | 35 | 6 |
+| Layout, sidebars, files tree, terminal, browser, preview, sessions | 65 | 3 | 23 | 32 | 7 |
 | Approvals, questions, schedule, jobs, goal, plan, subagents, models | 50 | 4 | 10 | 36 | 0 |
 | Un-numbered reference rows | 30 | 2 | 4 | 16 | 8 |
-| **Total** | **433** | **30** | **91** | **266** | **46** |
+| **Total** | **433** | **32** | **93** | **261** | **47** |
 
 ---
 
@@ -343,9 +343,9 @@ chords, all literals.** See **ED-001**.
 | S-103 | Mod+N starts a new session. | `ui-workspace/src/client/shortcuts.ts:88` | done | `crates/epsilon-contracts/src/keybind.rs` (`window.session.new` = `ctrl+n`) read in `app.rs` pane keys, running the same `run_new_session` the `/new` head runs — rebindable like every table row, no literal chord anywhere | `control_n_starts_a_new_session` (real Ctrl+N through the real draw: path moves, file exists, list grows by one) |
 | S-104 | Mod+K opens session search. | `ui-workspace/src/client/shortcuts.ts:90` | missing | — | The palette filters files and commands (`crates/epsilon-desktop/src/app.rs:977-1292`), not sessions. The sessions pane lists stored sessions but cannot search them (L-122). |
 | S-105 | Mod+O opens the add-workspace directory flow, and returns **blocked** with a reason when no picker is mounted. | `ui-workspace/src/client/shortcuts.ts:92` | done | `window.workspace.open` on `ctrl+o` (free in the WINDOW table; the terminal's filter cycle lives in TERMINAL) types `/open ` for the reader to complete — a transparent macro, not a hidden action. The blocked-with-reason half is every refusal in the flow: no-such-directory, not-a-directory, already-here, no-agent, busy, vanished-while-asking, compose failure — each names its reason | `control_o_types_the_open_head` (real chord, chord-removal control) |
-| S-106 | Mod+Alt+G renames the current session. | `ui-workspace/src/client/shortcuts.ts:97` | missing | — | Rename is still only the composer's `/name`. **Delete, the sibling verb, landed in round 99** over the shared `epsilon_session::delete_session_file` — which narrowed this group by one row and made the remaining one more visible rather than less: a window that can delete a session and cannot rename one is a stranger asymmetry than a window that can do neither. |
+| S-106 | Mod+Alt+G renames the current session. | `ui-workspace/src/client/shortcuts.ts:97` | done | `crates/epsilon-contracts/src/keybind.rs:530` (`window.session.rename` = `ctrl+alt+g`, the reference's chord read as `Ctrl`), `crates/epsilon-desktop/src/app.rs:3689-3702` (the arm types the `/name` head pre-filled with the current title) | No inline dialog: the composer is this window's editor, so the chord is a transparent macro in the `Ctrl+O` → `/open` shape — the draft shows exactly what will run, and `run_name_argument` persists onto the same store both front ends read. Current session only, which is the row's scope. Covered by `control_alt_g_types_the_rename_head_with_the_current_title` (real chord, pre-fill, rebind control) and `rename_without_an_agent_types_the_bare_head` (no title, bare head; the head itself answers `no agent attached`). Frame read at 1440×900: draft `/name tabby` beside live row `● tabby` |
 | S-107 | Mod+Alt+F forks the session. | `ui-workspace/src/client/shortcuts.ts:103` | done | `window.session.fork` = `ctrl+alt+f`, same dispatch as `/fork` (the grammar already parsed `alt`; only the row was missing) | `control_alt_f_forks_the_session` (real Ctrl+Alt+F: one branch file added, current file untouched) |
-| S-108 | Mod+Shift+A archives the session. | `ui-workspace/src/client/shortcuts.ts:117` | missing | — | No archive. |
+| S-108 | Mod+Shift+A archives the session. | `ui-workspace/src/client/shortcuts.ts:117` | done | `crates/epsilon-session/src/archive.rs:58-93`, `:100-129` (`archive_session_file` / `unarchive_session_file`: a move into `archived/`, never a copy, never a clobber), `crates/epsilon-desktop/src/app.rs:4094-4198` (arm, move, restore), `:7034-7091` (the pane's confirmation strip), `crates/epsilon-contracts/src/keybind.rs:552` (`window.session.archive` = `ctrl+shift+a`, the reference's chord read as `Ctrl`) | `Ctrl+Shift+A` arms the delete-shaped question in the pane — never the transcript behind it — and `Enter` moves the file; anything else cancels. The attached session is refused by name. Listings need no filter: `list_sessions` never descends, so an archived file leaves `--continue`, the per-workspace union and both browsers with no code changed at any call site. Archived rows list in place under `Archived (N)` carrying `· archived`, and Enter or click restores. Covered by five window tests (arm, question on screen, move, wording, cancel, active-refusal, Enter-restore, click-restore) plus the session crate's seven (move, missing, double-archive, round-trip, live-unarchive refusal, `--continue` invisibility, cwd union). Frames read at 1440×900: the question, the archived row under the cursor, the restored list |
 | S-109 | Mod+B toggles the left sidebar. | `ui-layout/src/client/index.ts:194` | partial | `crates/epsilon-contracts/src/keybind.rs:433` (the chord), `crates/epsilon-desktop/src/app.rs:6097-6105` (the title-bar button's verb, with the glyph constants at `:866,:898`) | The fold is bound, works, persists and is named on screen — the constant carries the chord, the title-bar button carries the verb and the chord in its accessible name (`crates/epsilon-desktop/src/app.rs:6210-6215`), and the status bar prints it. The chord is **`Ctrl`+`B`**, not the platform `Mod`: on Windows and Linux that is the same key, on macOS it is not. Covered by `the_sidebar_folds_and_unfolds_from_the_keyboard` and `dragging_the_sidebar_handle_resizes_it_and_stops_at_both_ends`. |
 | S-110 | Mod+Alt+B toggles the right sidebar. | `ui-sidebar-right/src/client/shortcuts.ts:30` | missing | — | No right sidebar (L-154). |
 | S-111 | Mod+\ splits the focused pane; Mod+Alt+Enter toggles pane fullscreen. | `ui-sidebar-right/src/client/shortcuts.ts:44`, `:45` | missing | — | No pane splitting. The editor pane is one pane. |
@@ -507,9 +507,9 @@ computed while drawing is a layout nobody can test.
 | L-120 | **Workspace Tree** nests each Workspace under its nearest registered ancestor folder. | `ui-workspace/src/client/tree.ts:636-648` | deliberately different | One workspace per window (`crates/epsilon-desktop/src/lib.rs:93`; `IdeSession` owns one agent, one lease, one pool): a multi-root tree serves DSH's plugin-host model, where workspaces are mount points for packages. Here an open workspace *replaces* the session whole (`apply_workspace_switch`), so a tree of workspaces would be a tree of agents the window cannot jointly run — structure without a capability behind it. | — |
 | L-121 | Hovering a Session row crawls a title wider than its cell at **0.03 px/ms** and rests at the far edge. | `ui-workspace/src/client/rows/Rows.tsx:54`, `:102-134` | missing | `crates/epsilon-desktop/src/app.rs:6726-6730` | No marquee. A row too wide for the pane is **marked as cut** with an ellipsis, which is this project's rule everywhere a value does not fit (`crates/epsilon-desktop/src/app.rs:6726-6730`; `fit` at `crates/epsilon-desktop/src/app.rs:3041`). Covered by `a_long_session_name_is_shown_as_cut_rather_than_clipped` and `a_cut_row_never_ends_in_half_a_character`. |
 | L-122 | Typing in the collapsed search header replaces either browsing mode with one flat list, with a 250 ms debounced host request, a 500-unit query cap and 20 results. | `ui-workspace/src/client/rows/WorkspaceBrowser.tsx:51`, `:73-81` | missing | — | No session search (S-104). The window's only filter is the **file** tree's (`crates/epsilon-desktop/src/app.rs:6859-6901`), which is local and instant. |
-| L-123 | Archived Sessions stay in their positions but are not openable — clicking one raises an explanation. | `ui-workspace/src/client/rows/WorkspaceBrowser.tsx:902-908` | missing | — | No archive state (S-108). |
-| L-124 | Archiving a **quiet** Session commits with no dialog; a Session with running work is the only case that asks first. | `ui-workspace/src/client/session-actions/ArchiveSession.tsx:159-170` | missing | — | No archive (S-108). |
-| L-125 | A successful archive raises a **6-second** success toast carrying **Undo**. | `ui-workspace/src/client/session-actions/RowActionToast.tsx:14`, `:29-46` | missing | — | No archive, and no toast surface (P-145). |
+| L-123 | Archived Sessions stay in their positions but are not openable — clicking one raises an explanation. | `ui-workspace/src/client/rows/WorkspaceBrowser.tsx:902-908` | partial | `crates/epsilon-desktop/src/app.rs:6887-6940` (the `Archived (N)` section: live rows first, archived after, state on the row) | Archived rows stay in the list in place with `· archived` on the row — but the second half is deliberately not reproduced: choosing one restores it (Enter or click, through `unarchive_session_file`) instead of raising an explanation, because a dead-end explanation is the worse answer when the file is right there to move back. They are not resumable in place: resuming from a directory no listing shows would run a session nothing can find. Covered by `archived_rows_list_and_enter_restores` and `clicking_an_archived_row_restores_it` |
+| L-124 | Archiving a **quiet** Session commits with no dialog; a Session with running work is the only case that asks first. | `ui-workspace/src/client/session-actions/ArchiveSession.tsx:159-170` | partial | `crates/epsilon-desktop/src/app.rs:7034-7091` (the strip), `:4094-4198` (arm and move) | Every archive asks — the delete-shaped strip, `Enter` commits, anything else cancels (`archive_asks_first_then_moves`, `cancelling_the_archive_keeps_the_file_live`). No quiet fast-path: a file move deserves one learnable rule, and the move is reversible. The running-work case is the attached session, refused outright (`archiving_the_attached_session_is_refused_by_name`) rather than stopped-and-archived — stopping a live turn from a key chord is not this window's job |
+| L-125 | A successful archive raises a **6-second** success toast carrying **Undo**. | `ui-workspace/src/client/session-actions/RowActionToast.tsx:14`, `:29-46` | deliberately different | — | No toast surface exists (P-145) and none is built for one verb: the undo is the `Archived` heading itself — persistent, counted, restorable by Enter or click — instead of a 6-second banner. A message that can vanish before it is read is the failure `AGENTS.md` §2.7 names. See Group 4 |
 | L-126 | The Session row's menu and hover buttons are slot lists stepping by 100. | `ui-workspace/src/client/index.ts:285-294` | missing | — | A session row is a `selectable_label` plus an age line (`crates/epsilon-desktop/src/app.rs:6731-6745`); it has no menu. |
 | L-127 | Add Workspace is unavailable — with a reason — unless a directory-picker package has filled a slot. | `ui-workspace/src/client/shortcuts.ts:75-77`, `:92-96` | done | There is no picker package to mount, so there is no mounted/unmounted state — instead every way the flow can refuse names its reason (`run_open_workspace`, `answer_pending_workspace`): usage, no-such-directory, not-a-directory, already-here, no-agent, busy, vanished-while-asking, compose failure. The behavior the row protects (never a silent unavailable) holds on every path | `open_validates_the_path_before_anything_else`, `open_pending_answer_cancels_repeats_or_reports_no_agent` |
 | L-128 | **Files** is a page tab type; `workspace.files` defaults to Mod+P on Desktop. | `ui-sidebar-files/src/client/definition.tsx:25-39` | partial | `crates/epsilon-desktop/src/app.rs:6308-6320`, `crates/epsilon-desktop/src/app.rs:977-1292` | Files is an activity-bar view with its own id salt, named and counted (`crates/epsilon-desktop/src/app.rs:6316`, `:3641-3658`), and it is the **first section of the palette** (`crates/epsilon-desktop/src/app.rs:977-990`) — so the keyboard route exists, on a different chord and mixed with commands. The reference's region model (page, editable, terminal) has no counterpart here. |
@@ -744,7 +744,7 @@ is the rule its own hint prints.
 
 ### Group 4 — Presentation decisions where the reference's answer is worse for a native window
 
-**Rows:** L-106, L-107, L-115, C-127, S-165, U-012. **Related, and recorded as `partial` rather
+**Rows:** L-106, L-107, L-115, L-125, C-127, S-165, U-012. **Related, and recorded as `partial` rather
 than as a decision:** D-084 and I-134, below.
 
 Four of these are places where the port did not copy the reference and should say why in the
@@ -766,6 +766,7 @@ matrix rather than let the difference look like an omission.
   transition to suppress, so reduced motion is honoured by construction rather than by a media
   query. The rows are `missing` or `deliberately different` honestly; if animation is ever added,
   the obligation arrives with it.
+- **L-125 — the archive undo is a list, not a toast.** The reference raises a 6-second banner with Undo; this window has no toast surface (P-145) and builds none for one verb. The undo is the `Archived` heading itself — counted, persistent, restorable by Enter or click — which is the stronger answer by this project's own rule: a message that can vanish before it is read is the failure `AGENTS.md` §2.7 names, and a 6-second banner is exactly that.
 - **D-084 and I-134 — the goal Clear action has no confirmation.** The evidence file is right that
   this is an asymmetry worth a deliberate decision: every delete in the reference's schedule asks
   first, and the goal strip's Clear does not. **This port currently agrees with the reference by
@@ -788,7 +789,7 @@ of the document**, so it lists ids rather than paraphrasing cells — the cell i
 | Transcript and tool cards | C-107, C-109, C-121, C-123, C-126, C-132, C-141, C-143, C-145, C-147, C-157, C-160, C-162, C-163, C-168, C-169 |
 | Keyboard and settings | S-109, S-113, S-115, S-117, S-119, S-126, S-159, S-164 |
 | Palette and composer | P-102, P-106, P-108, P-117, P-121, P-122, P-126, P-128, P-132, P-136, P-140, P-146, P-148, P-150 |
-| Layout and panes | L-101, L-102, L-103, L-105, L-108, L-113, L-128, L-129, L-130, L-131, L-132, L-143, L-146, L-151, L-152, L-155, L-158, L-159, L-160, L-161, L-164 |
+| Layout and panes | L-101, L-102, L-103, L-105, L-108, L-113, L-123, L-124, L-128, L-129, L-130, L-131, L-132, L-143, L-146, L-151, L-152, L-155, L-158, L-159, L-160, L-161, L-164 |
 | Approvals through models | I-101, I-105, I-106, I-133, I-134, I-137, I-139, I-141, I-142, I-149 |
 | Un-numbered reference rows | U-003, U-006, U-017, U-030 |
 
@@ -827,9 +828,9 @@ rather than merely underserved:
 | Electron shell | D-007, D-008, D-009, D-012, D-013, D-014, D-017, D-018, D-019, D-020, D-022, D-024, D-025, D-026, D-027, D-028, D-029, D-033, D-034, D-035, D-036, D-037, D-038, D-039, D-040, D-041, D-042, D-043, D-044, D-047, D-052, D-053, D-054, D-055, D-056, D-057, D-059, D-060, D-063, D-068, D-069, D-070 |
 | Approvals and presets | D-077, D-079 |
 | Transcript and tool cards | C-101, C-102, C-103, C-104, C-105, C-106, C-108, C-112, C-113, C-114, C-115, C-116, C-117, C-118, C-119, C-122, C-124, C-125, C-128, C-129, C-130, C-131, C-133, C-134, C-136, C-137, C-138, C-139, C-142, C-144, C-146, C-148, C-149, C-150, C-151, C-154, C-155, C-156, C-158, C-159, C-161, C-164, C-165, C-166, C-167, C-171, C-172, C-173, C-175, C-176, C-177, C-178, C-179, C-180, C-181, C-182 |
-| Keyboard and settings | S-102, S-104, S-106, S-108, S-110, S-111, S-112, S-114, S-116, S-121, S-128, S-130, S-129, S-131, S-132, S-133, S-134, S-136, S-137, S-138, S-139, S-140, S-141, S-142, S-143, S-144, S-145, S-146, S-147, S-148, S-149, S-150, S-151, S-152, S-153, S-155, S-156, S-157, S-158, S-160, S-161, S-162, S-163, S-166, S-167, S-168 |
+| Keyboard and settings | S-102, S-104, S-110, S-111, S-112, S-114, S-116, S-121, S-128, S-130, S-129, S-131, S-132, S-133, S-134, S-136, S-137, S-138, S-139, S-140, S-141, S-142, S-143, S-144, S-145, S-146, S-147, S-148, S-149, S-150, S-151, S-152, S-153, S-155, S-156, S-157, S-158, S-160, S-161, S-162, S-163, S-166, S-167, S-168 |
 | Palette and composer | P-103, P-105, P-107, P-109, P-110, P-111, P-112, P-113, P-115, P-116, P-118, P-119, P-120, P-123, P-124, P-125, P-129, P-130, P-131, P-134, P-135, P-137, P-139, P-141, P-142, P-143, P-144, P-145, P-147, P-149, P-151, P-152, P-153 |
-| Layout and panes | L-104, L-109, L-111, L-112, L-116, L-117, L-118, L-119, L-121, L-122, L-123, L-124, L-125, L-126, L-133, L-134, L-135, L-136, L-137, L-139, L-140, L-141, L-142, L-144, L-145, L-147, L-148, L-149, L-150, L-153, L-154, L-156, L-157, L-162, L-163 |
+| Layout and panes | L-104, L-109, L-111, L-112, L-116, L-117, L-118, L-119, L-121, L-122, L-126, L-133, L-134, L-135, L-136, L-137, L-139, L-140, L-141, L-142, L-144, L-145, L-147, L-148, L-149, L-150, L-153, L-154, L-156, L-157, L-162, L-163 |
 | Approvals through models | I-108, I-109, I-110, I-111, I-112, I-113, I-114, I-115, I-116, I-117, I-118, I-119, I-120, I-121, I-122, I-123, I-124, I-125, I-126, I-127, I-128, I-129, I-130, I-131, I-132, I-135, I-136, I-138, I-140, I-143, I-144, I-145, I-146, I-147, I-148, I-150 |
 | Un-numbered reference rows | U-002, U-004, U-005, U-007, U-008, U-009, U-010, U-011, U-013, U-014, U-015, U-016, U-018, U-019, U-020, U-021 |
 
@@ -890,15 +891,26 @@ nothing would deliver.
    privilege-raising control lands, `AGENTS.md` §6 and the reference's `RiskConfirmation` shape
    both demand that it cannot be taken by a reflexive Enter. The same applies to any destructive
    action, which is the pattern behind I-121 and I-131.
-5. **S-106 and S-108 — rename and archive, the two session verbs left.** Delete
-    landed in round 99 over the shared `epsilon_session::delete_session_file`, and
-    with it the one thing this entry complained about: *a capability the smaller
-    front end has is one the window is named for lacking*. The window can now
-    start, fork, resume and delete a session; rename and archive remain. Both are
-    smaller than the recorder below and both need a decision rather than a
-    surface — archive has no storage in this window's model, and rename exists in
-    the composer as `/name`, so what is missing is the door and not the
-    capability.
+5. **S-106 and S-108 — rename and archive — CLOSED.** The two session verbs left
+    are doors now, both on capabilities the window already had or that needed no
+    new machinery to share. **Rename (S-106 `done`):** `Ctrl+Alt+G`
+    (`window.session.rename`) types the `/name` head pre-filled with the current
+    title — the composer is this window's editor, so there is no dialog to open,
+    only the `Ctrl+O` → `/open` macro shape; the head writes the same store both
+    front ends read. **Archive (S-108 `done`)** needed the one decision this entry
+    said it needed: archived sessions are a directory, not a flag (ADR-038) —
+    `epsilon-session/src/archive.rs` moves the file into `archived/`, so every
+    existing listing loses it with no filter to forget, and `Ctrl+Shift+A` arms
+    the delete-shaped strip before `Enter` moves anything. The attached session
+    is refused by name both ways. **Restoring is the pane's own list:** archived
+    rows stay in place under `Archived (N)` and Enter or click moves one back —
+    an archive with no way back would be a delete wearing a softer verb.
+    Dispositions: L-123 `partial` (in place with state on the row; restore
+    instead of the reference's dead-end explanation), L-124 `partial` (every
+    archive asks; running work is the attached session, refused outright), L-125
+    deliberately different (no toast surface — the heading is the persistent
+    undo). The terminal has no archive door yet: its browser lists live sessions
+    only. Building the terminal's door is a separate round, not this one.
 6. **A sixth entry, added after round 98, and it is the one that most resembles a bug.** The
     window's quit dialog now names queued work, which was the third explanation it lacked. What the
     entries above have in common is that each is a *surface*; the recorder (entry 2) is the one with
