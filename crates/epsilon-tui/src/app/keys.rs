@@ -556,7 +556,24 @@ pub(crate) fn handle_key(app: &mut App, agent: &Arc<Agent>, key: KeyEvent) -> bo
     // Phase 3 (TUI as IDE): the file viewer owns the keyboard while open —
     // Esc closes, arrows and page keys scroll. Placed above the tree branch:
     // the viewer opens from the tree, so the tree would otherwise eat Esc.
-    if app.viewer_open() && !app.keybindings.matches("app.exit", &key) {
+    if app.viewer_open() && !app.tree_open && !app.keybindings.matches("app.exit", &key) {
+        // Phase 3 viewer tabs: switching works in view and edit modes alike
+        // — every tab owns its buffer, so leaving a dirty tab loses nothing.
+        if app.keybindings.matches("app.viewer.tabNext", &key) {
+            app.switch_viewer_tab(true);
+            return false;
+        }
+        if app.keybindings.matches("app.viewer.tabPrev", &key) {
+            app.switch_viewer_tab(false);
+            return false;
+        }
+        // F6 yields to the tree: with tabs kept, the sidebar (which co-draws
+        // beside the viewer) takes the keyboard, and its Esc hands back.
+        // Without this the tree would be visible but dead behind the viewer.
+        if app.keybindings.matches("app.tree.toggle", &key) {
+            app.tree_open = true;
+            return false;
+        }
         // Edit mode owns the keystroke vocabulary: printable text edits, Enter
         // splits, Backspace deletes-or-joins, Esc is two-stage against data
         // loss (first press arms when dirty, second discards), alt+s saves
@@ -564,52 +581,52 @@ pub(crate) fn handle_key(app: &mut App, agent: &Arc<Agent>, key: KeyEvent) -> bo
         if app.viewer_editing() {
             match key.code {
                 KeyCode::Esc => {
-                    let dirty = app.viewer.as_ref().is_some_and(|v| v.is_dirty());
-                    let armed = app.viewer.as_ref().is_some_and(|v| v.discard_armed);
+                    let dirty = app.active_viewer().is_some_and(|v| v.is_dirty());
+                    let armed = app.active_viewer().is_some_and(|v| v.discard_armed);
                     if dirty && !armed {
-                        if let Some(v) = app.viewer.as_mut() {
+                        if let Some(v) = app.active_viewer_mut() {
                             v.discard_armed = true;
                         }
                         app.ui.push_notice(format!(
                             "edits not saved — Esc again discards them, {}+s saves",
                             crate::keybindings::alt_name()
                         ));
-                    } else if let Some(v) = app.viewer.as_mut() {
+                    } else if let Some(v) = app.active_viewer_mut() {
                         v.editing = false;
                         v.discard_armed = false;
                     }
                     return false;
                 }
                 KeyCode::Enter => {
-                    if let Some(v) = app.viewer.as_mut() {
+                    if let Some(v) = app.active_viewer_mut() {
                         v.split_line();
                         v.clamp_cursor();
                     }
                     return false;
                 }
                 KeyCode::Backspace => {
-                    if let Some(v) = app.viewer.as_mut() {
+                    if let Some(v) = app.active_viewer_mut() {
                         v.backspace();
                         v.clamp_cursor();
                     }
                     return false;
                 }
                 KeyCode::Up => {
-                    if let Some(v) = app.viewer.as_mut() {
+                    if let Some(v) = app.active_viewer_mut() {
                         v.edit_row = v.edit_row.saturating_sub(1);
                         v.clamp_cursor();
                     }
                     return false;
                 }
                 KeyCode::Down => {
-                    if let Some(v) = app.viewer.as_mut() {
+                    if let Some(v) = app.active_viewer_mut() {
                         v.edit_row += 1;
                         v.clamp_cursor();
                     }
                     return false;
                 }
                 KeyCode::Left => {
-                    if let Some(v) = app.viewer.as_mut() {
+                    if let Some(v) = app.active_viewer_mut() {
                         if v.edit_col > 0 {
                             v.edit_col -= 1;
                         } else if v.edit_row > 0 {
@@ -621,27 +638,27 @@ pub(crate) fn handle_key(app: &mut App, agent: &Arc<Agent>, key: KeyEvent) -> bo
                     return false;
                 }
                 KeyCode::Right => {
-                    if let Some(v) = app.viewer.as_mut() {
+                    if let Some(v) = app.active_viewer_mut() {
                         v.edit_col += 1;
                         v.clamp_cursor();
                     }
                     return false;
                 }
                 KeyCode::Home => {
-                    if let Some(v) = app.viewer.as_mut() {
+                    if let Some(v) = app.active_viewer_mut() {
                         v.edit_col = 0;
                     }
                     return false;
                 }
                 KeyCode::End => {
-                    if let Some(v) = app.viewer.as_mut() {
+                    if let Some(v) = app.active_viewer_mut() {
                         v.edit_col = usize::MAX;
                         v.clamp_cursor();
                     }
                     return false;
                 }
                 KeyCode::Char(c) if key.modifiers == KeyModifiers::NONE && !c.is_control() => {
-                    if let Some(v) = app.viewer.as_mut() {
+                    if let Some(v) = app.active_viewer_mut() {
                         v.insert_char(c);
                         v.clamp_cursor();
                     }
@@ -660,32 +677,32 @@ pub(crate) fn handle_key(app: &mut App, agent: &Arc<Agent>, key: KeyEvent) -> bo
         // here rather than starting an edit — Esc first, then `e`); Enter and
         // Down step forward, Up steps back, Backspace widens, Esc closes.
         // The `n`/`p` aliases mirror the transcript search's step keys.
-        if app.viewer.as_ref().is_some_and(|v| v.find_open) {
+        if app.active_viewer().is_some_and(|v| v.find_open) {
             let capacity = app.viewer_capacity.max(1);
             match key.code {
                 KeyCode::Esc => {
-                    if let Some(v) = app.viewer.as_mut() {
+                    if let Some(v) = app.active_viewer_mut() {
                         v.find_close();
                     }
                 }
                 KeyCode::Enter | KeyCode::Down | KeyCode::Char('n') => {
-                    if let Some(v) = app.viewer.as_mut() {
+                    if let Some(v) = app.active_viewer_mut() {
                         v.find_step(true, capacity);
                     }
                 }
                 KeyCode::Up | KeyCode::PageUp | KeyCode::Char('p') => {
-                    if let Some(v) = app.viewer.as_mut() {
+                    if let Some(v) = app.active_viewer_mut() {
                         v.find_step(false, capacity);
                     }
                 }
                 KeyCode::Backspace => {
-                    if let Some(v) = app.viewer.as_mut() {
+                    if let Some(v) = app.active_viewer_mut() {
                         v.find_query.pop();
                         v.find_recompute();
                     }
                 }
                 KeyCode::Char(c) if key.modifiers == KeyModifiers::NONE && !c.is_control() => {
-                    if let Some(v) = app.viewer.as_mut() {
+                    if let Some(v) = app.active_viewer_mut() {
                         v.find_query.push(c);
                         v.find_recompute();
                     }
@@ -696,53 +713,88 @@ pub(crate) fn handle_key(app: &mut App, agent: &Arc<Agent>, key: KeyEvent) -> bo
         }
         match key.code {
             KeyCode::Esc => {
-                app.viewer = None;
+                // A dirty tab arms before it closes (the edit-mode discard
+                // idiom): the buffer survived leaving edit mode, so a bare
+                // Esc here would discard work with no warning at all.
+                let dirty = app.active_viewer().is_some_and(|v| v.has_unsaved());
+                let armed = app.active_viewer().is_some_and(|v| v.discard_armed);
+                if dirty && !armed {
+                    if let Some(v) = app.active_viewer_mut() {
+                        v.discard_armed = true;
+                    }
+                    // Name the options that actually exist: when the file
+                    // changed underneath, `save_viewer` will refuse, so
+                    // offering alt+s would be a promise the save breaks.
+                    let can_save = app.active_viewer().is_some_and(|v| {
+                        let path = app.workspace_root.join(&v.rel);
+                        match std::fs::read(&path) {
+                            Ok(current) => current == v.opened_bytes,
+                            Err(e) if e.kind() == std::io::ErrorKind::NotFound => true,
+                            Err(_) => false,
+                        }
+                    });
+                    app.ui.push_notice(if can_save {
+                        "unsaved edits — Esc again closes without saving, alt+s saves".to_string()
+                    } else {
+                        "edits can't be saved — the file changed on disk — Esc again discards them"
+                            .to_string()
+                    });
+                } else {
+                    app.close_viewer_tab();
+                    if !app.viewer_open() {
+                        // Return to the tree: it stayed open beneath single-file
+                        // viewing, and tabs keep that contract — closing the
+                        // last tab reveals the files, it does not strand the
+                        // reader at the composer.
+                        app.tree_open = true;
+                    }
+                }
             }
             // `/` opens find (the timeline's convention for "search here").
             // View mode only: in edit mode `/` is text.
             KeyCode::Char('/') if key.modifiers == KeyModifiers::NONE => {
-                if let Some(v) = app.viewer.as_mut() {
+                if let Some(v) = app.active_viewer_mut() {
                     v.find_open();
                 }
             }
             KeyCode::Char('e' | 'E') if key.modifiers == KeyModifiers::NONE => {
                 // Read-only until asked: `e` starts the edit buffer from the
                 // file on screen, so viewing never risks a keystroke.
-                if let Some(v) = app.viewer.as_mut() {
+                if let Some(v) = app.active_viewer_mut() {
                     v.start_edit();
                 }
             }
             KeyCode::Up => {
-                if let Some(v) = app.viewer.as_mut() {
+                if let Some(v) = app.active_viewer_mut() {
                     v.scroll = v.scroll.saturating_sub(1);
                 }
             }
             KeyCode::Down => {
-                if let Some(v) = app.viewer.as_mut() {
+                if let Some(v) = app.active_viewer_mut() {
                     let max = v.lines.len().saturating_sub(1);
                     v.scroll = (v.scroll + 1).min(max);
                 }
             }
             KeyCode::PageUp => {
                 let capacity = app.viewer_capacity.max(1);
-                if let Some(v) = app.viewer.as_mut() {
+                if let Some(v) = app.active_viewer_mut() {
                     v.scroll = v.scroll.saturating_sub(capacity);
                 }
             }
             KeyCode::PageDown => {
                 let capacity = app.viewer_capacity.max(1);
-                if let Some(v) = app.viewer.as_mut() {
+                if let Some(v) = app.active_viewer_mut() {
                     let max = v.lines.len().saturating_sub(1);
                     v.scroll = (v.scroll + capacity).min(max);
                 }
             }
             KeyCode::Home => {
-                if let Some(v) = app.viewer.as_mut() {
+                if let Some(v) = app.active_viewer_mut() {
                     v.scroll = 0;
                 }
             }
             KeyCode::End => {
-                if let Some(v) = app.viewer.as_mut() {
+                if let Some(v) = app.active_viewer_mut() {
                     v.scroll = v.lines.len().saturating_sub(1);
                 }
             }
@@ -828,8 +880,11 @@ pub(crate) fn handle_key(app: &mut App, agent: &Arc<Agent>, key: KeyEvent) -> bo
                         // gestures because they are two intentions.
                         match crate::tree::open_viewer(&app.workspace_root, &row.rel) {
                             Ok(viewer) => {
-                                app.viewer = Some(viewer);
-                                app.viewer_capacity = 0;
+                                // Tabs keep the tree's contract: Enter opens and
+                                // the tree yields (every picker closes on
+                                // select); Esc on the last tab reopens it.
+                                app.open_viewer_tab(viewer);
+                                app.tree_open = false;
                             }
                             Err(e) => {
                                 app.ui.push_notice(e);
@@ -2517,7 +2572,7 @@ pub(crate) fn handle_key(app: &mut App, agent: &Arc<Agent>, key: KeyEvent) -> bo
 /// viewer, tree, palette, picker, timeline — so the wheel and the arrows
 /// always agree about where the reader is.
 fn scroll_focused_overlay(app: &mut App, up: bool) {
-    if let Some(v) = app.viewer.as_mut() {
+    if let Some(v) = app.active_viewer_mut() {
         if up {
             v.scroll = v.scroll.saturating_sub(3);
         } else {

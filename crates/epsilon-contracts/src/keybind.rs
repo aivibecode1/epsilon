@@ -429,6 +429,11 @@ pub const TERMINAL: &[(&str, &[&str])] = &[
     // the composer owns the ctrl+letter family and `app.model.saveDefault`
     // owns ctrl+s, so the viewer's save takes the alt spelling instead.
     ("app.viewer.save", &["alt+s"]),
+    // Viewer tabs (Phase 3, TUI as IDE): alt+brackets beside alt+s, verified
+    // free above — no chord in either table names them (the `no_chord...`
+    // test below holds it).
+    ("app.viewer.tabNext", &["alt+]"]),
+    ("app.viewer.tabPrev", &["alt+["]),
 ];
 
 /// The desktop window's default bindings.

@@ -749,6 +749,20 @@ the run. Matrix at 81/111/24/123. (Previous: `gate-goal3-phase6-20261012`, 2,011
 > code + expiry (adapter test) with one stated divergence — the pre-filled page
 > opens too when offered. Counts now 86/114/8/131.
 >
+> **Phase 3 slice 2 (this session): viewer tabs.** Enter on a file focuses its
+> tab or opens one (replacing the single `viewer` field — no dual source);
+> alt+]/[ switch with wrap in view and edit modes; Esc closes the tab, and
+> the last close returns to the tree (the pinned single-file contract holds).
+> A dirty tab arms first with a notice naming the real options (save offered
+> only when it can succeed — the refused-save path says the file changed).
+> The layer rule that makes tabs accumulate: the tree yields on open like
+> every picker, F6 yields back with tabs kept, tree owns keys while open.
+> Tab strip (active marked, unsaved dotted) at both sizes. Four tests
+> (open/switch/wrap/close, dirty arm, updated refused-save contract with
+> history, switch-wrap removal control fails it); full suite green.
+> Error-jumps scoped out as slice 3: diagnostics reach the TUI only as
+> rendered strings, so jumping needs a structured channel that doesn't exist.
+>
 > **Phase 3 slice 1 (this session): viewer find.** `/` in view mode searches
 > the open file — plain substring, count `i of n`, Enter/Down/n forward,
 > Up/PageUp/p back, wrapping both ways, scroll following minimally, Esc

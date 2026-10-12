@@ -388,8 +388,11 @@ pub(crate) struct App {
     tree_collapsed: std::collections::BTreeSet<String>,
     /// Whether the last refresh hit the row budget (drawn as a capped note).
     tree_capped: bool,
-    /// Read-only file viewer opened from the tree (Phase 3, second slice).
-    viewer: Option<crate::tree::FileViewer>,
+    /// Open viewer tabs, oldest first; the active tab is `viewer_tab`.
+    /// (Phase 3: Enter on a file focuses its tab or opens one.)
+    viewer_tabs: Vec<crate::tree::FileViewer>,
+    /// Index into `viewer_tabs` of the visible tab.
+    viewer_tab: usize,
     /// Visible viewer lines measured at the last draw (page keys read it).
     viewer_capacity: usize,
     /// Rows in the `/tree` + `/timeline` picker, in display order.
@@ -1948,10 +1951,32 @@ fn draw(f: &mut Frame<'_>, app: &mut App) {
             app.tree_capped,
         );
     }
-    if let Some(viewer) = app.viewer.as_mut() {
-        // Disjoint field borrows: the viewer read and the capacity write touch
-        // different fields, so no clone crosses the frame.
-        crate::tree::draw_viewer(f, f.area(), &app.theme, viewer, &mut app.viewer_capacity);
+    if app.viewer_open() {
+        // Disjoint field borrows: the tab read and the capacity write touch
+        // different fields, so no clone crosses the frame. The strip takes an
+        // owned snapshot (a handful of names) so its borrow ends at the call.
+        let tab = app.viewer_tab;
+        let strip: Vec<(String, bool)> = app
+            .viewer_tabs
+            .iter()
+            .map(|t| {
+                (
+                    t.rel.clone(),
+                    !t.edit_lines.is_empty() && t.edit_lines != t.lines,
+                )
+            })
+            .collect();
+        if let Some(viewer) = app.viewer_tabs.get_mut(tab) {
+            crate::tree::draw_viewer(
+                f,
+                f.area(),
+                &app.theme,
+                viewer,
+                &strip,
+                tab,
+                &mut app.viewer_capacity,
+            );
+        }
     }
     draw_at_file(f, app, transcript_area);
     draw_slash_autocomplete(f, app, transcript_area);

@@ -5132,6 +5132,113 @@ fn a_filter_hides_entries_and_promotes_the_ones_left() {
     );
 }
 
+/// Phase 3, viewer tabs: Enter on a second file opens a second tab instead of
+/// replacing the first; alt+[ / alt+] switch with wrap; Esc closes the active
+/// tab and the viewer only when the last tab closes.
+#[tokio::test]
+async fn viewer_tabs_open_switch_and_close() {
+    let (mut app, agent, _receivers, dir) = test_app_with_store();
+    std::fs::write(dir.path().join("a.txt"), "aaa\n").unwrap();
+    std::fs::write(dir.path().join("b.txt"), "bbb\n").unwrap();
+    handle_key(&mut app, &agent, key(KeyCode::F(6)));
+    assert!(app.tree_open);
+    // Rows are dirs-first, then files: a.txt first.
+    handle_key(&mut app, &agent, key(KeyCode::Enter));
+    assert!(app.viewer_open(), "Enter opens the first tab");
+    assert!(!app.tree_open, "the tree yields on open, like every picker");
+    // F6 brings the tree back over the viewer; Enter opens the second file
+    // as a second tab instead of replacing the first.
+    handle_key(&mut app, &agent, key(KeyCode::F(6)));
+    assert!(app.tree_open, "F6 yields to the tree with tabs kept");
+    handle_key(&mut app, &agent, key(KeyCode::Down));
+    handle_key(&mut app, &agent, key(KeyCode::Enter));
+    assert_eq!(
+        app.viewer_tabs.len(),
+        2,
+        "a second file opens a second tab, not a replacement"
+    );
+    fn active_rel(app: &super::App) -> Option<String> {
+        app.active_viewer().map(|t| t.rel.clone())
+    }
+    assert_eq!(
+        active_rel(&app).as_deref(),
+        Some("b.txt"),
+        "the new tab is active"
+    );
+
+    // The strip names both tabs on screen at both sizes.
+    for (width, height) in [(80u16, 24u16), (100, 30)] {
+        let screen = render_rows(&mut app, width, height).join("\n");
+        assert!(
+            screen.contains("a.txt") && screen.contains("b.txt"),
+            "tab strip names both tabs at {width}x{height}: {screen}"
+        );
+    }
+
+    let prev = || key_mod(KeyModifiers::ALT, KeyCode::Char('['));
+    let next = || key_mod(KeyModifiers::ALT, KeyCode::Char(']'));
+    handle_key(&mut app, &agent, prev());
+    assert_eq!(
+        active_rel(&app).as_deref(),
+        Some("a.txt"),
+        "alt+[ steps back"
+    );
+    handle_key(&mut app, &agent, next());
+    assert_eq!(
+        active_rel(&app).as_deref(),
+        Some("b.txt"),
+        "alt+] steps forward"
+    );
+    handle_key(&mut app, &agent, next());
+    assert_eq!(
+        active_rel(&app).as_deref(),
+        Some("a.txt"),
+        "switching wraps past the last tab"
+    );
+
+    // Esc closes the active tab; the viewer survives while tabs remain.
+    handle_key(&mut app, &agent, key(KeyCode::Esc));
+    assert_eq!(app.viewer_tabs.len(), 1, "one tab closed");
+    assert!(app.viewer_open(), "viewer survives with tabs left");
+    handle_key(&mut app, &agent, key(KeyCode::Esc));
+    assert!(app.viewer_tabs.is_empty(), "last tab closed");
+    assert!(!app.viewer_open(), "viewer closes with its last tab");
+    assert!(app.tree_open, "closing the last tab returns to the tree");
+}
+
+/// A dirty tab does not close on the first Esc: it arms and names the cost,
+/// like the edit-mode discard it mirrors.
+#[tokio::test]
+async fn viewer_dirty_tab_arms_before_closing() {
+    let (mut app, agent, _receivers, dir) = test_app_with_store();
+    std::fs::write(dir.path().join("a.txt"), "aaa\n").unwrap();
+    handle_key(&mut app, &agent, key(KeyCode::F(6)));
+    handle_key(&mut app, &agent, key(KeyCode::Enter));
+    assert!(app.viewer_open());
+    // Edit: `e`, type, Esc (arms the edit discard), Esc (leaves edit mode
+    // with the buffer kept in the tab).
+    handle_key(&mut app, &agent, key(KeyCode::Char('e')));
+    handle_key(&mut app, &agent, key(KeyCode::Char('X')));
+    handle_key(&mut app, &agent, key(KeyCode::Esc));
+    handle_key(&mut app, &agent, key(KeyCode::Esc));
+    assert!(
+        app.viewer_tabs
+            .first()
+            .is_some_and(|t| !t.editing && t.has_unsaved()),
+        "leaving edit mode keeps the unsaved buffer in the tab"
+    );
+    // Esc in view mode must arm on a dirty tab, not close.
+    let before = app.ui.lines().len();
+    handle_key(&mut app, &agent, key(KeyCode::Esc));
+    assert!(
+        app.viewer_open(),
+        "first Esc on a dirty tab arms instead of closing"
+    );
+    assert!(app.ui.lines().len() > before, "the arm names its cost");
+    handle_key(&mut app, &agent, key(KeyCode::Esc));
+    assert!(!app.viewer_open(), "second Esc closes the dirty tab");
+}
+
 /// Phase 3, viewer find: `/` searches the open file, Enter steps through matches.
 ///
 /// Matches are counted, not highlighted — the transcript search's own rule
@@ -5147,21 +5254,21 @@ fn viewer_slash_finds_and_steps_through_matches() {
     )
     .unwrap();
     app.workspace_root = dir.path().to_path_buf();
-    app.viewer =
-        Some(crate::tree::open_viewer(&app.workspace_root, "notes.txt").expect("fixture opens"));
+    app.viewer_tabs =
+        vec![crate::tree::open_viewer(&app.workspace_root, "notes.txt").expect("fixture opens")];
+    app.viewer_tab = 0;
     assert!(app.viewer_open(), "precondition: the viewer is open");
 
     handle_key(&mut app, &agent, key(KeyCode::Char('/')));
     assert!(
-        app.viewer.as_ref().is_some_and(|v| v.find_open),
+        app.active_viewer().is_some_and(|v| v.find_open),
         "/ opens find in view mode"
     );
     for c in "beta".chars() {
         handle_key(&mut app, &agent, key(KeyCode::Char(c)));
     }
     let (hits, index) = app
-        .viewer
-        .as_ref()
+        .active_viewer()
         .map(|v| (v.find_hits.len(), v.find_index))
         .unwrap();
     assert_eq!(hits, 2, "both beta lines match");
@@ -5169,13 +5276,13 @@ fn viewer_slash_finds_and_steps_through_matches() {
 
     handle_key(&mut app, &agent, key(KeyCode::Enter));
     assert_eq!(
-        app.viewer.as_ref().map(|v| v.find_index),
+        app.active_viewer().map(|v| v.find_index),
         Some(1),
         "Enter steps to the next match"
     );
     handle_key(&mut app, &agent, key(KeyCode::Enter));
     assert_eq!(
-        app.viewer.as_ref().map(|v| v.find_index),
+        app.active_viewer().map(|v| v.find_index),
         Some(0),
         "stepping wraps past the last match"
     );
@@ -5191,7 +5298,7 @@ fn viewer_slash_finds_and_steps_through_matches() {
 
     handle_key(&mut app, &agent, key(KeyCode::Esc));
     assert!(
-        app.viewer.as_ref().is_some_and(|v| !v.find_open),
+        app.active_viewer().is_some_and(|v| !v.find_open),
         "Esc closes find; the viewer stays open"
     );
     assert!(app.viewer_open(), "Esc closes find, not the viewer");
@@ -9265,14 +9372,14 @@ async fn viewer_pages_down_and_names_an_empty_file() {
     let _ = render_rows(&mut app, 100, 30);
     assert!(app.viewer_capacity > 1, "capacity must be measured");
     handle_key(&mut app, &agent, key(KeyCode::PageDown));
-    let scrolled = app.viewer.as_ref().map(|v| v.scroll).unwrap_or(0);
+    let scrolled = app.active_viewer().map(|v| v.scroll).unwrap_or(0);
     assert!(
         scrolled > 0,
         "PageDown must advance, capacity {}",
         app.viewer_capacity
     );
     handle_key(&mut app, &agent, key(KeyCode::Home));
-    assert_eq!(app.viewer.as_ref().map(|v| v.scroll), Some(0));
+    assert_eq!(app.active_viewer().map(|v| v.scroll), Some(0));
     handle_key(&mut app, &agent, key(KeyCode::Esc));
     // Empty file names itself rather than showing a blank box.
     let idx = app
@@ -9328,7 +9435,7 @@ async fn wheel_scroll_follows_the_focused_overlay() {
     let _ = render_rows(&mut app, 100, 30);
     let before = app.tree_cursor;
     super::keys::handle_term_event(&mut app, &agent, wheel(MouseEventKind::ScrollDown));
-    let scrolled = app.viewer.as_ref().map(|v| v.scroll).unwrap_or(0);
+    let scrolled = app.active_viewer().map(|v| v.scroll).unwrap_or(0);
     assert!(scrolled > 0, "wheel must scroll the viewer");
     assert_eq!(
         app.tree_cursor, before,
@@ -9434,13 +9541,22 @@ async fn viewer_save_refuses_changed_underneath_and_restore_undoes_it() {
     );
     assert!(app.viewer_editing(), "refused save keeps the buffer open");
     // Re-open fresh and save cleanly: backup holds the previous version.
+    // Contract change (Phase 3, tabs): the third Esc used to close the viewer
+    // outright, silently discarding the refused-save buffer the test name
+    // calls "clean" but isn't. A dirty tab now arms first — and because the
+    // file changed underneath, the arm names that save will refuse rather
+    // than offering alt+s. The fourth Esc discards explicitly.
     handle_key(&mut app, &agent, key(KeyCode::Esc));
     handle_key(&mut app, &agent, key(KeyCode::Esc));
     handle_key(&mut app, &agent, key(KeyCode::Esc));
+    assert!(app.viewer_open(), "third Esc arms on unsaved edits");
     assert!(
-        !app.viewer_open(),
-        "Esc with a clean buffer closes the viewer"
+        last_line_text(&app).contains("changed on disk"),
+        "the arm must not offer a save that will refuse: {}",
+        last_line_text(&app)
     );
+    handle_key(&mut app, &agent, key(KeyCode::Esc));
+    assert!(!app.viewer_open(), "explicit second Esc closes the viewer");
     handle_key(&mut app, &agent, key(KeyCode::Enter));
     handle_key(&mut app, &agent, key(KeyCode::Char('e')));
     handle_key(&mut app, &agent, key(KeyCode::End));

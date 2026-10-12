@@ -413,8 +413,11 @@ impl App {
             } else {
                 Hints::approval_deny_only()
             }
-        } else if self.viewer.is_some() {
-            let editing = self.viewer.as_ref().is_some_and(|v| v.editing);
+        } else if !self.viewer_tabs.is_empty() {
+            let editing = self
+                .viewer_tabs
+                .get(self.viewer_tab)
+                .is_some_and(|v| v.editing);
             Hints {
                 mode: Some(if editing {
                     "edit".into()
@@ -537,7 +540,7 @@ impl App {
             || self.auth_pick_open
             || self.timeline_open
             || self.tree_open
-            || self.viewer.is_some()
+            || !self.viewer_tabs.is_empty()
             || self.session_browser.is_some()
             || self.pending_ask.is_some()
     }

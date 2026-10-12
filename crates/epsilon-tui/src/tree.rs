@@ -289,6 +289,13 @@ impl FileViewer {
         self.editing && self.edit_lines != self.lines
     }
 
+    /// True when the tab holds unsaved edits outside edit mode (Phase 3,
+    /// tabs): leaving edit mode keeps the buffer, so closing the tab must
+    /// ask even though `is_dirty` (an edit-mode predicate) is false.
+    pub fn has_unsaved(&self) -> bool {
+        !self.editing && !self.edit_lines.is_empty() && self.edit_lines != self.lines
+    }
+
     /// Open find: the query starts empty, showing no matches until typed.
     pub fn find_open(&mut self) {
         self.find_open = true;
@@ -434,6 +441,8 @@ pub(crate) fn draw_viewer(
     outer: Rect,
     theme: &crate::ui::theme::Theme,
     viewer: &mut FileViewer,
+    tab_strip: &[(String, bool)],
+    active_tab: usize,
     capacity_out: &mut usize,
 ) {
     use crate::ui::overlay::{self, Panel, Width};
@@ -476,6 +485,27 @@ pub(crate) fn draw_viewer(
     let start = viewer.scroll.min(body.len().saturating_sub(1));
     let end = (start + capacity).min(body.len());
     let mut lines: Vec<Line<'static>> = Vec::new();
+    // Phase 3 tabs: the strip names every open tab when there is more than
+    // one — one tab needs no chrome. Active marked, unsaved dotted, so the
+    // shape of the session is visible before a single key is pressed.
+    if tab_strip.len() > 1 {
+        let mut spans: Vec<ratatui::text::Span<'static>> = Vec::new();
+        for (i, (rel, dirty)) in tab_strip.iter().enumerate() {
+            if i > 0 {
+                spans.push(ratatui::text::Span::styled(" | ", theme.dim()));
+            }
+            let mut name = rel.clone();
+            if *dirty {
+                name.push_str(" \u{25cf}");
+            }
+            if i == active_tab {
+                spans.push(ratatui::text::Span::styled(name, theme.assistant()));
+            } else {
+                spans.push(ratatui::text::Span::styled(name, theme.dim()));
+            }
+        }
+        lines.push(Line::from(spans));
+    }
     if body.is_empty() {
         lines.push(Line::from(ratatui::text::Span::styled(
             "(empty file)",

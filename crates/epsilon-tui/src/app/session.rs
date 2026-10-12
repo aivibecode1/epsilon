@@ -139,7 +139,8 @@ impl App {
             tree_rows: Vec::new(),
             tree_collapsed: std::collections::BTreeSet::new(),
             tree_capped: false,
-            viewer: None,
+            viewer_tabs: Vec::new(),
+            viewer_tab: 0,
             viewer_capacity: 0,
             jump_mode: None,
             tree_filter: crate::app::TreeFilter::default(),
@@ -268,12 +269,61 @@ impl App {
 
     /// Whether the read-only file viewer is open.
     pub(super) fn viewer_open(&self) -> bool {
-        self.viewer.is_some()
+        !self.viewer_tabs.is_empty()
+    }
+
+    /// The visible tab, if any.
+    pub(super) fn active_viewer(&self) -> Option<&crate::tree::FileViewer> {
+        self.viewer_tabs.get(self.viewer_tab)
+    }
+
+    /// The visible tab, mutably.
+    ///
+    /// Every key and draw path reaches the viewer through this, so a second
+    /// copy of "the current file" cannot drift beside the tabs.
+    pub(super) fn active_viewer_mut(&mut self) -> Option<&mut crate::tree::FileViewer> {
+        self.viewer_tabs.get_mut(self.viewer_tab)
     }
 
     /// Whether the viewer is in edit mode.
     pub(super) fn viewer_editing(&self) -> bool {
-        self.viewer.as_ref().is_some_and(|v| v.editing)
+        self.active_viewer().is_some_and(|v| v.editing)
+    }
+
+    /// Open `rel` in a tab, focusing it when already open (Phase 3, tabs).
+    pub(super) fn open_viewer_tab(&mut self, viewer: crate::tree::FileViewer) {
+        if let Some(i) = self.viewer_tabs.iter().position(|t| t.rel == viewer.rel) {
+            self.viewer_tab = i;
+        } else {
+            self.viewer_tabs.push(viewer);
+            self.viewer_tab = self.viewer_tabs.len() - 1;
+        }
+        self.viewer_capacity = 0;
+    }
+
+    /// Close the visible tab; keeping `viewer_tab` a valid index, or empty.
+    pub(super) fn close_viewer_tab(&mut self) {
+        if self.viewer_tabs.is_empty() {
+            return;
+        }
+        self.viewer_tab = self.viewer_tab.min(self.viewer_tabs.len() - 1);
+        self.viewer_tabs.remove(self.viewer_tab);
+        if !self.viewer_tabs.is_empty() {
+            self.viewer_tab = self.viewer_tab.min(self.viewer_tabs.len() - 1);
+        }
+    }
+
+    /// Step the visible tab, wrapping past both ends.
+    pub(super) fn switch_viewer_tab(&mut self, forward: bool) {
+        if self.viewer_tabs.is_empty() {
+            return;
+        }
+        let n = self.viewer_tabs.len();
+        if forward {
+            self.viewer_tab = (self.viewer_tab + 1) % n;
+        } else {
+            self.viewer_tab = (self.viewer_tab + n - 1) % n;
+        }
     }
 
     /// Save the viewer's edit buffer through the checkpoint store, so `/restore`
@@ -283,7 +333,7 @@ impl App {
     /// The changed-underneath guard and the keep-the-buffer-on-failure rule stay:
     /// a refused or failed save loses nothing and says why.
     pub(super) fn save_viewer(&mut self) {
-        let Some(viewer) = self.viewer.as_ref() else {
+        let Some(viewer) = self.active_viewer() else {
             return;
         };
         if !viewer.editing {
@@ -326,7 +376,7 @@ impl App {
             ));
             return;
         }
-        if let Some(viewer) = self.viewer.as_mut() {
+        if let Some(viewer) = self.active_viewer_mut() {
             viewer.lines = viewer.edit_lines.clone();
             viewer.opened_bytes = text.into_bytes();
             viewer.editing = false;
