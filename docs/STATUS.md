@@ -784,6 +784,11 @@ the run. Matrix at 81/111/24/123. (Previous: `gate-goal3-phase6-20261012`, 2,011
 > docs files, nothing superseded, nothing orphaned. `docs/README.md` map,
 > START-HERE order and check-links (995/0) re-verified after the edits.
 >
+> **Phase 6 verdict (this session): full battery green.** Fresh label
+> `gate-goal3-close-20261012`, no edits during the run, 15/15 legs exit 0
+> (`GATE PASS`): ten repo gates + fmt + clippy + test + demo + real-check.
+> Log at `target/gate-gate-goal3-close-20261012.log` (disposable per AGENTS.md).
+>
 > **Phase 3 slice 1 (this session): viewer find.** `/` in view mode searches
 > the open file — plain substring, count `i of n`, Enter/Down/n forward,
 > Up/PageUp/p back, wrapping both ways, scroll following minimally, Esc
