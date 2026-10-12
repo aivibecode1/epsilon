@@ -415,6 +415,15 @@ the run. The drop from 2,385/19/78 is the removed desktop crate itself (~410 win
 > files named; >2000-line files capped and noted. Frames read at 80x24 and 100x30
 > (`audit/evidence/frames-viewer-20261012/`). RED-first (no-method compile error),
 > scroll/capped/empty states covered, clippy/fmt/checkers green.
+>
+> **Phase 3 slice 3 (this session, landed): wheel follows focus + mouse-click
+> disposition.** The wheel now routes by keyboard-focus order (viewer, tree,
+> palette, picker, timeline, transcript) so it never scrolls the transcript
+> behind an open overlay — RED-first (`wheel_scroll_follows_the_focused_overlay`:
+> tree cursor + viewer scroll advance, transcript/tree untouched). Clicks stay
+> deliberately absent: mouse capture remains OFF so drag-select copies, the same
+> stance pi, opencode and Hermes take (run-loop comment cites all three); wheel
+> needs no capture on any terminal. Recorded as judged-different, not missing.
 
 > **Ten findings closed in a row** (rounds 138–147). Rounds 138–144 were things that *happened*
 > wrongly, 145–146 were things that *went unsaid*, and 147 is the first one that **adds a

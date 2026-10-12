@@ -2268,6 +2268,74 @@ pub(crate) fn handle_key(app: &mut App, agent: &Arc<Agent>, key: KeyEvent) -> bo
 /// Extracted from the loop so the pre-draw drain and the select's input arm
 /// share exactly one implementation — the drain is what keeps a burst of keys
 /// down to a single frame.
+/// The wheel follows keyboard focus: the overlay that owns the keys gets the
+/// scroll, never the transcript behind it. Order mirrors `handle_key` —
+/// viewer, tree, palette, picker, timeline — so the wheel and the arrows
+/// always agree about where the reader is.
+fn scroll_focused_overlay(app: &mut App, up: bool) {
+    if let Some(v) = app.viewer.as_mut() {
+        if up {
+            v.scroll = v.scroll.saturating_sub(3);
+        } else {
+            let max = v.lines.len().saturating_sub(1);
+            v.scroll = (v.scroll + 3).min(max);
+        }
+        return;
+    }
+    if app.tree_open {
+        let total = app.tree_rows.len();
+        if up {
+            app.tree_cursor = app
+                .tree_cursor
+                .saturating_sub(1)
+                .min(total.saturating_sub(1));
+        } else if total > 0 {
+            app.tree_cursor = (app.tree_cursor + 1).min(total - 1);
+        }
+        return;
+    }
+    if app.palette_open {
+        let total = crate::picker::filter_palette(&app.input, &app.keybindings).len();
+        if up {
+            app.picker_index = app
+                .picker_index
+                .saturating_sub(1)
+                .min(total.saturating_sub(1));
+        } else if total > 0 {
+            app.picker_index = (app.picker_index + 1).min(total - 1);
+        }
+        return;
+    }
+    if app.picker_open {
+        if up {
+            app.picker_index = app.picker_index.saturating_sub(1);
+        } else {
+            let total = app.picker_rows().len();
+            if total > 0 {
+                app.picker_index = (app.picker_index + 1).min(total - 1);
+            }
+        }
+        return;
+    }
+    if app.timeline_open {
+        let total = app.timeline_entries.len();
+        if up {
+            app.timeline_index = app
+                .timeline_index
+                .saturating_sub(1)
+                .min(total.saturating_sub(1));
+        } else if total > 0 {
+            app.timeline_index = (app.timeline_index + 1).min(total - 1);
+        }
+        return;
+    }
+    if up {
+        app.scroll_from_bottom = app.scroll_from_bottom.saturating_add(3);
+    } else {
+        app.scroll_from_bottom = app.scroll_from_bottom.saturating_sub(3);
+    }
+}
+
 pub(crate) fn handle_term_event(app: &mut App, agent: &Arc<Agent>, ev: TermEvent) -> bool {
     match ev {
         TermEvent::Key(key) => {
@@ -2280,21 +2348,10 @@ pub(crate) fn handle_term_event(app: &mut App, agent: &Arc<Agent>, ev: TermEvent
         // blocks drag-select.
         TermEvent::Mouse(m) => match m.kind {
             crossterm::event::MouseEventKind::ScrollUp => {
-                if app.picker_open {
-                    app.picker_index = app.picker_index.saturating_sub(1);
-                } else {
-                    app.scroll_from_bottom = app.scroll_from_bottom.saturating_add(3);
-                }
+                scroll_focused_overlay(app, true);
             }
             crossterm::event::MouseEventKind::ScrollDown => {
-                if app.picker_open {
-                    let total = app.picker_rows().len();
-                    if total > 0 {
-                        app.picker_index = (app.picker_index + 1).min(total - 1);
-                    }
-                } else {
-                    app.scroll_from_bottom = app.scroll_from_bottom.saturating_sub(3);
-                }
+                scroll_focused_overlay(app, false);
             }
             _ => {} // drag/select: let the terminal own it
         },

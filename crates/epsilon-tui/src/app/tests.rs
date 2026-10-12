@@ -8756,3 +8756,54 @@ async fn viewer_pages_down_and_names_an_empty_file() {
         "empty file must say so: {frame}"
     );
 }
+
+/// The wheel follows focus: over the open tree it moves the tree cursor, over
+/// the viewer it scrolls the file — never the transcript behind them.
+#[tokio::test]
+async fn wheel_scroll_follows_the_focused_overlay() {
+    use crossterm::event::{Event as TermEvent, MouseEvent, MouseEventKind};
+    let wheel = |kind| {
+        TermEvent::Mouse(MouseEvent {
+            kind,
+            column: 0,
+            row: 0,
+            modifiers: KeyModifiers::NONE,
+        })
+    };
+    let (mut app, agent, _receivers, dir) = test_app_with_store();
+    std::fs::write(dir.path().join("a.txt"), "a\n").unwrap();
+    std::fs::write(dir.path().join("b.txt"), "b\n").unwrap();
+    handle_key(&mut app, &agent, key(KeyCode::F(6)));
+    assert!(app.tree_open);
+    super::keys::handle_term_event(&mut app, &agent, wheel(MouseEventKind::ScrollDown));
+    assert_eq!(app.tree_cursor, 1, "wheel must move the tree cursor");
+    assert_eq!(
+        app.scroll_from_bottom, 0,
+        "wheel over the tree must not scroll the transcript"
+    );
+    // Viewer open: the wheel scrolls the file, not the tree behind it.
+    let many: String = (0..60).map(|i| format!("line {i:02}\n")).collect();
+    std::fs::write(dir.path().join("many.txt"), &many).unwrap();
+    app.refresh_tree();
+    let idx = app
+        .tree_rows
+        .iter()
+        .position(|r| r.rel == "many.txt")
+        .expect("many.txt listed");
+    app.tree_cursor = idx;
+    handle_key(&mut app, &agent, key(KeyCode::Enter));
+    assert!(app.viewer_open());
+    let _ = render_rows(&mut app, 100, 30);
+    let before = app.tree_cursor;
+    super::keys::handle_term_event(&mut app, &agent, wheel(MouseEventKind::ScrollDown));
+    let scrolled = app.viewer.as_ref().map(|v| v.scroll).unwrap_or(0);
+    assert!(scrolled > 0, "wheel must scroll the viewer");
+    assert_eq!(
+        app.tree_cursor, before,
+        "wheel over the viewer must not move the tree"
+    );
+    assert_eq!(
+        app.scroll_from_bottom, 0,
+        "wheel over the viewer must not scroll the transcript"
+    );
+}
