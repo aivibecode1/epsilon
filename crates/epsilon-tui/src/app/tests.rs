@@ -813,9 +813,99 @@ async fn oauth_need_code_opens_the_overlay_and_done_closes_it() {
     assert!(app.input.is_empty(), "editor stays out of it");
     assert!(app.auth_key.contains("code=abc"));
     // Completion closes the overlay however the flow ended.
-    app.apply_oauth_event(OauthUiEvent::Done("done".into()));
+    app.apply_oauth_event(OauthUiEvent::Done {
+        provider: "anthropic".into(),
+        text: "done".into(),
+        ok: false,
+    });
     assert!(!app.auth_prompt_open);
     assert!(app.oauth_code_tx.is_none());
+}
+
+/// A completed anthropic OAuth ceremony warns once about subscription billing (P-061).
+///
+/// The worker thread is real-build-only, but its event applies on the UI
+/// thread — this drives the seam, not the spawn.
+#[test]
+fn oauth_completion_warns_once_about_subscription_billing() {
+    let (mut app, _agent, (_f, _n)) = test_app();
+    fn texts(app: &super::App) -> Vec<String> {
+        app.ui
+            .lines()
+            .iter()
+            .map(|l| l.text.clone())
+            .collect::<Vec<_>>()
+    }
+    let done = |ok: bool| OauthUiEvent::Done {
+        provider: "anthropic".into(),
+        text: "done".into(),
+        ok,
+    };
+    // A failed ceremony warns about nothing: no credential changed hands.
+    app.apply_oauth_event(done(false));
+    assert!(
+        !texts(&app).iter().any(|t| t.contains("per token")),
+        "failure warns nothing: {:?}",
+        texts(&app)
+    );
+    // A completed one warns, exactly once per session.
+    app.apply_oauth_event(done(true));
+    assert!(app.anthropic_billing_warned, "the flag records the warning");
+    // The warning reaches pixels at both sizes, through the production draw.
+    // (Normalised: the terminal wraps words and gutters interrupt the line.)
+    let mut flat = |w: u16, h: u16| {
+        render_rows(&mut app, w, h)
+            .join("\n")
+            .replace('\u{2022}', " ")
+            .split_whitespace()
+            .collect::<Vec<_>>()
+            .join(" ")
+    };
+    let flat80 = flat(80, 24);
+    assert!(
+        flat80.contains("per token"),
+        "the billing warning is on screen at 80x24: {flat80}"
+    );
+    let flat100 = flat(100, 30);
+    assert!(
+        flat100.contains("per token"),
+        "the billing warning is on screen at 100x30: {flat100}"
+    );
+    assert_eq!(
+        texts(&app)
+            .iter()
+            .filter(|t| t.contains("per token"))
+            .count(),
+        1,
+        "one warning, not one per event: {:?}",
+        texts(&app)
+    );
+    app.apply_oauth_event(done(true));
+    assert_eq!(
+        texts(&app)
+            .iter()
+            .filter(|t| t.contains("per token"))
+            .count(),
+        1,
+        "the second completion stays silent: {:?}",
+        texts(&app)
+    );
+    // And other providers never warn through this door.
+    app.anthropic_billing_warned = false;
+    app.apply_oauth_event(OauthUiEvent::Done {
+        provider: "openai".into(),
+        text: "done".into(),
+        ok: true,
+    });
+    assert_eq!(
+        texts(&app)
+            .iter()
+            .filter(|t| t.contains("per token"))
+            .count(),
+        1,
+        "openai completion adds no warning: {:?}",
+        texts(&app)
+    );
 }
 
 #[tokio::test]

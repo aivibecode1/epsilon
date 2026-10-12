@@ -189,6 +189,18 @@ pub fn lookup_model(id: &str) -> Option<&'static ModelInfo> {
     by_id().get(id).copied()
 }
 
+/// First bundled row for `provider` (P-063: the model a fresh login selects).
+///
+/// Catalog order, case-insensitive on the provider — the same order the picker
+/// lists, so the selection is never a name the UI would not offer. `None` when
+/// the provider has no bundled rows (customs, unknown ids): the caller, not
+/// this lookup, owns the guidance for that case.
+pub fn first_model_for_provider(provider: &str) -> Option<&'static ModelInfo> {
+    MODELS
+        .iter()
+        .find(|m| m.provider.eq_ignore_ascii_case(provider))
+}
+
 /// How `resolve_model` found its answer (for diagnostics and picker display).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ModelMatchKind {
@@ -796,6 +808,31 @@ mod tests {
         }
         // And a miss is a miss, rather than a panic or a default row.
         assert!(lookup_model("definitely-not-a-model-id").is_none());
+    }
+
+    /// P-063: post-login selection resolves to the provider's first bundled
+    /// row, case-insensitively — and to nothing for providers with no rows.
+    #[test]
+    fn first_model_for_provider_is_the_first_bundled_row_or_nothing() {
+        for row in MODELS {
+            let first = first_model_for_provider(row.provider).expect("its own provider resolves");
+            assert_eq!(
+                first.id,
+                MODELS
+                    .iter()
+                    .find(|m| m.provider == row.provider)
+                    .unwrap()
+                    .id,
+                "provider {:?} must resolve to its first bundled row",
+                row.provider
+            );
+        }
+        assert!(first_model_for_provider("definitely-not-a-provider").is_none());
+        let upper = MODELS[0].provider.to_uppercase();
+        assert!(
+            first_model_for_provider(&upper).is_some(),
+            "resolution is case-insensitive like the rest of the ladder"
+        );
     }
 
     /// The rows themselves must be unique for the index to be the whole story.

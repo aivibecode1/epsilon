@@ -521,6 +521,47 @@ pub fn provider_env_key(provider: &str, customs: &[CustomProvider]) -> Option<St
         })
 }
 
+/// What a successful `/login` save implies for the running model (P-063).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum PostLoginAction {
+    /// The current model already runs on a credential — save notice only.
+    KeepCurrent,
+    /// The current model cannot answer — switch to this bundled model id.
+    Select(String),
+    /// The provider has no bundled rows — save notice plus `/model` guidance.
+    NoBundledModels,
+}
+
+/// Pi selects the provider's default model after login, but only from an
+/// unknown model (`completeProviderAuthentication`'s `isUnknownModel` gate).
+/// The equivalent here: a `faux` fallback id or a model with no credential
+/// cannot answer, so the just-saved provider's first bundled row takes over
+/// (`catalog::first_model_for_provider` — picker order, never a guess); a
+/// running model is never yanked out from under its session.
+pub fn post_login_action(current_model_id: &str, provider: &str) -> PostLoginAction {
+    if !current_model_id.starts_with("faux") && catalog::credentials_ready(current_model_id) {
+        return PostLoginAction::KeepCurrent;
+    }
+    match catalog::first_model_for_provider(provider) {
+        Some(info) => PostLoginAction::Select(info.id.to_string()),
+        None => PostLoginAction::NoBundledModels,
+    }
+}
+
+/// Whether a just-saved key needs the subscription-billing warning (P-061:
+/// pi's `isAnthropicSubscriptionAuthKey` — an `sk-ant-oat` infix — scoped to
+/// the provider it prices).
+pub fn needs_subscription_warning(provider: &str, key: &str) -> bool {
+    provider.eq_ignore_ascii_case("anthropic")
+        && epsilon_llm::providers::anthropic::is_oauth_token(key)
+}
+
+/// P-061: the once-per-session subscription-billing warning. Pi's words minus
+/// the settings opt-out this tree has no toggle for — stated, not silent.
+pub fn subscription_billing_warning() -> &'static str {
+    "Anthropic subscription auth is active \u{2014} harness use draws from extra usage and is billed per token, not your Claude plan limits"
+}
+
 /// Stage-2 rows: the models of ONE provider, reusing [`build_rows`] ordering rules
 /// via fuzzy filter across id + label. Live-listed ids for this provider that are
 /// missing from the bundled catalog are merged on top (M20 auto-fetch).
@@ -1071,6 +1112,62 @@ mod tests {
                 now
             )
             .is_empty()
+        );
+    }
+
+    #[test]
+    fn post_login_selects_a_runnable_model_only_from_an_unrunnable_one() {
+        // P-063: pi's `isUnknownModel` gate — a running model is never yanked.
+        assert_eq!(
+            post_login_action("llama3.1:8b", "anthropic"),
+            PostLoginAction::KeepCurrent,
+            "a credential-free local model already runs: no switch"
+        );
+        // A faux fallback id cannot answer: the provider's first bundled row
+        // takes over, named explicitly so `/model` can move it.
+        let first = epsilon_llm::catalog::first_model_for_provider("anthropic")
+            .expect("bundled anthropic rows exist")
+            .id
+            .to_string();
+        assert_eq!(
+            post_login_action("faux-1", "anthropic"),
+            PostLoginAction::Select(first),
+            "faux after login resolves to the provider's first bundled row"
+        );
+        // Case-insensitive provider, like the rest of the ladder.
+        assert!(
+            matches!(
+                post_login_action("faux-1", "Anthropic"),
+                PostLoginAction::Select(_)
+            ),
+            "provider matching ignores case"
+        );
+        // No bundled rows (customs, unknown ids): guidance, not a guess.
+        assert_eq!(
+            post_login_action("faux-1", "definitely-not-a-provider"),
+            PostLoginAction::NoBundledModels,
+            "nothing bundled means no selection to make"
+        );
+    }
+
+    #[test]
+    fn subscription_warning_fires_only_for_anthropic_oauth_shaped_keys() {
+        // P-061: pi's `isAnthropicSubscriptionAuthKey` predicate, same shape.
+        assert!(
+            needs_subscription_warning("anthropic", "sk-ant-oat-abc123"),
+            "an OAuth-shaped anthropic key warns"
+        );
+        assert!(
+            !needs_subscription_warning("anthropic", "sk-ant-abc123"),
+            "a plain anthropic API key is not subscription auth"
+        );
+        assert!(
+            !needs_subscription_warning("openai", "sk-ant-oat-abc123"),
+            "the predicate is provider-scoped"
+        );
+        assert!(
+            subscription_billing_warning().contains("per token"),
+            "the warning names the billing surprise, not just the state"
         );
     }
 

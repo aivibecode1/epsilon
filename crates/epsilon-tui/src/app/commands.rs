@@ -726,6 +726,32 @@ impl App {
                             path.display()
                         ));
                         self.invalidate_picker();
+                        // P-061: a subscription-shaped anthropic key bills per
+                        // token, not against plan limits — warn once per
+                        // session, at the save that activates it.
+                        if !self.anthropic_billing_warned
+                            && crate::picker::needs_subscription_warning(&provider, key.trim())
+                        {
+                            self.anthropic_billing_warned = true;
+                            self.ui.push_notice(
+                                crate::picker::subscription_billing_warning().to_string(),
+                            );
+                        }
+                        // P-063: pi selects the provider's default model after
+                        // login, gated on the previous model being unknown. The
+                        // helper owns that gate; the arm only runs what it
+                        // returns, so a running model is never yanked.
+                        match crate::picker::post_login_action(&self.model_id, &provider) {
+                            crate::picker::PostLoginAction::KeepCurrent => {}
+                            crate::picker::PostLoginAction::Select(id) => {
+                                self.apply_model(agent, id);
+                            }
+                            crate::picker::PostLoginAction::NoBundledModels => {
+                                self.ui.push_notice(format!(
+                                    "no models listed for '{provider}' \u{2014} /model to pick one"
+                                ));
+                            }
+                        }
                     }
                     Err(e) => self
                         .ui

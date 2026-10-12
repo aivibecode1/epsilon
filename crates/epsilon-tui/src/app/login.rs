@@ -30,7 +30,13 @@ pub(super) enum OauthUiEvent {
         provider: String,
     },
     /// The ceremony finished (success or failure) — close the overlay.
-    Done(String),
+    /// Carries its provider so completion can warn (P-061) without parsing
+    /// its own notice text.
+    Done {
+        provider: String,
+        text: String,
+        ok: bool,
+    },
 }
 
 /// M52: the login thread's view of the terminal. Notices and events travel

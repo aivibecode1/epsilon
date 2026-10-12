@@ -479,6 +479,10 @@ pub(crate) struct App {
     /// discovery is one Enter, not memorizing ids. Filtered by `input`.
     auth_pick_open: bool,
     auth_pick_index: usize,
+    /// P-061: the subscription-billing warning has fired this session. Pi
+    /// warns once ever with a settings toggle; this tree has no such toggle,
+    /// so once per session is the honest scope — stated in the matrix row.
+    anthropic_billing_warned: bool,
     /// Workspace root for the footer (pi footer parity).
     workspace_root: std::path::PathBuf,
     /// Whether the CLI decided this process runs offline (M233).
@@ -1122,7 +1126,7 @@ impl App {
                     "finish the login in your browser — if it lands on an unreachable page, paste the redirect URL below (Esc cancels)",
                 );
             }
-            OauthUiEvent::Done(text) => {
+            OauthUiEvent::Done { provider, text, ok } => {
                 self.oauth_code_tx = None;
                 if self.auth_prompt_open {
                     self.auth_prompt_open = false;
@@ -1132,6 +1136,19 @@ impl App {
                 }
                 self.ui.push_notice(text);
                 self.invalidate_picker();
+                // P-061, ceremony half: a completed OAuth login IS
+                // subscription-shaped auth for anthropic. Warn once per
+                // session; failures warn about nothing because no credential
+                // changed hands. Undriven (real-build worker thread) — the
+                // pasted-key half carries the test, this half the review.
+                if ok
+                    && !self.anthropic_billing_warned
+                    && provider.eq_ignore_ascii_case("anthropic")
+                {
+                    self.anthropic_billing_warned = true;
+                    self.ui
+                        .push_notice(crate::picker::subscription_billing_warning().to_string());
+                }
             }
         }
     }
@@ -1168,12 +1185,14 @@ impl App {
             };
             // Listener + paste race: the browser callback usually wins on
             // the same machine, and a remote browser still has the overlay.
-            let text = match login(
+            let outcome = login(
                 &flow_provider,
                 &epsilon_core::config::oauth_config(&flow_provider),
                 &mut ui,
                 true,
-            ) {
+            );
+            let ok = outcome.is_ok();
+            let text = match outcome {
                 Ok(LoginSaved::Oauth {
                     provider,
                     path,
@@ -1188,7 +1207,11 @@ impl App {
                 ),
                 Err(e) => format!("✗ {flow_provider} OAuth login failed: {e}"),
             };
-            let _ = events.send(OauthUiEvent::Done(text));
+            let _ = events.send(OauthUiEvent::Done {
+                provider: flow_provider.clone(),
+                text,
+                ok,
+            });
         });
         self.ui.push_notice(format!(
             "starting {provider} OAuth login — a browser window will open; Esc cancels"

@@ -181,6 +181,7 @@ impl App {
             auth_key_cursor: 0,
             auth_pick_open: false,
             auth_pick_index: 0,
+            anthropic_billing_warned: false,
         };
         // A keybindings file that could not be used names itself at startup
         // (S-126, terminal half): every rebind in it is silently not applied

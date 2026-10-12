@@ -77,7 +77,7 @@ this document**, tallied from its own tables — not a projection.
 | 4. Slash commands and autocomplete | 13 | 2 | 5 | 0 | 6 |
 | 5. Transcript and streaming | 35 | 12 | 5 | 2 | 16 |
 | 6. Model picker and thinking | 9 | 0 | 5 | 0 | 4 |
-| 7. Auth, login and permissions | 8 | 0 | 4 | 2 | 2 |
+| 7. Auth, login and permissions | 8 | 2 | 4 | 0 | 2 |
 | 8. Sessions | 17 | 7 | 6 | 1 | 3 |
 | 9. Themes | 18 | 0 | 6 | 2 | 10 |
 | 10. Settings | 22 | 1 | 10 | 2 | 9 |
@@ -89,14 +89,14 @@ this document**, tallied from its own tables — not a projection.
 | 16. Status indicators | 13 | 2 | 5 | 0 | 6 |
 | 17. Footer | 12 | 4 | 4 | 0 | 4 |
 | 18. Selector and overlay components | 79 | 23 | 19 | 10 | 27 |
-| **Total** | **339** | **82** | **111** | **21** | **125** |
+| **Total** | **339** | **84** | **111** | **19** | **125** |
 
 A further **17 rows are not in the counts above**: the 10 `Y-###` rows Pi ships outside its interactive mode (out of
 scope by design) and the 7 `AA-###` rows recording what was never inventoried. Both are listed in full near the end
 of this document, because a row that is silently dropped is how a rule goes unowned.
 
-The shape of that table is the honest shape of a port from a 356-row inventory to a 315-row one: **21 rows have no
-counterpart established on our side, 111 are half-built, 82 are exercised, and 125 are decisions.** The 21 are not
+The shape of that table is the honest shape of a port from a 356-row inventory to a 315-row one: **19 rows have no
+counterpart established on our side, 111 are half-built, 84 are exercised, and 125 are decisions.** The 19 are not
 69/339 failures; most of them sit in Pi's extension, settings-overlay, mermaid, image and tree-navigation surface,
 much of which Epsilon deliberately does not have. Read [Open rows](#open-rows) before reading the table.
 
@@ -368,9 +368,9 @@ against Pi, which stores credentials by its own design.
 
 | id | behaviour | reference | status | ours | verified |
 |---|---|---|---|---|---|
-| P-061 | A subscription Anthropic credential warns once that third-party harness use is billed per token | `packages/coding-agent/src/modes/interactive/interactive-mode.ts:317-322`, `:5184-5212` | missing | none — no one-time subscription billing warning exists; spend is visible continuously instead (per-run cost in the header via `Metrics::cost_micro_usd`), which answers a different question than a warned-once notice | — |
+| P-061 | A subscription Anthropic credential warns once that third-party harness use is billed per token | `packages/coding-agent/src/modes/interactive/interactive-mode.ts:317-322`, `:5184-5212` | done | Pasted subscription-shaped keys warn at the save and completed OAuth ceremonies warn at the close, both once per session (`crates/epsilon-tui/src/picker.rs:554`, `:561`; `crates/epsilon-tui/src/app.rs:1129`) — pi's predicate (`sk-ant-oat` infix) and pi's words minus the settings opt-out this tree has no toggle for. Once-per-session, not once-ever, is the stated scope | `subscription_warning_fires_only_for_anthropic_oauth_shaped_keys` (predicate) + `oauth_completion_warns_once_about_subscription_billing` (frames at 80x24 and 100x30; warn-block removal control fails it) |
 | P-062 | `/login` walks auth type → provider → dialog, and cancelling a dialog reopens the selector it came from | `packages/coding-agent/src/modes/interactive/interactive-mode.ts:5809-5883`, `:5885-5928`, `:5798` | partial | `crates/epsilon-tui/src/app/commands.rs:622` — `/login <provider>` opens one masked modal directly; there is no auth-type selector, no provider list and no `onBack` chain | `oauth_need_code_opens_the_overlay_and_done_closes_it` — and no test renders the panel |
-| P-063 | After login Pi selects the provider's default model, or says which of four specific failures happened | `packages/coding-agent/src/modes/interactive/interactive-mode.ts:5990-6085` | missing | none — `/login` saves the key and reports saved/not-saved (`crates/epsilon-tui/src/app/commands.rs:724`); no default model is selected afterwards and failures are not taxonomised | — |
+| P-063 | After login Pi selects the provider's default model, or says which of four specific failures happened | `packages/coding-agent/src/modes/interactive/interactive-mode.ts:5990-6085` | done | A saved key selects a model only from an unrunnable one — faux fallback or no credential, pi's `isUnknownModel` gate (`crates/epsilon-tui/src/picker.rs:541`) — resolving to the provider's first bundled row in picker order (`crates/epsilon-llm/src/catalog.rs:198`): there is no per-provider default in-tree to select, and the notice names the pick plus `/model` to move it. No bundled rows names `/model` instead; a running model keeps running (`crates/epsilon-tui/src/app/commands.rs:745`). The save arm writes the real store, so the wiring is reviewed, not driven (favorites-toggles precedent) | `first_model_for_provider_is_the_first_bundled_row_or_nothing` + `post_login_selects_a_runnable_model_only_from_an_unrunnable_one` (gate-removal control fails it) |
 | P-064 | The login dialog renders four event kinds: auth URL, device code, info message, progress | `packages/coding-agent/src/modes/interactive/interactive-mode.ts:6227-6238`, `:6203-6225` | partial | `crates/epsilon-tui/src/app/panels.rs:1178` — the masked free-text prompt is one of the kinds; no URL, device-code or progress rendering | `oauth_need_code_opens_the_overlay_and_done_closes_it`; E-059 records that nothing renders this panel |
 | P-065 | The `amazon-bedrock` API-key dialog adds a hint about AWS profiles, IAM keys and role credentials | `packages/coding-agent/src/modes/interactive/interactive-mode.ts:6129-6135` | partial | Bedrock resolves through the ambient chain, not a bearer key: a stored `USE_AMBIENT_AWS_CHAIN` marker selects SigV4 via env/files the SDK reads itself (`crates/epsilon-llm/src/catalog.rs:605`), and the marker must never resolve as a key — but no dialog states the profiles/IAM/roles hint in words | `bedrock_ambient_chain_marker_never_resolves_as_a_key` (both marker guards removed → fails) |
 | P-066 | Logging in to Radius offers to configure its MCP server in the global `mcp.json` and reloads | `packages/coding-agent/src/modes/interactive/interactive-mode.ts:6296-6343` | deliberately different | No Radius provider exists anywhere in `crates/` — no login flow to extend, no MCP server of its to offer, nothing to reload | — |
@@ -768,7 +768,7 @@ row says so — that is a gap in the inventory, and closing it is cheap.
 | 4. Slash commands and autocomplete | 13 | 2 | 5 | 0 | 6 |
 | 5. Transcript and streaming | 35 | 12 | 5 | 2 | 16 |
 | 6. Model picker and thinking | 9 | 0 | 5 | 0 | 4 |
-| 7. Auth, login and permissions | 8 | 0 | 4 | 2 | 2 |
+| 7. Auth, login and permissions | 8 | 2 | 4 | 0 | 2 |
 | 8. Sessions | 17 | 7 | 6 | 1 | 3 |
 | 9. Themes | 18 | 0 | 6 | 2 | 10 |
 | 10. Settings | 22 | 1 | 10 | 2 | 9 |
@@ -780,9 +780,9 @@ row says so — that is a gap in the inventory, and closing it is cheap.
 | 16. Status indicators | 13 | 2 | 5 | 0 | 6 |
 | 17. Footer | 12 | 4 | 4 | 0 | 4 |
 | 18. Selector and overlay components | 79 | 23 | 19 | 10 | 27 |
-| **Total** | **339** | **82** | **111** | **21** | **125** |
+| **Total** | **339** | **84** | **111** | **19** | **125** |
 
-### The `missing` rows — 21
+### The `missing` rows — 19
 
 Every row below has **no** `E-` row establishing the behaviour. Nothing here was found by browsing `crates/`, and
 nothing here is a claim that the behaviour cannot be built.
@@ -791,7 +791,6 @@ nothing here is a claim that the behaviour cannot be built.
 |---|---|
 | Startup, header and resources (1) | P-004 |
 | Transcript and streaming (2) | P-053, P-056 |
-| Auth, login and permissions (2) | P-061, P-063 |
 | Sessions (1) | P-081 |
 | Themes (2) | P-096, P-098 |
 | Settings (2) | P-113, P-114 |

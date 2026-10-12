@@ -690,6 +690,21 @@ the run. Matrix at 81/111/24/123. (Previous: `gate-goal3-phase6-20261012`, 2,011
 > warn about a configuration nothing reads. Revisit if a default chord ever needs
 > CSI-u/kitty sequences. Counts now 81/111/22/125.
 >
+> **P-061/P-063 adapted (this session): login completion — usable model +
+> honest billing.** A saved key selects the provider's first bundled row in
+> picker order, but only from an unrunnable model (faux fallback or no
+> credential — pi's `isUnknownModel` gate); no per-provider default exists
+> in-tree to select, and the notice names the pick plus `/model` to move it.
+> No bundled rows names `/model` instead; a running model keeps running.
+> Subscription-shaped anthropic keys (`sk-ant-oat`) warn at the save and
+> completed OAuth ceremonies warn at the close, once per session (pi's words
+> minus the settings opt-out this tree has no toggle for). Four tests
+> (catalog lookup, post-login gate with removal control, predicate, ceremony
+> event with 80x24 + 100x30 frames and warn-block removal control); the save
+> arm writes the real store so its wiring is reviewed, not driven.
+> epsilon-llm + epsilon-tui suites green, fmt + clippy clean.
+> Counts now 84/111/19/125.
+>
 > **P-230 adapted (this session): Tab toggles workspace/all session scopes.** Bare
 > Tab flips `SessionScope` and rescans under the same filter (highlight restarts
 > at the top — the row it pointed at may not exist in the other scope); the All
