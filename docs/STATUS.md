@@ -660,6 +660,10 @@ the run. Up from 1,997: the checkpoint round-trip and restore-undo tests. (Previ
 > test through the real path (fold-removal control fails it). Counts now
 > 81/111/26/121.
 >
+> **P-308 judged (this session): empty opens, never cancels.** Auto-dismissing the
+> screen that teaches would hide the message that matters (P-243). Counts now
+> 81/111/25/122.
+>
 > **Goal 3, Phase 1 (landed): AGENTS.md v4 draft for owner application.** Every v3
 > clause audited against the tree (13 crates, uniform 1.88, TERMINAL+WINDOW tables,
 > 15 legs, SUPPORTED only in a historical comment); the complete v4 text sits in
