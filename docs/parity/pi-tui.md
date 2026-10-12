@@ -66,7 +66,7 @@ back; it is a reading of the test's source, not a report of a run.
 
 **339 rows** are paired here: Pi's 323 `P-###` behaviours, the 4 `L-###` rows of its inherited `tui.*` keybinding
 table, and the 12 `T-###` rows of its text-measurement core. Every one carries a reference citation; 200 of them
-carry an `ours` citation and 28 do not, and those 28 say so. The counts below are the rows **actually written in
+carry an `ours` citation and 27 do not, and those 27 say so. The counts below are the rows **actually written in
 this document**, tallied from its own tables — not a projection.
 
 | area | rows | done | partial | missing | deliberately different |
@@ -88,15 +88,15 @@ this document**, tallied from its own tables — not a projection.
 | 15. Markdown, mermaid and truncation | 22 | 6 | 7 | 1 | 8 |
 | 16. Status indicators | 13 | 2 | 5 | 0 | 6 |
 | 17. Footer | 12 | 4 | 4 | 0 | 4 |
-| 18. Selector and overlay components | 79 | 22 | 19 | 15 | 23 |
-| **Total** | **339** | **81** | **111** | **27** | **120** |
+| 18. Selector and overlay components | 79 | 22 | 19 | 14 | 24 |
+| **Total** | **339** | **81** | **111** | **26** | **121** |
 
 A further **17 rows are not in the counts above**: the 10 `Y-###` rows Pi ships outside its interactive mode (out of
 scope by design) and the 7 `AA-###` rows recording what was never inventoried. Both are listed in full near the end
 of this document, because a row that is silently dropped is how a rule goes unowned.
 
-The shape of that table is the honest shape of a port from a 356-row inventory to a 312-row one: **27 rows have no
-counterpart established on our side, 111 are half-built, 81 are exercised, and 120 are decisions.** The 27 are not
+The shape of that table is the honest shape of a port from a 356-row inventory to a 313-row one: **26 rows have no
+counterpart established on our side, 111 are half-built, 81 are exercised, and 121 are decisions.** The 26 are not
 69/339 failures; most of them sit in Pi's extension, settings-overlay, mermaid, image and tree-navigation surface,
 much of which Epsilon deliberately does not have. Read [Open rows](#open-rows) before reading the table.
 
@@ -708,7 +708,7 @@ the per-selector ones.
 | P-297 | `Shift+T` toggles label timestamps in three date formats keyed on recency | `packages/coding-agent/src/modes/interactive/components/tree-selector.ts:1097`, `:862`, `:641` | deliberately different | Labels carry no timestamps (`Label` entries are id+text, `set_label`), so three recency formats would format a field that does not exist | — |
 | P-298 | Tree search drops characters below 0x20, `0x7f` and `0x80-0x9f` as they are typed | `packages/coding-agent/src/modes/interactive/components/tree-selector.ts:1099`, `:1086` | done | `crates/epsilon-tui/src/state.rs:1403` — Epsilon strips at the state boundary with `display_safe`, which also removes bidi overrides, and strips again before a panel row is drawn (`crates/epsilon-tui/src/app/golden.rs:3294`); that is a stronger guarantee than a per-component filter | `a_panel_row_is_stripped_before_it_is_drawn` (frame), `a_bidi_override_in_streaming_model_output_never_reaches_the_frame` (frame) |
 | P-299 | Esc clears the search query and all folded branches first; a second Esc exits | `packages/coding-agent/src/modes/interactive/components/tree-selector.ts:1039-1043` | done | `crates/epsilon-tui/src/app/keys.rs:787-797` (outer Esc: query and folds clear first, the emptied Esc closes; the search-mode arm above already cleared the query this way) — the tree's Esc is two-stage now, matching the search field's own rule and the model picker's back-a-stage habit | `esc_in_the_tree_unfolds_first_and_only_then_closes` (unfold-plus-clear stays open, second Esc closes), `two_stage_picker_descends_and_applies_model` |
-| P-300 | `Ctrl+Left` folds a foldable branch and otherwise jumps to the previous segment start; `Ctrl+Right` unfolds or jumps forward | `packages/coding-agent/src/modes/interactive/components/tree-selector.ts:1010`, `:1018`, `:1117`, `:1139` | missing | none | — |
+| P-300 | `Ctrl+Left` folds a foldable branch and otherwise jumps to the previous segment start; `Ctrl+Right` unfolds or jumps forward | `packages/coding-agent/src/modes/interactive/components/tree-selector.ts:1010`, `:1018`, `:1117`, `:1139` | deliberately different | Adapted to the picker's own vocabulary: `Ctrl+Left` folds-or-up and `Ctrl+Right` unfolds-or-down through the real key path (`crates/epsilon-tui/src/app/keys.rs` timeline arms) — segment starts do not exist here, so cursor moves carry that half | `ctrl_arrows_fold_and_unfold_in_the_timeline` (fold-removal control fails it) |
 | P-301 | A folded branch renders `⊞` and an expanded one `⊟`; the glyph, not the count, is the only collapsed indicator | `packages/coding-agent/src/modes/interactive/components/tree-selector.ts:726`, `:738`, `:727` | done | `crates/epsilon-tui/src/app/panels.rs:788-794` (two repertoire glyphs — closed names its open chord, open names its close chord) — adapted, not adopted: pi's `⊞`/`⊟` literals render as boxes on the ASCII repertoire (A43), so the closed/open glyphs come from the repertoire table instead, which is the same fact in drawable ink | `the_tree_panel_draws_its_filter_search_field_and_fold_glyphs` (frame; both glyphs pinned per-row, repertoire-read not literal) |
 | P-302 | The tree has a horizontal viewport that shifts row bodies left only when the selected anchor nears the right edge, never clipping the two-column gutter | `packages/coding-agent/src/modes/interactive/components/tree-selector.ts:62`, `:75`, `:85`, `:71-79` | deliberately different | `crates/epsilon-tui/src/ui/transcript.rs:179` — wrapping is the terminal-wide policy: one mechanism everywhere, not a tree-specific viewport. A horizontal viewport hides line starts behind a per-row scroll position, and line starts carry the kind tag, the lane marks and the fold glyphs; wrapping keeps every prefix visible with no state to manage. The gutter-protection intent holds structurally — the prefix is never what gets cut | — |
 | P-303 | The subtree containing the current leaf sorts first at every level | `packages/coding-agent/src/modes/interactive/components/tree-selector.ts:245`, `:274`, `:217-240` | done | `crates/epsilon-tui/src/app/commands.rs:140-230` (stable leaf-first sort at every level in `flatten_tree` via `subtree_contains`; the stored timestamp order never moves), `:1978` (the leaf plumbed from the store under the same lock discipline as the forest) — the live context meets the eye before the abandoned lanes, with off-lane marks unchanged | `the_tree_sorts_the_leaf_branch_first` (real branched store, neuter-proven), `the_timeline_frame_drops_noise_and_leads_with_the_leaf_branch` (production `/timeline` draw at 80×24 and 100×30), `the_tree_picker_shows_an_abandoned_branch` (order-independent asserts still green) |
@@ -779,10 +779,10 @@ row says so — that is a gap in the inventory, and closing it is cheap.
 | 15. Markdown, mermaid and truncation | 22 | 6 | 7 | 1 | 8 |
 | 16. Status indicators | 13 | 2 | 5 | 0 | 6 |
 | 17. Footer | 12 | 4 | 4 | 0 | 4 |
-| 18. Selector and overlay components | 79 | 22 | 19 | 15 | 23 |
-| **Total** | **339** | **81** | **111** | **27** | **120** |
+| 18. Selector and overlay components | 79 | 22 | 19 | 14 | 24 |
+| **Total** | **339** | **81** | **111** | **26** | **121** |
 
-### The `missing` rows — 27
+### The `missing` rows — 26
 
 Every row below has **no** `E-` row establishing the behaviour. Nothing here was found by browsing `crates/`, and
 nothing here is a claim that the behaviour cannot be built.
@@ -796,7 +796,7 @@ nothing here is a claim that the behaviour cannot be built.
 | Themes (2) | P-096, P-098 |
 | Settings (2) | P-113, P-114 |
 | Markdown, mermaid and truncation (1) | T-010 |
-| Selector and overlay components (15) | P-230, P-239, P-251, P-300, P-304, P-306, P-307, P-308, P-311, P-314, P-316, P-317, P-318, P-319, P-323 |
+| Selector and overlay components (14) | P-230, P-239, P-251, P-304, P-306, P-307, P-308, P-311, P-314, P-316, P-317, P-318, P-319, P-323 |
 
 ### The `partial` rows — 111
 

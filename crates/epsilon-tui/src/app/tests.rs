@@ -8969,10 +8969,53 @@ async fn tree_sidebar_docks_right_with_a_separating_gap() {
 async fn user_markdown_stays_literal_while_assistant_renders() {
     let (mut app, _agent, _rx) = test_app();
     app.ui.push_local_input(r"1. \*x\*");
-    let frame = render_rows(&mut app, 80, 24).join("
-");
+    let frame = render_rows(&mut app, 80, 24).join(
+        "
+",
+    );
     assert!(
         frame.contains(r"1. \*x\*"),
         "user markdown must stay literal: {frame}"
     );
+}
+
+/// Ctrl+Left folds (or steps up) and Ctrl+Right unfolds (or steps down) in the
+/// timeline picker (P-300): the fold chord works through the real key path.
+#[tokio::test]
+async fn ctrl_arrows_fold_and_unfold_in_the_timeline() {
+    use crate::app::TimelineRow;
+    let (mut app, agent, _rx) = test_app();
+    let parent = TimelineRow {
+        seq: 0,
+        id: "a".into(),
+        kind: "user".into(),
+        snippet: "the parent".into(),
+        depth: 0,
+        on_active: true,
+        parent: None,
+        label: None,
+    };
+    let child = TimelineRow {
+        seq: 1,
+        id: "b".into(),
+        kind: "user".into(),
+        snippet: "the child".into(),
+        depth: 1,
+        on_active: false,
+        parent: Some("a".into()),
+        label: None,
+    };
+    app.timeline_all = vec![parent.clone(), child];
+    app.timeline_entries = vec![parent];
+    app.timeline_index = 0;
+    app.timeline_open = true;
+    let ctrl_left = key_mod(KeyModifiers::CONTROL, KeyCode::Left);
+    let ctrl_right = key_mod(KeyModifiers::CONTROL, KeyCode::Right);
+    handle_key(&mut app, &agent, ctrl_left);
+    assert!(
+        app.folded.contains("a"),
+        "ctrl+Left on a foldable row must fold it"
+    );
+    handle_key(&mut app, &agent, ctrl_right);
+    assert!(!app.folded.contains("a"), "ctrl+Right must unfold it again");
 }

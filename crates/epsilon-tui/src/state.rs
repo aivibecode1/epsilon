@@ -3828,7 +3828,12 @@ mod tests {
         let kinds: Vec<LineKind> = st.lines().iter().map(|l| l.kind).collect();
         assert_eq!(
             kinds,
-            vec![LineKind::User, LineKind::User, LineKind::Blank, LineKind::Assistant],
+            vec![
+                LineKind::User,
+                LineKind::User,
+                LineKind::Blank,
+                LineKind::Assistant
+            ],
             "blank exactly at the kind change: {kinds:?}"
         );
     }
