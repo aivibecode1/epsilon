@@ -66,7 +66,7 @@ back; it is a reading of the test's source, not a report of a run.
 
 **339 rows** are paired here: Pi's 323 `P-###` behaviours, the 4 `L-###` rows of its inherited `tui.*` keybinding
 table, and the 12 `T-###` rows of its text-measurement core. Every one carries a reference citation; 200 of them
-carry an `ours` citation and 84 do not, and those 84 say so. The counts below are the rows **actually written in
+carry an `ours` citation and 83 do not, and those 83 say so. The counts below are the rows **actually written in
 this document**, tallied from its own tables — not a projection.
 
 | area | rows | done | partial | missing | deliberately different |
@@ -88,15 +88,15 @@ this document**, tallied from its own tables — not a projection.
 | 15. Markdown, mermaid and truncation | 22 | 6 | 7 | 3 | 6 |
 | 16. Status indicators | 13 | 2 | 5 | 1 | 5 |
 | 17. Footer | 12 | 4 | 4 | 1 | 3 |
-| 18. Selector and overlay components | 79 | 21 | 17 | 29 | 12 |
-| **Total** | **339** | **77** | **105** | **83** | **74** |
+| 18. Selector and overlay components | 79 | 21 | 17 | 28 | 13 |
+| **Total** | **339** | **77** | **105** | **82** | **75** |
 
 A further **17 rows are not in the counts above**: the 10 `Y-###` rows Pi ships outside its interactive mode (out of
 scope by design) and the 7 `AA-###` rows recording what was never inventoried. Both are listed in full near the end
 of this document, because a row that is silently dropped is how a rule goes unowned.
 
-The shape of that table is the honest shape of a port from a 356-row inventory to a 256-row one: **83 rows have no
-counterpart established on our side, 105 are half-built, 77 are exercised, and 74 are decisions.** The 83 are not
+The shape of that table is the honest shape of a port from a 356-row inventory to a 257-row one: **82 rows have no
+counterpart established on our side, 105 are half-built, 77 are exercised, and 75 are decisions.** The 82 are not
 69/339 failures; most of them sit in Pi's extension, settings-overlay, mermaid, image and tree-navigation surface,
 much of which Epsilon deliberately does not have. Read [Open rows](#open-rows) before reading the table.
 
@@ -659,7 +659,7 @@ the per-selector ones.
 | P-229 | Overlay hints are generated from the current keybindings and follow a rebind | `packages/coding-agent/src/modes/interactive/components/keybinding-hints.ts:34` | done | `crates/epsilon-tui/src/ui/footer.rs:294`; the search panel ships its own key row inside the panel (`crates/epsilon-tui/src/app.rs:1918`) | `an_open_search_reports_itself_and_the_matches_it_found` (frame), `idle_hints_name_only_keys_that_do_something` (frame) |
 | P-230 | Tab toggles the session picker between current-folder and all sessions | `packages/coding-agent/src/modes/interactive/components/session-selector.ts:144`, `:1031` | missing | none — Epsilon's browser covers this workspace only (`crates/epsilon-tui/src/picker.rs:918`) | — |
 | P-231 | `Ctrl+S` cycles Threaded → Recent → Fuzzy, with the header label matching | `packages/coding-agent/src/modes/interactive/components/session-selector.ts:566`, `:1009`, `:134`, `:714` | partial | `crates/epsilon-tui/src/picker.rs:918` — newest-first is fixed; there is no sort cycle | `session_rows_list_newest_first_and_mark_the_current_file` |
-| P-232 | `Ctrl+N` filters the list to named sessions only | `packages/coding-agent/src/modes/interactive/components/session-selector.ts:571`, `:1017` | missing | none | — |
+| P-232 | `Ctrl+N` filters the list to named sessions only | `packages/coding-agent/src/modes/interactive/components/session-selector.ts:571`, `:1017` | deliberately different | The chord is taken — `ctrl+n` starts a new session (`app.session.new`, `crates/epsilon-contracts/src/keybind.rs:388`) — and the browser's free-text filter (`sessions — filter`, `crates/epsilon-tui/src/app/panels.rs:163`) already narrows to a name when one is typed; a second named-only toggle would be a mode over a filter | — |
 | P-233 | `Ctrl+P` toggles a column showing each session's file path | `packages/coding-agent/src/modes/interactive/components/session-selector.ts:577`, `:479` | partial | `crates/epsilon-tui/src/app/panels.rs:209` — the file name is in every row's meta string and is always present; there is no toggle | `session_rows_list_newest_first_and_mark_the_current_file`, `sessions_command_browses_and_enter_switches_the_session` |
 | P-234 | Deleting a session takes over the overlay and swallows every other key while confirming | `packages/coding-agent/src/modes/interactive/components/session-selector.ts:158`, `:402`, `:556` | done | Adapted — stricter: `ctrl+d` arms `confirming_delete` inline, Enter deletes, and *any* other key cancels and closes (`crates/epsilon-tui/src/app/keys.rs:1357`); the active session is refused by name, shown in the panel and as a notice | `ctrl_d_in_the_browser_asks_before_it_deletes`, `confirming_the_delete_removes_the_file_and_says_which_happened`, `escape_cancels_the_delete_and_keeps_the_file`, `deleting_the_active_session_is_refused_by_name` |
 | P-235 | `Ctrl+Backspace` deletes only when the search box is empty, because some terminals cannot distinguish it from Backspace | `packages/coding-agent/src/modes/interactive/components/session-selector.ts:600-601`, `:583` | deliberately different | Every Backspace spelling edits the browser filter and nothing else (`crates/epsilon-tui/src/app/keys.rs:1438`) — since no destructive act hangs on telling the two apart, the compat guard has nothing to protect | — |
@@ -779,10 +779,10 @@ row says so — that is a gap in the inventory, and closing it is cheap.
 | 15. Markdown, mermaid and truncation | 22 | 6 | 7 | 3 | 6 |
 | 16. Status indicators | 13 | 2 | 5 | 1 | 5 |
 | 17. Footer | 12 | 4 | 4 | 1 | 3 |
-| 18. Selector and overlay components | 79 | 21 | 17 | 29 | 12 |
-| **Total** | **339** | **77** | **105** | **83** | **74** |
+| 18. Selector and overlay components | 79 | 21 | 17 | 28 | 13 |
+| **Total** | **339** | **77** | **105** | **82** | **75** |
 
-### The `missing` rows — 83
+### The `missing` rows — 82
 
 Every row below has **no** `E-` row establishing the behaviour. Nothing here was found by browsing `crates/`, and
 nothing here is a claim that the behaviour cannot be built.
@@ -801,7 +801,7 @@ nothing here is a claim that the behaviour cannot be built.
 | Markdown, mermaid and truncation (3) | P-167, P-168, T-010 |
 | Status indicators (1) | P-194 |
 | Footer (1) | P-208 |
-| Selector and overlay components (29) | P-230, P-232, P-239, P-242, P-248, P-251, P-255, P-256, P-257, P-258, P-259, P-261, P-281, P-283, P-284, P-285, P-286, P-300, P-304, P-306, P-307, P-308, P-311, P-314, P-316, P-317, P-318, P-319, P-323 |
+| Selector and overlay components (28) | P-230, P-239, P-242, P-248, P-251, P-255, P-256, P-257, P-258, P-259, P-261, P-281, P-283, P-284, P-285, P-286, P-300, P-304, P-306, P-307, P-308, P-311, P-314, P-316, P-317, P-318, P-319, P-323 |
 
 ### The `partial` rows — 105
 

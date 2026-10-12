@@ -522,6 +522,11 @@ the run. Up from 1,997: the checkpoint round-trip and restore-undo tests. (Previ
 > is synchronous so loading counters, stale guards and timed failure displays
 > have no target. Counts now 77/105/83/74.
 >
+> **P-232 judged (this session): named-filter toggle dd.** `ctrl+n` starts sessions
+> and the free-text filter already narrows to a name — a mode over a filter.
+> P-230 (cross-directory scope) and P-239 (threaded tree) stay `missing`.
+> Counts now 77/105/82/75.
+>
 > **P-234 done (this session): delete confirms inline, stricter.** `ctrl+d` arms,
 > Enter deletes, any other key cancels and closes; active session refused by name
 > (three cited tests re-run green). Also corrected a stale ours cell claiming the
