@@ -1524,4 +1524,85 @@ mod tests {
         assert!(suggest_slash("").is_none());
         assert!(suggest_slash("zzzzz-nope-zzz").is_none());
     }
+
+    /// Filtered sessions rank by fuzzy score, not recency — and ties keep
+    /// newest-first (P-242): the sort is stable over the newest-first base, so
+    /// equal scores never reorder what the directory already ordered.
+    #[test]
+    fn session_filter_ranks_by_score_with_newest_first_ties() {
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = tmp.path();
+        let header = |id: &str| {
+            format!(
+                "{}\n",
+                serde_json::json!({
+                    "type": "session", "version": 3, "id": id,
+                    "timestamp": "2026-09-14T10:00:00Z", "cwd": dir.to_string_lossy(),
+                })
+            )
+        };
+        let user = |text: &str| {
+            let entry = epsilon_contracts::session_entry::SessionEntry {
+                id: "e1".to_string(),
+                seq: 1,
+                parent_id: None,
+                timestamp_ms: 0,
+                kind: epsilon_contracts::session_entry::EntryKind::Message {
+                    message: epsilon_contracts::message::Message::User(
+                        epsilon_contracts::message::UserMessage {
+                            id: "m1".to_string(),
+                            timestamp_ms: 0,
+                            content: vec![epsilon_contracts::content::UserContent::Text {
+                                text: text.to_string(),
+                            }],
+                        },
+                    ),
+                    api_request_sha256: None,
+                },
+            };
+            format!("{}\n", serde_json::to_string(&entry).unwrap())
+        };
+        // Better match is OLDER: score must beat recency, or this proves nothing.
+        std::fs::write(
+            dir.join("old.jsonl"),
+            format!("{}{}", header("ses_old"), user("task")),
+        )
+        .unwrap();
+        std::thread::sleep(std::time::Duration::from_millis(30));
+        std::fs::write(
+            dir.join("new.jsonl"),
+            format!("{}{}", header("ses_new"), user("mytask")),
+        )
+        .unwrap();
+        let now = 10_000_000_000u64;
+        let rows = session_rows(dir, dir, "task", None, now);
+        assert_eq!(rows.len(), 2);
+        assert_eq!(
+            rows[0].title,
+            "task",
+            "the better match ranks first even though it is older: {:?}",
+            rows.iter().map(|r| &r.title).collect::<Vec<_>>()
+        );
+        // Equal titles score equally: newest first stands.
+        std::fs::write(
+            dir.join("old.jsonl"),
+            format!("{}{}", header("ses_old"), user("same words")),
+        )
+        .unwrap();
+        // Rewrite order sets the age: the tie half needs old older than new,
+        // and the earlier half already touched old.jsonl last.
+        std::thread::sleep(std::time::Duration::from_millis(30));
+        std::fs::write(
+            dir.join("new.jsonl"),
+            format!("{}{}", header("ses_new"), user("same words")),
+        )
+        .unwrap();
+        let rows = session_rows(dir, dir, "same", None, now);
+        assert_eq!(rows.len(), 2);
+        assert!(
+            rows[0].meta.contains("new.jsonl"),
+            "tied scores keep newest-first: {:?}",
+            rows.iter().map(|r| &r.meta).collect::<Vec<_>>()
+        );
+    }
 }

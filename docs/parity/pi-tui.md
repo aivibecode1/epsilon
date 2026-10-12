@@ -66,7 +66,7 @@ back; it is a reading of the test's source, not a report of a run.
 
 **339 rows** are paired here: Pi's 323 `P-###` behaviours, the 4 `L-###` rows of its inherited `tui.*` keybinding
 table, and the 12 `T-###` rows of its text-measurement core. Every one carries a reference citation; 200 of them
-carry an `ours` citation and 77 do not, and those 77 say so. The counts below are the rows **actually written in
+carry an `ours` citation and 76 do not, and those 76 say so. The counts below are the rows **actually written in
 this document**, tallied from its own tables — not a projection.
 
 | area | rows | done | partial | missing | deliberately different |
@@ -88,15 +88,15 @@ this document**, tallied from its own tables — not a projection.
 | 15. Markdown, mermaid and truncation | 22 | 6 | 7 | 3 | 6 |
 | 16. Status indicators | 13 | 2 | 5 | 1 | 5 |
 | 17. Footer | 12 | 4 | 4 | 1 | 3 |
-| 18. Selector and overlay components | 79 | 21 | 17 | 28 | 13 |
-| **Total** | **339** | **77** | **105** | **76** | **81** |
+| 18. Selector and overlay components | 79 | 22 | 17 | 27 | 13 |
+| **Total** | **339** | **78** | **105** | **75** | **81** |
 
 A further **17 rows are not in the counts above**: the 10 `Y-###` rows Pi ships outside its interactive mode (out of
 scope by design) and the 7 `AA-###` rows recording what was never inventoried. Both are listed in full near the end
 of this document, because a row that is silently dropped is how a rule goes unowned.
 
-The shape of that table is the honest shape of a port from a 356-row inventory to a 263-row one: **76 rows have no
-counterpart established on our side, 105 are half-built, 77 are exercised, and 81 are decisions.** The 76 are not
+The shape of that table is the honest shape of a port from a 356-row inventory to a 264-row one: **75 rows have no
+counterpart established on our side, 105 are half-built, 78 are exercised, and 81 are decisions.** The 75 are not
 69/339 failures; most of them sit in Pi's extension, settings-overlay, mermaid, image and tree-navigation surface,
 much of which Epsilon deliberately does not have. Read [Open rows](#open-rows) before reading the table.
 
@@ -669,7 +669,7 @@ the per-selector ones.
 | P-239 | With Threaded sort and an empty query, sessions render as a parent/child tree | `packages/coding-agent/src/modes/interactive/components/session-selector.ts:530`, `:209`, `:380-392` | missing | none — the browser is a flat list; `/tree` (E-068) shows entries, not sessions | — |
 | P-240 | Typing fuzzy-matches session id, name, **all message text** and cwd | `packages/coding-agent/src/modes/interactive/components/session-selector-search.ts:26`, `packages/coding-agent/src/modes/interactive/components/session-selector.ts:642` | deliberately different | `crates/epsilon-tui/src/search.rs:72` — `/search` covers the **rendered transcript**, not the session log on disk, and that scope is pinned by name | `search_command_now_searches_the_transcript_and_not_the_session_log` |
 | P-241 | A quoted segment is an exact substring match; a `re:` prefix switches to regular expressions | `packages/coding-agent/src/modes/interactive/components/session-selector-search.ts:136`, `:75`, `:46` | partial | `crates/epsilon-tui/src/search.rs:93`, `:102` — plain matching over the rendered transcript, wrapping in both directions; no phrase or regex mode | `an_open_search_reports_itself_and_the_matches_it_found` (frame), `next_and_previous_wrap_rather_than_stop` |
-| P-242 | In Fuzzy sort results are ordered by match score ascending with newest-first tie-breaks; in Recent the query filters but preserves order | `packages/coding-agent/src/modes/interactive/components/session-selector-search.ts:180`, `:171`, `:125` | missing | none | — |
+| P-242 | In Fuzzy sort results are ordered by match score ascending with newest-first tie-breaks; in Recent the query filters but preserves order | `packages/coding-agent/src/modes/interactive/components/session-selector-search.ts:180`, `:171`, `:125` | done | Adapted to one list, no sort modes: unfiltered rows stay newest-first, and a query sorts by fuzzy score ascending over that order — the sort is stable, so ties keep newest-first (`crates/epsilon-tui/src/picker.rs:923`) | `session_filter_ranks_by_score_with_newest_first_ties` (reversed-sort control fails it), `session_rows_list_newest_first_and_mark_the_current_file` |
 | P-243 | An empty list names the exact key to press (`No named sessions in current folder. Press <Ctrl+N>…`) | `packages/coding-agent/src/modes/interactive/components/session-selector.ts:429`, `:443`, `:431` | done | `crates/epsilon-tui/src/app/panels.rs` — empty dir opens (not refuses) on `No sessions in this workspace yet — Ctrl+N starts one`; `app.session.new` (`ctrl+n`, both front ends' gesture) routes through the `/new` head. Filtered-empty keeps the widen hint | `ctrl_n_starts_a_new_session_file` (file appears), `empty_browser_names_the_new_session_key` (frame; draw-miss control), `ctrl_n_inside_the_browser_starts_a_session` (the named key works where named; arm-miss control), updated `sessions_command_says_when_there_is_nothing_to_browse` (opens, not refuses) |
 | P-244 | The header shows `Loading n/total` while sessions are read, and a stale load cannot overwrite a fast one | `packages/coding-agent/src/modes/interactive/components/session-selector.ts:142`, `:956`, `:955` | deliberately different | The scan is synchronous (`SessionBrowser::build` over `session_rows`, rebuilt per keystroke) — there is no async load to count, and no stale load to guard against; an empty directory opens on the P-243 empty state instead | — |
 | P-245 | A failed load is shown for 4000 ms with an empty list | `packages/coding-agent/src/modes/interactive/components/session-selector.ts:1003-1004` | deliberately different | As P-244: an unreadable directory reads as an empty list (`list_sessions` returns `Vec::new()`, `crates/epsilon-session/src/discover.rs:228`), and a missing directory is refused with a notice before the browser opens — there is no failed async load to time out on screen | — |
@@ -779,10 +779,10 @@ row says so — that is a gap in the inventory, and closing it is cheap.
 | 15. Markdown, mermaid and truncation | 22 | 6 | 7 | 3 | 6 |
 | 16. Status indicators | 13 | 2 | 5 | 1 | 5 |
 | 17. Footer | 12 | 4 | 4 | 1 | 3 |
-| 18. Selector and overlay components | 79 | 21 | 17 | 28 | 13 |
-| **Total** | **339** | **77** | **105** | **76** | **81** |
+| 18. Selector and overlay components | 79 | 22 | 17 | 27 | 13 |
+| **Total** | **339** | **78** | **105** | **75** | **81** |
 
-### The `missing` rows — 76
+### The `missing` rows — 75
 
 Every row below has **no** `E-` row establishing the behaviour. Nothing here was found by browsing `crates/`, and
 nothing here is a claim that the behaviour cannot be built.
@@ -801,7 +801,7 @@ nothing here is a claim that the behaviour cannot be built.
 | Markdown, mermaid and truncation (3) | P-167, P-168, T-010 |
 | Status indicators (1) | P-194 |
 | Footer (1) | P-208 |
-| Selector and overlay components (28) | P-230, P-239, P-242, P-248, P-251, P-255, P-256, P-257, P-258, P-259, P-261, P-281, P-283, P-284, P-285, P-286, P-300, P-304, P-306, P-307, P-308, P-311, P-314, P-316, P-317, P-318, P-319, P-323 |
+| Selector and overlay components (27) | P-230, P-239, P-248, P-251, P-255, P-256, P-257, P-258, P-259, P-261, P-281, P-283, P-284, P-285, P-286, P-300, P-304, P-306, P-307, P-308, P-311, P-314, P-316, P-317, P-318, P-319, P-323 |
 
 ### The `partial` rows — 105
 

@@ -517,6 +517,11 @@ the run. Up from 1,997: the checkpoint round-trip and restore-undo tests. (Previ
 > in the `/tree` picker forks the chosen ancestry with a fresh header (test green).
 > Counts now 76/105/87/71.
 >
+> **P-242 done (this session): session sort orders.** One list, no sort modes:
+> newest-first unfiltered, fuzzy-score ascending over it when filtered, ties
+> stable-newest-first (new test with reversed-sort control). Counts now
+> 78/105/75/81.
+>
 > **Browser-behavior trio judged (this session): P-235/P-244/P-245 dd.** Every
 > Backspace edits the filter so the compat distinction guards nothing; the scan
 > is synchronous so loading counters, stale guards and timed failure displays
