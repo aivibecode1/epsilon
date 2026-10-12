@@ -391,7 +391,10 @@ the run. The drop from 2,385/19/78 is the removed desktop crate itself (~410 win
 > it. (2) session durability — `a_failed_append_leaves_no_phantom_entry_behind`
 > (`epsilon-session/tests/session_store.rs`): faulted append leaves file/leaf/branch
 > untouched and the next append chains with no `seq` gap; control (early index push)
-> fails it. Baselines green: safety+session+tools+core suites, tui 624+9 ignored.
+> fails it. (3) data-loss guards — `deleting_a_directory_is_an_error_and_leaves_it_standing`
+> (`epsilon-session/tests/session_store.rs`): the session-delete path refuses a directory on
+> every branch and touches nothing underneath; control (`remove_dir_all`) fails it.
+> Baselines green: safety+session+tools+core suites, tui 624+9 ignored.
 
 > **Ten findings closed in a row** (rounds 138–147). Rounds 138–144 were things that *happened*
 > wrongly, 145–146 were things that *went unsaid*, and 147 is the first one that **adds a

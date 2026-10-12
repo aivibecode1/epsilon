@@ -82,6 +82,30 @@ fn a_path_that_looks_like_an_option_is_still_deleted() {
     assert!(!path.exists(), "and the file is gone");
 }
 
+/// A directory is an error, never a deletion — on every platform, through
+/// every branch of this function.
+///
+/// `remove_file` refuses directories, which is the only reason this holds: no line
+/// here names `remove_dir` or `remove_dir_all`, and a future "fix" that reaches for
+/// one would turn a mistyped session path into a recursively deleted workspace. The
+/// error text names the case so a caller never reports it as a trashed session.
+#[test]
+fn deleting_a_directory_is_an_error_and_leaves_it_standing() {
+    let tmp = tempfile::tempdir().expect("tmp");
+    let dir = tmp.path().join("not-a-session");
+    std::fs::create_dir(&dir).expect("a directory");
+    std::fs::write(dir.join("s.jsonl"), "{}\n").expect("a file inside it");
+    let err = delete_session_file(&dir).expect_err("a directory is not a delete");
+    assert!(
+        !err.contains("moved to trash"),
+        "a refused directory must not be reported as trashed: {err}"
+    );
+    assert!(
+        dir.join("s.jsonl").exists(),
+        "nothing under the directory may be touched"
+    );
+}
+
 #[test]
 fn child_sessions_record_their_parent_link() {
     // M58: a delegated task's transcript is a session too; the header records
