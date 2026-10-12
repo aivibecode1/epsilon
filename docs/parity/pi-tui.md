@@ -71,7 +71,7 @@ this document**, tallied from its own tables — not a projection.
 
 | area | rows | done | partial | missing | deliberately different |
 |---|---|---|---|---|---|
-| 1. Startup, header and resources | 20 | 1 | 7 | 2 | 10 |
+| 1. Startup, header and resources | 20 | 1 | 7 | 1 | 11 |
 | 2. Layout and renderer | 10 | 3 | 2 | 0 | 5 |
 | 3. Composer and editor | 24 | 6 | 12 | 0 | 6 |
 | 4. Slash commands and autocomplete | 13 | 2 | 5 | 0 | 6 |
@@ -89,14 +89,14 @@ this document**, tallied from its own tables — not a projection.
 | 16. Status indicators | 13 | 2 | 5 | 0 | 6 |
 | 17. Footer | 12 | 4 | 4 | 0 | 4 |
 | 18. Selector and overlay components | 79 | 22 | 19 | 11 | 27 |
-| **Total** | **339** | **81** | **111** | **23** | **124** |
+| **Total** | **339** | **81** | **111** | **22** | **125** |
 
 A further **17 rows are not in the counts above**: the 10 `Y-###` rows Pi ships outside its interactive mode (out of
 scope by design) and the 7 `AA-###` rows recording what was never inventoried. Both are listed in full near the end
 of this document, because a row that is silently dropped is how a rule goes unowned.
 
-The shape of that table is the honest shape of a port from a 356-row inventory to a 315-row one: **23 rows have no
-counterpart established on our side, 111 are half-built, 81 are exercised, and 124 are decisions.** The 23 are not
+The shape of that table is the honest shape of a port from a 356-row inventory to a 315-row one: **22 rows have no
+counterpart established on our side, 111 are half-built, 81 are exercised, and 125 are decisions.** The 22 are not
 69/339 failures; most of them sit in Pi's extension, settings-overlay, mermaid, image and tree-navigation surface,
 much of which Epsilon deliberately does not have. Read [Open rows](#open-rows) before reading the table.
 
@@ -186,7 +186,7 @@ transcript notices pushed **before** the first frame so it survives the alternat
 | P-059 | Managed-tool download progress renders as one contiguous group with a leading spacer | `packages/coding-agent/src/modes/interactive/interactive-mode.ts:3742-3753` | deliberately different | As P-012: with no downloads there is no progress to group, contiguously or otherwise | — |
 | P-086 | Shutdown is ordered — drain pending input, stop the TUI, dispose the runtime, then exit — so nothing repaints a dying frame | `packages/coding-agent/src/modes/interactive/interactive-mode.ts:4233-4249`, `:4211-4231` | partial | `crates/epsilon-tui/src/app.rs:1547`, `:1433` — the restore guard is armed before anything that can panic and every step is idempotent; there is no input drain and no in-process extension teardown to order against | `the_terminal_guard_restore_is_reachable_and_idempotent` |
 | P-087 | `EIO`/`EPIPE`/`ENOTCONN` trigger an emergency exit 129; an uncaught exception restores the terminal, prints the crash and exits 1 | `packages/coding-agent/src/modes/interactive/interactive-mode.ts:290-298`, `:4252-4259`, `:4272-4294` | partial | `crates/epsilon-tui/src/app.rs:1528`, `:1392`, `:1359` — the hook restores before it prints and survives every payload shape; there is no dead-terminal classification and no crash persisted for a later report | `the_panic_hook_survives_both_payload_shapes`, `the_terminal_guard_restore_is_reachable_and_idempotent` |
-| P-088 | Under tmux, Pi queries `extended-keys` and warns if the configuration will break modified Enter keys | `packages/coding-agent/src/modes/interactive/interactive-mode.ts:1268-1313`, `:1167-1172` | missing | none | — |
+| P-088 | Under tmux, Pi queries `extended-keys` and warns if the configuration will break modified Enter keys | `packages/coding-agent/src/modes/interactive/interactive-mode.ts:1268-1313`, `:1167-1172` | deliberately different | Nothing the defaults press needs extended-keys: submit is bare `enter` and newline is `ctrl+j` (`crates/epsilon-contracts/src/keybind.rs:414-415`), chosen because modified Enter is unreliable (M16b, `crates/epsilon-tui/src/app/keys.rs:2297-2298`). The one modified-Enter default, `alt+enter` for follow-ups (`keybind.rs:404`), arrives as ESC `\r`, which crossterm parses as Alt+Enter with no kitty/extended negotiation (`parse.rs:77-88`, `:92-94` in crossterm 0.29) — and the tree never requests keyboard-enhancement flags. A probe here would warn about a configuration nothing reads. Revisit if a default chord ever needs CSI-u/kitty sequences | — |
 | P-089 | An `Update Available` block and a `Package Updates Available` block render as bordered blocks | `packages/coding-agent/src/modes/interactive/interactive-mode.ts:4548-4578`, `:4580-4598` | deliberately different | Installer/updater machinery is excluded scope for this product — there is no update check to report, so both blocks have no trigger by design, not by omission | — |
 | P-119 | A throwing extension prints `Extension "<path>" error: …` with its stack indented and dimmed, first stack line skipped | `packages/coding-agent/src/modes/interactive/interactive-mode.ts:2989-3002` | deliberately different | Different runtime, different failure shape: extension failures are typed values (`ExtError::Timeout/Crashed/Protocol/ToolFailed`, `crates/epsilon-ext/src/host.rs:54`), counted against a crash budget with disable — there are no JS stacks to print, skip, or dim | `crashing_child_is_counted_and_eventually_disabled`, `stalled_child_hits_invoke_timeout` |
 | P-120 | First run may show a two-step setup dialog (theme, then analytics opt-in), gated on four conditions | `packages/coding-agent/src/cli/startup-ui.ts:131-148`, `packages/coding-agent/src/modes/interactive/components/first-time-setup.ts:64-70`, `:71-88` | partial | `crates/epsilon-cli/src/main.rs:1364` — the palette resolves most-explicit-first from flags, env and config with no dialog; there is no analytics opt-in because there is no analytics | `the_light_flag_selects_the_light_palette_regardless_of_the_environment` |
@@ -762,7 +762,7 @@ row says so — that is a gap in the inventory, and closing it is cheap.
 
 | area | rows | done | partial | missing | deliberately different |
 |---|---|---|---|---|---|
-| 1. Startup, header and resources | 20 | 1 | 7 | 2 | 10 |
+| 1. Startup, header and resources | 20 | 1 | 7 | 1 | 11 |
 | 2. Layout and renderer | 10 | 3 | 2 | 0 | 5 |
 | 3. Composer and editor | 24 | 6 | 12 | 0 | 6 |
 | 4. Slash commands and autocomplete | 13 | 2 | 5 | 0 | 6 |
@@ -780,16 +780,16 @@ row says so — that is a gap in the inventory, and closing it is cheap.
 | 16. Status indicators | 13 | 2 | 5 | 0 | 6 |
 | 17. Footer | 12 | 4 | 4 | 0 | 4 |
 | 18. Selector and overlay components | 79 | 22 | 19 | 11 | 27 |
-| **Total** | **339** | **81** | **111** | **23** | **124** |
+| **Total** | **339** | **81** | **111** | **22** | **125** |
 
-### The `missing` rows — 23
+### The `missing` rows — 22
 
 Every row below has **no** `E-` row establishing the behaviour. Nothing here was found by browsing `crates/`, and
 nothing here is a claim that the behaviour cannot be built.
 
 | area | ids |
 |---|---|
-| Startup, header and resources (2) | P-004, P-088 |
+| Startup, header and resources (1) | P-004 |
 | Transcript and streaming (2) | P-053, P-056 |
 | Auth, login and permissions (2) | P-061, P-063 |
 | Sessions (1) | P-081 |

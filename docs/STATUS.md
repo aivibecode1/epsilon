@@ -682,6 +682,14 @@ the run. Matrix at 81/111/24/123. (Previous: `gate-goal3-phase6-20261012`, 2,011
 > Revisit if a provider ever offers two selectable auth-type rows in one list.
 > Counts now 81/111/23/124.
 >
+> **P-088 judged (this session): no default chord needs extended-keys.** Submit is
+> bare `enter`, newline is `ctrl+j` by M16b design; the one modified-Enter default
+> (`alt+enter` for follow-ups) arrives as ESC `\r`, which crossterm parses as
+> Alt+Enter with no kitty/extended negotiation (measured in crossterm 0.29
+> `parse.rs`), and the tree never requests enhancement flags. A tmux probe would
+> warn about a configuration nothing reads. Revisit if a default chord ever needs
+> CSI-u/kitty sequences. Counts now 81/111/22/125.
+>
 > **Goal 3, Phase 1 (landed): AGENTS.md v4 draft for owner application.** Every v3
 > clause audited against the tree (13 crates, uniform 1.88, TERMINAL+WINDOW tables,
 > 15 legs, SUPPORTED only in a historical comment); the complete v4 text sits in
