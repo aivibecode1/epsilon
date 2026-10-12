@@ -66,7 +66,7 @@ back; it is a reading of the test's source, not a report of a run.
 
 **339 rows** are paired here: Pi's 323 `P-###` behaviours, the 4 `L-###` rows of its inherited `tui.*` keybinding
 table, and the 12 `T-###` rows of its text-measurement core. Every one carries a reference citation; 200 of them
-carry an `ours` citation and 127 do not, and those 127 say so. The counts below are the rows **actually written in
+carry an `ours` citation and 125 do not, and those 125 say so. The counts below are the rows **actually written in
 this document**, tallied from its own tables — not a projection.
 
 | area | rows | done | partial | missing | deliberately different |
@@ -84,19 +84,19 @@ this document**, tallied from its own tables — not a projection.
 | 11. Project trust | 4 | 1 | 2 | 0 | 1 |
 | 12. Tool cards | 16 | 3 | 6 | 0 | 7 |
 | 13. Bash cards | 11 | 3 | 6 | 2 | 0 |
-| 14. Diffs | 6 | 4 | 0 | 2 | 0 |
+| 14. Diffs | 6 | 6 | 0 | 0 | 0 |
 | 15. Markdown, mermaid and truncation | 22 | 6 | 7 | 9 | 0 |
 | 16. Status indicators | 13 | 2 | 5 | 5 | 1 |
 | 17. Footer | 12 | 4 | 4 | 1 | 3 |
 | 18. Selector and overlay components | 79 | 18 | 17 | 36 | 8 |
-| **Total** | **339** | **70** | **102** | **126** | **41** |
+| **Total** | **339** | **72** | **102** | **124** | **41** |
 
 A further **17 rows are not in the counts above**: the 10 `Y-###` rows Pi ships outside its interactive mode (out of
 scope by design) and the 7 `AA-###` rows recording what was never inventoried. Both are listed in full near the end
 of this document, because a row that is silently dropped is how a rule goes unowned.
 
-The shape of that table is the honest shape of a port from a 356-row inventory to a 213-row one: **126 rows have no
-counterpart established on our side, 102 are half-built, 70 are exercised, and 41 are decisions.** The 138 are not
+The shape of that table is the honest shape of a port from a 356-row inventory to a 214-row one: **124 rows have no
+counterpart established on our side, 102 are half-built, 72 are exercised, and 41 are decisions.** The 138 are not
 69/339 failures; most of them sit in Pi's extension, settings-overlay, mermaid, image and tree-navigation surface,
 much of which Epsilon deliberately does not have. Read [Open rows](#open-rows) before reading the table.
 
@@ -543,8 +543,8 @@ this area, because a diff run through a markdown renderer looks correct and read
 | id | behaviour | reference | status | ours | verified |
 |---|---|---|---|---|---|
 | P-161 | Context lines are dim, removals red, additions green, and every line carries its number | `packages/coding-agent/src/modes/interactive/components/diff.ts:89`, `:129`, `:8`, `:124` | done | `crates/epsilon-tui/src/ui/card.rs:458` — `@@` headers in the accent colour, `+`/`-` before the line number, a coloured gutter | `an_edits_diff_is_drawn_with_a_coloured_gutter_not_as_prose` (frame) |
-| P-162 | Intra-line highlighting appears only for a one-line-for-one-line replacement | `packages/coding-agent/src/modes/interactive/components/diff.ts:115`, `:26` | missing | none | — |
-| P-163 | Leading whitespace is excluded from the intra-line highlight | `packages/coding-agent/src/modes/interactive/components/diff.ts:39-41` | missing | none | — |
+| P-162 | Intra-line highlighting appears only for a one-line-for-one-line replacement | `packages/coding-agent/src/modes/interactive/components/diff.ts:115`, `:26` | done | `crates/epsilon-tui/src/ui/card.rs:762` — `intra_pair` returns `None` unless exactly one removed and one added line arrive, over whole-token prefix/suffix spans | `intra_highlight_needs_one_removed_and_one_added_line` |
+| P-163 | Leading whitespace is excluded from the intra-line highlight | `packages/coding-agent/src/modes/interactive/components/diff.ts:39-41` | done | `crates/epsilon-tui/src/ui/card.rs` — `strip_lead` trims the first span (the indent is the column the code was at, not content), same reason as pi's strip | `intra_highlight_excludes_leading_whitespace` (unstripped-spans control fails it) |
 | P-164 | Tabs are expanded to **three** spaces before both the diff computation and the rendering | `packages/coding-agent/src/modes/interactive/components/diff.ts:17`, `:120` | done | `crates/epsilon-tui/src/ui/card.rs:873` — the same three-space value, applied in the card's row normaliser rather than in the diff computation | `tabs_expand_to_three_spaces_before_anything_measures` (asserts the count, not just the absence of tabs) |
 | P-165 | Removals are emitted before additions, and lines outside the diff grammar pass through verbatim in the dim context colour | `packages/coding-agent/src/modes/interactive/components/diff.ts:127-131`, `:88-89` | done | `crates/epsilon-tui/src/ui/card.rs:458` — a line the format does not define, such as `\ No newline at end of file`, is kept and printed rather than dropped | `an_edits_diff_is_drawn_with_a_coloured_gutter_not_as_prose` (frame), `the_diff_is_not_run_through_the_markdown_parser` (frame) |
 | P-166 | The edit tool renders preview and result through the same diff function | `packages/coding-agent/src/core/tools/renderers/edit.ts:110`, `:146` | done | `crates/epsilon-tui/src/state.rs:1009` — one diff card path, reached from one parse | `the_split_diff_draws_both_sides_at_a_wide_frame` (frame) |
@@ -775,14 +775,14 @@ row says so — that is a gap in the inventory, and closing it is cheap.
 | 11. Project trust | 4 | 1 | 2 | 0 | 1 |
 | 12. Tool cards | 16 | 3 | 6 | 0 | 7 |
 | 13. Bash cards | 11 | 3 | 6 | 2 | 0 |
-| 14. Diffs | 6 | 4 | 0 | 2 | 0 |
+| 14. Diffs | 6 | 6 | 0 | 0 | 0 |
 | 15. Markdown, mermaid and truncation | 22 | 6 | 7 | 9 | 0 |
 | 16. Status indicators | 13 | 2 | 5 | 5 | 1 |
 | 17. Footer | 12 | 4 | 4 | 1 | 3 |
 | 18. Selector and overlay components | 79 | 18 | 17 | 36 | 8 |
-| **Total** | **339** | **70** | **102** | **126** | **41** |
+| **Total** | **339** | **72** | **102** | **124** | **41** |
 
-### The `missing` rows — 126
+### The `missing` rows — 124
 
 Every row below has **no** `E-` row establishing the behaviour. Nothing here was found by browsing `crates/`, and
 nothing here is a claim that the behaviour cannot be built.
@@ -800,7 +800,6 @@ nothing here is a claim that the behaviour cannot be built.
 | Themes (8) | P-092, P-094, P-095, P-096, P-098, P-101, P-270, P-271 |
 | Settings (11) | P-103, P-105, P-106, P-111, P-112, P-113, P-114, P-267, P-268, P-275, P-277 |
 | Bash cards (2) | P-024, P-160 |
-| Diffs (2) | P-162, P-163 |
 | Markdown, mermaid and truncation (9) | P-167, P-168, P-169, P-170, P-171, P-172, P-173, T-010, T-012 |
 | Status indicators (5) | P-019, P-191, P-192, P-193, P-194 |
 | Footer (1) | P-208 |

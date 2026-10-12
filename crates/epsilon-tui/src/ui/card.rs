@@ -919,7 +919,8 @@ fn cols(text: &str) -> usize {
 }
 #[cfg(test)]
 mod tests {
-    use super::{CardStatus, status_word};
+    use super::{CardStatus, intra_pair, status_word};
+    use crate::state::{DiffKind, DiffLine};
     use crate::ui::theme::{ASCII, UNICODE};
 
     /// The word matters as much as the glyph. `status_word` is documented to return both
@@ -1070,6 +1071,70 @@ mod tests {
             rows[0][0].0.contains("… 3 more lines (ctrl+x to open)"),
             "count plus chord, nothing else: {:?}",
             rows[0][0].0
+        );
+    }
+
+    /// Intra-line highlighting fires only for a one-for-one replacement (P-162):
+    /// two removals against one addition get no pairing, one-against-one does.
+    #[test]
+    fn intra_highlight_needs_one_removed_and_one_added_line() {
+        let removed = |text: &str| DiffLine {
+            kind: DiffKind::Remove,
+            text: text.to_string(),
+            number: None,
+        };
+        let added = |text: &str| DiffLine {
+            kind: DiffKind::Add,
+            text: text.to_string(),
+            number: None,
+        };
+        let (r1, r2, a1) = (
+            removed("let x = 1;"),
+            removed("let y = 2;"),
+            added("let x = 3;"),
+        );
+        assert!(
+            intra_pair(&[&r1, &r2], &[&a1]).is_none(),
+            "two-against-one must not pair"
+        );
+        let (r3, a2) = (removed("let x = 1;"), added("let x = 2;"));
+        assert!(
+            intra_pair(&[&r3], &[&a2]).is_some(),
+            "one-against-one with a real change pairs"
+        );
+        let (r4, a3) = (removed("same;"), added("same;"));
+        assert!(
+            intra_pair(&[&r4], &[&a3]).is_none(),
+            "identical lines are not a change"
+        );
+    }
+
+    /// Leading whitespace never enters the highlight (P-163): the indent is the
+    /// column the code was at, not content that changed.
+    #[test]
+    fn intra_highlight_excludes_leading_whitespace() {
+        let removed = DiffLine {
+            kind: DiffKind::Remove,
+            text: "    let x = 1;".to_string(),
+            number: None,
+        };
+        let added = DiffLine {
+            kind: DiffKind::Add,
+            text: "    let x = 2;".to_string(),
+            number: None,
+        };
+        let pair = intra_pair(&[&removed], &[&added]).expect("indented one-for-one pairs");
+        for (text, _) in pair.removed.iter().chain(pair.added.iter()).take(2) {
+            let first_char = text.chars().next();
+            assert!(
+                first_char.is_none_or(|c| !c.is_whitespace()),
+                "highlight must not open with whitespace, got {text:?}"
+            );
+        }
+        let changed: String = pair.added.iter().map(|(t, _)| t.as_str()).collect();
+        assert!(
+            changed.contains('2'),
+            "the changed token survives the strip: {changed:?}"
         );
     }
 }

@@ -474,6 +474,11 @@ the run. Up from 1,997: the checkpoint round-trip and restore-undo tests. (Previ
 > within seconds. P-208 stays `missing`: no experimental flags exist. Counts now
 > 70/102/126/41.
 >
+> **Diffs pair done (this session): P-162/P-163.** Intra-line pairing fires only for
+> one-removed/one-added over whole-token spans, and the leading indent never enters
+> the highlight — both pinned with unit tests (unstripped-spans control fails the
+> whitespace one). Counts now 72/102/124/41.
+>
 > **Goal 3, Phase 1 (landed): AGENTS.md v4 draft for owner application.** Every v3
 > clause audited against the tree (13 crates, uniform 1.88, TERMINAL+WINDOW tables,
 > 15 legs, SUPPORTED only in a historical comment); the complete v4 text sits in
