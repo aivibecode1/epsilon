@@ -732,6 +732,17 @@ the run. Matrix at 81/111/24/123. (Previous: `gate-goal3-phase6-20261012`, 2,011
 > far-end clamp, footer at 80x24 and 100x30; step-one control fails it); full
 > TUI suite green, clippy clean. Counts now 85/112/14/128.
 >
+> **P-307 adapted (this session): in-tree copy takes the selected entry's full
+> text.** F4 (not Ctrl+X, which is expand-all) inside `/tree` reads the
+> highlighted entry by seq and copies it untruncated through the one shared
+> transport; no store falls back to the global copy, lock/read failures name
+> themselves, acting keys close the picker so the count is visible. Split
+> `timeline_snip` into preview + `timeline_full_text` with identical outputs.
+> Two tests (440-char entry: count, OSC payload, frames both sizes; global-route
+> control fails it) plus the old-behaviour test updated to the new contract
+> with history kept. Full suite green, clippy clean.
+> Counts now 86/112/13/128.
+>
 > **P-230 adapted (this session): Tab toggles workspace/all session scopes.** Bare
 > Tab flips `SessionScope` and rescans under the same filter (highlight restarts
 > at the top — the row it pointed at may not exist in the other scope); the All

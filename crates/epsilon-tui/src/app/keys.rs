@@ -1312,8 +1312,54 @@ pub(crate) fn handle_key(app: &mut App, agent: &Arc<Agent>, key: KeyEvent) -> bo
             // A statement, not the global arm's tail expression: the tree's
             // match arms all end in `;` because the block's value is discarded
             // and `run_command` returns `bool`.
+            // P-307: inside the tree the copy key takes the SELECTED entry's
+            // full text — pi's `copySelected` (`tree-selector.ts:627`) — not
+            // the 200-character preview on screen, and not the last assistant
+            // message the same key copies outside the picker. The transport
+            // stays shared (`copy_text`): only the source differs by context.
+            // No store means no rows to select from, so the chord keeps its
+            // global meaning rather than dying silently; a store that will not
+            // answer names its failure instead of substituting another source.
             _ if app.keybindings.matches("app.message.copy", &key) => {
-                app.run_command(agent, crate::picker::Command::Copy);
+                let row = app.timeline_entries.get(app.timeline_index).cloned();
+                let store = agent.session_store();
+                match (row, store) {
+                    (Some(row), Some(store)) => {
+                        let entry = store.lock().map(|st| st.read_entry(row.seq));
+                        match entry {
+                            Ok(Ok(Some(entry))) => {
+                                let full = super::commands::timeline_full_text(&entry);
+                                let text = if full.trim().is_empty() {
+                                    None
+                                } else {
+                                    Some(full)
+                                };
+                                app.copy_text(text, "copy: the selected entry has no text to copy");
+                                // Acting keys close this picker (Enter jumps,
+                                // k forks): the copy notice lands in the
+                                // transcript, where it is visible — behind an
+                                // open overlay it would be a confirmation the
+                                // reader cannot see.
+                                app.timeline_open = false;
+                                app.timeline_index = 0;
+                                app.timeline_entries.clear();
+                                app.timeline_all.clear();
+                            }
+                            Ok(Ok(None)) => app.ui.push_notice(
+                                "copy: the selected entry is gone from the session file",
+                            ),
+                            Ok(Err(e)) => app.ui.push_notice(format!(
+                                "copy: could not read the selected entry: {e}"
+                            )),
+                            Err(_) => app
+                                .ui
+                                .push_notice("copy: the session store is busy — try again"),
+                        }
+                    }
+                    _ => {
+                        app.run_command(agent, crate::picker::Command::Copy);
+                    }
+                }
             }
             _ => {}
         }

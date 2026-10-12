@@ -5132,6 +5132,91 @@ fn a_filter_hides_entries_and_promotes_the_ones_left() {
     );
 }
 
+/// P-307: inside `/tree`, the copy key takes the SELECTED entry's full text,
+/// not the 200-character preview on screen — and not the last assistant
+/// message, which is what the same key copies outside the picker.
+///
+/// The entry text is 400 chars (past the preview budget); the assertions
+/// branch on the parked sequence exactly like `copy_parks_a_sequence...`,
+/// because the native half is machine-dependent and neither branch may pass
+/// by accident.
+#[test]
+fn tree_copy_takes_the_selected_entry_full_text() {
+    use epsilon_contracts::content::UserContent;
+    use epsilon_contracts::message::{Message, UserMessage};
+    use epsilon_contracts::session_entry::EntryKind;
+    use epsilon_session::SessionStore;
+
+    let dir = tempfile::tempdir().unwrap();
+    let backing = std::sync::Arc::new(std::sync::Mutex::new(
+        SessionStore::open(dir.path().join("s.jsonl")).unwrap(),
+    ));
+    // 400 chars: past every preview budget, so a preview copy reads shorter.
+    let full = "entry body ".repeat(40);
+    assert_eq!(full.chars().count(), 440);
+    let id = {
+        let mut st = backing.lock().unwrap();
+        st.append(EntryKind::Message {
+            message: Message::User(UserMessage {
+                id: epsilon_contracts::new_id("msg"),
+                timestamp_ms: 0,
+                content: vec![UserContent::Text { text: full.clone() }],
+            }),
+            api_request_sha256: None,
+        })
+        .unwrap()
+        .id
+    };
+
+    let (mut app, agent, _rx) = test_app();
+    agent.attach_session_store(std::sync::Arc::clone(&backing));
+    app.timeline_open = true;
+    app.timeline_entries = vec![crate::app::TimelineRow {
+        seq: 0,
+        id,
+        kind: "user".into(),
+        snippet: "entry body entry body".into(),
+        depth: 0,
+        on_active: true,
+        parent: None,
+        label: None,
+    }];
+    app.timeline_index = 0;
+
+    handle_key(&mut app, &agent, key(KeyCode::F(4)));
+
+    let notice = last_line_text(&app);
+    assert!(
+        notice.contains("440 chars"),
+        "the notice counts the FULL text, not the preview: {notice}"
+    );
+    if let Some(sequence) = app.osc_pending.clone() {
+        let payload = sequence
+            .trim_start_matches("\u{1b}Ptmux;\u{1b}")
+            .trim_start_matches("\u{1b}P")
+            .trim_start_matches("\u{1b}]52;c;")
+            .trim_end_matches("\u{1b}\\")
+            .trim_end_matches('\u{7}');
+        use base64::engine::Engine as _;
+        let decoded = base64::engine::general_purpose::STANDARD
+            .decode(payload)
+            .expect("the parked payload must be base64");
+        assert_eq!(
+            String::from_utf8(decoded).expect("utf-8"),
+            full,
+            "the sequence carries the entry, not its preview"
+        );
+    }
+    // And the copy lands on the drawn frame at both sizes.
+    for (width, height) in [(80u16, 24u16), (100, 30)] {
+        let screen = render_rows(&mut app, width, height).join("\n");
+        assert!(
+            screen.contains("440 chars"),
+            "the copy count reaches pixels at {width}x{height}: {screen}"
+        );
+    }
+}
+
 /// P-306: PageUp/PageDown and Left/Right page the `/tree` picker by the
 /// painted screenful — a 400-entry branch is unreachable one row at a time.
 /// Up/Down keep stepping one row and clamping (the tree-wide rule); only the
@@ -6399,13 +6484,21 @@ fn the_copy_key_reaches_the_clipboard_path() {
 /// The key was bound (`keybindings.rs:140`, F4) and the global arm that honours it
 /// exists — but the `if app.timeline_open` block returns for *every* key 620 lines
 /// above it, so inside the tree the chord hit `_ => {}` and did nothing, silently.
+/// The copy key works while the tree is open — and takes the selected entry.
+///
 /// `/hotkeys` advertised it and the panel printed it, so this is the "a silent
 /// no-op is worse than a missing feature" case rather than an absent feature.
 ///
+/// Contract change (P-307): this used to assert the SAME notice `/copy` gives
+/// ("copy: no assistant message to copy"), pinning the route-through-the-global
+/// command. The route is still shared (`copy_text`), but the source is now the
+/// highlighted entry's full text — so the assertion is on the entry's char
+/// count, which the old behaviour could never produce here (no assistant
+/// message exists in this fixture at all).
+///
 /// The negative is the test: `handle_key` returning without a notice is exactly
 /// the old behaviour, and asserting on the *absence* of a notice would pass
-/// vacuously against a build where the command never ran. So the assertion is on
-/// the notice `/copy` produces, reached through the open tree.
+/// vacuously against a build where the command never ran.
 #[tokio::test]
 async fn the_copy_key_still_works_while_the_tree_is_open() {
     let (mut app, agent, _rx) = test_app();
@@ -6449,13 +6542,18 @@ async fn the_copy_key_still_works_while_the_tree_is_open() {
     assert!(
         app.ui.lines().len() > before,
         "the copy key was swallowed by the tree's catch-all arm: the block returns \
-         for every key before the global copy arm is ever reached"
+         for every key before the copy arm is ever reached"
     );
-    assert_eq!(
-        last_line_text(&app),
-        "copy: no assistant message to copy",
-        "and it is the SAME notice `/copy` gives, so the tree routes through the \
-         command rather than owning a second copy of the clipboard logic"
+    // "a question worth answering" is 26 chars: the selected USER entry's full
+    // text, which the old global route could never name here.
+    assert!(
+        last_line_text(&app).contains("26 chars"),
+        "in-tree copy takes the highlighted entry: {}",
+        last_line_text(&app)
+    );
+    assert!(
+        !app.timeline_open,
+        "acting keys close the picker, so the copy notice is visible"
     );
 }
 

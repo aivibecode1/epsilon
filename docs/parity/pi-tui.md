@@ -88,15 +88,15 @@ this document**, tallied from its own tables — not a projection.
 | 15. Markdown, mermaid and truncation | 22 | 6 | 7 | 1 | 8 |
 | 16. Status indicators | 13 | 2 | 5 | 0 | 6 |
 | 17. Footer | 12 | 4 | 4 | 0 | 4 |
-| 18. Selector and overlay components | 79 | 24 | 20 | 6 | 29 |
-| **Total** | **339** | **85** | **112** | **14** | **128** |
+| 18. Selector and overlay components | 79 | 25 | 20 | 5 | 29 |
+| **Total** | **339** | **86** | **112** | **13** | **128** |
 
 A further **17 rows are not in the counts above**: the 10 `Y-###` rows Pi ships outside its interactive mode (out of
 scope by design) and the 7 `AA-###` rows recording what was never inventoried. Both are listed in full near the end
 of this document, because a row that is silently dropped is how a rule goes unowned.
 
-The shape of that table is the honest shape of a port from a 356-row inventory to a 315-row one: **14 rows have no
-counterpart established on our side, 112 are half-built, 85 are exercised, and 128 are decisions.** The 14 are not
+The shape of that table is the honest shape of a port from a 356-row inventory to a 315-row one: **13 rows have no
+counterpart established on our side, 112 are half-built, 86 are exercised, and 128 are decisions.** The 13 are not
 69/339 failures; most of them sit in Pi's extension, settings-overlay, mermaid, image and tree-navigation surface,
 much of which Epsilon deliberately does not have. Read [Open rows](#open-rows) before reading the table.
 
@@ -715,7 +715,7 @@ the per-selector ones.
 | P-304 | Indentation grows only at branch points and is recomputed against the visible tree after a filter | `packages/coding-agent/src/modes/interactive/components/tree-selector.ts:288`, `:436`, `:448`, `:479` | done | Single-child chains stay flat in both halves: `flatten_tree` steps depth only for multi-child parents (`crates/epsilon-tui/src/app/commands.rs:140`) and the visible pipeline counts only visible ancestors with more than one visible child (`:305`, via `:276`), re-indented once more at the end of `visible_rows` so search, mandatory rows and folds cannot leave a dangling indent (`:544`, `:569`). A hidden sibling does not fork the view | `single_child_chains_stay_flat_and_only_forks_step` (lane/flat, fork/steps, hidden-leaf collapse, fold pipeline) + `the_tree_panel_indents_only_at_branch_points` (relative `#` columns at 80x24 and 100x30; old unconditional rule fails both) |
 | P-305 | A tool-only assistant message with a normal stop reason is dropped from the tree unless it is the leaf or carries an error | `packages/coding-agent/src/modes/interactive/components/tree-selector.ts:344`, `:351`, `:341`, `:792`, `:798` | done | `crates/epsilon-tui/src/app/commands.rs:140-230` (`dropped_from_tree`: no text content plus a normal stop (`EndTurn`/`ToolUse`) plus not-the-leaf drops; truncated, failed and aborted turns stay, and an unknown leaf drops nothing; children recurse so lanes survive with recomputed depth) — tool-only turns are navigation noise, and a broken turn is where "where did it break" lives | `the_tree_drops_tool_only_turns_but_keeps_the_leaf_and_the_broken` (neuter-proven), `the_timeline_frame_drops_noise_and_leads_with_the_leaf_branch` (production draw at both sizes) |
 | P-306 | Left and Right page the tree as well as `PageUp`/`PageDown`, and this selector wraps at the ends | `packages/coding-agent/src/modes/interactive/components/tree-selector.ts:1026`, `:1029`, `:1007`, `:1009` | partial | The page half is built: PageUp/PageDown and bare Left/Right move by the painted screenful (`crates/epsilon-tui/src/app/keys.rs:1228`, `:1235`, recorded at paint in `crates/epsilon-tui/src/app/panels.rs:755` through `crates/epsilon-tui/src/app.rs:379`), bare arrows guarded so the Ctrl+Arrow fold chords keep their arms, footer names `left/right`. The wrap half is judged: clamping is the tree-wide rule (session browser, Up/Down here) — wrapping would move the highlight somewhere the reader did not send it | `page_keys_move_the_tree_picker_by_the_painted_screenful` (capacity step, Left/Right parity, far-end clamp, footer taught at 80x24 and 100x30; step-one control fails it) |
-| P-307 | `Ctrl+X` copies the selected entry's **full** text, not the 200-character preview on screen | `packages/coding-agent/src/modes/interactive/components/tree-selector.ts:1037`, `:904`, `packages/coding-agent/src/modes/interactive/interactive-mode.ts:5616-5627` | missing | none — Epsilon's `ctrl+x` is expand-all; copying is `F4` and copies the last assistant message (`crates/epsilon-tui/src/app/keys.rs:1957`) | — |
+| P-307 | `Ctrl+X` copies the selected entry's **full** text, not the 200-character preview on screen | `packages/coding-agent/src/modes/interactive/components/tree-selector.ts:1037`, `:904`, `packages/coding-agent/src/modes/interactive/interactive-mode.ts:5616-5627` | done | Adapted to this tree's chord: F4 (not Ctrl+X, which is expand-all) inside `/tree` copies the highlighted entry's full store text (`crates/epsilon-tui/src/app/keys.rs:1315`, read by seq through `read_entry`), extracted untruncated beside the preview it shares extraction with (`crates/epsilon-tui/src/app/commands.rs:73`) and sent through the one shared transport (`:2379`, so path choice and notice stay in one place). No store falls back to the global last-assistant copy; lock/read failures name themselves; acting keys close the picker so the count is visible | `tree_copy_takes_the_selected_entry_full_text` (440-char entry: count, OSC payload, frames at 80x24 and 100x30; global-route control fails it) + updated `the_copy_key_still_works_while_the_tree_is_open` (contract changed by design, history kept) |
 | P-308 | A tree with no entries cancels itself after 100 ms | `packages/coding-agent/src/modes/interactive/components/tree-selector.ts:1395`, `packages/coding-agent/src/modes/interactive/interactive-mode.ts:5488-5491` | deliberately different | An empty tree opens, never cancels (P-243): the empty state names the way to make content, and auto-dismissing the screen that teaches would hide exactly the message that matters | — |
 | P-309 | The tree footer lists every binding, rewriting `pageUp`→`pgup` and merging chords that share a prefix | `packages/coding-agent/src/modes/interactive/components/tree-selector.ts:1254`, `:1263` | partial | `crates/epsilon-tui/src/ui/footer.rs:294` — the footer names the keys that work right now, including overlay keys, with the mode badge leading (`crates/epsilon-tui/src/ui/footer.rs:367`); a tree-specific list is not established | `idle_hints_name_only_keys_that_do_something` (frame) |
 | P-310 | `/fork` opens `Fork from Message` with an explanation and the cursor on the most recent message | `packages/coding-agent/src/modes/interactive/components/user-message-selector.ts:123`, `packages/coding-agent/src/modes/interactive/interactive-mode.ts:5427` | done | Adapted: no separate dialog — `k` in the `/tree` picker forks at the SELECTED row through the same `fork_branch_at` (`crates/epsilon-tui/src/app/keys.rs:1132`), writing only the chosen ancestry with a fresh header | `forking_from_the_tree_writes_only_the_chosen_ancestry` |
@@ -779,10 +779,10 @@ row says so — that is a gap in the inventory, and closing it is cheap.
 | 15. Markdown, mermaid and truncation | 22 | 6 | 7 | 1 | 8 |
 | 16. Status indicators | 13 | 2 | 5 | 0 | 6 |
 | 17. Footer | 12 | 4 | 4 | 0 | 4 |
-| 18. Selector and overlay components | 79 | 24 | 20 | 6 | 29 |
-| **Total** | **339** | **85** | **112** | **14** | **128** |
+| 18. Selector and overlay components | 79 | 25 | 20 | 5 | 29 |
+| **Total** | **339** | **86** | **112** | **13** | **128** |
 
-### The `missing` rows — 14
+### The `missing` rows — 13
 
 Every row below has **no** `E-` row establishing the behaviour. Nothing here was found by browsing `crates/`, and
 nothing here is a claim that the behaviour cannot be built.
@@ -794,7 +794,7 @@ nothing here is a claim that the behaviour cannot be built.
 | Themes (2) | P-096, P-098 |
 | Settings (2) | P-113, P-114 |
 | Markdown, mermaid and truncation (1) | T-010 |
-| Selector and overlay components (6) | P-307, P-316, P-317, P-318, P-319, P-323 |
+| Selector and overlay components (5) | P-316, P-317, P-318, P-319, P-323 |
 
 ### The `partial` rows — 112
 

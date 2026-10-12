@@ -47,6 +47,31 @@ pub(super) fn timeline_snip(e: &epsilon_contracts::SessionEntry) -> String {
     /// overflowed the very column it existed to fit.
     const PREVIEW_COLUMNS: usize = 100;
     match &e.kind {
+        epsilon_contracts::session_entry::EntryKind::Message { .. } => {
+            let txt = timeline_full_text(e);
+            let s = crate::wrap::fit_width(&txt, PREVIEW_COLUMNS);
+            if s.trim().is_empty() {
+                "(empty)".into()
+            } else {
+                s
+            }
+        }
+        epsilon_contracts::session_entry::EntryKind::Compaction { .. } => {
+            let s = crate::wrap::fit_width(&timeline_full_text(e), PREVIEW_COLUMNS);
+            format!("[compaction] {s}")
+        }
+        _ => timeline_full_text(e),
+    }
+}
+
+/// An entry's copyable text, untruncated (P-307).
+///
+/// Split from [`timeline_snip`]: the picker shows the preview, the copy key
+/// takes this. Every arm below is the same extraction the preview truncates,
+/// so the two can never disagree about what an entry *says* — only about how
+/// much of it fits on a row.
+pub(super) fn timeline_full_text(e: &epsilon_contracts::SessionEntry) -> String {
+    match &e.kind {
         epsilon_contracts::session_entry::EntryKind::Message { message, .. } => {
             let txt: String = match message {
                 epsilon_contracts::message::Message::User(u) => u
@@ -97,17 +122,9 @@ pub(super) fn timeline_snip(e: &epsilon_contracts::SessionEntry) -> String {
                     .collect::<String>(),
                 _ => String::new(),
             };
-            let s = crate::wrap::fit_width(&txt, PREVIEW_COLUMNS);
-            if s.trim().is_empty() {
-                "(empty)".into()
-            } else {
-                s
-            }
+            txt
         }
-        epsilon_contracts::session_entry::EntryKind::Compaction { summary, .. } => {
-            let s = crate::wrap::fit_width(summary, PREVIEW_COLUMNS);
-            format!("[compaction] {s}")
-        }
+        epsilon_contracts::session_entry::EntryKind::Compaction { summary, .. } => summary.clone(),
         epsilon_contracts::session_entry::EntryKind::TurnEnd { reason, .. } => {
             format!("[turn_end {reason:?}]")
         }
@@ -2350,6 +2367,44 @@ impl App {
 
     /// Commands that move bytes or permissions across the trust boundary: `/trust`,
     /// `/export`, `/import`, `/share`, `/copy`.
+    /// Copy `text` through the one clipboard transport (P-307).
+    ///
+    /// Two paths, and the notice names the one that landed: `arboard` reaches
+    /// this machine's clipboard, and OSC 52 asks the *terminal* to reach the
+    /// one the user is sitting at — the only path that works over SSH, where
+    /// arboard either fails or fills a clipboard nobody will paste from. Both
+    /// copy doors (the global last-assistant-message copy and the timeline's
+    /// selected-row copy) run through here so the path choice and its notice
+    /// stay in one place.
+    pub(super) fn copy_text(&mut self, text: Option<String>, empty_msg: &str) {
+        match text {
+            Some(text) => {
+                let chars = text.chars().count();
+                // The sequence is handed to the *terminal*, so it is
+                // parked for the frame boundary rather than written from
+                // a key handler; `drive` writes it through the backend's
+                // own writer once the frame is out. A local rather than a
+                // `self`-capturing closure: the borrow checker is right
+                // that a closure holding `&mut self` across the call
+                // conflicts with the notice pushed after it.
+                let mut osc = None;
+                let copied = crate::clipboard::copy(
+                    &text,
+                    crate::clipboard::Multiplexer::detect(),
+                    crate::clipboard::is_remote(),
+                    |sequence| {
+                        osc = Some(sequence.to_string());
+                        Ok(())
+                    },
+                );
+                self.osc_pending = osc;
+                self.ui
+                    .push_notice(crate::clipboard::notice(chars, &copied));
+            }
+            None => self.ui.push_notice(empty_msg),
+        }
+    }
+
     fn run_transfer_command(
         &mut self,
         agent: &Arc<Agent>,
@@ -2600,11 +2655,8 @@ impl App {
             }
             crate::picker::Command::Copy => {
                 // Copy the last assistant message to the clipboard (pi
-                // app.message.copy parity). Two paths, and the notice names the
-                // one that landed: `arboard` reaches this machine's clipboard,
-                // and OSC 52 asks the *terminal* to reach the one the user is
-                // sitting at — the only path that works over SSH, where arboard
-                // either fails or fills a clipboard nobody will paste from.
+                // app.message.copy parity). The transport lives in
+                // `copy_text` so the timeline's selected-row copy shares it.
                 let text = self
                     .ui
                     .lines()
@@ -2612,32 +2664,7 @@ impl App {
                     .rev()
                     .find(|l| l.kind == crate::state::LineKind::Assistant)
                     .map(|l| l.full.as_deref().unwrap_or(l.text.as_str()).to_string());
-                match text {
-                    Some(text) => {
-                        let chars = text.chars().count();
-                        // The sequence is handed to the *terminal*, so it is
-                        // parked for the frame boundary rather than written from
-                        // a key handler; `drive` writes it through the backend's
-                        // own writer once the frame is out. A local rather than a
-                        // `self`-capturing closure: the borrow checker is right
-                        // that a closure holding `&mut self` across the call
-                        // conflicts with the notice pushed after it.
-                        let mut osc = None;
-                        let copied = crate::clipboard::copy(
-                            &text,
-                            crate::clipboard::Multiplexer::detect(),
-                            crate::clipboard::is_remote(),
-                            |sequence| {
-                                osc = Some(sequence.to_string());
-                                Ok(())
-                            },
-                        );
-                        self.osc_pending = osc;
-                        self.ui
-                            .push_notice(crate::clipboard::notice(chars, &copied));
-                    }
-                    None => self.ui.push_notice("copy: no assistant message to copy"),
-                }
+                self.copy_text(text, "copy: no assistant message to copy");
             }
             // `run_command` owns the routing, so reaching a variant here means the
             // dispatcher sent it to the wrong executor. `debug_assert` catches that in
