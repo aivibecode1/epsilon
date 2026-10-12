@@ -66,7 +66,7 @@ back; it is a reading of the test's source, not a report of a run.
 
 **339 rows** are paired here: Pi's 323 `P-###` behaviours, the 4 `L-###` rows of its inherited `tui.*` keybinding
 table, and the 12 `T-###` rows of its text-measurement core. Every one carries a reference citation; 200 of them
-carry an `ours` citation and 33 do not, and those 33 say so. The counts below are the rows **actually written in
+carry an `ours` citation and 28 do not, and those 28 say so. The counts below are the rows **actually written in
 this document**, tallied from its own tables — not a projection.
 
 | area | rows | done | partial | missing | deliberately different |
@@ -88,15 +88,15 @@ this document**, tallied from its own tables — not a projection.
 | 15. Markdown, mermaid and truncation | 22 | 6 | 7 | 1 | 8 |
 | 16. Status indicators | 13 | 2 | 5 | 0 | 6 |
 | 17. Footer | 12 | 4 | 4 | 0 | 4 |
-| 18. Selector and overlay components | 79 | 22 | 19 | 20 | 18 |
-| **Total** | **339** | **81** | **111** | **32** | **115** |
+| 18. Selector and overlay components | 79 | 22 | 19 | 15 | 23 |
+| **Total** | **339** | **81** | **111** | **27** | **120** |
 
 A further **17 rows are not in the counts above**: the 10 `Y-###` rows Pi ships outside its interactive mode (out of
 scope by design) and the 7 `AA-###` rows recording what was never inventoried. Both are listed in full near the end
 of this document, because a row that is silently dropped is how a rule goes unowned.
 
-The shape of that table is the honest shape of a port from a 356-row inventory to a 307-row one: **32 rows have no
-counterpart established on our side, 111 are half-built, 81 are exercised, and 115 are decisions.** The 32 are not
+The shape of that table is the honest shape of a port from a 356-row inventory to a 312-row one: **27 rows have no
+counterpart established on our side, 111 are half-built, 81 are exercised, and 120 are decisions.** The 27 are not
 69/339 failures; most of them sit in Pi's extension, settings-overlay, mermaid, image and tree-navigation surface,
 much of which Epsilon deliberately does not have. Read [Open rows](#open-rows) before reading the table.
 
@@ -689,12 +689,12 @@ the per-selector ones.
 | P-259 | `Alt+Up` / `Alt+Down` reorder the enabled list, disabled until the selection is an explicit list | `packages/coding-agent/src/modes/interactive/components/scoped-models-selector.ts:298`, `:309`, `:301` | deliberately different | As P-255: favorites are additive stars persisted globally (Ctrl+F), not an enable/disable list — starring order is insertion recency, not a curated sequence | — |
 | P-260 | Unsaved state is marked, a model absent from the catalog renders struck through with `[unavailable]`, and the footer counts them | `packages/coding-agent/src/modes/interactive/components/scoped-models-selector.ts:211`, `:369`, `:253`, `:272`, `:201` | partial | `crates/epsilon-tui/src/picker.rs` — a configured id the catalog does not know is **kept and marked**, not dropped: `is_unavailable` synthesizes a row for the current/default id when neither the catalog nor a live listing has it, drawn with the word `[unavailable]` and `Modifier::CROSSED_OUT` across label *and* id (the id is what Pi strikes, and it is the meta column here). Only a bare or self-prefixed id can be attributed — a `groq/foo-x` cannot be shown under `deepseek`, because the prefix is the only evidence and it points elsewhere. The **count** rides the hint row (`N unavailable`, shown only when N > 0, like Pi's `:196-201`). **Unsaved state has no target here**: Ctrl+S and Ctrl+F write through immediately, so there is no dirty flag to mark — recorded rather than invented | `an_uncatalogued_configured_model_marked_unavailable` (with a catalog-row and a live-row control), `an_ordinary_stage_two_call_has_no_unavailable_rows`, `an_unavailable_model_draws_struck_through_and_says_so` (frame: the strike on both columns, read from the buffer because a text-only assertion cannot see a modifier) |
 | P-261 | `Ctrl+C` in the scoped-models overlay clears the search box first and exits only when it is empty — matched past the keybinding table | `packages/coding-agent/src/modes/interactive/components/scoped-models-selector.ts:377`, `:388` | deliberately different | As P-255: no such overlay exists — and every key this product reads routes through the table (`AGENTS.md` §2.4), so the matched-past-the-table half is refused on principle | — |
-| P-281 | `pi config` is a three-level resource hierarchy over Global Resources, with per-type subheaders | `packages/coding-agent/src/modes/interactive/components/config-selector.ts:209`, `:299`, `:166` | missing | none — and note this is a **CLI command in Pi, not a slash command**; adding it to the composer would change the command surface | — |
+| P-281 | `pi config` is a three-level resource hierarchy over Global Resources, with per-type subheaders | `packages/coding-agent/src/modes/interactive/components/config-selector.ts:209`, `:299`, `:166` | deliberately different | No config-selector UI exists (`/settings` is guidance notices; TOML edited directly, `/reload` applies) — no hierarchy, subheaders, or per-type rows to draw | — |
 | P-282 | Space or Enter writes a `+pattern` / `-pattern` entry into the settings array for that resource type | `packages/coding-agent/src/modes/interactive/components/config-selector.ts:505`, `:557`, `:552` | partial | `crates/epsilon-tui/src/app/commands.rs:718` — one skill at a time by name; there is no resource-hierarchy overlay and no settings-array rewriting | `none found` per E-099 |
-| P-283 | A package resource toggles a pattern inside that package's entry, collapsing back to a bare source string when empty | `packages/coding-agent/src/modes/interactive/components/config-selector.ts:586`, `:631`, `:869` | missing | none | — |
-| P-284 | Tab flips Global ↔ Project scope and the hint changes to `space cycle inherit/+/−` | `packages/coding-agent/src/modes/interactive/components/config-selector.ts:501`, `:942`, `:211` | missing | none | — |
-| P-285 | In project scope Space cycles inherit → load → unload, choosing the next state from the inherited value | `packages/coding-agent/src/modes/interactive/components/config-selector.ts:739`, `:645`, `:648-650` | missing | none | — |
-| P-286 | Resources inherited from global settings render dim and their group header gains ` · inherited global` | `packages/coding-agent/src/modes/interactive/components/config-selector.ts:423`, `:663`, `:667` | missing | none — worth noting that this is where Pi communicates "inherited" without colour alone, which is the standard Epsilon holds itself to | — |
+| P-283 | A package resource toggles a pattern inside that package's entry, collapsing back to a bare source string when empty | `packages/coding-agent/src/modes/interactive/components/config-selector.ts:586`, `:631`, `:869` | deliberately different | No config-selector UI exists (`/settings` is guidance notices; TOML edited directly, `/reload` applies) — no entries to toggle patterns inside of | — |
+| P-284 | Tab flips Global ↔ Project scope and the hint changes to `space cycle inherit/+/−` | `packages/coding-agent/src/modes/interactive/components/config-selector.ts:501`, `:942`, `:211` | deliberately different | No config-selector UI exists (`/settings` is guidance notices; TOML edited directly, `/reload` applies) — no scopes to flip between | — |
+| P-285 | In project scope Space cycles inherit → load → unload, choosing the next state from the inherited value | `packages/coding-agent/src/modes/interactive/components/config-selector.ts:739`, `:645`, `:648-650` | deliberately different | No config-selector UI exists (`/settings` is guidance notices; TOML edited directly, `/reload` applies) — no inherit/load/unload states to cycle | — |
+| P-286 | Resources inherited from global settings render dim and their group header gains ` · inherited global` | `packages/coding-agent/src/modes/interactive/components/config-selector.ts:423`, `:663`, `:667` | deliberately different | No config-selector UI exists (`/settings` is guidance notices; TOML edited directly, `/reload` applies) — nothing inherits, so the dim-plus-suffix convention (kept as the standard) has no target | — |
 | P-287 | `Ctrl+C` inside `pi config` calls `onExit`, which the CLI host wires to `process.exit(0)`, hard-coded past the keybinding registry | `packages/coding-agent/src/modes/interactive/components/config-selector.ts:493`, `:497`, `packages/coding-agent/src/cli/config-selector.ts:49` | deliberately different | `crates/epsilon-tui/src/app/keys.rs:512` — a key an overlay does not act on is refused with a notice naming the ones that do, and the terminal guard (`crates/epsilon-tui/src/app.rs:1547`) means no UI path exits the process; [`../../AGENTS.md`](../../AGENTS.md) invariant 6 forbids reproducing it | `an_unbound_key_on_a_permission_ask_says_so_and_names_the_ones_that_work`, `the_terminal_guard_restore_is_reachable_and_idempotent` |
 | P-288 | Paging skips header rows to the next resource, and the visible row count is `max(5, height − 8)` | `packages/coding-agent/src/modes/interactive/components/config-selector.ts:471`, `:315`, `:463`, `:467` | partial | `crates/epsilon-tui/src/app/panels.rs:79` — capacity is derived from the frame the list actually drew, so it is never a magic constant that silently clips when the chrome changes | `a_page_key_moves_by_the_window_the_list_actually_drew` (frame) |
 | P-289 | `pi config` search is substring, case-insensitive, where every other selector fuzzy-matches | `packages/coding-agent/src/modes/interactive/components/config-selector.ts:341`, `:450` | deliberately different | `crates/epsilon-tui/src/fuzzy.rs` (`fuzzy_match` — the one policy every overlay ranks by) — Epsilon's overlays fuzzy-match and rank by score, one policy everywhere | `filtered_results_are_ranked_by_fuzzy_score_best_first` |
@@ -779,10 +779,10 @@ row says so — that is a gap in the inventory, and closing it is cheap.
 | 15. Markdown, mermaid and truncation | 22 | 6 | 7 | 1 | 8 |
 | 16. Status indicators | 13 | 2 | 5 | 0 | 6 |
 | 17. Footer | 12 | 4 | 4 | 0 | 4 |
-| 18. Selector and overlay components | 79 | 22 | 19 | 20 | 18 |
-| **Total** | **339** | **81** | **111** | **32** | **115** |
+| 18. Selector and overlay components | 79 | 22 | 19 | 15 | 23 |
+| **Total** | **339** | **81** | **111** | **27** | **120** |
 
-### The `missing` rows — 32
+### The `missing` rows — 27
 
 Every row below has **no** `E-` row establishing the behaviour. Nothing here was found by browsing `crates/`, and
 nothing here is a claim that the behaviour cannot be built.
@@ -796,7 +796,7 @@ nothing here is a claim that the behaviour cannot be built.
 | Themes (2) | P-096, P-098 |
 | Settings (2) | P-113, P-114 |
 | Markdown, mermaid and truncation (1) | T-010 |
-| Selector and overlay components (20) | P-230, P-239, P-251, P-281, P-283, P-284, P-285, P-286, P-300, P-304, P-306, P-307, P-308, P-311, P-314, P-316, P-317, P-318, P-319, P-323 |
+| Selector and overlay components (15) | P-230, P-239, P-251, P-300, P-304, P-306, P-307, P-308, P-311, P-314, P-316, P-317, P-318, P-319, P-323 |
 
 ### The `partial` rows — 111
 
