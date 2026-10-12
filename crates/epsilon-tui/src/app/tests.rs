@@ -5132,6 +5132,71 @@ fn a_filter_hides_entries_and_promotes_the_ones_left() {
     );
 }
 
+/// P-306: PageUp/PageDown and Left/Right page the `/tree` picker by the
+/// painted screenful — a 400-entry branch is unreachable one row at a time.
+/// Up/Down keep stepping one row and clamping (the tree-wide rule); only the
+/// page keys move by the screenful pi pages by (`session-selector.ts:612-617`).
+#[test]
+fn page_keys_move_the_tree_picker_by_the_painted_screenful() {
+    use crate::app::{TimelineRow, TreeFilter};
+
+    let (mut app, agent, _rx) = test_app();
+    app.tree_filter = TreeFilter::All;
+    app.timeline_open = true;
+    app.timeline_entries = (0..30)
+        .map(|i| TimelineRow {
+            seq: i,
+            id: format!("e{i}"),
+            kind: "user".into(),
+            snippet: format!("entry number {i}"),
+            depth: 0,
+            on_active: true,
+            parent: None,
+            label: None,
+        })
+        .collect();
+    app.timeline_index = 0;
+    // Paint first: the page step is the measured screenful, and a key before
+    // the first paint must still move rather than silently do nothing.
+    let _ = render_rows(&mut app, 80, 24);
+    assert!(
+        app.timeline_capacity > 1,
+        "the paint records the screenful: {}",
+        app.timeline_capacity
+    );
+
+    handle_key(&mut app, &agent, key(KeyCode::PageDown));
+    assert_eq!(
+        app.timeline_index, app.timeline_capacity,
+        "PageDown moves one screenful, not one row"
+    );
+    handle_key(&mut app, &agent, key(KeyCode::PageUp));
+    assert_eq!(app.timeline_index, 0, "PageUp returns by the same step");
+
+    // Bare Left/Right page too (pi's mapping); the Ctrl+Arrow fold chords
+    // keep their own arms and never meet these.
+    handle_key(&mut app, &agent, key(KeyCode::Right));
+    assert_eq!(
+        app.timeline_index, app.timeline_capacity,
+        "Right pages forward like PageDown"
+    );
+    handle_key(&mut app, &agent, key(KeyCode::Left));
+    assert_eq!(app.timeline_index, 0, "Left pages back like PageUp");
+
+    // Clamped at the far end, and the footer teaches the keys at both sizes.
+    handle_key(&mut app, &agent, key(KeyCode::PageDown));
+    handle_key(&mut app, &agent, key(KeyCode::PageDown));
+    handle_key(&mut app, &agent, key(KeyCode::PageDown));
+    assert_eq!(app.timeline_index, 29, "paging clamps at the last row");
+    for (width, height) in [(80u16, 24u16), (100, 30)] {
+        let screen = render_rows(&mut app, width, height).join("\n");
+        assert!(
+            screen.contains("left/right"),
+            "the page chord is taught on screen at {width}x{height}: {screen}"
+        );
+    }
+}
+
 /// P-304: indentation grows only at branch points, recomputed against the
 /// visible tree after a filter.
 ///

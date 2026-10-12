@@ -370,6 +370,13 @@ pub(crate) struct App {
     /// Plan 009: timeline picker overlay (pi timeline parity — not a notice dump).
     timeline_open: bool,
     timeline_index: usize,
+    /// Rows the timeline showed last frame, measured at paint time (P-306).
+    ///
+    /// A Page key in the handler knows no geometry, and pi's page size is the
+    /// visible count (`session-selector.ts:612-617`) — the only step a reader
+    /// can predict from the screen. One until the first paint, so a key
+    /// before the first frame still moves.
+    timeline_capacity: usize,
     /// Phase 3 (TUI as IDE): workspace tree sidebar open (F6). When open the
     /// tree owns the keyboard like every other overlay (see `overlay_open`).
     pub(crate) tree_open: bool,

@@ -88,15 +88,15 @@ this document**, tallied from its own tables — not a projection.
 | 15. Markdown, mermaid and truncation | 22 | 6 | 7 | 1 | 8 |
 | 16. Status indicators | 13 | 2 | 5 | 0 | 6 |
 | 17. Footer | 12 | 4 | 4 | 0 | 4 |
-| 18. Selector and overlay components | 79 | 24 | 19 | 7 | 29 |
-| **Total** | **339** | **85** | **111** | **15** | **128** |
+| 18. Selector and overlay components | 79 | 24 | 20 | 6 | 29 |
+| **Total** | **339** | **85** | **112** | **14** | **128** |
 
 A further **17 rows are not in the counts above**: the 10 `Y-###` rows Pi ships outside its interactive mode (out of
 scope by design) and the 7 `AA-###` rows recording what was never inventoried. Both are listed in full near the end
 of this document, because a row that is silently dropped is how a rule goes unowned.
 
-The shape of that table is the honest shape of a port from a 356-row inventory to a 315-row one: **15 rows have no
-counterpart established on our side, 111 are half-built, 85 are exercised, and 128 are decisions.** The 15 are not
+The shape of that table is the honest shape of a port from a 356-row inventory to a 315-row one: **14 rows have no
+counterpart established on our side, 112 are half-built, 85 are exercised, and 128 are decisions.** The 14 are not
 69/339 failures; most of them sit in Pi's extension, settings-overlay, mermaid, image and tree-navigation surface,
 much of which Epsilon deliberately does not have. Read [Open rows](#open-rows) before reading the table.
 
@@ -714,7 +714,7 @@ the per-selector ones.
 | P-303 | The subtree containing the current leaf sorts first at every level | `packages/coding-agent/src/modes/interactive/components/tree-selector.ts:245`, `:274`, `:217-240` | done | `crates/epsilon-tui/src/app/commands.rs:140-230` (stable leaf-first sort at every level in `flatten_tree` via `subtree_contains`; the stored timestamp order never moves), `:1978` (the leaf plumbed from the store under the same lock discipline as the forest) — the live context meets the eye before the abandoned lanes, with off-lane marks unchanged | `the_tree_sorts_the_leaf_branch_first` (real branched store, neuter-proven), `the_timeline_frame_drops_noise_and_leads_with_the_leaf_branch` (production `/timeline` draw at 80×24 and 100×30), `the_tree_picker_shows_an_abandoned_branch` (order-independent asserts still green) |
 | P-304 | Indentation grows only at branch points and is recomputed against the visible tree after a filter | `packages/coding-agent/src/modes/interactive/components/tree-selector.ts:288`, `:436`, `:448`, `:479` | done | Single-child chains stay flat in both halves: `flatten_tree` steps depth only for multi-child parents (`crates/epsilon-tui/src/app/commands.rs:140`) and the visible pipeline counts only visible ancestors with more than one visible child (`:305`, via `:276`), re-indented once more at the end of `visible_rows` so search, mandatory rows and folds cannot leave a dangling indent (`:544`, `:569`). A hidden sibling does not fork the view | `single_child_chains_stay_flat_and_only_forks_step` (lane/flat, fork/steps, hidden-leaf collapse, fold pipeline) + `the_tree_panel_indents_only_at_branch_points` (relative `#` columns at 80x24 and 100x30; old unconditional rule fails both) |
 | P-305 | A tool-only assistant message with a normal stop reason is dropped from the tree unless it is the leaf or carries an error | `packages/coding-agent/src/modes/interactive/components/tree-selector.ts:344`, `:351`, `:341`, `:792`, `:798` | done | `crates/epsilon-tui/src/app/commands.rs:140-230` (`dropped_from_tree`: no text content plus a normal stop (`EndTurn`/`ToolUse`) plus not-the-leaf drops; truncated, failed and aborted turns stay, and an unknown leaf drops nothing; children recurse so lanes survive with recomputed depth) — tool-only turns are navigation noise, and a broken turn is where "where did it break" lives | `the_tree_drops_tool_only_turns_but_keeps_the_leaf_and_the_broken` (neuter-proven), `the_timeline_frame_drops_noise_and_leads_with_the_leaf_branch` (production draw at both sizes) |
-| P-306 | Left and Right page the tree as well as `PageUp`/`PageDown`, and this selector wraps at the ends | `packages/coding-agent/src/modes/interactive/components/tree-selector.ts:1026`, `:1029`, `:1007`, `:1009` | missing | none — Epsilon's arrows step one row and clamp at both ends (`crates/epsilon-tui/src/app/keys.rs:1334`) | — |
+| P-306 | Left and Right page the tree as well as `PageUp`/`PageDown`, and this selector wraps at the ends | `packages/coding-agent/src/modes/interactive/components/tree-selector.ts:1026`, `:1029`, `:1007`, `:1009` | partial | The page half is built: PageUp/PageDown and bare Left/Right move by the painted screenful (`crates/epsilon-tui/src/app/keys.rs:1228`, `:1235`, recorded at paint in `crates/epsilon-tui/src/app/panels.rs:755` through `crates/epsilon-tui/src/app.rs:379`), bare arrows guarded so the Ctrl+Arrow fold chords keep their arms, footer names `left/right`. The wrap half is judged: clamping is the tree-wide rule (session browser, Up/Down here) — wrapping would move the highlight somewhere the reader did not send it | `page_keys_move_the_tree_picker_by_the_painted_screenful` (capacity step, Left/Right parity, far-end clamp, footer taught at 80x24 and 100x30; step-one control fails it) |
 | P-307 | `Ctrl+X` copies the selected entry's **full** text, not the 200-character preview on screen | `packages/coding-agent/src/modes/interactive/components/tree-selector.ts:1037`, `:904`, `packages/coding-agent/src/modes/interactive/interactive-mode.ts:5616-5627` | missing | none — Epsilon's `ctrl+x` is expand-all; copying is `F4` and copies the last assistant message (`crates/epsilon-tui/src/app/keys.rs:1957`) | — |
 | P-308 | A tree with no entries cancels itself after 100 ms | `packages/coding-agent/src/modes/interactive/components/tree-selector.ts:1395`, `packages/coding-agent/src/modes/interactive/interactive-mode.ts:5488-5491` | deliberately different | An empty tree opens, never cancels (P-243): the empty state names the way to make content, and auto-dismissing the screen that teaches would hide exactly the message that matters | — |
 | P-309 | The tree footer lists every binding, rewriting `pageUp`→`pgup` and merging chords that share a prefix | `packages/coding-agent/src/modes/interactive/components/tree-selector.ts:1254`, `:1263` | partial | `crates/epsilon-tui/src/ui/footer.rs:294` — the footer names the keys that work right now, including overlay keys, with the mode badge leading (`crates/epsilon-tui/src/ui/footer.rs:367`); a tree-specific list is not established | `idle_hints_name_only_keys_that_do_something` (frame) |
@@ -779,10 +779,10 @@ row says so — that is a gap in the inventory, and closing it is cheap.
 | 15. Markdown, mermaid and truncation | 22 | 6 | 7 | 1 | 8 |
 | 16. Status indicators | 13 | 2 | 5 | 0 | 6 |
 | 17. Footer | 12 | 4 | 4 | 0 | 4 |
-| 18. Selector and overlay components | 79 | 24 | 19 | 7 | 29 |
-| **Total** | **339** | **85** | **111** | **15** | **128** |
+| 18. Selector and overlay components | 79 | 24 | 20 | 6 | 29 |
+| **Total** | **339** | **85** | **112** | **14** | **128** |
 
-### The `missing` rows — 15
+### The `missing` rows — 14
 
 Every row below has **no** `E-` row establishing the behaviour. Nothing here was found by browsing `crates/`, and
 nothing here is a claim that the behaviour cannot be built.
@@ -794,9 +794,9 @@ nothing here is a claim that the behaviour cannot be built.
 | Themes (2) | P-096, P-098 |
 | Settings (2) | P-113, P-114 |
 | Markdown, mermaid and truncation (1) | T-010 |
-| Selector and overlay components (7) | P-306, P-307, P-316, P-317, P-318, P-319, P-323 |
+| Selector and overlay components (6) | P-307, P-316, P-317, P-318, P-319, P-323 |
 
-### The `partial` rows — 111
+### The `partial` rows — 112
 
 An `E-` row covers these and something is not finished. The reason column is the shortest honest statement of what.
 
@@ -818,7 +818,7 @@ An `E-` row covers these and something is not finished. The reason column is the
 | Markdown, mermaid and truncation (7) | P-176, T-003, T-004, T-005, T-006, T-008, T-011 | hint placement has no keep-last mode; stripping established at two boundaries, not one central measure; hyperlink/reset closing held by a different mechanism with a re-measure backstop; span-dropping, not column slicing; style is per-`Span`, so no reset ladder; row caching, but no ASCII fast path or bounded width cache; CJK as a word character unestablished for completion |
 | Status indicators (5) | P-018, P-186, P-188, P-189, P-190 | a drawn spinner rather than the terminal's progress state; one run-state slot rather than four kinds; whole-gauge dropping rather than a four-step border ladder; a retry notice and elapsed seconds rather than a cancelable countdown; one compaction wording rather than three |
 | Footer (4) | P-200, P-203, P-205, P-206 | no `~` substitution and no `• session-name` segment; no routed-model `→ id`; the footer's own recompute trigger unestablished; the no-spawn `.git/HEAD` read unestablished |
-| Selector and overlay components (19) | P-226, P-228, P-231, P-233, P-236, P-237, P-238, P-241, P-246, P-248, P-250, P-255, P-260, P-282, P-288, P-294, P-309, P-313, P-315 | per-overlay focus targets; no overlay-scoped id space; fixed sort, path always shown, current session marked not protected, rename outside the picker, no phrase/regex search, no message count, no resource overlay, capacity derived, no tree-specific key list, no provider-selector empty state, provider badges in this window's visual language rather than Pi's literals; the picker's provider-first order is built and pinned, the scoped overlay's opposite order is not (one picker, one order); no Tab scope toggle but empty-scope warnings exist; favorites apply immediately and globally with no session-only layer; the transcript filter cycles three of five modes (`ctrl+o`/`shift+ctrl+o`), the other two not being representable on a live transcript; an uncatalogued configured model is struck and badged, but there is no unsaved state to mark because the saving actions write through |
+| Selector and overlay components (20) | P-226, P-228, P-231, P-233, P-236, P-237, P-238, P-241, P-246, P-248, P-250, P-255, P-260, P-282, P-288, P-294, P-306, P-309, P-313, P-315 | per-overlay focus targets; no overlay-scoped id space; fixed sort, path always shown, current session marked not protected, rename outside the picker, no phrase/regex search, no message count, no resource overlay, capacity derived, no tree-specific key list, no provider-selector empty state, provider badges in this window's visual language rather than Pi's literals; the picker's provider-first order is built and pinned, the scoped overlay's opposite order is not (one picker, one order); no Tab scope toggle but empty-scope warnings exist; favorites apply immediately and globally with no session-only layer; the transcript filter cycles three of five modes (`ctrl+o`/`shift+ctrl+o`), the other two not being representable on a live transcript; an uncatalogued configured model is struck and badged, but there is no unsaved state to mark because the saving actions write through; the tree pages by the screenful but never wraps |
 
 ### Four gaps that are not about features at all
 

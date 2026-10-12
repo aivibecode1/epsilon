@@ -1220,6 +1220,41 @@ pub(crate) fn handle_key(app: &mut App, agent: &Arc<Agent>, key: KeyEvent) -> bo
                     app.timeline_index = (app.timeline_index + 1).min(total - 1);
                 }
             }
+            // P-306: page by the painted screenful — pi pages by `maxVisible`
+            // (`session-selector.ts:612-617`), and Left/Right page as well as
+            // PageUp/PageDown (`tree-selector.ts:1026`, `:1029`). Bare arrows:
+            // the Ctrl+Arrow fold chords keep their own arms below, and Up/Down
+            // above keep stepping one row — only the page keys move far.
+            KeyCode::PageUp => {
+                let total = app.timeline_entries.len();
+                app.timeline_index = app
+                    .timeline_index
+                    .saturating_sub(app.timeline_capacity.max(1))
+                    .min(total.saturating_sub(1));
+            }
+            KeyCode::PageDown => {
+                let total = app.timeline_entries.len();
+                if total > 0 {
+                    app.timeline_index =
+                        (app.timeline_index + app.timeline_capacity.max(1)).min(total - 1);
+                }
+            }
+            // Bare arrows only: the guard keeps Ctrl+Left/Right falling
+            // through to the fold arms below.
+            KeyCode::Right if key.modifiers.is_empty() => {
+                let total = app.timeline_entries.len();
+                if total > 0 {
+                    app.timeline_index =
+                        (app.timeline_index + app.timeline_capacity.max(1)).min(total - 1);
+                }
+            }
+            KeyCode::Left if key.modifiers.is_empty() => {
+                let total = app.timeline_entries.len();
+                app.timeline_index = app
+                    .timeline_index
+                    .saturating_sub(app.timeline_capacity.max(1))
+                    .min(total.saturating_sub(1));
+            }
             // M196: fold/unfold, on pi's chords (`keybindings.ts:150-157`:
             // Ctrl+Left folds-or-up, Ctrl+Right unfolds-or-down).
             //

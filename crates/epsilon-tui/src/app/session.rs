@@ -132,6 +132,7 @@ impl App {
             at_fragment: String::new(),
             timeline_open: false,
             timeline_index: 0,
+            timeline_capacity: 1,
             timeline_entries: Vec::new(),
             tree_open: false,
             tree_cursor: 0,

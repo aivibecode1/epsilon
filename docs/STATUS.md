@@ -724,6 +724,14 @@ the run. Matrix at 81/111/24/123. (Previous: `gate-goal3-phase6-20261012`, 2,011
 > lineage surfaces per row; revisit if fork families go unfindable.
 > Counts now 85/111/15/128.
 >
+> **P-306 partial (this session): the tree pages, but never wraps.** PageUp /
+> PageDown and bare Left/Right move by the painted screenful (capacity recorded
+> at paint, `max(1)` before first paint); bare-arrow guards keep the Ctrl+Arrow
+> fold chords intact; footer teaches `left/right`. The wrap half is judged:
+> clamping is the tree-wide rule. One test (capacity step, Left/Right parity,
+> far-end clamp, footer at 80x24 and 100x30; step-one control fails it); full
+> TUI suite green, clippy clean. Counts now 85/112/14/128.
+>
 > **P-230 adapted (this session): Tab toggles workspace/all session scopes.** Bare
 > Tab flips `SessionScope` and rescans under the same filter (highlight restarts
 > at the top — the row it pointed at may not exist in the other scope); the All

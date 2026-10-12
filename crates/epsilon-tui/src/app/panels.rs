@@ -742,7 +742,7 @@ pub(super) fn draw_at_file(f: &mut Frame<'_>, app: &App, transcript_area: ratatu
     f.render_widget(ratatui::widgets::Paragraph::new(lines), inner);
 }
 
-pub(super) fn draw_timeline(f: &mut Frame<'_>, app: &App, outer: Rect) {
+pub(super) fn draw_timeline(f: &mut Frame<'_>, app: &mut App, outer: Rect) {
     use crate::ui::overlay::{self, Panel, Width};
 
     if !app.timeline_open || app.timeline_entries.is_empty() {
@@ -750,6 +750,9 @@ pub(super) fn draw_timeline(f: &mut Frame<'_>, app: &App, outer: Rect) {
     }
     let total = app.timeline_entries.len();
     let capacity = 12usize.min(outer.height.saturating_sub(6).max(1) as usize);
+    // P-306: the page step is this measured screenful. Recorded before the
+    // immutable borrows below, like the session browser's own capacity.
+    app.timeline_capacity = capacity;
     let start = crate::scroll::scroll_start(total, app.timeline_index, capacity);
     let end = (start + capacity).min(total);
     // The timeline is a list panel like the others, so it takes the panel width;
@@ -906,6 +909,11 @@ pub(super) fn draw_timeline(f: &mut Frame<'_>, app: &App, outer: Rect) {
             // undiscoverable.
             &[
                 (&arrows, "move"),
+                // P-306: the page step is named where the keys are — a
+                // screenful step with no hint is undiscoverable at exactly
+                // the branch sizes that need it. Early in the list so the
+                // budget drops later hints first, not this one.
+                ("left/right", "page"),
                 ("enter", "jump"),
                 ("f", "filter"),
                 ("/", "search"),
