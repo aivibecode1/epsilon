@@ -66,7 +66,7 @@ back; it is a reading of the test's source, not a report of a run.
 
 **339 rows** are paired here: Pi's 323 `P-###` behaviours, the 4 `L-###` rows of its inherited `tui.*` keybinding
 table, and the 12 `T-###` rows of its text-measurement core. Every one carries a reference citation; 200 of them
-carry an `ours` citation and 128 do not, and those 128 say so. The counts below are the rows **actually written in
+carry an `ours` citation and 127 do not, and those 127 say so. The counts below are the rows **actually written in
 this document**, tallied from its own tables — not a projection.
 
 | area | rows | done | partial | missing | deliberately different |
@@ -87,16 +87,16 @@ this document**, tallied from its own tables — not a projection.
 | 14. Diffs | 6 | 4 | 0 | 2 | 0 |
 | 15. Markdown, mermaid and truncation | 22 | 6 | 7 | 9 | 0 |
 | 16. Status indicators | 13 | 2 | 5 | 5 | 1 |
-| 17. Footer | 12 | 4 | 4 | 2 | 2 |
+| 17. Footer | 12 | 4 | 4 | 1 | 3 |
 | 18. Selector and overlay components | 79 | 18 | 17 | 36 | 8 |
-| **Total** | **339** | **70** | **102** | **127** | **40** |
+| **Total** | **339** | **70** | **102** | **126** | **41** |
 
 A further **17 rows are not in the counts above**: the 10 `Y-###` rows Pi ships outside its interactive mode (out of
 scope by design) and the 7 `AA-###` rows recording what was never inventoried. Both are listed in full near the end
 of this document, because a row that is silently dropped is how a rule goes unowned.
 
-The shape of that table is the honest shape of a port from a 356-row inventory to a 212-row one: **127 rows have no
-counterpart established on our side, 102 are half-built, 70 are exercised, and 40 are decisions.** The 138 are not
+The shape of that table is the honest shape of a port from a 356-row inventory to a 213-row one: **126 rows have no
+counterpart established on our side, 102 are half-built, 70 are exercised, and 41 are decisions.** The 138 are not
 69/339 failures; most of them sit in Pi's extension, settings-overlay, mermaid, image and tree-navigation surface,
 much of which Epsilon deliberately does not have. Read [Open rows](#open-rows) before reading the table.
 
@@ -638,7 +638,7 @@ per mode (`insert` · `enter send` against `run` · `enter queue`) and a bare ch
 | P-204 | Footer truncation measures **visible** columns on already-styled strings, and dims stats and right side separately so a colour reset cannot clear an outer dim | `packages/coding-agent/src/modes/interactive/components/footer.ts:225`, `:282`, `:284` | done | `crates/epsilon-tui/src/ui/layout.rs:272` (`display_width` measures visible columns; the footer's own budget is in `ui/footer.rs`) — Epsilon never truncates a styled string; whole spans are dropped at a boundary and a re-measure backstop covers the case where its own width table disagrees with ratatui's, which is the same failure a naive `chars().take(n)` produces | `nothing_is_drawn_past_the_row_width` (frame), `no_footer_row_ever_prints_half_a_hint_or_touches_the_location` (frame) |
 | P-205 | Footer statistics are recomputed only when the session, id, leaf, entry count or context-window model changes | `packages/coding-agent/src/modes/interactive/components/footer.ts:109`, `:143`, `:124` | partial | `crates/epsilon-tui/src/render_cache.rs:470` — cached rows make a frame O(visible) regardless of transcript length; the footer's own recompute trigger is not separately established by an `E-` row | `width_change_invalidates_everything` |
 | P-206 | The branch is read by parsing `.git/HEAD` and walking up, following `gitdir:` and `commondir`; a detached HEAD renders `detached` | `packages/coding-agent/src/core/footer-data-provider.ts:22`, `:242`, `:245`, `:259` | partial | `crates/epsilon-tui/src/ui/footer.rs:435` — a branch is shown (`crates/epsilon-tui/src/git.rs`); that it is read without spawning `git` is not established by an `E-` row | `the_location_survives_a_narrow_terminal` (frame) |
-| P-207 | Branch watching watches the HEAD **directory**, debounces at 500 ms, polls under WSL on a Windows drive, adds reftable watchers, and tears down and retries on error | `packages/coding-agent/src/core/footer-data-provider.ts:313`, `:101`, `:91`, `:344`, `:302` | missing | none | — |
+| P-207 | Branch watching watches the HEAD **directory**, debounces at 500 ms, polls under WSL on a Windows drive, adds reftable watchers, and tears down and retries on error | `packages/coding-agent/src/core/footer-data-provider.ts:313`, `:101`, `:91`, `:344`, `:302` | deliberately different | Poll-with-TTL instead of watch-with-debounce: the branch is read straight from `.git/HEAD` (`crates/epsilon-tui/src/git.rs:30`) with a two-second cache (`App::cached_branch`), so the name is at most 2 s stale with no watcher to tear down, no debounce to tune, and no new dependency for the difference — a file watcher buys sub-second freshness for a label nobody acts on within seconds | `a_branch_ref_is_read_from_head`, `a_detached_head_is_the_short_sha`, `no_git_directory_is_not_a_branch`, `a_worktree_pointer_is_not_a_branch` |
 | P-208 | With `PI_EXPERIMENTAL=1` a bold warning-coloured `xp` marker is appended to the footer stats | `packages/coding-agent/src/modes/interactive/components/footer.ts:214`, `packages/coding-agent/src/core/experimental.ts:2` | missing | none | — |
 
 ## 18. Selector and overlay components
@@ -778,11 +778,11 @@ row says so — that is a gap in the inventory, and closing it is cheap.
 | 14. Diffs | 6 | 4 | 0 | 2 | 0 |
 | 15. Markdown, mermaid and truncation | 22 | 6 | 7 | 9 | 0 |
 | 16. Status indicators | 13 | 2 | 5 | 5 | 1 |
-| 17. Footer | 12 | 4 | 4 | 2 | 2 |
+| 17. Footer | 12 | 4 | 4 | 1 | 3 |
 | 18. Selector and overlay components | 79 | 18 | 17 | 36 | 8 |
-| **Total** | **339** | **70** | **102** | **127** | **40** |
+| **Total** | **339** | **70** | **102** | **126** | **41** |
 
-### The `missing` rows — 127
+### The `missing` rows — 126
 
 Every row below has **no** `E-` row establishing the behaviour. Nothing here was found by browsing `crates/`, and
 nothing here is a claim that the behaviour cannot be built.
@@ -803,7 +803,7 @@ nothing here is a claim that the behaviour cannot be built.
 | Diffs (2) | P-162, P-163 |
 | Markdown, mermaid and truncation (9) | P-167, P-168, P-169, P-170, P-171, P-172, P-173, T-010, T-012 |
 | Status indicators (5) | P-019, P-191, P-192, P-193, P-194 |
-| Footer (2) | P-207, P-208 |
+| Footer (1) | P-208 |
 | Selector and overlay components (36) | P-230, P-232, P-234, P-235, P-239, P-242, P-244, P-245, P-248, P-251, P-255, P-256, P-257, P-258, P-259, P-261, P-281, P-283, P-284, P-285, P-286, P-296, P-297, P-300, P-304, P-306, P-307, P-308, P-310, P-311, P-314, P-316, P-317, P-318, P-319, P-323 |
 
 ### The `partial` rows — 101

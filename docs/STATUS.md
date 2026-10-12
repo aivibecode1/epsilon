@@ -468,6 +468,12 @@ the run. Up from 1,997: the checkpoint round-trip and restore-undo tests. (Previ
 > no-store crash guard). P-081 (`/bug` flow) stays `missing`: absent, no decision
 > recorded against it. Counts now 70/102/127/40.
 >
+> **P-207 judged (this session): poll-with-TTL, not watch-with-debounce.** The branch
+> is read straight from `.git/HEAD` with a 2 s cache — at most 2 s stale, no watcher
+> to tear down, no new dependency for sub-second freshness on a label nobody acts on
+> within seconds. P-208 stays `missing`: no experimental flags exist. Counts now
+> 70/102/126/41.
+>
 > **Goal 3, Phase 1 (landed): AGENTS.md v4 draft for owner application.** Every v3
 > clause audited against the tree (13 crates, uniform 1.88, TERMINAL+WINDOW tables,
 > 15 legs, SUPPORTED only in a historical comment); the complete v4 text sits in
