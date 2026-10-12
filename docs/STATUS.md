@@ -743,6 +743,12 @@ the run. Matrix at 81/111/24/123. (Previous: `gate-goal3-phase6-20261012`, 2,011
 > with history kept. Full suite green, clippy clean.
 > Counts now 86/112/13/128.
 >
+> **Trio judged (this session): P-316/P-317 Radius shimmer, P-323 images
+> gate.** Zero Radius references anywhere (P-066's rule,
+> re-verified); image blobs collapse to a one-line deferred fallback that is
+> never drawn, so a Yes/No setting would toggle nothing — and pi's own
+> selector has no production caller either. Counts now 86/112/10/131.
+>
 > **P-230 adapted (this session): Tab toggles workspace/all session scopes.** Bare
 > Tab flips `SessionScope` and rescans under the same filter (highlight restarts
 > at the top — the row it pointed at may not exist in the other scope); the All

@@ -88,15 +88,15 @@ this document**, tallied from its own tables — not a projection.
 | 15. Markdown, mermaid and truncation | 22 | 6 | 7 | 1 | 8 |
 | 16. Status indicators | 13 | 2 | 5 | 0 | 6 |
 | 17. Footer | 12 | 4 | 4 | 0 | 4 |
-| 18. Selector and overlay components | 79 | 25 | 20 | 5 | 29 |
-| **Total** | **339** | **86** | **112** | **13** | **128** |
+| 18. Selector and overlay components | 79 | 25 | 20 | 2 | 32 |
+| **Total** | **339** | **86** | **112** | **10** | **131** |
 
 A further **17 rows are not in the counts above**: the 10 `Y-###` rows Pi ships outside its interactive mode (out of
 scope by design) and the 7 `AA-###` rows recording what was never inventoried. Both are listed in full near the end
 of this document, because a row that is silently dropped is how a rule goes unowned.
 
-The shape of that table is the honest shape of a port from a 356-row inventory to a 315-row one: **13 rows have no
-counterpart established on our side, 112 are half-built, 86 are exercised, and 128 are decisions.** The 13 are not
+The shape of that table is the honest shape of a port from a 356-row inventory to a 315-row one: **10 rows have no
+counterpart established on our side, 112 are half-built, 86 are exercised, and 131 are decisions.** The 10 are not
 69/339 failures; most of them sit in Pi's extension, settings-overlay, mermaid, image and tree-navigation surface,
 much of which Epsilon deliberately does not have. Read [Open rows](#open-rows) before reading the table.
 
@@ -724,13 +724,13 @@ the per-selector ones.
 | P-313 | Provider rows carry `• not configured`, `✓ configured`, `✓ env: NAME`, or a warning when the stored credential's type differs | `packages/coding-agent/src/modes/interactive/components/oauth-selector.ts:36`, `:47`, `:49-52`, `:42-46` | partial | `crates/epsilon-tui/src/app/panels.rs:112-131` draws the distinction in this window's own visual language (key glyph for configured, `·` for not, `●` on the active provider; `key` / `—` / `oauth` words in the auth picker) — and since round 9 the auth picker additionally names the variable when the environment is the credential (`key (env: NAME)`, sourced from `catalog::env_credential_name`). Since round 13 it also warns on a stored OAuth login nothing will ever read (`! oauth login unused`, sourced from `catalog::oauth_credential_unused`: stored-OAuth plus no login flow and no refresh endpoint — API keys always resolve, so the warning cannot fire on a working setup). Stays `partial`, not `done`: the suffix pixels have no frame (process env is un-settable under edition-2024 unsafe-forbid, stored logins untouchable in tests), so the positive branches are logic-pinned and reviewed, not rendered | `stage_one_provider_rows_carry_an_auth_badge_and_an_active_mark` (frame) + `env_credential_name_pins_the_display_precedence` (7 injected cases) + `oauth_credential_unused_fires_only_on_dead_logins` (6 cases: empty store, stored-API incl. flow providers, stored-OAuth with flow, with endpoint-only, dead pair, unreadable store) + `the_auth_picker_shows_no_source_for_an_unconfigured_provider` (frame; negative controls run on both halves) |
 | P-314 | The `[api key]` / `[subscription]` / `[account]` tag appears only when the list mixes auth types | `packages/coding-agent/src/modes/interactive/components/oauth-selector.ts:92`, `:160`, `:32` | deliberately different | Each row already names its own auth state unconditionally — `key` / `key (env: NAME)` / `—` for credential presence (`crates/epsilon-tui/src/app/panels.rs:1271`) plus an `oauth` capability word where a login flow exists (`:1284`), joined into the row meta (`:1300`) — because the list holds one row per provider answering "how do I authenticate here", not one row per auth-type option. Pi's tag disambiguates multiple auth-type options across rows and hides itself when uniform (`oauth-selector.ts:92`, `:160`); hiding our state words when uniform would remove the answer rather than the redundancy. Revisit if a provider ever offers two selectable auth-type rows in one list | — |
 | P-315 | Three distinct auth empty states: no providers available, none logged in, no matching providers | `packages/coding-agent/src/modes/interactive/components/oauth-selector.ts:182`, `:186` | partial | `crates/epsilon-tui/src/app/commands.rs:659` — `/logout` distinguishes removed from nothing-to-remove and says which; there is no provider-selector overlay to have an empty state | `no_slash_command_panics_when_typed` |
-| P-316 | The `Sign in with Radius` option shimmers through four brand colours, only while selected | `packages/coding-agent/src/modes/interactive/components/radius-login-selector.ts:11`, `:18`, `:72` | missing | none — no Radius provider | — |
-| P-317 | The shimmer is a post-render string patch that finds the rendered line and replaces it, and disappears silently if the line wrapped | `packages/coding-agent/src/modes/interactive/components/radius-login-selector.ts:78`, `:81`, `:41-44` | missing | none — if an animated row is ever added it must be a widget that honours reduced motion ([`../../AGENTS.md`](../../AGENTS.md) §8), not a string substitution | — |
+| P-316 | The `Sign in with Radius` option shimmers through four brand colours, only while selected | `packages/coding-agent/src/modes/interactive/components/radius-login-selector.ts:11`, `:18`, `:72` | deliberately different | As P-066: zero references to Radius anywhere in `crates/` — no login flow, no provider, nothing to shimmer | — |
+| P-317 | The shimmer is a post-render string patch that finds the rendered line and replaces it, and disappears silently if the line wrapped | `packages/coding-agent/src/modes/interactive/components/radius-login-selector.ts:78`, `:81`, `:41-44` | deliberately different | As P-316: no Radius row exists to animate. And as already recorded: if an animated row is ever added it must be a widget honouring reduced motion ([`../../AGENTS.md`](../../AGENTS.md) §8), not a string substitution | — |
 | P-318 | The OAuth dialog replaces the composer with a panel that opens the browser **without a keypress** | `packages/coding-agent/src/modes/interactive/components/login-dialog.ts:96`, `:111`, `:102`, `:124` | missing | none | — |
 | P-319 | The device-code flow shows the verification URI and a code and does **not** open a browser | `packages/coding-agent/src/modes/interactive/components/login-dialog.ts:118`, `:128`, `:152-153` | missing | none | — |
 | P-320 | A submitted login input is replaced in place with `> value`; Esc aborts and reports `Login cancelled` | `packages/coding-agent/src/modes/interactive/components/login-dialog.ts:77`, `:83`, `:225`, `:65` | deliberately different | `crates/epsilon-tui/src/app/panels.rs:1178` — Epsilon renders one bullet glyph per character and never the value, not even an echo of the digits; the path is named instead | `cancelling_a_key_entry_says_what_was_kept`, `auth_file_is_owner_only_on_unix` |
 | P-321 | The auth selector clamps and keeps its position after filtering, where the model selector resets — three navigation policies across three pickers | `packages/coding-agent/src/modes/interactive/components/oauth-selector.ts:198`, `:204`, `:139`, `:146` | deliberately different | `crates/epsilon-tui/src/app/keys.rs:1334` — one policy everywhere (see P-312): clamp at both ends, reset the highlight only on a new query | `a_page_key_moves_by_the_window_the_list_actually_drew` (frame) |
-| P-323 | A `Show images` Yes/No selector exists with no production caller; the reachable setting is a row in `/settings` | `packages/coding-agent/src/modes/interactive/components/show-images-selector.ts:19`, `:31`, `packages/coding-agent/src/modes/interactive/components/index.ts:29` | missing | none — Epsilon draws no inline transcript images, so there is no setting to gate | — |
+| P-323 | A `Show images` Yes/No selector exists with no production caller; the reachable setting is a row in `/settings` | `packages/coding-agent/src/modes/interactive/components/show-images-selector.ts:19`, `:31`, `packages/coding-agent/src/modes/interactive/components/index.ts:29` | deliberately different | Excluded scope needs no gate: image blobs collapse to a one-line `[image: … — graphics deferred]` fallback (`crates/epsilon-tui/src/state.rs:156`) and are never drawn, so a Yes/No setting would toggle nothing. Pi's own selector has no production caller either (AA-006) | — |
 
 ## 19. Epsilon rows with no Pi counterpart — ours, not a port
 
@@ -779,10 +779,10 @@ row says so — that is a gap in the inventory, and closing it is cheap.
 | 15. Markdown, mermaid and truncation | 22 | 6 | 7 | 1 | 8 |
 | 16. Status indicators | 13 | 2 | 5 | 0 | 6 |
 | 17. Footer | 12 | 4 | 4 | 0 | 4 |
-| 18. Selector and overlay components | 79 | 25 | 20 | 5 | 29 |
-| **Total** | **339** | **86** | **112** | **13** | **128** |
+| 18. Selector and overlay components | 79 | 25 | 20 | 2 | 32 |
+| **Total** | **339** | **86** | **112** | **10** | **131** |
 
-### The `missing` rows — 13
+### The `missing` rows — 10
 
 Every row below has **no** `E-` row establishing the behaviour. Nothing here was found by browsing `crates/`, and
 nothing here is a claim that the behaviour cannot be built.
@@ -794,7 +794,7 @@ nothing here is a claim that the behaviour cannot be built.
 | Themes (2) | P-096, P-098 |
 | Settings (2) | P-113, P-114 |
 | Markdown, mermaid and truncation (1) | T-010 |
-| Selector and overlay components (5) | P-316, P-317, P-318, P-319, P-323 |
+| Selector and overlay components (2) | P-318, P-319 |
 
 ### The `partial` rows — 112
 
