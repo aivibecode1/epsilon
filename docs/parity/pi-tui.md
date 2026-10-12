@@ -66,7 +66,7 @@ back; it is a reading of the test's source, not a report of a run.
 
 **339 rows** are paired here: Pi's 323 `P-###` behaviours, the 4 `L-###` rows of its inherited `tui.*` keybinding
 table, and the 12 `T-###` rows of its text-measurement core. Every one carries a reference citation; 200 of them
-carry an `ours` citation and 89 do not, and those 89 say so. The counts below are the rows **actually written in
+carry an `ours` citation and 88 do not, and those 88 say so. The counts below are the rows **actually written in
 this document**, tallied from its own tables — not a projection.
 
 | area | rows | done | partial | missing | deliberately different |
@@ -88,15 +88,15 @@ this document**, tallied from its own tables — not a projection.
 | 15. Markdown, mermaid and truncation | 22 | 6 | 7 | 3 | 6 |
 | 16. Status indicators | 13 | 2 | 5 | 1 | 5 |
 | 17. Footer | 12 | 4 | 4 | 1 | 3 |
-| 18. Selector and overlay components | 79 | 19 | 17 | 34 | 9 |
-| **Total** | **339** | **75** | **105** | **88** | **71** |
+| 18. Selector and overlay components | 79 | 20 | 17 | 33 | 9 |
+| **Total** | **339** | **76** | **105** | **87** | **71** |
 
 A further **17 rows are not in the counts above**: the 10 `Y-###` rows Pi ships outside its interactive mode (out of
 scope by design) and the 7 `AA-###` rows recording what was never inventoried. Both are listed in full near the end
 of this document, because a row that is silently dropped is how a rule goes unowned.
 
-The shape of that table is the honest shape of a port from a 356-row inventory to a 251-row one: **88 rows have no
-counterpart established on our side, 105 are half-built, 75 are exercised, and 71 are decisions.** The 88 are not
+The shape of that table is the honest shape of a port from a 356-row inventory to a 252-row one: **87 rows have no
+counterpart established on our side, 105 are half-built, 76 are exercised, and 71 are decisions.** The 87 are not
 69/339 failures; most of them sit in Pi's extension, settings-overlay, mermaid, image and tree-navigation surface,
 much of which Epsilon deliberately does not have. Read [Open rows](#open-rows) before reading the table.
 
@@ -718,7 +718,7 @@ the per-selector ones.
 | P-307 | `Ctrl+X` copies the selected entry's **full** text, not the 200-character preview on screen | `packages/coding-agent/src/modes/interactive/components/tree-selector.ts:1037`, `:904`, `packages/coding-agent/src/modes/interactive/interactive-mode.ts:5616-5627` | missing | none — Epsilon's `ctrl+x` is expand-all; copying is `F4` and copies the last assistant message (`crates/epsilon-tui/src/app/keys.rs:1957`) | — |
 | P-308 | A tree with no entries cancels itself after 100 ms | `packages/coding-agent/src/modes/interactive/components/tree-selector.ts:1395`, `packages/coding-agent/src/modes/interactive/interactive-mode.ts:5488-5491` | missing | none | — |
 | P-309 | The tree footer lists every binding, rewriting `pageUp`→`pgup` and merging chords that share a prefix | `packages/coding-agent/src/modes/interactive/components/tree-selector.ts:1254`, `:1263` | partial | `crates/epsilon-tui/src/ui/footer.rs:294` — the footer names the keys that work right now, including overlay keys, with the mode badge leading (`crates/epsilon-tui/src/ui/footer.rs:367`); a tree-specific list is not established | `idle_hints_name_only_keys_that_do_something` (frame) |
-| P-310 | `/fork` opens `Fork from Message` with an explanation and the cursor on the most recent message | `packages/coding-agent/src/modes/interactive/components/user-message-selector.ts:123`, `packages/coding-agent/src/modes/interactive/interactive-mode.ts:5427` | missing | none — Epsilon forks at the current leaf (`crates/epsilon-tui/src/app/commands.rs:1229`) | — |
+| P-310 | `/fork` opens `Fork from Message` with an explanation and the cursor on the most recent message | `packages/coding-agent/src/modes/interactive/components/user-message-selector.ts:123`, `packages/coding-agent/src/modes/interactive/interactive-mode.ts:5427` | done | Adapted: no separate dialog — `k` in the `/tree` picker forks at the SELECTED row through the same `fork_branch_at` (`crates/epsilon-tui/src/app/keys.rs:1132`), writing only the chosen ancestry with a fresh header | `forking_from_the_tree_writes_only_the_chosen_ancestry` |
 | P-311 | Each fork row is three lines with a `Message N of M` caption, ten visible | `packages/coding-agent/src/modes/interactive/components/user-message-selector.ts:54`, `:42`, `:73`, `:19` | missing | none | — |
 | P-312 | Fork-picker navigation wraps at both ends, where the auth selector clamps | `packages/coding-agent/src/modes/interactive/components/user-message-selector.ts:84`, `:88`, contrasted with `packages/coding-agent/src/modes/interactive/components/oauth-selector.ts:198` | deliberately different | `crates/epsilon-tui/src/app/keys.rs:1334` — Epsilon's overlays clamp at both ends and keep their position after filtering, one policy rather than three | `a_page_key_moves_by_the_window_the_list_actually_drew` (frame), `two_stage_picker_descends_and_applies_model` |
 | P-313 | Provider rows carry `• not configured`, `✓ configured`, `✓ env: NAME`, or a warning when the stored credential's type differs | `packages/coding-agent/src/modes/interactive/components/oauth-selector.ts:36`, `:47`, `:49-52`, `:42-46` | partial | `crates/epsilon-tui/src/app/panels.rs:112-131` draws the distinction in this window's own visual language (key glyph for configured, `·` for not, `●` on the active provider; `key` / `—` / `oauth` words in the auth picker) — and since round 9 the auth picker additionally names the variable when the environment is the credential (`key (env: NAME)`, sourced from `catalog::env_credential_name`). Since round 13 it also warns on a stored OAuth login nothing will ever read (`! oauth login unused`, sourced from `catalog::oauth_credential_unused`: stored-OAuth plus no login flow and no refresh endpoint — API keys always resolve, so the warning cannot fire on a working setup). Stays `partial`, not `done`: the suffix pixels have no frame (process env is un-settable under edition-2024 unsafe-forbid, stored logins untouchable in tests), so the positive branches are logic-pinned and reviewed, not rendered | `stage_one_provider_rows_carry_an_auth_badge_and_an_active_mark` (frame) + `env_credential_name_pins_the_display_precedence` (7 injected cases) + `oauth_credential_unused_fires_only_on_dead_logins` (6 cases: empty store, stored-API incl. flow providers, stored-OAuth with flow, with endpoint-only, dead pair, unreadable store) + `the_auth_picker_shows_no_source_for_an_unconfigured_provider` (frame; negative controls run on both halves) |
@@ -779,10 +779,10 @@ row says so — that is a gap in the inventory, and closing it is cheap.
 | 15. Markdown, mermaid and truncation | 22 | 6 | 7 | 3 | 6 |
 | 16. Status indicators | 13 | 2 | 5 | 1 | 5 |
 | 17. Footer | 12 | 4 | 4 | 1 | 3 |
-| 18. Selector and overlay components | 79 | 19 | 17 | 34 | 9 |
-| **Total** | **339** | **75** | **105** | **88** | **71** |
+| 18. Selector and overlay components | 79 | 20 | 17 | 33 | 9 |
+| **Total** | **339** | **76** | **105** | **87** | **71** |
 
-### The `missing` rows — 88
+### The `missing` rows — 87
 
 Every row below has **no** `E-` row establishing the behaviour. Nothing here was found by browsing `crates/`, and
 nothing here is a claim that the behaviour cannot be built.
@@ -801,7 +801,7 @@ nothing here is a claim that the behaviour cannot be built.
 | Markdown, mermaid and truncation (3) | P-167, P-168, T-010 |
 | Status indicators (1) | P-194 |
 | Footer (1) | P-208 |
-| Selector and overlay components (34) | P-230, P-232, P-234, P-235, P-239, P-242, P-244, P-245, P-248, P-251, P-255, P-256, P-257, P-258, P-259, P-261, P-281, P-283, P-284, P-285, P-286, P-300, P-304, P-306, P-307, P-308, P-310, P-311, P-314, P-316, P-317, P-318, P-319, P-323 |
+| Selector and overlay components (33) | P-230, P-232, P-234, P-235, P-239, P-242, P-244, P-245, P-248, P-251, P-255, P-256, P-257, P-258, P-259, P-261, P-281, P-283, P-284, P-285, P-286, P-300, P-304, P-306, P-307, P-308, P-311, P-314, P-316, P-317, P-318, P-319, P-323 |
 
 ### The `partial` rows — 105
 

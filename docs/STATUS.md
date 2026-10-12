@@ -513,6 +513,10 @@ the run. Up from 1,997: the checkpoint round-trip and restore-undo tests. (Previ
 > through the store with empty-clears semantics (test green); labels carry no
 > timestamps, so recency formats have no target. Counts now 75/105/88/71.
 >
+> **P-310 done (this session): fork at the selected row.** No separate dialog — `k`
+> in the `/tree` picker forks the chosen ancestry with a fresh header (test green).
+> Counts now 76/105/87/71.
+>
 > **Startup trio (this session): P-005 partial, P-008/P-119 judged.** The model scope
 > lives persistently in the header rather than printed once to scrollback; extension
 > slash commands cannot collide (closed static vocabulary); extension failures are
