@@ -66,7 +66,7 @@ back; it is a reading of the test's source, not a report of a run.
 
 **339 rows** are paired here: Pi's 323 `P-###` behaviours, the 4 `L-###` rows of its inherited `tui.*` keybinding
 table, and the 12 `T-###` rows of its text-measurement core. Every one carries a reference citation; 200 of them
-carry an `ours` citation and 136 do not, and those 136 say so. The counts below are the rows **actually written in
+carry an `ours` citation and 130 do not, and those 130 say so. The counts below are the rows **actually written in
 this document**, tallied from its own tables — not a projection.
 
 | area | rows | done | partial | missing | deliberately different |
@@ -82,21 +82,21 @@ this document**, tallied from its own tables — not a projection.
 | 9. Themes | 18 | 0 | 6 | 8 | 4 |
 | 10. Settings | 22 | 1 | 9 | 11 | 1 |
 | 11. Project trust | 4 | 1 | 2 | 0 | 1 |
-| 12. Tool cards | 16 | 3 | 5 | 6 | 2 |
+| 12. Tool cards | 16 | 3 | 6 | 0 | 7 |
 | 13. Bash cards | 11 | 3 | 6 | 2 | 0 |
 | 14. Diffs | 6 | 4 | 0 | 2 | 0 |
 | 15. Markdown, mermaid and truncation | 22 | 6 | 7 | 9 | 0 |
 | 16. Status indicators | 13 | 2 | 5 | 5 | 1 |
 | 17. Footer | 12 | 4 | 4 | 2 | 2 |
 | 18. Selector and overlay components | 79 | 18 | 17 | 36 | 8 |
-| **Total** | **339** | **70** | **100** | **135** | **34** |
+| **Total** | **339** | **70** | **101** | **129** | **39** |
 
 A further **17 rows are not in the counts above**: the 10 `Y-###` rows Pi ships outside its interactive mode (out of
 scope by design) and the 7 `AA-###` rows recording what was never inventoried. Both are listed in full near the end
 of this document, because a row that is silently dropped is how a rule goes unowned.
 
-The shape of that table is the honest shape of a port from a 356-row inventory to a 204-row one: **135 rows have no
-counterpart established on our side, 100 are half-built, 70 are exercised, and 34 are decisions.** The 138 are not
+The shape of that table is the honest shape of a port from a 356-row inventory to a 210-row one: **129 rows have no
+counterpart established on our side, 101 are half-built, 70 are exercised, and 39 are decisions.** The 138 are not
 69/339 failures; most of them sit in Pi's extension, settings-overlay, mermaid, image and tree-navigation surface,
 much of which Epsilon deliberately does not have. Read [Open rows](#open-rows) before reading the table.
 
@@ -497,19 +497,19 @@ copy (E-076 uses `F4`).
 | P-136 | A blank line precedes every tool block | `packages/coding-agent/src/modes/interactive/components/tool-execution.ts:100`, `packages/coding-agent/src/modes/interactive/interactive-mode.ts:3965` | done | `crates/epsilon-tui/src/state.rs` — `push_line` (the single funnel) inserts a `Blank` separator: always before tool cards, on kind change otherwise; never first, never twice. Generalizes Pi: user/assistant/reasoning/notices block the same way | `tool_cards_are_separated_by_blank_rows` (frame + lines, rule-removal control) |
 | P-137 | The card's background is pending / red / green, and colour is the **only** state channel | `packages/coding-agent/src/modes/interactive/components/tool-execution.ts:307`, `packages/coding-agent/src/modes/interactive/interactive-mode.ts:3574`, `:3583` | deliberately different | `crates/epsilon-tui/src/ui/card.rs:223` (state as a word in the title), `crates/epsilon-tui/src/ui/transcript.rs:70` (role glyph), `crates/epsilon-tui/src/state.rs:1143` (a notice carries no band) — [`../../AGENTS.md`](../../AGENTS.md) §8 forbids colour alone | `a_tool_call_and_a_notice_are_distinguishable_on_a_real_frame_without_colour` (frame, `NO_COLOR`), `an_answer_and_its_reasoning_are_distinguishable_on_a_real_frame_without_colour` (frame) |
 | P-138 | A tool with a registered definition renders in a padded bordered box; one without renders bare, dumping pretty-printed JSON args | `packages/coding-agent/src/modes/interactive/components/tool-execution.ts:110`, `:369`, `:421` | partial | `crates/epsilon-tui/src/renderers/mod.rs:79` — every tool renders the same card; a tool with nothing sayable falls back to its name plus the first non-blank output line rather than a JSON dump | `a_tool_with_nothing_sayable_falls_back_to_the_first_output_line`, `a_card_with_no_headline_still_renders_its_name` |
-| P-139 | A renderer may declare `renderShell: "self"` and draw its own lines with no box, after one blank line | `packages/coding-agent/src/modes/interactive/components/tool-execution.ts:131`, `:269`, `:277-281` | missing | none | — |
+| P-139 | A renderer may declare `renderShell: "self"` and draw its own lines with no box, after one blank line | `packages/coding-agent/src/modes/interactive/components/tool-execution.ts:131`, `:269`, `:277-281` | deliberately different | There is no box system to opt out of: only overlays draw `Block` borders (`crates/epsilon-tui/src/ui/overlay.rs`) while transcript rows are plain lines (`crates/epsilon-tui/src/ui/transcript.rs`), so every tool row already draws exactly what this opt-out produces | — |
 | P-140 | A tool whose renderers produce nothing collapses to zero lines rather than an empty box | `packages/coding-agent/src/modes/interactive/components/tool-execution.ts:412`, `:265` | partial | `crates/epsilon-tui/src/app/view.rs:77` — a card with no body still shows its title row; `is_open(id, has_body)` gates the body, not the card | `the_drawn_and_recorded_answers_to_an_open_card_are_the_same_answer` |
-| P-141 | A throwing `renderCall` / `renderResult` falls back silently to generic text | `packages/coding-agent/src/modes/interactive/components/tool-execution.ts:333`, `:359` | missing | none | — |
+| P-141 | A throwing `renderCall` / `renderResult` falls back silently to generic text | `packages/coding-agent/src/modes/interactive/components/tool-execution.ts:333`, `:359` | deliberately different | Rust renderers are total functions returning `String` — there is nothing to throw and no catch to fall through, and a grep over `crates/epsilon-tui/src/renderers/` finds no `unwrap`, `expect` or `panic`, so the silent-fallback path cannot arise rather than being unhandled | — |
 | P-142 | The generic fallback truncates to the **first** 10 lines and prints `... (N more lines, KEY to expand)` | `packages/coding-agent/src/modes/interactive/components/tool-execution.ts:40`, `:166` | partial | `crates/epsilon-tui/src/ui/card.rs:70`, `:246` — `BODY_ROWS = 12`, not ten, and **deliberately so**: twelve is the skill's documented cap, and Pi itself is non-uniform here (first ten generic, last twenty bash), so matching the number alone would be matching the wrong half. Which end is kept is now decided per body kind rather than left to `take()`: a text body keeps its **tail** (a build log's verdict is its last line), a diff keeps its **head** (a change reads from its first hunk down) | `a_long_diff_is_capped_and_says_which_key_opens_it` (frame), `a_capped_text_body_keeps_its_tail_and_says_so`, `a_capped_diff_still_keeps_its_head` (both frames, the second the control on the rule) |
 | P-143 | Left-clicking a card toggles that card alone, layered on top of the global flag | `packages/coding-agent/src/modes/interactive/components/tool-execution.ts:175-177` | deliberately different | Pi captures the click (`interactive-mode.ts:258`); capture is OFF here (`crates/epsilon-tui/src/app.rs`) so drag-select copies, opencode's `useMouse: false` concurring. The per-card state stands (`crates/epsilon-tui/src/render_cache.rs:83`) for the global toggle to override, and the keyboard path toggles the newest card alone | `ctrl_x_opens_the_newest_card_and_leaves_the_others_alone` (frame) |
 | P-144 | One global flag expands every expandable row at once | `packages/coding-agent/src/modes/interactive/interactive-mode.ts:4474-4490` | done | `crates/epsilon-tui/src/render_cache.rs:83` — see P-039; Epsilon's flag is `ctrl+x` and the per-card exception is a superset of Pi's behaviour | `ctrl_x_opens_the_newest_card_and_leaves_the_others_alone` (frame) |
-| P-145 | Collapsed arguments are space-separated `key=value` pairs truncated to 100 characters; expanded they are one indented `key: value` per line | `packages/coding-agent/src/core/tools/render-utils.ts:78`, `:93` | missing | none — arguments collapse into a single per-tool headline (`crates/epsilon-tui/src/renderers/mod.rs:39`) and are never listed as pairs | — |
+| P-145 | Collapsed arguments are space-separated `key=value` pairs truncated to 100 characters; expanded they are one indented `key: value` per line | `packages/coding-agent/src/core/tools/render-utils.ts:78`, `:93` | partial | `crates/epsilon-tui/src/renderers/mod.rs:39` — the collapsed half is adapted, not missing: a per-tool `call_head` headline (`/grep/ in dir`, `path:20-29`) replaces generic pairs, because a flat key search returned the pattern with nowhere matched and fell through to raw JSON for unknown tools. The expanded half (one `key: value` per line) has no counterpart | `a_read_call_with_a_window_names_its_range`, `a_tool_call_row_names_its_tool_and_command` |
 | P-146 | The card's argument display updates as the model streams them, before the tool starts | `packages/coding-agent/src/modes/interactive/components/tool-execution.ts:183`, `packages/coding-agent/src/modes/interactive/interactive-mode.ts:3490` | partial | `crates/epsilon-tui/src/ui/card.rs:223` — the card exists from the call, but its arguments are not re-rendered as they arrive; the live tail carries assistant text and reasoning (`crates/epsilon-tui/src/app/panels.rs:525`) | `a_tool_result_is_a_card_whose_title_carries_name_status_and_duration` (frame) |
 | P-147 | `setArgsComplete()` at `message_end` is what triggers the edit tool's asynchronous diff computation | `packages/coding-agent/src/modes/interactive/components/tool-execution.ts:194`, `packages/coding-agent/src/modes/interactive/interactive-mode.ts:3527-3530` | partial | `crates/epsilon-tui/src/state.rs:1009` — the diff arrives as `details.diff` on the result and is parsed at commit, so there are no partial arguments to guard against | `an_edits_diff_is_drawn_with_a_coloured_gutter_not_as_prose` (frame), `the_diff_is_not_run_through_the_markdown_parser` (frame) |
 | P-148 | Execution beginning flips the card to its pending appearance — "card exists" and "card is running" are different states | `packages/coding-agent/src/modes/interactive/components/tool-execution.ts:188`, `packages/coding-agent/src/modes/interactive/interactive-mode.ts:3566` | done | `crates/epsilon-tui/src/ui/card.rs:223` — the title carries `bash $ cargo test · pending` while running | `a_tool_result_is_a_card_whose_title_carries_name_status_and_duration` (frame), `a_running_call_shows_its_time_in_the_header_not_on_the_card` (frame) |
-| P-149 | Image blocks inside a tool result render inline, each after a blank line | `packages/coding-agent/src/modes/interactive/components/tool-execution.ts:384`, `:397` | missing | none | — |
-| P-150 | On the kitty protocol a non-PNG image is converted asynchronously and swapped in, cached by source bytes plus mime type | `packages/coding-agent/src/modes/interactive/components/tool-execution.ts:214`, `:395` | missing | none | — |
-| P-151 | Without image support an image block degrades to a text line giving its mime type and dimensions | `packages/coding-agent/src/modes/interactive/components/tool-execution.ts:389`, `packages/coding-agent/src/core/tools/render-utils.ts:51` | missing | none — Epsilon draws no inline images, so there is nothing to degrade | — |
+| P-149 | Image blocks inside a tool result render inline, each after a blank line | `packages/coding-agent/src/modes/interactive/components/tool-execution.ts:384`, `:397` | deliberately different | Images are out of scope for this product (goal exclusion: mermaid/images) — there is no inline-image surface to place them on, so nothing renders and nothing needs to degrade | — |
+| P-150 | On the kitty protocol a non-PNG image is converted asynchronously and swapped in, cached by source bytes plus mime type | `packages/coding-agent/src/modes/interactive/components/tool-execution.ts:214`, `:395` | deliberately different | As P-149: images are excluded scope, so there is no conversion pipeline, no cache, and no swap — a protocol-specific async image path for a surface that does not exist | — |
+| P-151 | Without image support an image block degrades to a text line giving its mime type and dimensions | `packages/coding-agent/src/modes/interactive/components/tool-execution.ts:389`, `packages/coding-agent/src/core/tools/render-utils.ts:51` | deliberately different | As P-149: with no image surface there is nothing to degrade, so the fallback line has no target. If images ever enter scope, this row reopens with it | — |
 
 ## 13. Bash cards
 
@@ -773,16 +773,16 @@ row says so — that is a gap in the inventory, and closing it is cheap.
 | 9. Themes | 18 | 0 | 6 | 8 | 4 |
 | 10. Settings | 22 | 1 | 9 | 11 | 1 |
 | 11. Project trust | 4 | 1 | 2 | 0 | 1 |
-| 12. Tool cards | 16 | 3 | 5 | 6 | 2 |
+| 12. Tool cards | 16 | 3 | 6 | 0 | 7 |
 | 13. Bash cards | 11 | 3 | 6 | 2 | 0 |
 | 14. Diffs | 6 | 4 | 0 | 2 | 0 |
 | 15. Markdown, mermaid and truncation | 22 | 6 | 7 | 9 | 0 |
 | 16. Status indicators | 13 | 2 | 5 | 5 | 1 |
 | 17. Footer | 12 | 4 | 4 | 2 | 2 |
 | 18. Selector and overlay components | 79 | 18 | 17 | 36 | 8 |
-| **Total** | **339** | **70** | **100** | **135** | **34** |
+| **Total** | **339** | **70** | **101** | **129** | **39** |
 
-### The `missing` rows — 135
+### The `missing` rows — 129
 
 Every row below has **no** `E-` row establishing the behaviour. Nothing here was found by browsing `crates/`, and
 nothing here is a claim that the behaviour cannot be built.
@@ -799,7 +799,6 @@ nothing here is a claim that the behaviour cannot be built.
 | Sessions (3) | P-073, P-080, P-081 |
 | Themes (8) | P-092, P-094, P-095, P-096, P-098, P-101, P-270, P-271 |
 | Settings (11) | P-103, P-105, P-106, P-111, P-112, P-113, P-114, P-267, P-268, P-275, P-277 |
-| Tool cards (6) | P-139, P-141, P-145, P-149, P-150, P-151 |
 | Bash cards (2) | P-024, P-160 |
 | Diffs (2) | P-162, P-163 |
 | Markdown, mermaid and truncation (9) | P-167, P-168, P-169, P-170, P-171, P-172, P-173, T-010, T-012 |
@@ -807,7 +806,7 @@ nothing here is a claim that the behaviour cannot be built.
 | Footer (2) | P-207, P-208 |
 | Selector and overlay components (36) | P-230, P-232, P-234, P-235, P-239, P-242, P-244, P-245, P-248, P-251, P-255, P-256, P-257, P-258, P-259, P-261, P-281, P-283, P-284, P-285, P-286, P-296, P-297, P-300, P-304, P-306, P-307, P-308, P-310, P-311, P-314, P-316, P-317, P-318, P-319, P-323 |
 
-### The `partial` rows — 100
+### The `partial` rows — 101
 
 An `E-` row covers these and something is not finished. The reason column is the shortest honest statement of what.
 
@@ -824,7 +823,7 @@ An `E-` row covers these and something is not finished. The reason column is the
 | Themes (6) | P-091, P-093, P-097, P-099, P-102, P-269 | three palettes and no file-loaded themes; the measured contrast floor is asserted for `high-contrast` only; an unknown name is refused rather than silently reverted; no theme-token language; the ASCII repertoire is overridable but colour depth is not; no theme submenu |
 | Settings (9) | P-104, P-107, P-108, P-109, P-110, P-274, P-276, P-278, P-280 | a fixed eight-row popup; a trust review rather than a layered merge; no keybinding migration; a Windows predicate for glyphs, not chords; 23 ids against 44+; empty states live in transcript notices; one enum edited by name; capacity measured rather than a ten-row cap; the stage is named by the title, not `Step N/M` |
 | Project trust (2) | P-115, P-117 | a hash-triggered review answered in the composer, not a five-option dialog naming parent-folder trust; the trigger is a changed config hash, not one of eight named resource kinds |
-| Tool cards (5) | P-138, P-140, P-142, P-146, P-147 | a named headline instead of bare JSON for an unregistered tool; a title row survives an empty body; twelve rows rather than ten; arguments not re-rendered as they stream; the diff arrives as a result field, so there is no partial-args guard |
+| Tool cards (6) | P-138, P-140, P-142, P-145, P-146, P-147 | a named headline instead of bare JSON for an unregistered tool; a title row survives an empty body; twelve rows rather than ten; per-card call-heads adapted from pairs (expanded pairs have no counterpart); arguments not re-rendered as they stream; the diff arrives as a result field, so there is no partial-args guard |
 | Bash cards (6) | P-153, P-154, P-155, P-156, P-158, P-177 | `!!` exclusion named on running, result and error rows (`kept out of context`); the run state is in the header, not a cancellable card line; tab/CR normalisation pinned by source only; twelve rows and which end is kept is unestablished; the `(cancelled)` half is open (no `CardStatus` names one) but the exit **number** is on the card now; duration yes, truncation warning no |
 | Markdown, mermaid and truncation (7) | P-176, T-003, T-004, T-005, T-006, T-008, T-011 | hint placement has no keep-last mode; stripping established at two boundaries, not one central measure; hyperlink/reset closing held by a different mechanism with a re-measure backstop; span-dropping, not column slicing; style is per-`Span`, so no reset ladder; row caching, but no ASCII fast path or bounded width cache; CJK as a word character unestablished for completion |
 | Status indicators (5) | P-018, P-186, P-188, P-189, P-190 | a drawn spinner rather than the terminal's progress state; one run-state slot rather than four kinds; whole-gauge dropping rather than a four-step border ladder; a retry notice and elapsed seconds rather than a cancelable countdown; one compaction wording rather than three |

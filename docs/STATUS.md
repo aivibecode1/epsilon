@@ -454,6 +454,13 @@ the run. Up from 1,997: the checkpoint round-trip and restore-undo tests. (Previ
 > via `alt_name()`; both spellings round-trip on every host (option-strip control
 > fails it). Counts now 70/100/135/34.
 >
+> **Tool-cards cluster (this session): P-139/P-141/P-149/P-150/P-151 judged dd,
+> P-145 partial.** No box system to opt out of (only overlays draw `Block`);
+> renderers are total fns with no unwrap/expect/panic, so silent fallback cannot
+> arise; images are excluded scope (all three rows); `call_head` headlines adapt
+> the collapsed-args half while expanded pairs stay missing. Counts now
+> 70/101/129/39.
+>
 > **Goal 3, Phase 1 (landed): AGENTS.md v4 draft for owner application.** Every v3
 > clause audited against the tree (13 crates, uniform 1.88, TERMINAL+WINDOW tables,
 > 15 legs, SUPPORTED only in a historical comment); the complete v4 text sits in
