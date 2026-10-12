@@ -66,7 +66,7 @@ back; it is a reading of the test's source, not a report of a run.
 
 **339 rows** are paired here: Pi's 323 `P-###` behaviours, the 4 `L-###` rows of its inherited `tui.*` keybinding
 table, and the 12 `T-###` rows of its text-measurement core. Every one carries a reference citation; 200 of them
-carry an `ours` citation and 106 do not, and those 106 say so. The counts below are the rows **actually written in
+carry an `ours` citation and 100 do not, and those 100 say so. The counts below are the rows **actually written in
 this document**, tallied from its own tables — not a projection.
 
 | area | rows | done | partial | missing | deliberately different |
@@ -85,18 +85,18 @@ this document**, tallied from its own tables — not a projection.
 | 12. Tool cards | 16 | 3 | 6 | 0 | 7 |
 | 13. Bash cards | 11 | 5 | 6 | 0 | 0 |
 | 14. Diffs | 6 | 6 | 0 | 0 | 0 |
-| 15. Markdown, mermaid and truncation | 22 | 6 | 7 | 9 | 0 |
+| 15. Markdown, mermaid and truncation | 22 | 6 | 7 | 3 | 6 |
 | 16. Status indicators | 13 | 2 | 5 | 5 | 1 |
 | 17. Footer | 12 | 4 | 4 | 1 | 3 |
 | 18. Selector and overlay components | 79 | 18 | 17 | 36 | 8 |
-| **Total** | **339** | **74** | **104** | **105** | **56** |
+| **Total** | **339** | **74** | **104** | **99** | **62** |
 
 A further **17 rows are not in the counts above**: the 10 `Y-###` rows Pi ships outside its interactive mode (out of
 scope by design) and the 7 `AA-###` rows recording what was never inventoried. Both are listed in full near the end
 of this document, because a row that is silently dropped is how a rule goes unowned.
 
-The shape of that table is the honest shape of a port from a 356-row inventory to a 234-row one: **105 rows have no
-counterpart established on our side, 104 are half-built, 74 are exercised, and 56 are decisions.** The 105 are not
+The shape of that table is the honest shape of a port from a 356-row inventory to a 240-row one: **99 rows have no
+counterpart established on our side, 104 are half-built, 74 are exercised, and 62 are decisions.** The 99 are not
 69/339 failures; most of them sit in Pi's extension, settings-overlay, mermaid, image and tree-navigation surface,
 much of which Epsilon deliberately does not have. Read [Open rows](#open-rows) before reading the table.
 
@@ -560,11 +560,11 @@ with its contract about message type, streaming flag and available width, has no
 |---|---|---|---|---|---|
 | P-167 | Every markdown block passes a transformer chain told the message type, the streaming flag and the **available** width | `packages/coding-agent/src/modes/interactive/components/markdown-transform.ts:9`, `packages/coding-agent/src/modes/interactive/interactive-mode.ts:2186-2188` | missing | none — markdown rendering exists (`crates/epsilon-tui/src/markdown.rs`) but no `E-` row establishes a transform contract | — |
 | P-168 | A transformer returning a non-string is ignored and one that throws is skipped; the rest still run | `packages/coding-agent/src/modes/interactive/components/markdown-transform.ts:21-22`, `:24-26` | missing | none | — |
-| P-169 | A ```` ```mermaid ```` fence is replaced by a Unicode box diagram | `packages/coding-agent/src/modes/interactive/components/mermaid.ts:60`, `:75` | missing | none | — |
-| P-170 | A diagram wider than the terminal is left as the original code block rather than clipped | `packages/coding-agent/src/modes/interactive/components/mermaid.ts:76`, `:74` | missing | none | — |
-| P-171 | Each mermaid span class maps to a named theme colour, so a diagram follows the theme | `packages/coding-agent/src/modes/interactive/components/mermaid.ts:38`, `:49` | missing | none | — |
-| P-172 | Each diagram row is an inline code span with a fence sized past the longest backtick run, and a non-breaking space for a blank row | `packages/coding-agent/src/modes/interactive/components/mermaid.ts:22`, `:33` | missing | none — and worth stating as a rule: if a diagram renderer is ever added, drawing straight to terminal lines must not then be run through a markdown renderer that collapses whitespace | — |
-| P-173 | Mermaid never renders inside a thinking block, and during streaming draws only in `streaming` mode | `packages/coding-agent/src/modes/interactive/components/mermaid.ts:63`, `:65` | missing | none | — |
+| P-169 | A ```` ```mermaid ```` fence is replaced by a Unicode box diagram | `packages/coding-agent/src/modes/interactive/components/mermaid.ts:60`, `:75` | deliberately different | Mermaid is excluded scope: fences render as plain code blocks, so there is no diagram to draw, clip, colour, space or gate | — |
+| P-170 | A diagram wider than the terminal is left as the original code block rather than clipped | `packages/coding-agent/src/modes/interactive/components/mermaid.ts:76`, `:74` | deliberately different | As P-169: with no diagram renderer the wide-diagram question cannot arise | — |
+| P-171 | Each mermaid span class maps to a named theme colour, so a diagram follows the theme | `packages/coding-agent/src/modes/interactive/components/mermaid.ts:38`, `:49` | deliberately different | As P-169: no diagram spans exist to colour | — |
+| P-172 | Each diagram row is an inline code span with a fence sized past the longest backtick run, and a non-breaking space for a blank row | `packages/coding-agent/src/modes/interactive/components/mermaid.ts:22`, `:33` | deliberately different | As P-169; the whitespace rule it states (never collapse a diagram's blanks through a markdown renderer) is kept as the reason, not the behaviour | — |
+| P-173 | Mermaid never renders inside a thinking block, and during streaming draws only in `streaming` mode | `packages/coding-agent/src/modes/interactive/components/mermaid.ts:63`, `:65` | deliberately different | As P-169: nothing renders anywhere, so render-gating has no target | — |
 | P-174 | Collapsed output is limited by **wrapped** lines at the current width, so one long minified line cannot flood the screen | `packages/coding-agent/src/modes/interactive/components/visual-truncate.ts:41`, `:43`, `:47-48` | done | `crates/epsilon-tui/src/ui/card.rs:262`, `:290` — the cap counts visible rows after wrapping, so a 41-row diff is twelve rows plus a marker | `a_long_diff_is_capped_and_says_which_key_opens_it` (frame) |
 | P-175 | The truncation preview caches its rendered lines per width | `packages/coding-agent/src/modes/interactive/components/visual-truncate.ts:78-79` | done | `crates/epsilon-tui/src/render_cache.rs:470` — each line is wrapped once per width and cached by its monotonic id, so a frame binary-searches the window and clones only visible rows; a width change invalidates everything wholesale | `width_change_invalidates_everything`, `a_restaled_card_is_rebuilt_when_named_and_kept_when_not` |
 | P-176 | The `... (N more lines)` hint is placed on the side that keeps the relevant content | `packages/coding-agent/src/modes/interactive/components/visual-truncate.ts:84-85` | partial | `crates/epsilon-tui/src/ui/card.rs:291` — the marker follows the body it abbreviates; there is no keep-last mode to place it on the other side | `a_long_diff_is_capped_and_says_which_key_opens_it` (frame) |
@@ -592,7 +592,7 @@ reading, and it is the one a future reader should re-check first.
 | T-009 | A background fill is applied **after** padding, to the padded string, so the fill covers the full width | `packages/tui/src/utils.ts:1099-1108` | done | `crates/epsilon-tui/src/ui/transcript.rs:179` — a banded row's fill runs to the right edge, and an unbanded row is deliberately left unpadded | `a_user_turn_carries_its_gutter_and_band_on_a_real_frame` (frame), `a_wrapped_banded_message_keeps_every_row_inside_the_frame` (frame) |
 | T-010 | Precomposed Thai/Lao `AM` vowels are decomposed before output, because those terminals render them inconsistently during differential repaint | `packages/tui/src/utils.ts:383-393`, `:394-416`, `:391-392` | missing | none — and stated as an open question rather than assumed: whether ratatui or any dependency performs this normalisation was **not measured** by our inventory, and saying so is more useful than claiming parity | — |
 | T-011 | Han, Hiragana, Katakana, Hangul and Bopomofo are word characters, so autocomplete does not break inside CJK | `packages/tui/src/utils.ts:54-55`, `:57-63` | partial | `crates/epsilon-tui/src/app/keys.rs:1821`, `crates/epsilon-tui/src/app/completion.rs:42` — word motion and the `@`-word filter exist; the pinned test covers Greek, and nothing establishes CJK letters as word characters for completion | `word_nav_respects_boundaries_and_unicode` |
-| T-012 | The OSC 8 hyperlink covering a visible column can be recovered, which is how clicks map to URLs | `packages/tui/src/utils.ts:359-381`, `:335-356` | missing | none | — |
+| T-012 | The OSC 8 hyperlink covering a visible column can be recovered, which is how clicks map to URLs | `packages/tui/src/utils.ts:359-381`, `:335-356` | deliberately different | Hyperlinks route to clicks, and clicks do not exist here (capture OFF so drag-select copies): there is no URL to map a column back to | — |
 
 ## 16. Status indicators
 
@@ -776,13 +776,13 @@ row says so — that is a gap in the inventory, and closing it is cheap.
 | 12. Tool cards | 16 | 3 | 6 | 0 | 7 |
 | 13. Bash cards | 11 | 5 | 6 | 0 | 0 |
 | 14. Diffs | 6 | 6 | 0 | 0 | 0 |
-| 15. Markdown, mermaid and truncation | 22 | 6 | 7 | 9 | 0 |
+| 15. Markdown, mermaid and truncation | 22 | 6 | 7 | 3 | 6 |
 | 16. Status indicators | 13 | 2 | 5 | 5 | 1 |
 | 17. Footer | 12 | 4 | 4 | 1 | 3 |
 | 18. Selector and overlay components | 79 | 18 | 17 | 36 | 8 |
-| **Total** | **339** | **74** | **104** | **105** | **56** |
+| **Total** | **339** | **74** | **104** | **99** | **62** |
 
-### The `missing` rows — 105
+### The `missing` rows — 99
 
 Every row below has **no** `E-` row establishing the behaviour. Nothing here was found by browsing `crates/`, and
 nothing here is a claim that the behaviour cannot be built.
@@ -799,7 +799,7 @@ nothing here is a claim that the behaviour cannot be built.
 | Sessions (1) | P-081 |
 | Themes (8) | P-092, P-094, P-095, P-096, P-098, P-101, P-270, P-271 |
 | Settings (8) | P-103, P-111, P-113, P-114, P-267, P-268, P-275, P-277 |
-| Markdown, mermaid and truncation (9) | P-167, P-168, P-169, P-170, P-171, P-172, P-173, T-010, T-012 |
+| Markdown, mermaid and truncation (3) | P-167, P-168, T-010 |
 | Status indicators (5) | P-019, P-191, P-192, P-193, P-194 |
 | Footer (1) | P-208 |
 | Selector and overlay components (36) | P-230, P-232, P-234, P-235, P-239, P-242, P-244, P-245, P-248, P-251, P-255, P-256, P-257, P-258, P-259, P-261, P-281, P-283, P-284, P-285, P-286, P-296, P-297, P-300, P-304, P-306, P-307, P-308, P-310, P-311, P-314, P-316, P-317, P-318, P-319, P-323 |

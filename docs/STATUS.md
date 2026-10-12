@@ -488,6 +488,12 @@ the run. Up from 1,997: the checkpoint round-trip and restore-undo tests. (Previ
 > delivery modes exist and are tested with no user-facing switch yet. Counts now
 > 74/104/105/56.
 >
+> **Mermaid + links judged (this session): P-169–P-173/T-012 dd.** Excluded scope
+> needs no renderer, clip rule, palette mapping, row encoding, gating — or link
+> recovery for clicks that do not exist. P-167/P-168 (transformer chain) and T-010
+> (vowel decomposition) stay `missing`: no such machinery, no decision. Counts now
+> 74/104/99/62.
+>
 > **Startup trio (this session): P-005 partial, P-008/P-119 judged.** The model scope
 > lives persistently in the header rather than printed once to scrollback; extension
 > slash commands cannot collide (closed static vocabulary); extension failures are
