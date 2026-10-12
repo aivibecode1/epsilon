@@ -648,6 +648,10 @@ the run. Up from 1,997: the checkpoint round-trip and restore-undo tests. (Previ
 > with no toggles surface; no nested list, no mode-conditional set. Counts now
 > 81/111/37/110.
 >
+> **Scoped-mechanics quintet judged (this session): P-256–P-261 dd.** Favorites are
+> additive stars, not an enable/disable list — no materialization, bulk scope,
+> provider-enable, reorder, or overlay keys. Counts now 81/111/32/115.
+>
 > **Goal 3, Phase 1 (landed): AGENTS.md v4 draft for owner application.** Every v3
 > clause audited against the tree (13 crates, uniform 1.88, TERMINAL+WINDOW tables,
 > 15 legs, SUPPORTED only in a historical comment); the complete v4 text sits in

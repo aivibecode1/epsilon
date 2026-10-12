@@ -66,7 +66,7 @@ back; it is a reading of the test's source, not a report of a run.
 
 **339 rows** are paired here: Pi's 323 `P-###` behaviours, the 4 `L-###` rows of its inherited `tui.*` keybinding
 table, and the 12 `T-###` rows of its text-measurement core. Every one carries a reference citation; 200 of them
-carry an `ours` citation and 38 do not, and those 38 say so. The counts below are the rows **actually written in
+carry an `ours` citation and 33 do not, and those 33 say so. The counts below are the rows **actually written in
 this document**, tallied from its own tables — not a projection.
 
 | area | rows | done | partial | missing | deliberately different |
@@ -88,15 +88,15 @@ this document**, tallied from its own tables — not a projection.
 | 15. Markdown, mermaid and truncation | 22 | 6 | 7 | 1 | 8 |
 | 16. Status indicators | 13 | 2 | 5 | 0 | 6 |
 | 17. Footer | 12 | 4 | 4 | 0 | 4 |
-| 18. Selector and overlay components | 79 | 22 | 19 | 25 | 13 |
-| **Total** | **339** | **81** | **111** | **37** | **110** |
+| 18. Selector and overlay components | 79 | 22 | 19 | 20 | 18 |
+| **Total** | **339** | **81** | **111** | **32** | **115** |
 
 A further **17 rows are not in the counts above**: the 10 `Y-###` rows Pi ships outside its interactive mode (out of
 scope by design) and the 7 `AA-###` rows recording what was never inventoried. Both are listed in full near the end
 of this document, because a row that is silently dropped is how a rule goes unowned.
 
-The shape of that table is the honest shape of a port from a 356-row inventory to a 302-row one: **37 rows have no
-counterpart established on our side, 111 are half-built, 81 are exercised, and 110 are decisions.** The 37 are not
+The shape of that table is the honest shape of a port from a 356-row inventory to a 307-row one: **32 rows have no
+counterpart established on our side, 111 are half-built, 81 are exercised, and 115 are decisions.** The 32 are not
 69/339 failures; most of them sit in Pi's extension, settings-overlay, mermaid, image and tree-navigation surface,
 much of which Epsilon deliberately does not have. Read [Open rows](#open-rows) before reading the table.
 
@@ -683,12 +683,12 @@ the per-selector ones.
 | P-253 | The selector paints the cached snapshot immediately, refreshes behind it, and reports success, timeout or per-provider failure | `packages/coding-agent/src/modes/interactive/components/model-selector.ts:154`, `:185`, `:196`, `:216` | done | `crates/epsilon-tui/src/app.rs` — opening starts the silent fetch over the bundled snapshot; `record_live_result` merges and reports (`live listing: N models merged`, `live listing failed: …`), surfaced by the event loop; `Ctrl+G` forces with its own notices (no fetcher, no endpoint, no key all named) | `ctrl_g_reports_unavailable_without_the_real_feature` (real key path; notice-mutation control), `finished_refresh_reports_success_and_failure` (merge + report, both halves; notice-mutation control) |
 | P-254 | Enter applies to the session, `Ctrl+S` applies **and** writes settings, Esc cancels and aborts the refresh | `packages/coding-agent/src/modes/interactive/components/model-selector.ts:399`, `:387`, `:394`, `:137` | done | `crates/epsilon-tui/src/app/keys.rs` — `app.model.saveDefault` (`ctrl+s`, rebindable) saves the highlighted stage-2 row via `save_model_id_in` (override dir in tests, global in production) and refreshes memory; Enter applies, Esc cancels (unchanged) | `ctrl_s_in_the_picker_saves_the_default` (real key path, file + memory; binding-miss control). Window Ctrl+S deferred (no picker save surface yet) |
 | P-255 | The scoped-models overlay says `Session-only. Ctrl+S to save to settings.` and applies every edit immediately | `packages/coding-agent/src/modes/interactive/components/scoped-models-selector.ts:137`, `:86-89` | partial | Favorites are the scoped set (persisted in config `[picker] favorite`, applied the moment Ctrl+F toggles) — immediacy holds, but there is no session-only layer: everything persists globally | `ctrl_f_in_the_model_picker_toggles_a_favorite_instead_of_panicking` |
-| P-256 | Enter toggles a model and "all enabled" materialises into an explicit list on the first toggle | `packages/coding-agent/src/modes/interactive/components/scoped-models-selector.ts:320`, `:30`, `:26` | missing | none | — |
-| P-257 | `Ctrl+A` and `Ctrl+X` act only on the filtered rows when the search box has text | `packages/coding-agent/src/modes/interactive/components/scoped-models-selector.ts:332`, `:342`, `:48` | missing | none | — |
-| P-258 | `Ctrl+P` enables every model of the highlighted row's provider, or clears them if already enabled | `packages/coding-agent/src/modes/interactive/components/scoped-models-selector.ts:352`, `:357` | missing | none | — |
-| P-259 | `Alt+Up` / `Alt+Down` reorder the enabled list, disabled until the selection is an explicit list | `packages/coding-agent/src/modes/interactive/components/scoped-models-selector.ts:298`, `:309`, `:301` | missing | none | — |
+| P-256 | Enter toggles a model and "all enabled" materialises into an explicit list on the first toggle | `packages/coding-agent/src/modes/interactive/components/scoped-models-selector.ts:320`, `:30`, `:26` | deliberately different | As P-255: favorites are additive stars persisted globally (Ctrl+F), not an enable/disable list — there is no enabled set to materialise | — |
+| P-257 | `Ctrl+A` and `Ctrl+X` act only on the filtered rows when the search box has text | `packages/coding-agent/src/modes/interactive/components/scoped-models-selector.ts:332`, `:342`, `:48` | deliberately different | As P-255: favorites are additive stars persisted globally (Ctrl+F), not an enable/disable list — no bulk scope exists for filtered rows to bound | — |
+| P-258 | `Ctrl+P` enables every model of the highlighted row's provider, or clears them if already enabled | `packages/coding-agent/src/modes/interactive/components/scoped-models-selector.ts:352`, `:357` | deliberately different | As P-255: favorites are additive stars persisted globally (Ctrl+F), not an enable/disable list — and `ctrl+p` opens the command palette here, so the chord could not carry this meaning anyway | — |
+| P-259 | `Alt+Up` / `Alt+Down` reorder the enabled list, disabled until the selection is an explicit list | `packages/coding-agent/src/modes/interactive/components/scoped-models-selector.ts:298`, `:309`, `:301` | deliberately different | As P-255: favorites are additive stars persisted globally (Ctrl+F), not an enable/disable list — starring order is insertion recency, not a curated sequence | — |
 | P-260 | Unsaved state is marked, a model absent from the catalog renders struck through with `[unavailable]`, and the footer counts them | `packages/coding-agent/src/modes/interactive/components/scoped-models-selector.ts:211`, `:369`, `:253`, `:272`, `:201` | partial | `crates/epsilon-tui/src/picker.rs` — a configured id the catalog does not know is **kept and marked**, not dropped: `is_unavailable` synthesizes a row for the current/default id when neither the catalog nor a live listing has it, drawn with the word `[unavailable]` and `Modifier::CROSSED_OUT` across label *and* id (the id is what Pi strikes, and it is the meta column here). Only a bare or self-prefixed id can be attributed — a `groq/foo-x` cannot be shown under `deepseek`, because the prefix is the only evidence and it points elsewhere. The **count** rides the hint row (`N unavailable`, shown only when N > 0, like Pi's `:196-201`). **Unsaved state has no target here**: Ctrl+S and Ctrl+F write through immediately, so there is no dirty flag to mark — recorded rather than invented | `an_uncatalogued_configured_model_marked_unavailable` (with a catalog-row and a live-row control), `an_ordinary_stage_two_call_has_no_unavailable_rows`, `an_unavailable_model_draws_struck_through_and_says_so` (frame: the strike on both columns, read from the buffer because a text-only assertion cannot see a modifier) |
-| P-261 | `Ctrl+C` in the scoped-models overlay clears the search box first and exits only when it is empty — matched past the keybinding table | `packages/coding-agent/src/modes/interactive/components/scoped-models-selector.ts:377`, `:388` | missing | none — and invariant 4 would require routing such keys through the registry rather than hard-coding them | — |
+| P-261 | `Ctrl+C` in the scoped-models overlay clears the search box first and exits only when it is empty — matched past the keybinding table | `packages/coding-agent/src/modes/interactive/components/scoped-models-selector.ts:377`, `:388` | deliberately different | As P-255: no such overlay exists — and every key this product reads routes through the table (`AGENTS.md` §2.4), so the matched-past-the-table half is refused on principle | — |
 | P-281 | `pi config` is a three-level resource hierarchy over Global Resources, with per-type subheaders | `packages/coding-agent/src/modes/interactive/components/config-selector.ts:209`, `:299`, `:166` | missing | none — and note this is a **CLI command in Pi, not a slash command**; adding it to the composer would change the command surface | — |
 | P-282 | Space or Enter writes a `+pattern` / `-pattern` entry into the settings array for that resource type | `packages/coding-agent/src/modes/interactive/components/config-selector.ts:505`, `:557`, `:552` | partial | `crates/epsilon-tui/src/app/commands.rs:718` — one skill at a time by name; there is no resource-hierarchy overlay and no settings-array rewriting | `none found` per E-099 |
 | P-283 | A package resource toggles a pattern inside that package's entry, collapsing back to a bare source string when empty | `packages/coding-agent/src/modes/interactive/components/config-selector.ts:586`, `:631`, `:869` | missing | none | — |
@@ -779,10 +779,10 @@ row says so — that is a gap in the inventory, and closing it is cheap.
 | 15. Markdown, mermaid and truncation | 22 | 6 | 7 | 1 | 8 |
 | 16. Status indicators | 13 | 2 | 5 | 0 | 6 |
 | 17. Footer | 12 | 4 | 4 | 0 | 4 |
-| 18. Selector and overlay components | 79 | 22 | 19 | 25 | 13 |
-| **Total** | **339** | **81** | **111** | **37** | **110** |
+| 18. Selector and overlay components | 79 | 22 | 19 | 20 | 18 |
+| **Total** | **339** | **81** | **111** | **32** | **115** |
 
-### The `missing` rows — 37
+### The `missing` rows — 32
 
 Every row below has **no** `E-` row establishing the behaviour. Nothing here was found by browsing `crates/`, and
 nothing here is a claim that the behaviour cannot be built.
@@ -796,7 +796,7 @@ nothing here is a claim that the behaviour cannot be built.
 | Themes (2) | P-096, P-098 |
 | Settings (2) | P-113, P-114 |
 | Markdown, mermaid and truncation (1) | T-010 |
-| Selector and overlay components (25) | P-230, P-239, P-251, P-256, P-257, P-258, P-259, P-261, P-281, P-283, P-284, P-285, P-286, P-300, P-304, P-306, P-307, P-308, P-311, P-314, P-316, P-317, P-318, P-319, P-323 |
+| Selector and overlay components (20) | P-230, P-239, P-251, P-281, P-283, P-284, P-285, P-286, P-300, P-304, P-306, P-307, P-308, P-311, P-314, P-316, P-317, P-318, P-319, P-323 |
 
 ### The `partial` rows — 111
 
