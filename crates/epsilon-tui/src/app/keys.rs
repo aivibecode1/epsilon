@@ -778,10 +778,22 @@ pub(crate) fn handle_key(app: &mut App, agent: &Arc<Agent>, key: KeyEvent) -> bo
                 }
                 return false;
             }
+            // Pi's two-stage Esc (`tree-selector.ts:1039-1043`): the query and the
+            // folds clear first; only the emptied Esc exits. Closing over a
+            // folded branch would leave rows hidden behind a dismissal, and
+            // losing a typed query to one stray Esc is the kind of thing a
+            // reader remembers badly — the search-mode arm above already works
+            // this way, and the picker must not have two Esc rules.
             KeyCode::Esc => {
-                app.timeline_open = false;
-                app.timeline_index = 0;
-                app.timeline_entries.clear();
+                if !app.tree_query.is_empty() || !app.folded.is_empty() {
+                    app.tree_query.clear();
+                    app.folded.clear();
+                    refilter(app);
+                } else {
+                    app.timeline_open = false;
+                    app.timeline_index = 0;
+                    app.timeline_entries.clear();
+                }
             }
             KeyCode::Enter => {
                 if let Some(row) = app.timeline_entries.get(app.timeline_index).cloned() {
@@ -850,9 +862,13 @@ pub(crate) fn handle_key(app: &mut App, agent: &Arc<Agent>, key: KeyEvent) -> bo
             }
             // M196: cycle the filter. Re-derived from `timeline_all`, never from
             // the already-filtered list, so `f` `f` returns to where it started
-            // instead of narrowing twice.
+            // instead of narrowing twice. The folds clear with the mode: a fold
+            // hides rows under one filter's meaning, and pi clears them on a
+            // filter change (`tree-selector.ts:1049`) rather than letting the
+            // next mode inherit the hiding.
             KeyCode::Char('f') | KeyCode::Char('F') => {
                 app.tree_filter = app.tree_filter.next();
+                app.folded.clear();
                 refilter(app);
             }
             // M196: fork the session at the SELECTED row, which is the whole

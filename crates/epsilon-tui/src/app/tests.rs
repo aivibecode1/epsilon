@@ -4067,6 +4067,57 @@ fn a_tool_call_row_names_its_tool_and_command() {
         "calls and prose share the row: {snip:?}"
     );
 }
+
+/// A tree row for a ranged `read` names the range, on the frame (P-291).
+///
+/// Pi's tree shows `[read: path:first-last]` from the call's `offset`/`limit`;
+/// the snip unit pins the head, this pins the drawn row through the production
+/// draw at both frame sizes. The stored turn is the session's only entry, so it
+/// is the leaf — which pi always shows, and which the drop rules (P-305) must
+/// keep showing, or this test names that regression too.
+#[test]
+fn a_tree_row_for_a_ranged_read_names_the_range_on_the_frame() {
+    let (mut app, agent, _rx, _dir) = test_app_with_store();
+    {
+        let store = agent.session_store().expect("test store attached");
+        let mut st = store.lock().expect("store lock");
+        use epsilon_contracts::content::ContentBlock;
+        use epsilon_contracts::message::{AssistantMessage, Message};
+        use epsilon_contracts::session_entry::EntryKind;
+        st.append(EntryKind::Message {
+            message: Message::Assistant(AssistantMessage {
+                id: "m-read".into(),
+                timestamp_ms: 0,
+                provider: "faux".into(),
+                model_id: "faux-1".into(),
+                content: vec![ContentBlock::ToolCall {
+                    id: "c1".into(),
+                    name: "read".into(),
+                    arguments: serde_json::json!({
+                        "path": "src/main.rs",
+                        "offset": 20,
+                        "limit": 10
+                    }),
+                }],
+                stop_reason: epsilon_contracts::message::StopReason::ToolUse,
+                error_message: None,
+                usage: epsilon_contracts::message::Usage::default(),
+            }),
+            api_request_sha256: None,
+        })
+        .expect("append");
+    }
+    assert!(!type_and_enter(&mut app, &agent, "/timeline"));
+    assert!(app.timeline_open, "the picker must open");
+    for (width, height) in [(80u16, 24u16), (100, 30)] {
+        let rows = render_rows(&mut app, width, height);
+        let screen = rows.join("\n");
+        assert!(
+            screen.contains("src/main.rs:20-29"),
+            "the tree row must carry the requested window at {width}x{height}:\n{screen}"
+        );
+    }
+}
 /// M168: the regression test for the bug the coverage gap was hiding. An agent with no
 /// durable session store is a normal state - a plain `--tui` run, a child before its store
 /// exists - and `Agent::store_handle_for_tests` panics on exactly that. Nine production
@@ -4506,6 +4557,238 @@ fn the_prompt_template_guide_states_what_does_not_work() {
 /// The assertion is that the abandoned row is *present and marked*, not merely
 /// that the list is longer: a test that only counted rows would also pass if
 /// the picker dumped the whole file in file order with no structure.
+/// The tree drops tool-only turns but keeps the leaf and the broken (P-305).
+///
+/// Pi hides assistant messages with only tool calls and a normal stop reason —
+/// navigation noise — unless the turn is the leaf the reader is on or carries
+/// an abnormal stop, which is exactly what a reader hunting "where did it
+/// break" needs to find. RED first: the picker lists every turn today.
+#[test]
+fn the_tree_drops_tool_only_turns_but_keeps_the_leaf_and_the_broken() {
+    use epsilon_contracts::content::ContentBlock;
+    use epsilon_contracts::content::UserContent;
+    use epsilon_contracts::message::{AssistantMessage, Message, StopReason, Usage, UserMessage};
+    use epsilon_contracts::session_entry::EntryKind;
+    use epsilon_session::SessionStore;
+
+    fn push_user(store: &mut SessionStore, text: &str) {
+        store
+            .append(EntryKind::Message {
+                message: Message::User(UserMessage {
+                    id: epsilon_contracts::new_id("msg"),
+                    timestamp_ms: 0,
+                    content: vec![UserContent::Text { text: text.into() }],
+                }),
+                api_request_sha256: None,
+            })
+            .unwrap();
+    }
+    fn push_call(store: &mut SessionStore, cmd: &str, stop: StopReason, err: Option<&str>) {
+        store
+            .append(EntryKind::Message {
+                message: Message::Assistant(AssistantMessage {
+                    id: epsilon_contracts::new_id("msg"),
+                    timestamp_ms: 0,
+                    provider: "faux".into(),
+                    model_id: "faux-1".into(),
+                    content: vec![ContentBlock::ToolCall {
+                        id: epsilon_contracts::new_id("call"),
+                        name: "bash".into(),
+                        arguments: serde_json::json!({ "command": cmd }),
+                    }],
+                    stop_reason: stop,
+                    error_message: err.map(str::to_string),
+                    usage: Usage::default(),
+                }),
+                api_request_sha256: None,
+            })
+            .unwrap();
+    }
+
+    let dir = tempfile::tempdir().unwrap();
+    let mut store = SessionStore::open(dir.path().join("s.jsonl")).unwrap();
+    push_user(&mut store, "q");
+    push_call(&mut store, "mid-cmd", StopReason::EndTurn, None);
+    push_call(&mut store, "err-cmd", StopReason::Error, Some("boom"));
+    push_call(&mut store, "leaf-cmd", StopReason::EndTurn, None);
+
+    let forest = store.tree().unwrap();
+    let active: std::collections::HashSet<String> = store
+        .branch_entries()
+        .unwrap()
+        .iter()
+        .map(|e| e.id.clone())
+        .collect();
+    let leaf = store.leaf_id();
+    let mut rows: Vec<crate::app::TimelineRow> = Vec::new();
+    super::commands::flatten_tree(
+        &forest,
+        0,
+        &active,
+        &Default::default(),
+        leaf.as_deref(),
+        &mut rows,
+    );
+
+    let snips: Vec<&str> = rows.iter().map(|r| r.snippet.as_str()).collect();
+    assert!(
+        !snips.iter().any(|s| s.contains("mid-cmd")),
+        "a tool-only turn mid-tree is navigation noise: {snips:?}"
+    );
+    assert!(
+        snips.iter().any(|s| s.contains("err-cmd")),
+        "a broken turn is where 'where did it break' lives: {snips:?}"
+    );
+    assert!(
+        snips.iter().any(|s| s.contains("leaf-cmd")),
+        "the leaf is always visible, noise or not: {snips:?}"
+    );
+}
+
+/// The tree sorts the leaf's branch first at every level (P-303).
+///
+/// Pi's rule (`tree-selector.ts:245,274,217-240`): the subtree holding the
+/// current leaf comes before the abandoned lanes, so the live context meets
+/// the eye first. RED first: rows come out in stored timestamp order today.
+#[test]
+fn the_tree_sorts_the_leaf_branch_first() {
+    use epsilon_contracts::content::UserContent;
+    use epsilon_contracts::message::{Message, UserMessage};
+    use epsilon_contracts::session_entry::EntryKind;
+    use epsilon_session::SessionStore;
+
+    fn push(store: &mut SessionStore, text: &str) -> String {
+        store
+            .append(EntryKind::Message {
+                message: Message::User(UserMessage {
+                    id: epsilon_contracts::new_id("msg"),
+                    timestamp_ms: 0,
+                    content: vec![UserContent::Text { text: text.into() }],
+                }),
+                api_request_sha256: None,
+            })
+            .unwrap()
+            .id
+    }
+
+    let dir = tempfile::tempdir().unwrap();
+    let mut store = SessionStore::open(dir.path().join("s.jsonl")).unwrap();
+    let root = push(&mut store, "root");
+    push(&mut store, "a1");
+    push(&mut store, "a2");
+    // Rewind to the root, then go a different way: the leaf lives on branch B.
+    store.navigate_to(&root).unwrap();
+    push(&mut store, "b1");
+
+    let forest = store.tree().unwrap();
+    let active: std::collections::HashSet<String> = store
+        .branch_entries()
+        .unwrap()
+        .iter()
+        .map(|e| e.id.clone())
+        .collect();
+    let leaf = store.leaf_id();
+    let mut rows: Vec<crate::app::TimelineRow> = Vec::new();
+    super::commands::flatten_tree(
+        &forest,
+        0,
+        &active,
+        &Default::default(),
+        leaf.as_deref(),
+        &mut rows,
+    );
+
+    let pos = |needle: &str| {
+        rows.iter()
+            .position(|r| r.snippet.contains(needle))
+            .unwrap_or_else(|| panic!("{needle:?} must be listed: {rows:?}"))
+    };
+    assert!(
+        pos("b1") < pos("a1") && pos("b1") < pos("a2"),
+        "the leaf's branch sorts before the abandoned lane: {rows:?}"
+    );
+}
+
+/// The dropped-and-ordered tree, on the frame (P-303, P-305).
+///
+/// Through the production path — store, `/timeline`, draw — at both frame
+/// sizes: branch A's tool-only turn is gone, the leaf's branch B sorts before
+/// the abandoned lane, and the leaf itself stays. If the sort ever stops
+/// leading with the leaf, `b-q` sinks below `a-q`; if the drop ever takes the
+/// leaf with it, `leaf-cmd` vanishes with `a-cmd`.
+#[test]
+fn the_timeline_frame_drops_noise_and_leads_with_the_leaf_branch() {
+    use epsilon_contracts::content::{ContentBlock, UserContent};
+    use epsilon_contracts::message::{AssistantMessage, Message, StopReason, Usage, UserMessage};
+    use epsilon_contracts::session_entry::EntryKind;
+    let (mut app, agent, _rx, _dir) = test_app_with_store();
+    {
+        let store = agent.session_store().expect("test store attached");
+        let mut st = store.lock().expect("store lock");
+        fn user(st: &mut epsilon_session::SessionStore, text: &str) -> String {
+            st.append(EntryKind::Message {
+                message: Message::User(UserMessage {
+                    id: epsilon_contracts::new_id("msg"),
+                    timestamp_ms: 0,
+                    content: vec![UserContent::Text { text: text.into() }],
+                }),
+                api_request_sha256: None,
+            })
+            .unwrap()
+            .id
+        }
+        fn call(st: &mut epsilon_session::SessionStore, cmd: &str) {
+            st.append(EntryKind::Message {
+                message: Message::Assistant(AssistantMessage {
+                    id: epsilon_contracts::new_id("msg"),
+                    timestamp_ms: 0,
+                    provider: "faux".into(),
+                    model_id: "faux-1".into(),
+                    content: vec![ContentBlock::ToolCall {
+                        id: epsilon_contracts::new_id("call"),
+                        name: "bash".into(),
+                        arguments: serde_json::json!({ "command": cmd }),
+                    }],
+                    stop_reason: StopReason::EndTurn,
+                    error_message: None,
+                    usage: Usage::default(),
+                }),
+                api_request_sha256: None,
+            })
+            .unwrap();
+        }
+        let root = user(&mut st, "root");
+        user(&mut st, "a-q");
+        call(&mut st, "a-cmd");
+        st.navigate_to(&root).expect("rewind");
+        user(&mut st, "b-q");
+        call(&mut st, "leaf-cmd");
+    }
+    assert!(!type_and_enter(&mut app, &agent, "/timeline"));
+    assert!(app.timeline_open, "the picker must open");
+    for (width, height) in [(80u16, 24u16), (100, 30)] {
+        let rows = render_rows(&mut app, width, height);
+        let screen = rows.join("\n");
+        assert!(
+            !screen.contains("a-cmd"),
+            "a tool-only turn mid-tree stays off the screen at {width}x{height}:\n{screen}"
+        );
+        assert!(
+            screen.contains("leaf-cmd"),
+            "the leaf stays on the screen at {width}x{height}:\n{screen}"
+        );
+        let pos = |needle: &str| {
+            screen.find(needle).unwrap_or_else(|| {
+                panic!("{needle:?} must be on screen at {width}x{height}:\n{screen}")
+            })
+        };
+        assert!(
+            pos("b-q") < pos("a-q"),
+            "the leaf's branch leads at {width}x{height}:\n{screen}"
+        );
+    }
+}
+
 #[test]
 fn the_tree_picker_shows_an_abandoned_branch() {
     use epsilon_contracts::content::UserContent;
@@ -4552,7 +4835,14 @@ fn the_tree_picker_shows_an_abandoned_branch() {
         .collect();
 
     let mut rows: Vec<crate::app::TimelineRow> = Vec::new();
-    super::commands::flatten_tree(&forest, 0, &active, &Default::default(), &mut rows);
+    super::commands::flatten_tree(
+        &forest,
+        0,
+        &active,
+        &Default::default(),
+        store.leaf_id().as_deref(),
+        &mut rows,
+    );
 
     let ids: Vec<&str> = rows.iter().map(|r| r.id.as_str()).collect();
     for b in &abandoned {
@@ -5151,6 +5441,139 @@ fn the_backward_jump_chord_arms_backward_not_forward() {
         Some(crate::app::JumpDir::Forward),
         "ctrl+] still arms FORWARD"
     );
+}
+
+/// Esc in the tree unfolds first and only then closes (P-299).
+///
+/// Pi clears the query and the folded branches first; a second Esc exits.
+/// The search-mode half already exists (the query clears before the field
+/// closes); the folds half did not — Esc closed over a folded branch, leaving
+/// rows hidden behind a dismissal. Both directions are asserted: unfold stays
+/// open, and only the emptied Esc closes.
+#[test]
+fn esc_in_the_tree_unfolds_first_and_only_then_closes() {
+    use crate::app::TimelineRow;
+    use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+    let (mut app, agent, _rx) = test_app();
+    let parent = TimelineRow {
+        seq: 0,
+        id: "a".into(),
+        kind: "user".into(),
+        snippet: "the parent".into(),
+        depth: 0,
+        on_active: true,
+        parent: None,
+        label: None,
+    };
+    let child = TimelineRow {
+        seq: 1,
+        id: "b".into(),
+        kind: "user".into(),
+        snippet: "the child".into(),
+        depth: 1,
+        on_active: false,
+        parent: Some("a".into()),
+        label: None,
+    };
+    app.timeline_all = vec![parent.clone(), child];
+    app.timeline_entries = vec![parent];
+    app.timeline_index = 0;
+    app.timeline_open = true;
+    app.folded.insert("a".into());
+    app.tree_query = "parent".into();
+    let esc = || KeyEvent::new(KeyCode::Esc, KeyModifiers::empty());
+
+    handle_key(&mut app, &agent, esc());
+    assert!(
+        app.folded.is_empty(),
+        "the first Esc must unfold before anything closes"
+    );
+    assert!(
+        app.tree_query.is_empty(),
+        "and clear the query with it — pi clears both first"
+    );
+    assert!(
+        app.timeline_open,
+        "clearing is not closing: the picker stays up"
+    );
+    // The unfolded child is back on the screen, at both frame sizes — state
+    // asserts alone would pass with rows the draw never shows.
+    for (width, height) in [(80u16, 24u16), (100, 30)] {
+        let rows = render_rows(&mut app, width, height);
+        let screen = rows.join("\n");
+        assert!(
+            screen.contains("the child"),
+            "unfolding must reach the pixels at {width}x{height}:\n{screen}"
+        );
+    }
+
+    handle_key(&mut app, &agent, esc());
+    assert!(!app.timeline_open, "with nothing left to clear, Esc closes");
+}
+
+/// Cycling the tree filter clears folded branches (P-293).
+///
+/// Pi's filter change unfolds everything: a fold hides rows under one filter's
+/// meaning, and the next filter must not inherit the hiding. The five modes
+/// already cycle on `f` in pi's order; the folds survived the cycle, so this is
+/// the half that was missing. Asserted both ways — the mode advances AND the
+/// folds clear — so neither half can regress silently.
+#[test]
+fn cycling_the_tree_filter_clears_folded_branches() {
+    use crate::app::{TimelineRow, TreeFilter};
+    use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+    let (mut app, agent, _rx) = test_app();
+    let parent = TimelineRow {
+        seq: 0,
+        id: "a".into(),
+        kind: "user".into(),
+        snippet: "the parent".into(),
+        depth: 0,
+        on_active: true,
+        parent: None,
+        label: None,
+    };
+    let child = TimelineRow {
+        seq: 1,
+        id: "b".into(),
+        kind: "user".into(),
+        snippet: "the child".into(),
+        depth: 1,
+        on_active: false,
+        parent: Some("a".into()),
+        label: None,
+    };
+    app.timeline_all = vec![parent.clone(), child];
+    app.timeline_entries = vec![parent];
+    app.timeline_index = 0;
+    app.timeline_open = true;
+    app.tree_filter = TreeFilter::Default;
+    app.folded.insert("a".into());
+
+    handle_key(
+        &mut app,
+        &agent,
+        KeyEvent::new(KeyCode::Char('f'), KeyModifiers::empty()),
+    );
+    assert_eq!(
+        app.tree_filter,
+        TreeFilter::UserOnly,
+        "the cycle still advances in pi's order"
+    );
+    assert!(
+        app.folded.is_empty(),
+        "a filter change must not inherit the hiding"
+    );
+    assert!(app.timeline_open, "cycling is not closing");
+    // The new mode is named on the screen, and the unfolded child with it.
+    for (width, height) in [(80u16, 24u16), (100, 30)] {
+        let rows = render_rows(&mut app, width, height);
+        let screen = rows.join("\n");
+        assert!(
+            screen.contains("user only") && screen.contains("the child"),
+            "mode and rows must reach the pixels at {width}x{height}:\n{screen}"
+        );
+    }
 }
 
 /// The `/tree` panel DRAWS what the state says: the filter, the search field, and

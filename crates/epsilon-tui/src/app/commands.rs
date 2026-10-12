@@ -142,9 +142,27 @@ pub(crate) fn flatten_tree(
     depth: usize,
     active: &std::collections::HashSet<String>,
     labels: &std::collections::HashMap<String, String>,
+    leaf_id: Option<&str>,
     out: &mut Vec<crate::app::TimelineRow>,
 ) {
-    for n in nodes {
+    // P-303: the subtree holding the leaf sorts first at every level, so the
+    // live context meets the eye before the abandoned lanes — pi's rule
+    // (`tree-selector.ts:245,274,217-240`), applied at display time so the
+    // stored order (timestamp ascending) never moves. Stable within each half.
+    let mut ordered: Vec<&epsilon_contracts::session_entry::SessionTreeNode> =
+        nodes.iter().collect();
+    if leaf_id.is_some() {
+        ordered.sort_by_key(|n| !subtree_contains(n, leaf_id));
+    }
+    for n in ordered {
+        // P-305: pi's drop rule (`tree-selector.ts:346-356`) — a tool-only turn
+        // is navigation noise. The recursion continues past a dropped row so
+        // its children stay listed, exactly as pi's flat filter does; their
+        // depth is recomputed downstream (`visible_depth` promotes orphans).
+        if dropped_from_tree(&n.entry, leaf_id) {
+            flatten_tree(&n.children, depth + 1, active, labels, leaf_id, out);
+            continue;
+        }
         out.push(crate::app::TimelineRow {
             seq: n.entry.seq,
             id: n.entry.id.clone(),
@@ -155,8 +173,52 @@ pub(crate) fn flatten_tree(
             parent: n.entry.parent_id.clone(),
             label: labels.get(&n.entry.id).cloned(),
         });
-        flatten_tree(&n.children, depth + 1, active, labels, out);
+        flatten_tree(&n.children, depth + 1, active, labels, leaf_id, out);
     }
+}
+
+/// Whether the subtree rooted at `node` holds `leaf_id`: the node itself or
+/// any descendant. `None` never matches, so an unknown leaf keeps stored order.
+fn subtree_contains(
+    node: &epsilon_contracts::session_entry::SessionTreeNode,
+    leaf_id: Option<&str>,
+) -> bool {
+    let Some(leaf) = leaf_id else {
+        return false;
+    };
+    node.entry.id == leaf || node.children.iter().any(|c| subtree_contains(c, leaf_id))
+}
+
+/// Pi's tree drop rule (`tree-selector.ts:346-356`): an assistant message with
+/// no text content and a normal stop reason is dropped — unless it is the leaf
+/// the reader is on, or it carries an abnormal stop (truncated, failed,
+/// aborted), which is exactly what a reader hunting "where did it break"
+/// needs to find. Tool calls do not count as text; pi checks content blocks,
+/// and the prose half of the snip is this crate's same question.
+///
+/// An unknown leaf drops nothing: hiding turns when the reader's position is
+/// unknown could bury the only context they have.
+fn dropped_from_tree(e: &epsilon_contracts::SessionEntry, leaf_id: Option<&str>) -> bool {
+    let Some(leaf) = leaf_id else {
+        return false;
+    };
+    if e.id == leaf {
+        return false;
+    }
+    let epsilon_contracts::session_entry::EntryKind::Message { message, .. } = &e.kind else {
+        return false;
+    };
+    let epsilon_contracts::message::Message::Assistant(a) = message else {
+        return false;
+    };
+    if !a.text().trim().is_empty() {
+        return false;
+    }
+    matches!(
+        a.stop_reason,
+        epsilon_contracts::message::StopReason::EndTurn
+            | epsilon_contracts::message::StopReason::ToolUse
+    )
 }
 
 /// Apply a filter to the flattened rows, **promoting orphans to depth 0**.
@@ -1898,7 +1960,23 @@ impl App {
             }
         };
         let mut all: Vec<crate::app::TimelineRow> = Vec::new();
-        flatten_tree(&forest, 0, &active, &labels, &mut all);
+        // The leaf the reader is on: the drop rule never hides it and the sort
+        // leads with its branch. Read under the same lock discipline as the
+        // forest above — a second implementation of "current" is how the picker
+        // and the store disagree about where the conversation is.
+        let leaf: Option<String> = {
+            let Some(guard) = agent.session_store() else {
+                self.ui
+                    .push_notice(format!("{label}: no session store attached"));
+                return false;
+            };
+            let Ok(st) = guard.lock() else {
+                self.ui.push_notice(format!("{label}: store unavailable"));
+                return false;
+            };
+            st.leaf_id()
+        };
+        flatten_tree(&forest, 0, &active, &labels, leaf.as_deref(), &mut all);
         // M196: the filter is applied here, once, on the flattened rows -- so the
         // picker, the key handler and the renderer all see the same filtered
         // list rather than each applying the rule and hoping they agree.

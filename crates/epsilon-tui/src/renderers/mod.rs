@@ -43,7 +43,15 @@ pub fn call_head(name: &str, args: &Value, ellipsis: &str) -> String {
             (None, Some(path)) => path,
             (None, None) => String::new(),
         },
-        "read" | "ls" | "write" | "edit" | "glob" | "find" | "webfetch" | "web_fetch" => {
+        "read" => {
+            let path = read_path(args);
+            match read_window(args) {
+                Some((start, Some(end))) => format!("{path}:{start}-{end}"),
+                Some((start, None)) => format!("{path}:{start}"),
+                None => path,
+            }
+        }
+        "ls" | "write" | "edit" | "glob" | "find" | "webfetch" | "web_fetch" => {
             str_arg(args, "path")
                 .or_else(|| str_arg(args, "file_path"))
                 .or_else(|| str_arg(args, "filePath"))
@@ -60,6 +68,39 @@ pub fn call_head(name: &str, args: &Value, ellipsis: &str) -> String {
     }
 }
 
+/// The path a `read` call named, without any window: the one fact the call
+/// and the result agree on. Shared by `call_head` (which appends the requested
+/// window) and `result_head` (which appends the returned lines instead — never
+/// both, because `path:10:10–50 of 300` states the start twice).
+fn read_path(args: &Value) -> String {
+    str_arg(args, "path")
+        .or_else(|| str_arg(args, "file_path"))
+        .or_else(|| str_arg(args, "filePath"))
+        .or_else(|| str_arg(args, "url"))
+        .unwrap_or_default()
+}
+///
+/// Pi's tree prefix (`tree-selector.ts:946-960`): `start = offset ?? 1`,
+/// `end = start + limit - 1`, shown when either is present. The tree snip sees the
+/// call, which is exactly what pi reads — an earlier note claiming this was
+/// `result_head` territory was wrong, and the correction is this function.
+/// A non-numeric value degrades to the bare path: a renderer may not invent a range.
+///
+/// The `-` separator is pi's literal. The settled card's `result_head` uses `–` with
+/// the file total beside it; the two spellings mark different facts (requested window
+/// against returned lines), so sharing one would claim an agreement that is not there.
+fn read_window(args: &Value) -> Option<(u64, Option<u64>)> {
+    let offset = args.get("offset").and_then(Value::as_u64);
+    let limit = args.get("limit").and_then(Value::as_u64);
+    match (offset, limit) {
+        (None, None) => None,
+        (start, limit) => {
+            let start = start.unwrap_or(1);
+            Some((start, limit.map(|l| start + l.saturating_sub(1))))
+        }
+    }
+}
+
 /// The headline a settled card shows, which may know more than the call did.
 ///
 /// A `read` that returned lines 10–50 of a 300-line file should say so, because "read" alone
@@ -71,7 +112,13 @@ pub fn result_head(
     body: &str,
     ellipsis: &str,
 ) -> String {
-    let call = call_head(name, args, ellipsis);
+    let call = if name == "read" && details.get("read").is_some() {
+        // Actuals supersede the request: the arm below states the returned
+        // lines, so the head must not also state the requested window.
+        read_path(args)
+    } else {
+        call_head(name, args, ellipsis)
+    };
     let extra = match name {
         "read" => details
             .get("read")

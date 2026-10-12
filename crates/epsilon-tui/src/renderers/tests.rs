@@ -48,6 +48,65 @@ fn a_whole_file_read_does_not_announce_a_range_it_covered_everything_in() {
 }
 
 #[test]
+fn a_read_call_with_a_window_names_its_range() {
+    // Pi's tree prefix (`tree-selector.ts:946-960`): the range comes from the CALL's
+    // `offset`/`limit` — `start = offset ?? 1`, `end = start + limit - 1` — which the
+    // snip sees, exactly as pi does. The earlier note claiming this was `result_head`
+    // territory was wrong: pi never reads the result for this line.
+    assert_eq!(
+        call_head(
+            "read",
+            &args(json!({"path": "src/main.rs", "offset": 20, "limit": 10})),
+            UNICODE.ellipsis
+        ),
+        "src/main.rs:20-29"
+    );
+    // Offset alone names where the window starts; limit alone starts at 1.
+    assert_eq!(
+        call_head(
+            "read",
+            &args(json!({"path": "src/main.rs", "offset": 20})),
+            UNICODE.ellipsis
+        ),
+        "src/main.rs:20"
+    );
+    assert_eq!(
+        call_head(
+            "read",
+            &args(json!({"path": "src/main.rs", "limit": 10})),
+            UNICODE.ellipsis
+        ),
+        "src/main.rs:1-10"
+    );
+    // No window, no range: the head degrades to the bare path rather than a guess.
+    // This is the removal control — the range must come from the args, not be invented.
+    assert_eq!(
+        call_head(
+            "read",
+            &args(json!({"path": "src/main.rs"})),
+            UNICODE.ellipsis
+        ),
+        "src/main.rs"
+    );
+}
+
+#[test]
+fn a_settled_read_without_reported_lines_keeps_the_requested_window() {
+    // `result_head` states actuals when it has them (bare path plus `:first–last`)
+    // and the request when it does not — never both (`path:10:10–50 of 300`
+    // states the start twice). A result with no `details.read` is a result whose
+    // lines are unknown, and the requested window is the only range in evidence.
+    let head = result_head(
+        "read",
+        &args(json!({"path": "src/main.rs", "offset": 20, "limit": 10})),
+        &json!({}),
+        "line twenty\n",
+        UNICODE.ellipsis,
+    );
+    assert_eq!(head, "src/main.rs:20-29");
+}
+
+#[test]
 fn a_grep_card_says_what_it_searched_for_and_where() {
     // The old heuristic returned the bare pattern, so a `grep` card could not distinguish
     // a search that hit from one that hit in the wrong place.

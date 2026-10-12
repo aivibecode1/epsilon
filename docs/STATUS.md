@@ -306,7 +306,7 @@ inventories are inventories.
 
 | Matrix | Rows | done | partial | missing | deliberately different |
 |---|---|---|---|---|---|
-| [`parity/pi-tui.md`](parity/pi-tui.md) | **339** | 63 | 108 | 141 | 27 |
+| [`parity/pi-tui.md`](parity/pi-tui.md) | **339** | 69 | 101 | 141 | 28 |
 | [`parity/dsh-desktop.md`](parity/dsh-desktop.md) | **433** | 32 | 95 | 257 | 49 |
 
 > **Corrected 2026-10-06 by [an independent review](reviews/2026-10-06-objective-review.md).** The
