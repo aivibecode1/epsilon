@@ -570,9 +570,10 @@ pub(crate) fn handle_key(app: &mut App, agent: &Arc<Agent>, key: KeyEvent) -> bo
                         if let Some(v) = app.viewer.as_mut() {
                             v.discard_armed = true;
                         }
-                        app.ui.push_notice(
-                            "edits not saved — Esc again discards them, alt+s saves".to_string(),
-                        );
+                        app.ui.push_notice(format!(
+                            "edits not saved — Esc again discards them, {}+s saves",
+                            crate::keybindings::alt_name()
+                        ));
                     } else if let Some(v) = app.viewer.as_mut() {
                         v.editing = false;
                         v.discard_armed = false;

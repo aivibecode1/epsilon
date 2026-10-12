@@ -449,6 +449,11 @@ the run. Up from 1,997: the checkpoint round-trip and restore-undo tests. (Previ
 > Counts now 69/100/136/34. P-212/P-213 stay `missing`: extensions have no keybinding
 > surface in the protocol, and inventing a reason would be the dressing-up rule.
 >
+> **P-197 done (this session): `option` on macOS.** `Chord::parse` takes `option`,
+> `to_label_platform`/`key_label_platform` print it on macOS, panel prose follows
+> via `alt_name()`; both spellings round-trip on every host (option-strip control
+> fails it). Counts now 70/100/135/34.
+>
 > **Goal 3, Phase 1 (landed): AGENTS.md v4 draft for owner application.** Every v3
 > clause audited against the tree (13 crates, uniform 1.88, TERMINAL+WINDOW tables,
 > 15 legs, SUPPORTED only in a historical comment); the complete v4 text sits in

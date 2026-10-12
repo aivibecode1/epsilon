@@ -370,8 +370,9 @@ pub(crate) fn draw_viewer(
     let height = outer.height.saturating_sub(4).max(10);
     let title = if viewer.editing {
         format!(
-            "edit {} — alt+s saves, esc cancels{}",
+            "edit {} — {}+s saves, esc cancels{}",
             viewer.rel,
+            crate::keybindings::alt_name(),
             if viewer.is_dirty() { " (modified)" } else { "" }
         )
     } else {
@@ -429,8 +430,9 @@ pub(crate) fn draw_viewer(
     while lines.len() < capacity {
         lines.push(Line::from(""));
     }
+    let save = format!("{}+s", crate::keybindings::alt_name());
     let hints: &[(&str, &str)] = if viewer.editing {
-        &[("type/enter", "edit"), ("alt+s", "save"), ("esc", "cancel")]
+        &[("type/enter", "edit"), (&save, "save"), ("esc", "cancel")]
     } else {
         &[("↑↓/pgup/pgdn", "scroll"), ("e", "edit"), ("esc", "close")]
     };

@@ -66,7 +66,7 @@ back; it is a reading of the test's source, not a report of a run.
 
 **339 rows** are paired here: Pi's 323 `P-###` behaviours, the 4 `L-###` rows of its inherited `tui.*` keybinding
 table, and the 12 `T-###` rows of its text-measurement core. Every one carries a reference citation; 200 of them
-carry an `ours` citation and 137 do not, and those 137 say so. The counts below are the rows **actually written in
+carry an `ours` citation and 136 do not, and those 136 say so. The counts below are the rows **actually written in
 this document**, tallied from its own tables — not a projection.
 
 | area | rows | done | partial | missing | deliberately different |
@@ -87,16 +87,16 @@ this document**, tallied from its own tables — not a projection.
 | 14. Diffs | 6 | 4 | 0 | 2 | 0 |
 | 15. Markdown, mermaid and truncation | 22 | 6 | 7 | 9 | 0 |
 | 16. Status indicators | 13 | 2 | 5 | 5 | 1 |
-| 17. Footer | 12 | 3 | 4 | 3 | 2 |
+| 17. Footer | 12 | 4 | 4 | 2 | 2 |
 | 18. Selector and overlay components | 79 | 18 | 17 | 36 | 8 |
-| **Total** | **339** | **69** | **100** | **136** | **34** |
+| **Total** | **339** | **70** | **100** | **135** | **34** |
 
 A further **17 rows are not in the counts above**: the 10 `Y-###` rows Pi ships outside its interactive mode (out of
 scope by design) and the 7 `AA-###` rows recording what was never inventoried. Both are listed in full near the end
 of this document, because a row that is silently dropped is how a rule goes unowned.
 
-The shape of that table is the honest shape of a port from a 356-row inventory to a 203-row one: **136 rows have no
-counterpart established on our side, 100 are half-built, 69 are exercised, and 34 are decisions.** The 138 are not
+The shape of that table is the honest shape of a port from a 356-row inventory to a 204-row one: **135 rows have no
+counterpart established on our side, 100 are half-built, 70 are exercised, and 34 are decisions.** The 138 are not
 69/339 failures; most of them sit in Pi's extension, settings-overlay, mermaid, image and tree-navigation surface,
 much of which Epsilon deliberately does not have. Read [Open rows](#open-rows) before reading the table.
 
@@ -628,7 +628,7 @@ per mode (`insert` · `enter send` against `run` · `enter queue`) and a bare ch
 
 | id | behaviour | reference | status | ours | verified |
 |---|---|---|---|---|---|
-| P-197 | `alt` is displayed as `option` on macOS | `packages/coding-agent/src/modes/interactive/components/keybinding-hints.ts:13` | missing | none | — |
+| P-197 | `alt` is displayed as `option` on macOS | `packages/coding-agent/src/modes/interactive/components/keybinding-hints.ts:13` | done | `crates/epsilon-contracts/src/keybind.rs` (`Chord::parse` takes `option`, `to_label_platform` prints it on macOS) and `crates/epsilon-tui/src/keybindings.rs` (`key_label_platform` + `alt_name` for panel prose) — adapted: the spelling follows the platform rather than the window, and both spellings parse back on every host | `option_parses_to_the_alt_modifier`, `platform_labels_print_and_parse_on_both_platforms`, `alt_spelling_follows_the_platform` |
 | P-198 | A hint for a binding id is resolved at render time, so a rebind changes every hint at once; an unbound id yields an empty hint rather than an error | `packages/coding-agent/src/modes/interactive/components/keybinding-hints.ts:35` | done | `crates/epsilon-tui/src/ui/footer.rs:294`, `:285` — hints are drawn from the live table, and the truncation marker on a card carries the same live text (`crates/epsilon-tui/src/ui/card.rs:167`) | `a_hint_label_parses_back_to_the_chord_it_names`, `a_long_diff_is_capped_and_says_which_key_opens_it` (frame), `the_advertised_scroll_key_scrolls_the_real_frame` (frame) |
 | P-199 | The footer is two lines, plus a third whenever an extension sets a status | `packages/coding-agent/src/modes/interactive/components/footer.ts:287`, `:297`, `:292` | deliberately different | `crates/epsilon-tui/src/ui/footer.rs:421` — one row by construction (the five-band layout), because the mode badge has to lead it and the hints have to be budgeted before the layout runs | `no_footer_row_ever_prints_half_a_hint_or_touches_the_location` (frame, sweeps 20…120 columns) |
 | P-200 | The cwd is shortened to `~` only inside `$HOME`, with the git branch in parentheses and the session name after a `•` | `packages/coding-agent/src/modes/interactive/components/footer.ts:33`, `:44`, `:170`, `:176` | partial | `crates/epsilon-tui/src/ui/footer.rs:435` — the workspace path and git branch are shown and are pinned to survive any narrowing; the `~` substitution and the `• session-name` segment are not established by an `E-` row | `the_location_survives_a_narrow_terminal` (frame), `no_footer_row_ever_prints_half_a_hint_or_touches_the_location` (frame) |
@@ -778,11 +778,11 @@ row says so — that is a gap in the inventory, and closing it is cheap.
 | 14. Diffs | 6 | 4 | 0 | 2 | 0 |
 | 15. Markdown, mermaid and truncation | 22 | 6 | 7 | 9 | 0 |
 | 16. Status indicators | 13 | 2 | 5 | 5 | 1 |
-| 17. Footer | 12 | 3 | 4 | 3 | 2 |
+| 17. Footer | 12 | 4 | 4 | 2 | 2 |
 | 18. Selector and overlay components | 79 | 18 | 17 | 36 | 8 |
-| **Total** | **339** | **69** | **100** | **136** | **34** |
+| **Total** | **339** | **70** | **100** | **135** | **34** |
 
-### The `missing` rows — 136
+### The `missing` rows — 135
 
 Every row below has **no** `E-` row establishing the behaviour. Nothing here was found by browsing `crates/`, and
 nothing here is a claim that the behaviour cannot be built.
@@ -804,7 +804,7 @@ nothing here is a claim that the behaviour cannot be built.
 | Diffs (2) | P-162, P-163 |
 | Markdown, mermaid and truncation (9) | P-167, P-168, P-169, P-170, P-171, P-172, P-173, T-010, T-012 |
 | Status indicators (5) | P-019, P-191, P-192, P-193, P-194 |
-| Footer (3) | P-197, P-207, P-208 |
+| Footer (2) | P-207, P-208 |
 | Selector and overlay components (36) | P-230, P-232, P-234, P-235, P-239, P-242, P-244, P-245, P-248, P-251, P-255, P-256, P-257, P-258, P-259, P-261, P-281, P-283, P-284, P-285, P-286, P-296, P-297, P-300, P-304, P-306, P-307, P-308, P-310, P-311, P-314, P-316, P-317, P-318, P-319, P-323 |
 
 ### The `partial` rows — 100

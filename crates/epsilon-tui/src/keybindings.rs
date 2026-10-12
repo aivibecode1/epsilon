@@ -111,12 +111,29 @@ fn key_matches(spec: &KeySpec, ev: &KeyEvent) -> bool {
 /// former and a label nothing can parse is exactly the defect this file is
 /// fixing. Modifier order follows the parser (`ctrl+shift+x`).
 fn key_label(spec: &KeySpec) -> String {
+    key_label_platform(spec, cfg!(target_os = "macos"))
+}
+
+/// The alt modifier as the current platform spells it in prose: `option` on
+/// macOS, `alt` everywhere else. For hint labels use `key_text` (which follows
+/// rebinds); this is for sentences that name the default chord in words.
+pub(crate) fn alt_name() -> &'static str {
+    if cfg!(target_os = "macos") {
+        "option"
+    } else {
+        "alt"
+    }
+}
+
+/// The hint spelling on one platform: macOS reads `option`, everywhere else
+/// reads `alt` (P-197). Split out so both branches are testable on every host.
+fn key_label_platform(spec: &KeySpec, macos: bool) -> String {
     let mut out = String::new();
     if spec.modifiers.contains(KeyModifiers::CONTROL) {
         out.push_str("ctrl+");
     }
     if spec.modifiers.contains(KeyModifiers::ALT) {
-        out.push_str("alt+");
+        out.push_str(if macos { "option+" } else { "alt+" });
     }
     if spec.modifiers.contains(KeyModifiers::SHIFT) {
         out.push_str("shift+");
@@ -514,5 +531,24 @@ mod tests {
             broken.key_text("tui.input.submit"),
             Some("enter".to_string())
         );
+    }
+
+    /// macOS reads `option`, everywhere else reads `alt` (P-197): both spell
+    /// the same chord, and both parse back through `parse_key_id` (which takes
+    /// `option` since the contracts change).
+    #[test]
+    fn alt_spelling_follows_the_platform() {
+        let spec = parse_key_id("alt+s").expect("the fixture parses on every platform");
+        assert_eq!(key_label_platform(&spec, false), "alt+s");
+        assert_eq!(key_label_platform(&spec, true), "option+s");
+        for label in ["alt+s", "option+s"] {
+            let back = parse_key_id(label)
+                .unwrap_or_else(|| panic!("{label:?} must parse on every platform"));
+            assert_eq!(
+                key_label_platform(&back, label.starts_with("option")),
+                label,
+                "{label:?} must round-trip on its own platform"
+            );
+        }
     }
 }

@@ -138,7 +138,7 @@ impl Chord {
             match *m {
                 "ctrl" | "control" => mods.ctrl = true,
                 "shift" => mods.shift = true,
-                "alt" | "meta" => mods.alt = true,
+                "alt" | "meta" | "option" => mods.alt = true,
                 "super" | "win" | "cmd" => mods.command = true,
                 "" => {}
                 _ => return None,
@@ -192,12 +192,20 @@ impl Chord {
     /// `key_label` gives: a footer that hardcodes `ctrl-p` names a key it only *hopes* is
     /// bound, and a rebound key must change its own hint.
     pub fn to_label(self) -> String {
+        self.to_label_platform(cfg!(target_os = "macos"))
+    }
+
+    /// The chord as a hint spells it, on one platform: macOS reads `option`,
+    /// everywhere else reads `alt` (pi `keybinding-hints.ts:13`). Split out so
+    /// both spellings are testable on every host — a `cfg!` buried in the body
+    /// would leave the macOS branch unproven on the machine that builds this.
+    pub fn to_label_platform(self, macos: bool) -> String {
         let mut out = String::new();
         if self.mods.ctrl {
             out.push_str("ctrl+");
         }
         if self.mods.alt {
-            out.push_str("alt+");
+            out.push_str(if macos { "option+" } else { "alt+" });
         }
         if self.mods.shift {
             out.push_str("shift+");
@@ -650,5 +658,38 @@ mod tests {
             "each chord must name one action: {}",
             clashes.join("; ")
         );
+    }
+
+    /// macOS reads the alt modifier as `option` (P-197, pi
+    /// `keybinding-hints.ts:13`): the spelling parses to the same chord, so a
+    /// hint that prints it still names a key the product reads.
+    #[test]
+    fn option_parses_to_the_alt_modifier() {
+        assert_eq!(
+            Chord::parse("option+s"),
+            Chord::parse("alt+s"),
+            "option+s must be alt+s under another spelling"
+        );
+        assert!(
+            Chord::parse("option+s").is_some_and(|c| c.mods.alt),
+            "the parsed chord carries alt"
+        );
+    }
+
+    /// Both platform spellings print, and both parse back — the round trip the
+    /// footer depends on, on each OS rather than only the build host's.
+    #[test]
+    fn platform_labels_print_and_parse_on_both_platforms() {
+        let chord = Chord::parse("alt+s").expect("fixture parses");
+        assert_eq!(chord.to_label_platform(false), "alt+s");
+        assert_eq!(chord.to_label_platform(true), "option+s");
+        for (label, macos) in [("alt+s", false), ("option+s", true)] {
+            assert_eq!(
+                Chord::parse(label),
+                Some(chord),
+                "{label:?} must parse back on its own platform"
+            );
+            let _ = macos;
+        }
     }
 }
