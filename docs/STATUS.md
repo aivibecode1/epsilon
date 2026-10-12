@@ -755,6 +755,15 @@ the run. Matrix at 81/111/24/123. (Previous: `gate-goal3-phase6-20261012`, 2,011
 > with layer modifiers — access is permission presets, not enable lists.
 > Counts now 86/114/4/135.
 >
+> **Phase 2 complete (this session): P-004/P-053/T-010 judged, zero `missing`
+> remain.** Quiet mode has nothing to hide (permanent header P-019, bannerless
+> headless modes, welcome-is-empty-state pinned by test); redaction deltas
+> have no diagnostic channel to read from (`AssistantMessage` carries none,
+> zero redaction refs — a count would be invented); Thai/Lao decomposition
+> has no single output boundary to port pi's one-point normalization to
+> (verbatim mapping recorded with its revisit trigger). Final matrix:
+> 86 / 115 / **0** / **138**. All parity checkers green.
+>
 > **P-056 partial (this session): skill invocations render — as generic tool
 > cards.** Corrected the inventory: model skill use runs through the `skill`
 > tool, so every invocation already renders as a normal collapsible card.

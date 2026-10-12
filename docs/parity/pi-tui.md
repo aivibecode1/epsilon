@@ -71,11 +71,11 @@ this document**, tallied from its own tables — not a projection.
 
 | area | rows | done | partial | missing | deliberately different |
 |---|---|---|---|---|---|
-| 1. Startup, header and resources | 20 | 1 | 7 | 1 | 11 |
+| 1. Startup, header and resources | 20 | 1 | 7 | 0 | 12 |
 | 2. Layout and renderer | 10 | 3 | 2 | 0 | 5 |
 | 3. Composer and editor | 24 | 6 | 12 | 0 | 6 |
 | 4. Slash commands and autocomplete | 13 | 2 | 5 | 0 | 6 |
-| 5. Transcript and streaming | 35 | 12 | 6 | 1 | 16 |
+| 5. Transcript and streaming | 35 | 12 | 6 | 0 | 17 |
 | 6. Model picker and thinking | 9 | 0 | 5 | 0 | 4 |
 | 7. Auth, login and permissions | 8 | 2 | 4 | 0 | 2 |
 | 8. Sessions | 17 | 7 | 6 | 0 | 4 |
@@ -85,18 +85,17 @@ this document**, tallied from its own tables — not a projection.
 | 12. Tool cards | 16 | 3 | 6 | 0 | 7 |
 | 13. Bash cards | 11 | 5 | 6 | 0 | 0 |
 | 14. Diffs | 6 | 6 | 0 | 0 | 0 |
-| 15. Markdown, mermaid and truncation | 22 | 6 | 7 | 1 | 8 |
+| 15. Markdown, mermaid and truncation | 22 | 6 | 7 | 0 | 9 |
 | 16. Status indicators | 13 | 2 | 5 | 0 | 6 |
 | 17. Footer | 12 | 4 | 4 | 0 | 4 |
 | 18. Selector and overlay components | 79 | 25 | 22 | 0 | 32 |
-| **Total** | **339** | **86** | **115** | **3** | **135** |
+| **Total** | **339** | **86** | **115** | **0** | **138** |
 
 A further **17 rows are not in the counts above**: the 10 `Y-###` rows Pi ships outside its interactive mode (out of
 scope by design) and the 7 `AA-###` rows recording what was never inventoried. Both are listed in full near the end
 of this document, because a row that is silently dropped is how a rule goes unowned.
 
-The shape of that table is the honest shape of a port from a 356-row inventory to a 315-row one: **4 rows have no
-counterpart established on our side, 115 are half-built, 86 are exercised, and 135 are decisions.** The 3 are not
+The shape of that table is the honest shape of a port from a 356-row inventory to a 315-row one: **every row now has a counterpart established on our side — 115 are half-built, 86 are exercised, and 138 are decisions.** The 138 decisions are not
 69/339 failures; most of them sit in Pi's extension, settings-overlay, mermaid, image and tree-navigation surface,
 much of which Epsilon deliberately does not have. Read [Open rows](#open-rows) before reading the table.
 
@@ -174,7 +173,7 @@ transcript notices pushed **before** the first frame so it survives the alternat
 | P-001 | A header draws the Pi logo, `v<version>` and a one-line key hint; terminals that cannot draw the logo get a `Pi vX` wordmark | `packages/coding-agent/src/modes/interactive/interactive-mode.ts:996`, `:1001-1006`, `:1051-1057` | partial | `crates/epsilon-tui/src/ui/transcript.rs:264` — a welcome panel with wordmark, one instruction and the three composer prefixes; **no version, and the key hints live in the footer (E-082), not the header** | `an_empty_session_gets_the_first_run_screen_inside_a_well_formed_frame` (frame) |
 | P-002 | `Ctrl+O` expands the startup help from one compact line to a ~20-line instruction list | `packages/coding-agent/src/modes/interactive/interactive-mode.ts:1036-1043`, `:1011-1035`, `:4470-4472` | deliberately different | Two blockers, both structural: the chord is taken — `ctrl+o` cycles the transcript filter (P-293, with the collision rationale in `crates/epsilon-contracts/src/keybind.rs`) — and discovery is already covered three ways (welcome panel, `/help`, palette), so an expandable startup line would duplicate all three | — |
 | P-003 | Clicking the first two logo columns starts the logo animation | `packages/coding-agent/src/modes/interactive/interactive-mode.ts:254-263`, `:1058` | deliberately different | Mouse capture is deliberately off (`crates/epsilon-tui/src/app.rs:1549`), so there is no click to animate from — and the mark would be Pi's, not this product's (CREDITS: never take a name, logo or brand) | — |
-| P-004 | `quietStartup` has three states: hide everything, header only, or both | `packages/coding-agent/src/core/settings-manager.ts:1089-1092`, `packages/coding-agent/src/modes/interactive/interactive-mode.ts:1410-1417` | missing | none | — |
+| P-004 | `quietStartup` has three states: hide everything, header only, or both | `packages/coding-agent/src/core/settings-manager.ts:1089-1092`, `packages/coding-agent/src/modes/interactive/interactive-mode.ts:1410-1417` | deliberately different | Three decided shapes leave nothing to hide: the header is permanent (P-019), headless modes print no banner by construction, and the welcome screen is the empty-transcript state — hiding it shows a void, pinned by `an_empty_transcript_gets_a_welcome_screen_not_a_void` (`crates/epsilon-tui/src/ui/shell.rs:89`, `:221`). A quiet flag would suppress what the tree promises is always there | `an_empty_transcript_gets_a_welcome_screen_not_a_void` |
 | P-005 | The model scope is printed to stdout at startup so it scrolls away in the terminal's own scrollback | `packages/coding-agent/src/modes/interactive/interactive-mode.ts:940-953` | partial | The scope is shown persistently in the header instead of printed once to scrollback (`crates/epsilon-contracts/src/command.rs:551` names the scope; the header names the provider it is actually calling) — always visible rather than scrolled away, but not in the scrollback record | `an_offline_launch_names_the_provider_it_is_actually_calling` |
 | P-006 | `[Context]` / `[Skills]` / `[Prompts]` / `[Extensions]` blocks list what loaded, grouped into project / user / path | `packages/coding-agent/src/modes/interactive/interactive-mode.ts:1759-1953`, `:1648-1680` | partial | `crates/epsilon-tui/src/app/commands.rs:1530` — one summary line (`1 skill(s) + 1 agent(s) loaded`), no scope grouping or abbreviation rules | `a_skill_root_reload_cannot_read_is_named_on_the_frame` (frame) |
 | P-007 | Duplicate or broken skills, prompts, extensions and themes render as `[Skill conflicts]` / `[Extension issues]` blocks with ✓ and ✗ | `packages/coding-agent/src/modes/interactive/interactive-mode.ts:1706-1757`, `:1901-1952` | partial | `crates/epsilon-tui/src/app/commands.rs:1481` — an **unreadable** root is named with its reason; a **duplicate** skill is not reported | `a_skill_root_reload_cannot_read_is_named_on_the_frame` (frame), `an_agents_root_reload_cannot_read_is_named_on_the_frame` (frame) |
@@ -292,7 +291,7 @@ in each component.
 | P-050 | A tool card is created when the model calls the tool, before it runs, and re-used by the execution event | `packages/coding-agent/src/modes/interactive/interactive-mode.ts:3469-3493`, `:3545-3569` | done | `crates/epsilon-tui/src/ui/card.rs:223` — one card; the result settles the call's own card rather than adding a second. **`todo` was the exception and is fixed (round 90):** its result arm returned before the settle, so every multi-step turn drew `▸ todo · pending` above `✓ todo …` — now the checklist is the card body, so the title, gutter, cap and `… N more lines (ctrl+x to open)` all apply | `a_tool_result_is_a_card_whose_title_carries_name_status_and_duration` (frame), `a_completed_tool_call_is_drawn_once_on_a_real_frame` (frame), `a_todo_result_settles_its_call_and_nests_its_checklist` (frame, both widths, double-draw control) |
 | P-051 | An aborted or errored turn retro-fits every in-flight tool card with one error line and suggests `/bug` | `packages/coding-agent/src/modes/interactive/interactive-mode.ts:3514-3525`, `:3499-3511` | partial | The stopped answer is marked (`Response was stopped before completion`, both live and replay paths) — but in-flight tool cards are not retro-fitted with an error line, and there is no `/bug` to suggest | `a_stopped_reply_says_so` |
 | P-052 | A cache miss is explained: `Cache miss: 18.2K tokens re-billed (~$0.42)` | `packages/coding-agent/src/modes/interactive/interactive-mode.ts:4100-4126` | partial | The miss is marked, not priced: tokens moved in an unpriced bucket floor the total and the header carries a trailing `+` (`crates/epsilon-tui/src/ui/cost.rs:152`) — no per-miss rebill sentence with dollars | `unpriced_bucket_movement_marks_the_total_a_floor` (floor-forced-false control fails it) |
-| P-053 | Anthropic's silently dropped thinking blocks are reported with a delta-based count | `packages/coding-agent/src/modes/interactive/interactive-mode.ts:4070-4098`, `:4054-4068` | missing | none — redaction-deltas are not detected on any provider; thinking visibility is governed by the hide flag, not by provider redaction | — |
+| P-053 | Anthropic's silently dropped thinking blocks are reported with a delta-based count | `packages/coding-agent/src/modes/interactive/interactive-mode.ts:4070-4098`, `:4054-4068` | deliberately different | Pi reads provider-returned `anthropic_input_transformations` diagnostics off the assistant message; no diagnostic channel exists anywhere in this tree (`AssistantMessage` carries content, stop reason and usage — `crates/epsilon-contracts/src/message.rs:217` — and zero references to redaction exist in `crates/`). Thinking visibility is governed by the hide flag. A count with no channel to read it from would be invented. Revisit if the wire ever surfaces provider diagnostics | — |
 | P-054 | Compaction rebuilds the transcript and inserts a summary card plus a billed-cost line | `packages/coding-agent/src/modes/interactive/interactive-mode.ts:3623-3673`, `:4041-4052` | partial | The billed-cost line is `crates/epsilon-tui/src/state.rs:1639`'s `CompactionFinished` arm — now `── context compacted · from 96k tokens · ↑12k ↓310 · 21k re-read ──` — and the digest rides the row as its expandable payload (the arm; the row predicate at `crates/epsilon-tui/src/state.rs:627`; `render_cache.rs`'s event-row branch; `ui/card.rs:325`'s `event_body`). **Replay half landed for the terminal**, and **both halves landed for the window** (same slice): the reducer folds `CompactionFinished` into a cost-plus-summary notice (`push_compaction_digest`, one builder with the terminal), resume/jump paths reattach via `Transcript::from_history`, and the `/compact` channel reports only non-success outcomes — it used to print "context compacted" on any `Ok`, including `Failed` | `a_compaction_row_reports_the_same_tokens_it_records`, `a_compaction_row_opens_to_the_summary_it_carried` (collapsed names the chord and the count; `ctrl+x` opens the digest whole, nested under the continuation gutter; frames read at 80×24 and 100×30), `a_resumed_compaction_marker_regains_its_digest`, `a_marker_without_a_digest_stays_a_plain_line`, `resume_reattaches_the_compaction_digest` (end to end through real `/resume`, with a wire-removal control), `a_replayed_compaction_row_renders_like_the_live_one` (same drawn rows at 80 and 100; frame read); window: `a_live_compaction_draws_its_cost_row_with_the_digest` (arm-removal control), `replayed_history_reattaches_the_compaction_digest`, `a_marker_without_a_digest_stays_a_user_row`, `resumed_compaction_digest_reaches_the_screen` (painted 1440×900, switch-removal control), `compact_from_the_typed_line_compacts_and_reports` (now pins the honest skip report, never a success row for failed work) |
 | P-056 | A skill invocation renders as its own collapsible card, separate from the remaining user text | `packages/coding-agent/src/modes/interactive/interactive-mode.ts:3857-3876` | partial | Corrected inventory: invocations DO render — model skill use runs through the `skill` tool (`crates/epsilon-tools/src/skill.rs:87`), so every invocation is a normal collapsible tool card, listed and toggled (`crates/epsilon-tui/src/app/commands.rs:321`). What was missing is identity in the collapsed head: the generic fallback reads no `name` key, so the card carried nothing naming the skill. New `skill` arm (`crates/epsilon-tui/src/renderers/mod.rs`) names it. What stays missing is a bespoke skill-card type — the shared generic card is the shape | `a_skill_call_names_the_skill_it_loads` (head names the skill; empty name stays empty) |
 | P-057 | Two status messages back to back update the same line instead of appending | `packages/coding-agent/src/modes/interactive/interactive-mode.ts:3761-3781` | deliberately different | A notice is a durable transcript row (`crates/epsilon-tui/src/state.rs:1143`) — updating one line in place would rewrite history the reader may have already read, so consecutive notices append rather than coalesce | — |
@@ -590,7 +589,7 @@ reading, and it is the one a future reader should re-check first.
 | T-007 | A token wider than the line — a URL, a long path — is broken by grapheme, not by character | `packages/tui/src/utils.ts:947-967`, `:1022-1045` | done | `crates/epsilon-tui/src/app.rs:1967` — `if !newline && col + cells > width` breaks at cluster boundaries, preserving typed spaces | `wrapped_draft_grows_composer_at_supported_widths` (frame), `long_unicode_draft_wraps_and_places_caret_in_display_columns` (frame) |
 | T-008 | `visibleWidth` short-circuits printable ASCII and caches everything else in a bounded 512-entry FIFO | `packages/tui/src/utils.ts:255-261`, `:430-450`, `:50-52`, `:301-307` | partial | `crates/epsilon-tui/src/render_cache.rs:470` — a stronger property in one direction (whole rows cached by width, cost per frame O(visible)) but no ASCII fast path and no bounded width cache is established by an `E-` row | `width_change_invalidates_everything` |
 | T-009 | A background fill is applied **after** padding, to the padded string, so the fill covers the full width | `packages/tui/src/utils.ts:1099-1108` | done | `crates/epsilon-tui/src/ui/transcript.rs:179` — a banded row's fill runs to the right edge, and an unbanded row is deliberately left unpadded | `a_user_turn_carries_its_gutter_and_band_on_a_real_frame` (frame), `a_wrapped_banded_message_keeps_every_row_inside_the_frame` (frame) |
-| T-010 | Precomposed Thai/Lao `AM` vowels are decomposed before output, because those terminals render them inconsistently during differential repaint | `packages/tui/src/utils.ts:383-393`, `:394-416`, `:391-392` | missing | none — and stated as an open question rather than assumed: whether ratatui or any dependency performs this normalisation was **not measured** by our inventory, and saying so is more useful than claiming parity | — |
+| T-010 | Precomposed Thai/Lao `AM` vowels are decomposed before output, because those terminals render them inconsistently during differential repaint | `packages/tui/src/utils.ts:383-393`, `:394-416`, `:391-392` | deliberately different | Pi normalises at one output boundary; this tree has none — ratatui owns cell writing and text arrives as lines at dozens of sites, so the mapping has no port point. Per-site edits would carry terminal-specific effects nothing here can verify (no affected terminal; the test backend does not differentially repaint). Revisit on a stale-cell report with Thai/Lao text — then the surface is known and the verbatim mapping (`\u0e33` → `\u0e4d\u0e32`, `\u0eb3` → `\u0ecd\u0eb2`) ports as-is | — |
 | T-011 | Han, Hiragana, Katakana, Hangul and Bopomofo are word characters, so autocomplete does not break inside CJK | `packages/tui/src/utils.ts:54-55`, `:57-63` | partial | `crates/epsilon-tui/src/app/keys.rs:1821`, `crates/epsilon-tui/src/app/completion.rs:42` — word motion and the `@`-word filter exist; the pinned test covers Greek, and nothing establishes CJK letters as word characters for completion | `word_nav_respects_boundaries_and_unicode` |
 | T-012 | The OSC 8 hyperlink covering a visible column can be recovered, which is how clicks map to URLs | `packages/tui/src/utils.ts:359-381`, `:335-356` | deliberately different | Hyperlinks route to clicks, and clicks do not exist here (capture OFF so drag-select copies): there is no URL to map a column back to | — |
 
@@ -762,11 +761,11 @@ row says so — that is a gap in the inventory, and closing it is cheap.
 
 | area | rows | done | partial | missing | deliberately different |
 |---|---|---|---|---|---|
-| 1. Startup, header and resources | 20 | 1 | 7 | 1 | 11 |
+| 1. Startup, header and resources | 20 | 1 | 7 | 0 | 12 |
 | 2. Layout and renderer | 10 | 3 | 2 | 0 | 5 |
 | 3. Composer and editor | 24 | 6 | 12 | 0 | 6 |
 | 4. Slash commands and autocomplete | 13 | 2 | 5 | 0 | 6 |
-| 5. Transcript and streaming | 35 | 12 | 6 | 1 | 16 |
+| 5. Transcript and streaming | 35 | 12 | 6 | 0 | 17 |
 | 6. Model picker and thinking | 9 | 0 | 5 | 0 | 4 |
 | 7. Auth, login and permissions | 8 | 2 | 4 | 0 | 2 |
 | 8. Sessions | 17 | 7 | 6 | 0 | 4 |
@@ -776,22 +775,21 @@ row says so — that is a gap in the inventory, and closing it is cheap.
 | 12. Tool cards | 16 | 3 | 6 | 0 | 7 |
 | 13. Bash cards | 11 | 5 | 6 | 0 | 0 |
 | 14. Diffs | 6 | 6 | 0 | 0 | 0 |
-| 15. Markdown, mermaid and truncation | 22 | 6 | 7 | 1 | 8 |
+| 15. Markdown, mermaid and truncation | 22 | 6 | 7 | 0 | 9 |
 | 16. Status indicators | 13 | 2 | 5 | 0 | 6 |
 | 17. Footer | 12 | 4 | 4 | 0 | 4 |
 | 18. Selector and overlay components | 79 | 25 | 22 | 0 | 32 |
-| **Total** | **339** | **86** | **115** | **3** | **135** |
+| **Total** | **339** | **86** | **115** | **0** | **138** |
 
-### The `missing` rows — 3
+### The `missing` rows — 0
 
 Every row below has **no** `E-` row establishing the behaviour. Nothing here was found by browsing `crates/`, and
 nothing here is a claim that the behaviour cannot be built.
 
 | area | ids |
 |---|---|
-| Startup, header and resources (1) | P-004 |
-| Transcript and streaming (1) | P-053 |
-| Markdown, mermaid and truncation (1) | T-010 |
+
+_All 339 rows are dispositioned: no `missing` rows remain._
 
 ### The `partial` rows — 115
 
