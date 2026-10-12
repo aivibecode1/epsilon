@@ -114,7 +114,7 @@ edge nobody meant to add.
 
 | Crate | Responsibility |
 |---|---|
-| `epsilon-contracts` | Shared types and traits, and the command registry both front ends read |
+| `epsilon-contracts` | Shared types and traits, and the command registry every mode reads |
 | `epsilon-llm` | Provider protocols, the offline provider, routing, catalog, auth, retry |
 | `epsilon-session` | Session storage, indexing, branch projection, repair, leases |
 | `epsilon-core` | Agent loop, scheduling, context assembly, compaction, task lifecycle |

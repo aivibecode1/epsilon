@@ -20,14 +20,15 @@ Read in this order:
 ## 1. What this is, in three sentences
 
 Epsilon is a coding-agent harness in Rust: an agent core that reads, edits, runs commands and keeps
-a resumable session. It has **two front ends on one core** — a terminal UI (`epsilon-cli` /
-`epsilon-tui`) and a **native desktop IDE** (`epsilon-desktop`, egui/eframe over winit + wgpu, no
-webview). It began as a port of [pi](https://github.com/earendil-works/pi); [`../CREDITS.md`](../CREDITS.md)
+a resumable session. It has **one terminal IDE over one core** — a full-screen terminal
+app (`epsilon-cli` / `epsilon-tui`: file tree, file viewer, agent conversation, palette)
+plus headless, HTTP/SSE and stdio-RPC modes. (The native desktop IDE was removed in
+ADR-039; its matrix is retired.) It began as a port of [pi](https://github.com/earendil-works/pi); [`../CREDITS.md`](../CREDITS.md)
 names everything else it learned from.
 
 **The architecture invariant that matters most** (`AGENTS.md` §2): the agent loop is `epsilon-core`'s
 `Agent`, and `epsilon-runtime` is the *only* place a workspace plus a configuration becomes a
-running agent (`build_runtime`, `resolve_launch`). A capability the desktop has, the terminal has,
+running agent (`build_runtime`, `resolve_launch`). A capability one mode has, every mode has,
 because it is the same machinery behind a different draw call. **A second copy of composition is a
 defect, not an optimisation.**
 
@@ -52,19 +53,16 @@ written down.
 
 ### What is genuinely done
 
-- **One core, two front ends, one composition point, and one command registry.** The command half
-  lives in `epsilon-contracts` and both front ends read it; the *keybindings* half closed with the
-  shared grammar (M315) and the window's recorder and restore (rounds 108–109, S-122/S-123/S-125/
-  S-124). The *flat* `REGISTRY` of `Action` rows is not built — see the plan.
-- **The desktop is a real native window** and it has been **seen**: `audit/evidence/desktop-frames-2026-10-04/`
-  holds a rendered 1440×900 frame. Getting there is worth understanding before you touch rendering —
-  see §4.
-- **Its accessibility tree is known to reach the operating system**, read through Windows UI
-  Automation from a separate process (`scripts/desktop-a11y-probe.ps1`).
+- **One core, one terminal IDE, one composition point, and one command registry.** The command half
+  lives in `epsilon-contracts` and every mode reads it; the *keybindings* half closed with the
+  shared grammar (M315). The *flat* `REGISTRY` of `Action` rows is not built — see the plan.
+- **The removed desktop was a real native window** and it had been **seen** (retrieved):
+  `audit/evidence/desktop-frames-2026-10-04/` holds a rendered 1440×900 frame. The desktop
+  itself is gone (ADR-039); the frames stay as evidence of what was verified while it lived.
 - **Approvals, permissions (including presets), checkpoints/rollback, sessions/resume, goals,
   subagents, MCP, skills, model and provider switching, cost tracking** all exist and are exercised by
-  the suite. The window's failure notices now draw as failures (round 107), its compaction digest
-  opens live (round 106), and the terminal's failure rows have had their own severity since round 97.
+  the suite. The terminal's failure rows have their own severity; the tree (F6) and file viewer
+  (Enter) are covered with frames read at 80×24 and 100×30.
 
 ### What is NOT done — the short version
 
@@ -73,9 +71,9 @@ The plan has the detail and the evidence. In rough priority order:
 1. **A real screen reader has never been run, and no dated human keyboard-only pass exists.** UI
    Automation is one layer *below* a reader: it proves the platform exposes names and roles, not that
    anything announces them. Both items need a person, and they have slipped every round (plan 026 R5).
-2. **The desktop's pixels have never been seen on this machine.** The offscreen rasteriser crashes
-   here on both adapters (Vulkan access-violation, Dx12 hangs — round 58 re-proved it), so visual QA
-   must happen where the raster works.
+2. **The desktop is gone, and its open rows went with it.** The DSH matrix is retired
+   (ADR-039, frozen history); the \~70 Electron-chrome rows and the portable remainder are
+   moot — a window that does not exist has no gaps. The live question is the pi matrix.
 3. **Plaintext credentials still sit in `auth.json`** against locked `AGENTS.md` §6; proposal 7 is
    unanswered and the fix needs the owner's signature (plan 026 R6).
 4. **The release is untagged.** Preview install was verified (round 73); no artifact is published
@@ -83,9 +81,8 @@ The plan has the detail and the evidence. In rough priority order:
 5. **The compaction digest's replay and markdown halves.** A resumed session hydrates from *messages*
    while the digest lives in the store's compaction entry, so `/resume` shows `[context compacted]`
    without opening it (P-054/P-183 stay `partial`).
-6. **The DSH Desktop matrix's 275 open rows.** ~70 are Electron chrome the native invariant
-   permanently excludes; the portable remainder is roadmap, not a defect list. The Windows keyboard
-   shortcuts surface remains S-126's.
+6. **The pi matrix's missing rows.** The DSH Desktop matrix's 275 open rows retired with the
+   desktop (item 2); what remains is pi-tui's `missing` set, which is roadmap, not a defect list.
 
 ---
 
@@ -199,5 +196,5 @@ Each of these caught something real; the evidence is in `STATUS.md`.
 | Architecture and dependency graph | [`design/epsilon-architecture.md`](design/epsilon-architecture.md) |
 | Why a decision was made | [`design/epsilon-decisions.md`](design/epsilon-decisions.md) |
 | Battery logs and measurements | [`../audit/evidence/`](../audit/evidence/) |
-| Rendered proof for both front ends | [`../audit/evidence/desktop-frames-2026-10-04/`](../audit/evidence/desktop-frames-2026-10-04/), [`../audit/evidence/tui-frames-2026-10-04/`](../audit/evidence/tui-frames-2026-10-04/) |
+| Rendered proof (terminal frames; retired desktop frames) | [`../audit/evidence/tui-frames-2026-10-04/`](../audit/evidence/tui-frames-2026-10-04/), [`../audit/evidence/desktop-frames-2026-10-04/`](../audit/evidence/desktop-frames-2026-10-04/) |
 | Every gate and probe, and why each exists | [`../scripts/README.md`](../scripts/README.md) |

@@ -19,23 +19,17 @@ plain language. It reads files, edits them, runs commands, and keeps a record of
 conversation so you can come back to it later. Every action that changes something asks
 permission first.
 
-**It has two front ends over one engine.**
+**It has one full-screen terminal IDE over one engine.**
 
-- **The terminal one** (`epsilon`) — the full screen app you can drive entirely from the
-  keyboard.
-- **The desktop one** (`epsilon-desktop`) — a real window in your operating system, with a
-  file tree, an editor, and the conversation beside it.
-
-Those are not two programs. They are two ways of drawing the same conversation, talking to the
-same agent. If you approve a command in the terminal and run the same one in the window, the
-same rules decide. That is the central design idea, and it is worth checking for yourself: run
-the same request in both and compare what happens.
+- **The terminal IDE** (`epsilon`) — the full-screen app you drive entirely from the
+  keyboard: a file tree (F6), a read-only file viewer (Enter), and the agent
+  conversation beside them, plus command palette, themes, and headless/HTTP/RPC modes.
 
 **It runs anywhere a Rust toolchain does.** One binary. No Node, no Python, no companion
 service. Install it from source with `cargo install --path crates/epsilon-cli` — it is **not
 published to crates.io**, so the `--path` form is the one that works.
 
-**You can read it in one sitting.** The interesting code is in about fourteen small folders
+**You can read it in one sitting.** The interesting code is in thirteen small folders
 under `crates/`, each with one job. The map is in §3.
 
 ### Try it, in about two minutes
@@ -83,22 +77,21 @@ If you have an hour, in this order.
 
 | Folder | What it does | Who cares about it |
 |---|---|---|
-| `crates/epsilon-contracts` | The types every other crate agrees on, and the command registry both front ends read. No behaviour beyond parsing. | Anyone changing the shape of a message, or what a `/word` means |
+| `crates/epsilon-contracts` | The types every other crate agrees on, and the command registry every mode reads. No behaviour beyond parsing. | Anyone changing the shape of a message, or what a `/word` means |
 | `crates/epsilon-core` | **The agent.** The loop that calls a model, runs tools, and decides what happens next | Almost everyone. Start here |
-| `crates/epsilon-runtime` | **The one place** a configuration becomes a running agent. Both front ends call it | Anyone adding a startup step, a setting, or a front end |
+| `crates/epsilon-runtime` | **The one place** a configuration becomes a running agent. Every mode calls it | Anyone adding a startup step, a setting, or a front end |
 | `crates/epsilon-tools` | The tools the agent can use: read, edit, search, shell, tasks, goals | Anyone adding or changing a capability |
 | `crates/epsilon-safety` | Permission rules, the approval prompt, and the sandbox | Anyone touching what the agent is allowed to do |
 | `crates/epsilon-session` | Saving, listing, branching and resuming conversations | Anyone changing session behaviour |
 | `crates/epsilon-llm` | Talking to model providers; retry, fallback, the model catalogue | Anyone adding a provider or changing model handling |
-| `crates/epsilon-tui` | The terminal front end | Terminal users and contributors |
-| `crates/epsilon-desktop` | The desktop front end | Desktop users and contributors |
+| `crates/epsilon-tui` | The terminal IDE: tree, viewer, transcript, composer, palette | Terminal users and contributors |
 | `crates/epsilon-cli` | The binary: argument parsing, and choosing a mode | Anyone adding a command-line flag |
 | `crates/epsilon-server` | An HTTP/SSE front end for other programs | Anyone integrating |
 | `crates/epsilon-lsp` | Optional integration with language servers (completion, errors) | Editor-experience work |
 | `crates/epsilon-mcp` | Connecting to external tool servers (MCP) | Anyone extending the tool set |
 | `crates/epsilon-ext` | Running third-party helper processes | Extension work |
 | `docs/` | Everything written down: decisions, history, guides, this file | Reviewers, contributors |
-| `docs/parity/` | **One row per behaviour** against the two projects this is a port of — [a guide to reading them](parity/README.md) first | Anyone asking "how close is it?" |
+| `docs/parity/` | **One row per behaviour** against the project this is a port of — [a guide to reading them](parity/README.md) first. The DSH desktop matrix is retired (ADR-039) | Anyone asking "how close is it?" |
 | `audit/` | Older assessment of the project's state. **Superseded** by `docs/STATUS.md` where they disagree | Historians |
 | `references/` | The six projects studied, vendored read-only. Not built, not committed | The curious |
 | `scripts/` | The verification battery and repository checks | Contributors |
@@ -108,20 +101,19 @@ If you have an hour, in this order.
 
 ## 4. How the pieces connect
 
-One core, two front ends, one composition point.
+One core, one terminal IDE, one composition point.
 
 ```mermaid
 flowchart TB
     subgraph frontends["Front ends — each owns pixels, not behaviour"]
         CLI["epsilon-cli<br/>arguments and mode dispatch"]
-        TUI["epsilon-tui<br/>terminal UI<br/>(ratatui)"]
-        IDE["epsilon-desktop<br/>native desktop IDE<br/>(egui + wgpu)"]
+        TUI["epsilon-tui<br/>terminal IDE: tree · viewer · agent<br/>(ratatui)"]
         SRV["epsilon-server<br/>HTTP / SSE"]
     end
 
     RT["epsilon-runtime<br/><b>the one composition point</b><br/>build_runtime · resolve_launch"]
 
-    subgraph core["The core — one agent loop, both front ends drive it"]
+    subgraph core["The core — one agent loop, every mode drives it"]
         AG["epsilon-core<br/>Agent · turn loop<br/>queues · compaction"]
         TOOLS["epsilon-tools<br/>read · edit · search · shell<br/>checkpoints · goals"]
         SAFE["epsilon-safety<br/>permission engine<br/>approvals · sandbox"]
@@ -131,7 +123,6 @@ flowchart TB
 
     CLI --> RT
     TUI --> RT
-    IDE --> RT
     SRV --> AG
 
     RT --> AG
@@ -148,19 +139,22 @@ flowchart TB
     classDef corefill fill:#1f3a5f,stroke:#4a90d9,color:#fff
     classDef fefill fill:#3d2f1f,stroke:#d9a04a,color:#fff
     class AG,TOOLS,SAFE,SESS,LLM corefill
-    class CLI,TUI,IDE,SRV fefill
+    class CLI,TUI,SRV fefill
 ```
 
-Read it as: **the arrows into the core are the only way in.** Both front ends ask
-`epsilon-runtime` to build an agent; neither builds one itself. That is why they cannot drift
+Read it as: **the arrows into the core are the only way in.** Every mode asks
+`epsilon-runtime` to build an agent; none builds one itself. That is why they cannot drift
 apart — there is nothing to drift, because there is only one copy.
+
+(The desktop IDE `epsilon-desktop` was removed in ADR-039; the diagram above no longer
+draws it. The retired DSH parity matrix is frozen history under `docs/parity/`.)
 
 **One arrow in that diagram is different, and the diagram is right to draw it.**
 `epsilon-server` is drawn outside the runtime because it genuinely is: `serve_mode()` composes
 the agent through `build_runtime` and **hands the server a finished one**, so the server has no
 `epsilon-runtime` edge of its own. It is still one core behind it — it just receives the core
-rather than asking for it. The two front ends in the sentence above are the ones a person
-drives.
+rather than asking for it. The modes a person drives are the terminal IDE and the
+headless/HTTP/RPC modes above.
 
 ---
 
@@ -222,7 +216,7 @@ characters.
 **Permission gate** — the check every side-effecting action passes before it happens. A rule
 decides automatically, or the agent asks you.
 
-**Approval** — the moment a permission gate asks a person. Both front ends show it the same way.
+**Approval** — the moment a permission gate asks a person. Every mode shows it the same way.
 
 **Sandbox / confinement** — restrictions on what a spawned command may do. On Windows this is
 a Job Object; on Linux, bubblewrap where installed.
@@ -263,8 +257,8 @@ reasoning, including the options that were rejected.
 **Battery** — the one command that runs every check: formatting, linting, tests, link and
 byte-level repository checks, and an offline demo. See [`../AGENTS.md`](../AGENTS.md).
 
-**Front end / frontend** — a way of drawing the same underlying thing. Here: the terminal app
-and the desktop window.
+**Front end / frontend** — a way of drawing the same underlying thing. Here: the terminal IDE
+and the headless/HTTP/RPC modes.
 
 ---
 
@@ -272,26 +266,25 @@ and the desktop window.
 
 Three questions answer most of it.
 
-1. **Is it really one system, or two programs that agree?** Run the same task in the terminal
-   and in the window. Compare.
-2. **Is the desktop a real desktop application, or a web page in a frame?** It is native —
-   egui over winit and wgpu, with no embedded browser. See ADR-020.
-3. **Do the claims match the code?** [`STATUS.md`](STATUS.md) says what is verified and how.
+1. **Is it really one system, or several programs that agree?** Run the same task in the
+   terminal IDE and headless (`-p`). Compare.
+2. **Do the claims match the code?** [`STATUS.md`](STATUS.md) says what is verified and how.
    [`../AGENTS.md`](../AGENTS.md) explains the evidence rules that project holds itself to,
    including the ones it learned by getting them wrong.
 
 ### The two parity matrices, and how to read one
 
-Both front ends are **ports**: the terminal UI of [Pi](https://github.com/earendil-works/pi)'s
-interactive terminal mode, and the desktop window of **DSH Desktop**. A port means *the same
-thing happens, the same way* — not the same pixels.
+The terminal IDE is a **port**: [Pi](https://github.com/earendil-works/pi)'s
+interactive terminal mode. A port means *the same
+thing happens, the same way* — not the same pixels. (The desktop window port of **DSH Desktop**
+was retired with the desktop in ADR-039; its matrix is frozen history.)
 
 [`docs/parity/`](parity/README.md) holds one row per behaviour:
 
 | File | Compares our… | Against |
 |---|---|---|
-| [`pi-tui.md`](parity/pi-tui.md) | terminal UI | Pi's interactive terminal mode |
-| [`dsh-desktop.md`](parity/dsh-desktop.md) | desktop window | DSH Desktop |
+| [`pi-tui.md`](parity/pi-tui.md) | terminal IDE | Pi's interactive terminal mode |
+| [`dsh-desktop.md`](parity/dsh-desktop.md) | RETIRED (ADR-039) | DSH Desktop |
 
 Read the [guide in that folder](parity/README.md) first — it explains the four statuses
 (`done`, `partial`, `missing`, `deliberately different`) and why a row is allowed to say no.
@@ -299,7 +292,7 @@ Read the [guide in that folder](parity/README.md) first — it explains the four
 The one thing to know before you judge a row: **`done` means exercised, not written.** A row is
 `done` only when something was run or rendered and looked at. And a row that says
 `deliberately different` has to name a reason that would make the product *worse* if we copied the
-reference — a licence, a platform limit, a conflict between the two ports, or the accessibility
+reference — a licence, a platform limit, or the accessibility
 standard in [`../AGENTS.md`](../AGENTS.md) §8. "We did not get to it" is written as **missing**,
 never dressed up as a decision.
 

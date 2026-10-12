@@ -27,7 +27,7 @@ curated open-work notes, evidence pointers and safe resumption steps, not produc
 | [`design/`](design) | **how and why**: the architecture tour, the ADR log, the skills design | you are changing behaviour |
 | [`../scripts/README.md`](../scripts/README.md) | the verification battery and every repository check: what each one fails on, and why it exists | you want to know what CI actually enforces |
 | [`references/`](references/README.md) | **the six reference harnesses**: one page each — what it is, who made it, its licence, what we took and what we skipped — plus [the TUI stack decision](references/TUI-DECISION.md) and a one-table summary | you want to know where an idea came from, or are proposing a terminal toolkit |
-| [`parity/`](parity/README.md) | **the two parity matrices** — [`pi-tui.md`](parity/pi-tui.md) against Pi's interactive terminal mode and [`dsh-desktop.md`](parity/dsh-desktop.md) against DSH Desktop — one row per behaviour, with where the reference defines it, our status, where we implement it and how it was verified. Start at [the guide that explains how to read them](parity/README.md) | you want to know how close a front end is to the thing it is a port of |
+| [`parity/`](parity/README.md) | **the live parity matrix** — [`pi-tui.md`](parity/pi-tui.md) against Pi's interactive terminal mode — one row per behaviour, with where the reference defines it, our status, where we implement it and how it was verified ([`dsh-desktop.md`](parity/dsh-desktop.md) is retired, ADR-039). Start at [the guide that explains how to read them](parity/README.md) | you want to know how close the terminal IDE is to the thing it is a port of |
 | [`qa/`](qa) | design conversations turned into notes: why Rust, the brick methodology, the harness primer, TUI keymaps, OAuth client ids, provider extension points, the repository layout, **which code belongs to a frontend and which to the composition** | you need the convention behind a choice |
 | [`plans/README.md`](plans/README.md) | historical plans and their recorded statuses, plus [`025-completion-plan.md`](plans/025-completion-plan.md) — **the current objective-level plan** | you want to trace earlier scope, or to know what to do next |
 | [`reviews/`](reviews/2026-10-06-objective-review.md) | **an independent review of the objective**: verdict clause by clause, twelve flaws the project had not recorded, the structural reasons the objective was not met, and the definition of done it was missing | you want an outside judgement rather than the project's own |
@@ -56,8 +56,8 @@ saying which parts were verified when, so read a claim there as a hypothesis to 
 that crate.
 
 **Writing a frontend, or changing one?** [`qa/11-frontend-ownership.md`](qa/11-frontend-ownership.md)
-first. It is the rule that decides whether a change belongs in `epsilon-tui`,
-`epsilon-desktop`, or `epsilon-runtime`, and it exists because the first attempt at this
+first. It is the rule that decides whether a change belongs in `epsilon-tui`
+or `epsilon-runtime`, and it exists because the first attempt at this
 would have needed fourteen steps copied into a second place.
 
 **Reviewing a change?** `AGENTS.md` (gates), then the ADR log

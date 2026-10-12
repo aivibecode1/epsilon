@@ -433,6 +433,12 @@ the run. The drop from 2,385/19/78 is the removed desktop crate itself (~410 win
 > surfaces contradict, footer/hint rows P-198/P-199/P-229 still hold (tree toggle hint
 > resolves live via `key_text`; viewer/tree literal hints match the overlay convention),
 > click rows P-003/P-125/P-143/P-185/P-223 unchanged (capture still OFF).
+>
+> **docs-nav (this session, landed): reading path re-pointed.** START-HERE (EN+AR),
+> docs/README map, HANDOFF, root README, CONTRIBUTING, install guide and the crate-table
+> rows now describe one terminal IDE (tree/viewer/palette), 13 crates, and the retired
+> DSH matrix — mermaid included on both languages. Remaining `epsilon-desktop` mentions
+> are dated evidence prose only. check-links 994/0; all ten python gates green.
 
 > **Ten findings closed in a row** (rounds 138–147). Rounds 138–144 were things that *happened*
 > wrongly, 145–146 were things that *went unsaid*, and 147 is the first one that **adds a
