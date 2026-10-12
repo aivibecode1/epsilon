@@ -417,6 +417,10 @@ pub const TERMINAL: &[(&str, &[&str])] = &[
     // and f6 was the retired window's focus-ring key — same family, no conflict:
     // `no_chord_is_bound_to_two_ids_in_the_terminal_table` holds it.
     ("app.tree.toggle", &["f6"]),
+    // File viewer save (Phase 3, TUI as IDE): mnemonic alt+s, verified free —
+    // the composer owns the ctrl+letter family and `app.model.saveDefault`
+    // owns ctrl+s, so the viewer's save takes the alt spelling instead.
+    ("app.viewer.save", &["alt+s"]),
 ];
 
 /// The desktop window's default bindings.

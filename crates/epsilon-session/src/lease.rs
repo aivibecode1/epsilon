@@ -662,6 +662,35 @@ mod tests {
         assert!(session.exists(), "the sweep must not touch session files");
     }
 
+    /// A stale lock with corrupt content does not block a new writer.
+    ///
+    /// Crash debris is not always a well-formed `pid=… owner=…` line: a torn write can
+    /// leave garbage, an empty file, or a half-line. The steal rule is mtime-only by
+    /// design (see `acquire_with_progress`'s probe: content is never read there), so
+    /// debris from a dead holder must be stolen like any other stale lock — never
+    /// waited out, and never a wedge that bricks the session open. `Held` even
+    /// carries its holder as `Option` ("when parseable") for the same reason.
+    #[test]
+    fn a_stale_lock_with_corrupt_content_is_stolen_not_waited_out() {
+        let dir = tempfile::tempdir().expect("tmp");
+        let session = dir.path().join("s.jsonl");
+        let lock = session.with_extension("lock");
+        std::fs::write(&lock, "\0garbage{{{\n").expect("torn debris");
+        std::fs::OpenOptions::new()
+            .write(true)
+            .open(&lock)
+            .expect("open")
+            .set_modified(SystemTime::now() - STALE_AFTER - Duration::from_secs(1))
+            .expect("age it past the window");
+        let outcome =
+            SessionLease::acquire_with(&session, STALE_AFTER, HEARTBEAT, Duration::from_secs(5))
+                .expect("acquire runs");
+        assert!(
+            matches!(outcome, LeaseOutcome::Acquired(_)),
+            "a stale lock is stealable whatever it says: {outcome:?}"
+        );
+    }
+
     #[test]
     fn lease_is_exclusive_and_released_on_drop() {
         let dir = tempfile::tempdir().expect("tmp");

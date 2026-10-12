@@ -1,0 +1,30 @@
+┌tree────────────────────────┐idle ?/1.0M · ↑0 ↓0 · Faux (offline scripted) • thinking off · offline
+│> notes.txt                 │                                                                      
+│         ╭ edit notes.txt — alt+s saves, esc cancels (modified) ────────────────────────╮          
+│         │ first line edited                                                            │          
+│         │ second line                                                                  │          
+│         │                                                                              │          
+│         │                                                                              │          
+│         │                                                                              │          
+│         │                                                                              │          
+│         │                                                                              │          
+│         │                                                                              │          
+│         │                                                                              │          
+│         │                                                                              │          
+│         │                                                                              │          
+│         │                                                                              │          
+│         │                                                                              │          
+│         │                                                                              │          
+│         │                                                                              │          
+│         │                                                                              │          
+│         │                                                                              │          
+│         │                                                                              │          
+│         │                                                                              │          
+│         │                                                                              │          
+│         │                                                                              │          
+│         │                                                                              │          
+│         │                                                                              │          
+│         │ type/enter edit · alt+s save · esc cancel                                    │          
+│         ╰──────────────────────────────────────────────────────────────────────────────╯          
+│                            │──────────────────────────────────────────────────────────────────────
+└────────────────────────────┘edit · type edit · enter newline · alt+s  …\Epsilon\crates\epsilon-tui

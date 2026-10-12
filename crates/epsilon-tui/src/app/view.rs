@@ -414,12 +414,30 @@ impl App {
                 Hints::approval_deny_only()
             }
         } else if self.viewer.is_some() {
+            let editing = self.viewer.as_ref().is_some_and(|v| v.editing);
             Hints {
-                mode: Some("view".into()),
-                keys: vec![
-                    ("arrows/pgup/pgdn".into(), "scroll".into()),
-                    ("esc".into(), "close".into()),
-                ],
+                mode: Some(if editing {
+                    "edit".into()
+                } else {
+                    "view".into()
+                }),
+                keys: if editing {
+                    let mut keys = vec![
+                        ("type".into(), "edit".into()),
+                        ("enter".into(), "newline".into()),
+                    ];
+                    if let Some(save) = self.keybindings.key_text("app.viewer.save") {
+                        keys.push((save, "save".into()));
+                    }
+                    keys.push(("esc".into(), "cancel".into()));
+                    keys
+                } else {
+                    vec![
+                        ("arrows/pgup/pgdn".into(), "scroll".into()),
+                        ("e".into(), "edit".into()),
+                        ("esc".into(), "close".into()),
+                    ]
+                },
                 ..Hints::default()
             }
         } else if self.tree_open {

@@ -1562,7 +1562,11 @@ pub async fn run(cfg: TuiConfig) -> i32 {
     let guard = TerminalGuard;
     install_panic_hook();
     // Bracketed paste only — mouse capture stays OFF so drag-select copies
-    // (pi does this; opencode/Hermes too). Hold Shift to select still works
+    // (opencode ships `useMouse: false` in `runtime.lifecycle.ts:185`; pi captures
+    // clicks — `handleMouse` in `interactive-mode.ts:258` — and we deliberately do
+    // not: a click this program cannot see is one it cannot act on, while capture
+    // would take drag-select away from every terminal. The wheel needs no capture
+    // on any terminal, so it follows focus instead). Hold Shift to select still works
     // on ConPTY, but we don't need to swallow motion just for wheel.
     let _ = execute!(std::io::stdout(), crossterm::event::EnableBracketedPaste);
 
@@ -1881,7 +1885,7 @@ fn draw(f: &mut Frame<'_>, app: &mut App) {
             app.tree_capped,
         );
     }
-    if let Some(viewer) = app.viewer.as_ref() {
+    if let Some(viewer) = app.viewer.as_mut() {
         // Disjoint field borrows: the viewer read and the capacity write touch
         // different fields, so no clone crosses the frame.
         crate::tree::draw_viewer(f, f.area(), &app.theme, viewer, &mut app.viewer_capacity);

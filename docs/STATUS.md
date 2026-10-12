@@ -434,6 +434,19 @@ the run. Up from 1,975: the tree sidebar, viewer and wheel-routing tests. (Previ
 > resolves live via `key_text`; viewer/tree literal hints match the overlay convention),
 > click rows P-003/P-125/P-143/P-185/P-223 unchanged (capture still OFF).
 >
+> **Audit rework (this session, landed).** Four objections closed: (1) **editor** — the
+> viewer gains edit mode (`e` edits, alt+s saves with changed-underneath guard +
+> `.tui-bak` backup, two-stage Esc discards, grapheme-safe ops, cursor drawn;
+> RED-first with decoy-write control; Esc-discard, underneath-refusal and backup
+> tests; frames read at 80x24 and 100x30 in `audit/evidence/frames-edit-20261012/`).
+> (2) **click rows judged** — P-125/P-185/P-223 `missing`→`deliberately different` and
+> P-143 `partial`→`deliberately different`, each citing pi's `handleMouse` against
+> capture-OFF + opencode's `useMouse: false` with keyboard alternatives; counts now
+> 69/100/138/32, prose and headings re-measured. (3) **lease regression** — stale
+> corrupt-content locks are stolen, not waited out (content-gated-steal control fails
+> it). (4) **AGENTS.md proposal 15** filed (lock file still describes the desktop;
+> owner to apply).
+>
 > **docs-nav (this session, landed): reading path re-pointed.** START-HERE (EN+AR),
 > docs/README map, HANDOFF, root README, CONTRIBUTING, install guide and the crate-table
 > rows now describe one terminal IDE (tree/viewer/palette), 13 crates, and the retired

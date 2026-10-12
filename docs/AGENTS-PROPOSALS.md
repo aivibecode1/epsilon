@@ -452,6 +452,32 @@ Next: write the install + scope notes and run the clean-install transcript.
 **Next focus, same round: permission presets** (plan §C gap 2) — design first,
 no owner input needed.
 
+## 15. AGENTS.md still describes the removed desktop
+
+**Filed:** 2026-10-12, revised-goal rework after the completion audit.
+
+**The gap.** ADR-039 removed `crates/epsilon-desktop`, but `AGENTS.md` — which holds
+"only what stays true" — still states it: §1's "one core and two front ends" with the
+`epsilon-desktop` bullet and "The desktop must stay a real desktop application"; §2.1
+("the terminal and the desktop are front ends on it"); §2.3 (the native-desktop
+stack rule, ADR-020, now superseded); §2.4 (palette entries "derived from each front
+end's `SUPPORTED` subset" — the desktop `SUPPORTED` table is gone; the terminal reads
+`COMMAND_HEADS` directly) and the `TERMINAL` / `WINDOW` tables (the `WINDOW` table's
+only reader is gone, retained deliberately for the TUI IDE per its doc comment);
+§3's `epsilon-desktop` repository-map row; §4's 1.95 toolchain split, the MSRV-job
+split, and `cargo run -q -p epsilon-desktop`; §8's "applies to the desktop IDE first".
+Evidence: the crate is gone (`git log 8992fec`), the workspace is 13 crates on uniform
+1.88, the battery is green without it. A newcomer reading the lock file first — as
+`START-HERE.md` instructs — meets a product that contradicts the tree on the first page.
+
+**Proposed**, as a maintainer edit with lock re-issue (agents must not touch the file):
+restate §1 as one core + one terminal IDE (+ headless/HTTP/RPC modes), fold §2.1's
+sentence to modes, mark §2.3 superseded by ADR-039 with its revisit trigger, repoint
+§2.4 at the `TERMINAL` table (+ `WINDOW` retained-for-IDE note), drop the §3 row, and
+restore §4/§8 to a single toolchain and the terminal. `docs/START-HERE.md` (EN+AR),
+`docs/README.md`, `docs/HANDOFF.md` and the root `README.md` already read that way —
+the lock file is the last document still describing two front ends.
+
 ---
 
 ## Closed proposals

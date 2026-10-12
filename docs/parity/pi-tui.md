@@ -65,8 +65,8 @@ back; it is a reading of the test's source, not a report of a run.
 ## Summary by area
 
 **339 rows** are paired here: Pi's 323 `P-###` behaviours, the 4 `L-###` rows of its inherited `tui.*` keybinding
-table, and the 12 `T-###` rows of its text-measurement core. Every one carries a reference citation; 320 of them
-carry an `ours` citation and 19 do not, and those 19 say so. The counts below are the rows **actually written in
+table, and the 12 `T-###` rows of its text-measurement core. Every one carries a reference citation; 200 of them
+carry an `ours` citation and 139 do not, and those 139 say so. The counts below are the rows **actually written in
 this document**, tallied from its own tables — not a projection.
 
 | area | rows | done | partial | missing | deliberately different |
@@ -74,30 +74,30 @@ this document**, tallied from its own tables — not a projection.
 | 1. Startup, header and resources | 20 | 1 | 6 | 12 | 1 |
 | 2. Layout and renderer | 10 | 3 | 2 | 4 | 1 |
 | 3. Composer and editor | 24 | 6 | 12 | 4 | 2 |
-| 4. Slash commands and autocomplete | 13 | 2 | 5 | 6 | 0 |
-| 5. Transcript and streaming | 35 | 9 | 2 | 21 | 3 |
+| 4. Slash commands and autocomplete | 13 | 2 | 5 | 5 | 1 |
+| 5. Transcript and streaming | 35 | 9 | 2 | 19 | 5 |
 | 6. Model picker and thinking | 9 | 0 | 4 | 5 | 0 |
 | 7. Auth, login and permissions | 8 | 0 | 3 | 4 | 1 |
 | 8. Sessions | 17 | 7 | 5 | 3 | 2 |
 | 9. Themes | 18 | 0 | 6 | 8 | 4 |
 | 10. Settings | 22 | 1 | 9 | 11 | 1 |
 | 11. Project trust | 4 | 1 | 2 | 0 | 1 |
-| 12. Tool cards | 16 | 3 | 6 | 6 | 1 |
+| 12. Tool cards | 16 | 3 | 5 | 6 | 2 |
 | 13. Bash cards | 11 | 3 | 6 | 2 | 0 |
 | 14. Diffs | 6 | 4 | 0 | 2 | 0 |
 | 15. Markdown, mermaid and truncation | 22 | 6 | 7 | 9 | 0 |
 | 16. Status indicators | 13 | 2 | 5 | 5 | 1 |
 | 17. Footer | 12 | 3 | 4 | 3 | 2 |
 | 18. Selector and overlay components | 79 | 18 | 17 | 36 | 8 |
-| **Total** | **339** | **69** | **101** | **141** | **28** |
+| **Total** | **339** | **69** | **100** | **138** | **32** |
 
 A further **17 rows are not in the counts above**: the 10 `Y-###` rows Pi ships outside its interactive mode (out of
 scope by design) and the 7 `AA-###` rows recording what was never inventoried. Both are listed in full near the end
 of this document, because a row that is silently dropped is how a rule goes unowned.
 
-The shape of that table is the honest shape of a port from a 356-row inventory to a 110-row one: **161 rows have no
-counterpart established on our side, 121 are half-built, 39 are exercised, and 18 are decisions.** The 161 are not
-39/339 failures; most of them sit in Pi's extension, settings-overlay, mermaid, image and tree-navigation surface,
+The shape of that table is the honest shape of a port from a 356-row inventory to a 201-row one: **138 rows have no
+counterpart established on our side, 100 are half-built, 69 are exercised, and 32 are decisions.** The 138 are not
+69/339 failures; most of them sit in Pi's extension, settings-overlay, mermaid, image and tree-navigation surface,
 much of which Epsilon deliberately does not have. Read [Open rows](#open-rows) before reading the table.
 
 ## The deliberate differences
@@ -272,7 +272,7 @@ The four easter eggs at the end of this area are listed for completeness; none i
 | P-084 | `/changelog` renders every entry, newest first | `packages/coding-agent/src/modes/interactive/interactive-mode.ts:6693-6712` | partial | `crates/epsilon-tui/src/app/commands.rs` (head at `crates/epsilon-contracts/src/command.rs:547`) — driven only by the all-heads sweep | `no_slash_command_panics_when_typed` |
 | P-221 | `/arminsayshi` plays a 31×36 half-block animated portrait with one of seven reveal effects | `packages/coding-agent/src/modes/interactive/components/armin.ts:2` | missing | none — not a parity target | — |
 | P-222 | Selecting an `opencode` model whose id contains `kimi-k2.5` fires a portrait automatically, from three call sites | `packages/coding-agent/src/modes/interactive/interactive-mode.ts:6911-6915` | missing | none — not a parity target | — |
-| P-223 | Clicking the header logo plays a full-screen braille-dust overlay animation | `packages/coding-agent/src/modes/interactive/interactive-mode.ts:1058`, `packages/coding-agent/src/modes/interactive/components/pi-logo-animation.ts:778` | missing | none — and mouse capture is off in any case (`crates/epsilon-tui/src/app.rs:1549`) | — |
+| P-223 | Clicking the header logo plays a full-screen braille-dust overlay animation | `packages/coding-agent/src/modes/interactive/interactive-mode.ts:1058`, `packages/coding-agent/src/modes/interactive/components/pi-logo-animation.ts:778` | deliberately different | Pi captures clicks (`handleMouse`, `interactive-mode.ts:258` — the other side, cited honestly); this product does not (`crates/epsilon-tui/src/app.rs` — capture stays OFF so drag-select copies, and opencode ships `useMouse: false`, the same stance). An easter egg that needs a click the program never receives cannot be adopted, and a logo animation is not a behaviour a keyboard path can carry | — |
 | P-224 | `/dementedelves` appends an accent-bordered announcement card with a bundled PNG | `packages/coding-agent/src/modes/interactive/components/earendil-announcement.ts:32`, `:13` | missing | none — not a parity target | — |
 
 ## 5. Transcript and streaming
@@ -302,7 +302,7 @@ in each component.
 | P-122 | A blank line precedes an assistant block only when it has visible content | `packages/coding-agent/src/modes/interactive/components/assistant-message.ts:102` | missing | none | — |
 | P-123 | Consecutive thinking blocks render as one joined block | `packages/coding-agent/src/modes/interactive/components/assistant-message.ts:118`, `:147` | done | `crates/epsilon-tui/src/state.rs:1417` — one reasoning row per reply, committed from the single reasoning field, so the blocks never appear separately | `an_answer_and_its_reasoning_are_distinguishable_on_a_real_frame_without_colour` (frame) |
 | P-124 | A hidden thinking block becomes a dim italic `Thinking...` label | `packages/coding-agent/src/modes/interactive/components/assistant-message.ts:145`, `packages/coding-agent/src/modes/interactive/interactive-mode.ts:484` | missing | none — there is no hidden-thinking state | — |
-| P-125 | A thinking block toggles individually on left-click | `packages/coding-agent/src/modes/interactive/components/assistant-message.ts:163`, `:143` | missing | none — mouse capture is off (`crates/epsilon-tui/src/app.rs:1549`) | — |
+| P-125 | A thinking block toggles individually on left-click | `packages/coding-agent/src/modes/interactive/components/assistant-message.ts:163`, `:143` | deliberately different | Pi captures the click (`interactive-mode.ts:258`); capture is OFF here (`crates/epsilon-tui/src/app.rs`) so drag-select copies, opencode's `useMouse: false` concurring. The behaviour — toggling what thinking shows — is carried by keyboard instead: `ctrl+t` cycles the thinking ladder | `ctrl_t_cycles_the_thinking_ladder` |
 | P-126 | Thinking is followed by a blank line only when more assistant content follows | `packages/coding-agent/src/modes/interactive/components/assistant-message.ts:138`, `:171` | missing | none | — |
 | P-127 | A reply that hit the token limit appends `Response was truncated before completion.` | `packages/coding-agent/src/modes/interactive/components/assistant-message.ts:182` | done | `crates/epsilon-tui/src/state.rs` — both assistant paths (`apply` for live turns, `hydrate_from_history` for resumed sessions) append the line as a `System` notice when `stop_reason` is `MaxTokens`, beside the M62 error marker | `a_truncated_reply_says_so` (frame: one truncated + one whole reply, exactly one notice) + `a_resumed_truncated_reply_says_so` (frame over replayed history; negative control run on the history arm) |
 | P-128 | An aborted reply shows its message or `Operation aborted`; an errored one shows `Error: …` | `packages/coding-agent/src/modes/interactive/components/assistant-message.ts:188`, `:195` | deliberately different | `crates/epsilon-tui/src/state.rs` — an aborted run produces a harness-authored row, not text on the answer's own row, and the errored half draws as a **failure** rather than as a quiet notice (the `SystemErr` row P-058 describes) | **Decided, round 106, with P-058:** the fixed `Error: ` prefix is not adopted here — the `SystemErr` row already carries the severity (cross glyph, danger colour, error band, its own gutter, all proven under `NO_COLOR` by `every_role_is_distinguishable_without_colour`), and the notice's own wording names the failure. Evidence: `the_error_marker_and_the_auth_note_draw_as_failures`, `a_run_failure_draws_with_the_cross_and_not_the_bullet` |
@@ -320,7 +320,7 @@ in each component.
 | P-182 | An entry renderer that throws is the one extension renderer that surfaces the error, as a boxed `[customType] renderer failed:` | `packages/coding-agent/src/modes/interactive/components/custom-entry.ts:47`, `:50` | missing | none | — |
 | P-183 | A compaction entry collapses to `Compacted from N tokens (KEY to expand)` and expands to a header plus markdown | `packages/coding-agent/src/modes/interactive/components/compaction-summary-message.ts:49`, `:51`, `:42` | done | The collapsed row names `from N tokens` and the resolved `ctrl+x` chord (`crates/epsilon-tui/src/state.rs:1639`'s `CompactionFinished` arm; `ui/card.rs:325`'s `event_body` and `more_lines`); opening shows the digest whole under the continuation gutter. **The live half, the terminal replay half, and both window halves are built:** resumed markers regain their digests in `/resume`, `/import`, the browser and branch jumps (one helper per front end; `compaction_digests` reads branch order); the window draws the digest as a full notice row (it has no collapsed rows) through the same cost builder; the terminal's open body is parsed as markdown (same parser as assistant prose; plain digests draw exactly as before). **The window half is built too:** the digest rides its own `Digest` row through the same markdown draw path as answers, under its own name (`Compaction summary`, never `Agent said`) — a new row kind rather than a flag, for the reason the draw path states | `a_compaction_row_opens_to_the_summary_it_carried` — the affordance's exact wording is pinned (the ellipsis, the count, the singular, "more" not "earlier" because the digest hides below), and the expansion drives the real key path — plus the four replay tests on P-054, the five window tests, `an_opened_digest_renders_its_markdown` (heading styled, words kept; frame read) with `a_collapsed_digest_still_hides_whole` as its control; window: `compaction_digest_renders_markdown_under_its_own_name` (heading parsed, words kept, cost row above; frame read; plain-path control), `a_digest_row_is_named_a_compaction_summary` (one a11y name, a record's — speaker-misname control) |
 | P-184 | Branch and skill cards have their own collapsed wording, and only compaction shows a count | `packages/coding-agent/src/modes/interactive/components/branch-summary-message.ts:50`, `:41`, `packages/coding-agent/src/modes/interactive/components/skill-invocation-message.ts:49-50`, `:41` | missing | none | — |
-| P-185 | Compaction, branch and skill cards each toggle on a left click | `packages/coding-agent/src/modes/interactive/components/compaction-summary-message.ts:61`, `packages/coding-agent/src/modes/interactive/components/branch-summary-message.ts:60` | missing | none — mouse capture is off (`crates/epsilon-tui/src/app.rs:1549`) | — |
+| P-185 | Compaction, branch and skill cards each toggle on a left click | `packages/coding-agent/src/modes/interactive/components/compaction-summary-message.ts:61`, `packages/coding-agent/src/modes/interactive/components/branch-summary-message.ts:60` | deliberately different | Pi captures the click (`interactive-mode.ts:258`); capture is OFF here (`crates/epsilon-tui/src/app.rs`) so drag-select copies, opencode's `useMouse: false` concurring. Card toggling is carried by keyboard instead: `ctrl+x` opens the newest card and leaves the others alone | `ctrl_x_opens_the_newest_card_and_leaves_the_others_alone` (frame) |
 
 ## 6. Model picker and thinking
 
@@ -501,7 +501,7 @@ copy (E-076 uses `F4`).
 | P-140 | A tool whose renderers produce nothing collapses to zero lines rather than an empty box | `packages/coding-agent/src/modes/interactive/components/tool-execution.ts:412`, `:265` | partial | `crates/epsilon-tui/src/app/view.rs:77` — a card with no body still shows its title row; `is_open(id, has_body)` gates the body, not the card | `the_drawn_and_recorded_answers_to_an_open_card_are_the_same_answer` |
 | P-141 | A throwing `renderCall` / `renderResult` falls back silently to generic text | `packages/coding-agent/src/modes/interactive/components/tool-execution.ts:333`, `:359` | missing | none | — |
 | P-142 | The generic fallback truncates to the **first** 10 lines and prints `... (N more lines, KEY to expand)` | `packages/coding-agent/src/modes/interactive/components/tool-execution.ts:40`, `:166` | partial | `crates/epsilon-tui/src/ui/card.rs:70`, `:246` — `BODY_ROWS = 12`, not ten, and **deliberately so**: twelve is the skill's documented cap, and Pi itself is non-uniform here (first ten generic, last twenty bash), so matching the number alone would be matching the wrong half. Which end is kept is now decided per body kind rather than left to `take()`: a text body keeps its **tail** (a build log's verdict is its last line), a diff keeps its **head** (a change reads from its first hunk down) | `a_long_diff_is_capped_and_says_which_key_opens_it` (frame), `a_capped_text_body_keeps_its_tail_and_says_so`, `a_capped_diff_still_keeps_its_head` (both frames, the second the control on the rule) |
-| P-143 | Left-clicking a card toggles that card alone, layered on top of the global flag | `packages/coding-agent/src/modes/interactive/components/tool-execution.ts:175-177` | partial | `crates/epsilon-tui/src/render_cache.rs:83` — a card records an explicit per-card open/closed state that the global toggle can override, but nothing sets it: mouse capture is off (`crates/epsilon-tui/src/app.rs:1549`) | `ctrl_x_opens_the_newest_card_and_leaves_the_others_alone` (frame) |
+| P-143 | Left-clicking a card toggles that card alone, layered on top of the global flag | `packages/coding-agent/src/modes/interactive/components/tool-execution.ts:175-177` | deliberately different | Pi captures the click (`interactive-mode.ts:258`); capture is OFF here (`crates/epsilon-tui/src/app.rs`) so drag-select copies, opencode's `useMouse: false` concurring. The per-card state stands (`crates/epsilon-tui/src/render_cache.rs:83`) for the global toggle to override, and the keyboard path toggles the newest card alone | `ctrl_x_opens_the_newest_card_and_leaves_the_others_alone` (frame) |
 | P-144 | One global flag expands every expandable row at once | `packages/coding-agent/src/modes/interactive/interactive-mode.ts:4474-4490` | done | `crates/epsilon-tui/src/render_cache.rs:83` — see P-039; Epsilon's flag is `ctrl+x` and the per-card exception is a superset of Pi's behaviour | `ctrl_x_opens_the_newest_card_and_leaves_the_others_alone` (frame) |
 | P-145 | Collapsed arguments are space-separated `key=value` pairs truncated to 100 characters; expanded they are one indented `key: value` per line | `packages/coding-agent/src/core/tools/render-utils.ts:78`, `:93` | missing | none — arguments collapse into a single per-tool headline (`crates/epsilon-tui/src/renderers/mod.rs:39`) and are never listed as pairs | — |
 | P-146 | The card's argument display updates as the model streams them, before the tool starts | `packages/coding-agent/src/modes/interactive/components/tool-execution.ts:183`, `packages/coding-agent/src/modes/interactive/interactive-mode.ts:3490` | partial | `crates/epsilon-tui/src/ui/card.rs:223` — the card exists from the call, but its arguments are not re-rendered as they arrive; the live tail carries assistant text and reasoning (`crates/epsilon-tui/src/app/panels.rs:525`) | `a_tool_result_is_a_card_whose_title_carries_name_status_and_duration` (frame) |
@@ -765,24 +765,24 @@ row says so — that is a gap in the inventory, and closing it is cheap.
 | 1. Startup, header and resources | 20 | 1 | 6 | 12 | 1 |
 | 2. Layout and renderer | 10 | 3 | 2 | 4 | 1 |
 | 3. Composer and editor | 24 | 6 | 12 | 4 | 2 |
-| 4. Slash commands and autocomplete | 13 | 2 | 5 | 6 | 0 |
-| 5. Transcript and streaming | 35 | 9 | 2 | 21 | 3 |
+| 4. Slash commands and autocomplete | 13 | 2 | 5 | 5 | 1 |
+| 5. Transcript and streaming | 35 | 9 | 2 | 19 | 5 |
 | 6. Model picker and thinking | 9 | 0 | 4 | 5 | 0 |
 | 7. Auth, login and permissions | 8 | 0 | 3 | 4 | 1 |
 | 8. Sessions | 17 | 7 | 5 | 3 | 2 |
 | 9. Themes | 18 | 0 | 6 | 8 | 4 |
 | 10. Settings | 22 | 1 | 9 | 11 | 1 |
 | 11. Project trust | 4 | 1 | 2 | 0 | 1 |
-| 12. Tool cards | 16 | 3 | 6 | 6 | 1 |
+| 12. Tool cards | 16 | 3 | 5 | 6 | 2 |
 | 13. Bash cards | 11 | 3 | 6 | 2 | 0 |
 | 14. Diffs | 6 | 4 | 0 | 2 | 0 |
 | 15. Markdown, mermaid and truncation | 22 | 6 | 7 | 9 | 0 |
 | 16. Status indicators | 13 | 2 | 5 | 5 | 1 |
 | 17. Footer | 12 | 3 | 4 | 3 | 2 |
 | 18. Selector and overlay components | 79 | 18 | 17 | 36 | 8 |
-| **Total** | **339** | **69** | **101** | **141** | **28** |
+| **Total** | **339** | **69** | **100** | **138** | **32** |
 
-### The `missing` rows — 161
+### The `missing` rows — 138
 
 Every row below has **no** `E-` row establishing the behaviour. Nothing here was found by browsing `crates/`, and
 nothing here is a claim that the behaviour cannot be built.
@@ -792,8 +792,8 @@ nothing here is a claim that the behaviour cannot be built.
 | Startup, header and resources (12) | P-002, P-004, P-005, P-008, P-009, P-011, P-012, P-059, P-088, P-089, P-119, P-216 |
 | Layout and renderer (4) | P-015, P-020, P-021, P-220 |
 | Composer and editor (4) | P-013, P-032, P-212, P-213 |
-| Slash commands and autocomplete (6) | P-042, P-045, P-221, P-222, P-223, P-224 |
-| Transcript and streaming (21) | P-051, P-052, P-053, P-056, P-057, P-060, P-122, P-124, P-125, P-126, P-129, P-132, P-134, P-135, P-178, P-179, P-180, P-181, P-182, P-184, P-185 |
+| Slash commands and autocomplete (5) | P-042, P-045, P-221, P-222, P-224 |
+| Transcript and streaming (19) | P-051, P-052, P-053, P-056, P-057, P-060, P-122, P-124, P-126, P-129, P-132, P-134, P-135, P-178, P-179, P-180, P-181, P-182, P-184 |
 | Model picker and thinking (5) | P-262, P-263, P-264, P-265, P-273 |
 | Auth, login and permissions (4) | P-061, P-063, P-065, P-066 |
 | Sessions (3) | P-073, P-080, P-081 |
@@ -807,7 +807,7 @@ nothing here is a claim that the behaviour cannot be built.
 | Footer (3) | P-197, P-207, P-208 |
 | Selector and overlay components (36) | P-230, P-232, P-234, P-235, P-239, P-242, P-244, P-245, P-248, P-251, P-255, P-256, P-257, P-258, P-259, P-261, P-281, P-283, P-284, P-285, P-286, P-296, P-297, P-300, P-304, P-306, P-307, P-308, P-310, P-311, P-314, P-316, P-317, P-318, P-319, P-323 |
 
-### The `partial` rows — 117
+### The `partial` rows — 100
 
 An `E-` row covers these and something is not finished. The reason column is the shortest honest statement of what.
 
@@ -824,7 +824,7 @@ An `E-` row covers these and something is not finished. The reason column is the
 | Themes (6) | P-091, P-093, P-097, P-099, P-102, P-269 | three palettes and no file-loaded themes; the measured contrast floor is asserted for `high-contrast` only; an unknown name is refused rather than silently reverted; no theme-token language; the ASCII repertoire is overridable but colour depth is not; no theme submenu |
 | Settings (9) | P-104, P-107, P-108, P-109, P-110, P-274, P-276, P-278, P-280 | a fixed eight-row popup; a trust review rather than a layered merge; no keybinding migration; a Windows predicate for glyphs, not chords; 23 ids against 44+; empty states live in transcript notices; one enum edited by name; capacity measured rather than a ten-row cap; the stage is named by the title, not `Step N/M` |
 | Project trust (2) | P-115, P-117 | a hash-triggered review answered in the composer, not a five-option dialog naming parent-folder trust; the trigger is a changed config hash, not one of eight named resource kinds |
-| Tool cards (6) | P-138, P-140, P-142, P-143, P-146, P-147 | a named headline instead of bare JSON for an unregistered tool; a title row survives an empty body; twelve rows rather than ten; per-card explicit state that nothing sets (no mouse); arguments not re-rendered as they stream; the diff arrives as a result field, so there is no partial-args guard |
+| Tool cards (5) | P-138, P-140, P-142, P-146, P-147 | a named headline instead of bare JSON for an unregistered tool; a title row survives an empty body; twelve rows rather than ten; arguments not re-rendered as they stream; the diff arrives as a result field, so there is no partial-args guard |
 | Bash cards (6) | P-153, P-154, P-155, P-156, P-158, P-177 | `!!` exclusion named on running, result and error rows (`kept out of context`); the run state is in the header, not a cancellable card line; tab/CR normalisation pinned by source only; twelve rows and which end is kept is unestablished; the `(cancelled)` half is open (no `CardStatus` names one) but the exit **number** is on the card now; duration yes, truncation warning no |
 | Markdown, mermaid and truncation (7) | P-176, T-003, T-004, T-005, T-006, T-008, T-011 | hint placement has no keep-last mode; stripping established at two boundaries, not one central measure; hyperlink/reset closing held by a different mechanism with a re-measure backstop; span-dropping, not column slicing; style is per-`Span`, so no reset ladder; row caching, but no ASCII fast path or bounded width cache; CJK as a word character unestablished for completion |
 | Status indicators (5) | P-018, P-186, P-188, P-189, P-190 | a drawn spinner rather than the terminal's progress state; one run-state slot rather than four kinds; whole-gauge dropping rather than a four-step border ladder; a retry notice and elapsed seconds rather than a cancelable countdown; one compaction wording rather than three |

@@ -557,9 +557,113 @@ pub(crate) fn handle_key(app: &mut App, agent: &Arc<Agent>, key: KeyEvent) -> bo
     // Esc closes, arrows and page keys scroll. Placed above the tree branch:
     // the viewer opens from the tree, so the tree would otherwise eat Esc.
     if app.viewer_open() && !app.keybindings.matches("app.exit", &key) {
+        // Edit mode owns the keystroke vocabulary: printable text edits, Enter
+        // splits, Backspace deletes-or-joins, Esc is two-stage against data
+        // loss (first press arms when dirty, second discards), alt+s saves
+        // through a checkpoint. Arrows move in both modes.
+        if app.viewer_editing() {
+            match key.code {
+                KeyCode::Esc => {
+                    let dirty = app.viewer.as_ref().is_some_and(|v| v.is_dirty());
+                    let armed = app.viewer.as_ref().is_some_and(|v| v.discard_armed);
+                    if dirty && !armed {
+                        if let Some(v) = app.viewer.as_mut() {
+                            v.discard_armed = true;
+                        }
+                        app.ui.push_notice(
+                            "edits not saved — Esc again discards them, alt+s saves".to_string(),
+                        );
+                    } else if let Some(v) = app.viewer.as_mut() {
+                        v.editing = false;
+                        v.discard_armed = false;
+                    }
+                    return false;
+                }
+                KeyCode::Enter => {
+                    if let Some(v) = app.viewer.as_mut() {
+                        v.split_line();
+                        v.clamp_cursor();
+                    }
+                    return false;
+                }
+                KeyCode::Backspace => {
+                    if let Some(v) = app.viewer.as_mut() {
+                        v.backspace();
+                        v.clamp_cursor();
+                    }
+                    return false;
+                }
+                KeyCode::Up => {
+                    if let Some(v) = app.viewer.as_mut() {
+                        v.edit_row = v.edit_row.saturating_sub(1);
+                        v.clamp_cursor();
+                    }
+                    return false;
+                }
+                KeyCode::Down => {
+                    if let Some(v) = app.viewer.as_mut() {
+                        v.edit_row += 1;
+                        v.clamp_cursor();
+                    }
+                    return false;
+                }
+                KeyCode::Left => {
+                    if let Some(v) = app.viewer.as_mut() {
+                        if v.edit_col > 0 {
+                            v.edit_col -= 1;
+                        } else if v.edit_row > 0 {
+                            v.edit_row -= 1;
+                            v.edit_col = usize::MAX;
+                        }
+                        v.clamp_cursor();
+                    }
+                    return false;
+                }
+                KeyCode::Right => {
+                    if let Some(v) = app.viewer.as_mut() {
+                        v.edit_col += 1;
+                        v.clamp_cursor();
+                    }
+                    return false;
+                }
+                KeyCode::Home => {
+                    if let Some(v) = app.viewer.as_mut() {
+                        v.edit_col = 0;
+                    }
+                    return false;
+                }
+                KeyCode::End => {
+                    if let Some(v) = app.viewer.as_mut() {
+                        v.edit_col = usize::MAX;
+                        v.clamp_cursor();
+                    }
+                    return false;
+                }
+                KeyCode::Char(c) if key.modifiers == KeyModifiers::NONE && !c.is_control() => {
+                    if let Some(v) = app.viewer.as_mut() {
+                        v.insert_char(c);
+                        v.clamp_cursor();
+                    }
+                    return false;
+                }
+                _ => {}
+            }
+            if app.keybindings.matches("app.viewer.save", &key) {
+                app.save_viewer();
+                return false;
+            }
+            return false;
+        }
         match key.code {
             KeyCode::Esc => {
                 app.viewer = None;
+            }
+            KeyCode::Char('e' | 'E') if key.modifiers == KeyModifiers::NONE => {
+                // Read-only until asked: `e` starts the edit buffer from the
+                // file on screen, so viewing never risks a keystroke.
+                if let Some(v) = app.viewer.as_mut() {
+                    v.start_edit();
+                }
             }
             KeyCode::Up => {
                 if let Some(v) = app.viewer.as_mut() {

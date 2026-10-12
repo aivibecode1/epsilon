@@ -269,6 +269,80 @@ impl App {
         self.viewer.is_some()
     }
 
+    /// Whether the viewer is in edit mode.
+    pub(super) fn viewer_editing(&self) -> bool {
+        self.viewer.as_ref().is_some_and(|v| v.editing)
+    }
+
+    /// Save the viewer's edit buffer with two guards and a way back.
+    ///
+    /// The shipped TUI names `epsilon-tools` only in tests by design, so this
+    /// does not go through the checkpoint store (that edge would make the
+    /// shipped binary depend on the tool crate for one call). Instead:
+    /// (1) a changed-underneath guard refuses rather than silently overwriting
+    /// a file something else touched since it was opened; (2) the previous
+    /// bytes are kept beside the file as `<name>.tui-bak`, named in the notice.
+    /// A failed write keeps the buffer — the words stay on screen — and reports.
+    pub(super) fn save_viewer(&mut self) {
+        let Some(viewer) = self.viewer.as_ref() else {
+            return;
+        };
+        if !viewer.editing {
+            return;
+        }
+        let rel = viewer.rel.clone();
+        let text = viewer.buffer_text();
+        if rel.contains("..") {
+            self.ui
+                .push_notice(format!("{rel}: refusing to write outside the workspace"));
+            return;
+        }
+        let path = self.workspace_root.join(&rel);
+        let opened = viewer.opened_bytes.clone();
+        match std::fs::read(&path) {
+            Ok(current) if current != opened => {
+                self.ui.push_notice(format!(
+                    "{rel} changed on disk since it was opened — re-open it (Enter) instead of overwriting"
+                ));
+                return;
+            }
+            Err(e) if e.kind() != std::io::ErrorKind::NotFound => {
+                self.ui.push_notice(format!(
+                    "save failed ({e}) — your edits are still in the buffer"
+                ));
+                return;
+            }
+            _ => {}
+        }
+        if path.exists() {
+            let mut bak = path.as_os_str().to_os_string();
+            bak.push(".tui-bak");
+            if let Err(e) = std::fs::copy(&path, &bak) {
+                self.ui.push_notice(format!(
+                    "save failed (no backup: {e}) — nothing was written"
+                ));
+                return;
+            }
+        }
+        if let Err(e) = std::fs::write(&path, &text) {
+            self.ui.push_notice(format!(
+                "save failed ({e}) — your edits are still in the buffer"
+            ));
+            return;
+        }
+        if let Some(viewer) = self.viewer.as_mut() {
+            viewer.lines = viewer.edit_lines.clone();
+            viewer.opened_bytes = text.into_bytes();
+            viewer.editing = false;
+            viewer.discard_armed = false;
+            viewer.scroll = viewer.scroll.min(viewer.lines.len().saturating_sub(1));
+        }
+        self.refresh_tree();
+        self.ui.push_notice(format!(
+            "saved {rel} — previous version kept at {rel}.tui-bak"
+        ));
+    }
+
     /// M59: ask the event loop to open `$EDITOR` on the current draft.
     ///
     /// Resolution happens HERE so the user gets an immediate, actionable notice

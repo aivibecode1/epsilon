@@ -214,6 +214,19 @@ pub struct FileViewer {
     pub scroll: usize,
     /// True when the file held more lines than the cap.
     pub truncated: bool,
+    /// Exact bytes at open time: the changed-underneath guard compares against
+    /// these, so a file without a trailing newline does not read as changed.
+    pub opened_bytes: Vec<u8>,
+    /// Edit mode (Phase 3 editor slice): the buffer below is live.
+    pub editing: bool,
+    /// Editable copy of the file; written back on save.
+    pub edit_lines: Vec<String>,
+    /// Cursor row within `edit_lines`.
+    pub edit_row: usize,
+    /// Cursor column within the row, in characters.
+    pub edit_col: usize,
+    /// First Esc with a dirty buffer arms; the second discards.
+    pub discard_armed: bool,
 }
 
 /// Read `rel` under `root` for viewing. Refuses (rather than guessing) when the
@@ -237,7 +250,109 @@ pub fn open_viewer(root: &std::path::Path, rel: &str) -> Result<FileViewer, Stri
         lines,
         scroll: 0,
         truncated,
+        opened_bytes: bytes,
+        editing: false,
+        edit_lines: Vec::new(),
+        edit_row: 0,
+        edit_col: 0,
+        discard_armed: false,
     })
+}
+
+impl FileViewer {
+    /// Enter edit mode: the buffer starts as the file on screen.
+    pub fn start_edit(&mut self) {
+        self.editing = true;
+        self.edit_lines = self.lines.clone();
+        if self.edit_lines.is_empty() {
+            self.edit_lines.push(String::new());
+        }
+        self.edit_row = 0;
+        self.edit_col = 0;
+        self.discard_armed = false;
+    }
+
+    /// True when the buffer differs from what was opened.
+    pub fn is_dirty(&self) -> bool {
+        self.editing && self.edit_lines != self.lines
+    }
+
+    /// Byte index of character `col` in `line` (clamped at line end).
+    fn byte_idx(line: &str, col: usize) -> usize {
+        line.char_indices()
+            .nth(col)
+            .map(|(i, _)| i)
+            .unwrap_or(line.len())
+    }
+
+    /// Insert `c` at the cursor; grapheme clusters are never split because
+    /// movement and edits share character indices, not byte offsets.
+    pub fn insert_char(&mut self, c: char) {
+        if self.edit_row >= self.edit_lines.len() {
+            return;
+        }
+        let line = &mut self.edit_lines[self.edit_row];
+        let at = Self::byte_idx(line, self.edit_col);
+        line.insert(at, c);
+        self.edit_col += 1;
+        self.discard_armed = false;
+    }
+
+    /// Split the line at the cursor (Enter).
+    pub fn split_line(&mut self) {
+        if self.edit_row >= self.edit_lines.len() {
+            return;
+        }
+        let line = &mut self.edit_lines[self.edit_row];
+        let at = Self::byte_idx(line, self.edit_col);
+        let tail = line.split_off(at);
+        self.edit_lines.insert(self.edit_row + 1, tail);
+        self.edit_row += 1;
+        self.edit_col = 0;
+        self.discard_armed = false;
+    }
+
+    /// Backspace: delete left, or join with the previous line at column zero.
+    pub fn backspace(&mut self) {
+        if self.edit_row >= self.edit_lines.len() {
+            return;
+        }
+        if self.edit_col > 0 {
+            let line = &mut self.edit_lines[self.edit_row];
+            let at = Self::byte_idx(line, self.edit_col);
+            let prev = line[..at]
+                .chars()
+                .next_back()
+                .map(|c| c.len_utf8())
+                .unwrap_or(0);
+            line.drain(at - prev..at);
+            self.edit_col -= 1;
+        } else if self.edit_row > 0 {
+            let tail = self.edit_lines.remove(self.edit_row);
+            self.edit_row -= 1;
+            let prev_len = self.edit_lines[self.edit_row].chars().count();
+            self.edit_lines[self.edit_row].push_str(&tail);
+            self.edit_col = prev_len;
+        }
+        self.discard_armed = false;
+    }
+
+    /// Clamp the cursor after any structural change.
+    pub fn clamp_cursor(&mut self) {
+        if self.edit_lines.is_empty() {
+            self.edit_lines.push(String::new());
+        }
+        self.edit_row = self.edit_row.min(self.edit_lines.len() - 1);
+        let len = self.edit_lines[self.edit_row].chars().count();
+        self.edit_col = self.edit_col.min(len);
+    }
+
+    /// The buffer as file text (trailing newline, like every text file here).
+    pub fn buffer_text(&self) -> String {
+        let mut out = self.edit_lines.join("\n");
+        out.push('\n');
+        out
+    }
 }
 
 /// Draw the read-only viewer as a centered overlay: title is the path, body is
@@ -247,13 +362,21 @@ pub(crate) fn draw_viewer(
     f: &mut Frame<'_>,
     outer: Rect,
     theme: &crate::ui::theme::Theme,
-    viewer: &FileViewer,
+    viewer: &mut FileViewer,
     capacity_out: &mut usize,
 ) {
     use crate::ui::overlay::{self, Panel, Width};
     let width = Width::PANEL.resolve(outer);
     let height = outer.height.saturating_sub(4).max(10);
-    let title = format!("view {}", viewer.rel);
+    let title = if viewer.editing {
+        format!(
+            "edit {} — alt+s saves, esc cancels{}",
+            viewer.rel,
+            if viewer.is_dirty() { " (modified)" } else { "" }
+        )
+    } else {
+        format!("view {}", viewer.rel)
+    };
     let panel = Panel {
         theme,
         area: overlay::centered(outer, width, height),
@@ -265,16 +388,29 @@ pub(crate) fn draw_viewer(
     // One line is the footer; the rest is text.
     let capacity = inner.height.saturating_sub(1).max(1) as usize;
     *capacity_out = capacity;
-    let start = viewer.scroll.min(viewer.lines.len().saturating_sub(1));
-    let end = (start + capacity).min(viewer.lines.len());
+    let body: &[String] = if viewer.editing {
+        &viewer.edit_lines
+    } else {
+        &viewer.lines
+    };
+    // The cursor stays visible: editing scrolls the window after itself.
+    if viewer.editing {
+        if viewer.edit_row < viewer.scroll {
+            viewer.scroll = viewer.edit_row;
+        } else if viewer.edit_row >= viewer.scroll + capacity {
+            viewer.scroll = viewer.edit_row + 1 - capacity;
+        }
+    }
+    let start = viewer.scroll.min(body.len().saturating_sub(1));
+    let end = (start + capacity).min(body.len());
     let mut lines: Vec<Line<'static>> = Vec::new();
-    if viewer.lines.is_empty() {
+    if body.is_empty() {
         lines.push(Line::from(ratatui::text::Span::styled(
             "(empty file)",
             theme.dim(),
         )));
     }
-    for line in viewer.lines.iter().take(end).skip(start) {
+    for line in body.iter().take(end).skip(start) {
         // Plain text, unstyled: a viewer shows the file, it does not interpret
         // it — markdown stays markdown, and a width fit keeps long lines from
         // pushing the panel wider than the rect it was given.
@@ -283,7 +419,7 @@ pub(crate) fn draw_viewer(
             inner.width as usize,
         )));
     }
-    if viewer.truncated {
+    if viewer.truncated && !viewer.editing {
         lines.push(Line::from(ratatui::text::Span::styled(
             format!("... showing the first {VIEWER_LINE_CAP} lines"),
             theme.dim(),
@@ -293,10 +429,29 @@ pub(crate) fn draw_viewer(
     while lines.len() < capacity {
         lines.push(Line::from(""));
     }
-    lines.push(Line::from(
-        overlay::hint_row(theme, &[("↑↓/pgup/pgdn", "scroll"), ("esc", "close")]).spans,
-    ));
+    let hints: &[(&str, &str)] = if viewer.editing {
+        &[("type/enter", "edit"), ("alt+s", "save"), ("esc", "cancel")]
+    } else {
+        &[("↑↓/pgup/pgdn", "scroll"), ("e", "edit"), ("esc", "close")]
+    };
+    lines.push(Line::from(overlay::hint_row(theme, hints).spans));
     f.render_widget(Paragraph::new(lines), inner);
+    // The caret, in panel coordinates from the character column.
+    if viewer.editing
+        && viewer.edit_row >= start
+        && viewer.edit_row < start + capacity
+        && let Some(line) = viewer.edit_lines.get(viewer.edit_row)
+    {
+        let col_cells: usize = line
+            .chars()
+            .take(viewer.edit_col)
+            .map(|c| crate::ui::layout::display_width(&c.to_string()))
+            .sum();
+        f.set_cursor_position((
+            inner.x + col_cells.min(inner.width as usize - 1) as u16,
+            inner.y + (viewer.edit_row - start) as u16,
+        ));
+    }
 }
 
 #[cfg(test)]

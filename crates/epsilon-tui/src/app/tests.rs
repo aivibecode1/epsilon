@@ -8807,3 +8807,124 @@ async fn wheel_scroll_follows_the_focused_overlay() {
         "wheel over the viewer must not scroll the transcript"
     );
 }
+
+/// `e` in the viewer edits the file; Ctrl+S saves through a checkpoint (undoable).
+#[tokio::test]
+async fn viewer_edit_mode_types_and_ctrl_s_saves_undoably() {
+    let (mut app, agent, _receivers, dir) = test_app_with_store();
+    std::fs::write(dir.path().join("edit.txt"), "hello\n").unwrap();
+    handle_key(&mut app, &agent, key(KeyCode::F(6)));
+    let idx = app
+        .tree_rows
+        .iter()
+        .position(|r| r.rel == "edit.txt")
+        .expect("edit.txt listed");
+    app.tree_cursor = idx;
+    handle_key(&mut app, &agent, key(KeyCode::Enter));
+    assert!(app.viewer_open());
+    handle_key(&mut app, &agent, key(KeyCode::Char('e')));
+    assert!(app.viewer_editing(), "e must enter edit mode");
+    handle_key(&mut app, &agent, key(KeyCode::End));
+    for c in " world".chars() {
+        handle_key(&mut app, &agent, key(KeyCode::Char(c)));
+    }
+    // Alt+S saves (ctrl+s belongs to `app.model.saveDefault`).
+    handle_key(
+        &mut app,
+        &agent,
+        key_mod(KeyModifiers::ALT, KeyCode::Char('s')),
+    );
+    assert_eq!(
+        std::fs::read_to_string(dir.path().join("edit.txt")).unwrap(),
+        "hello world\n",
+        "save must write the buffer"
+    );
+}
+
+/// Esc with a dirty buffer arms first and discards only on the second press.
+#[tokio::test]
+async fn viewer_esc_arms_before_discarding_dirty_edits() {
+    let (mut app, agent, _receivers, dir) = test_app_with_store();
+    std::fs::write(dir.path().join("d.txt"), "keep\n").unwrap();
+    handle_key(&mut app, &agent, key(KeyCode::F(6)));
+    let idx = app
+        .tree_rows
+        .iter()
+        .position(|r| r.rel == "d.txt")
+        .expect("d.txt listed");
+    app.tree_cursor = idx;
+    handle_key(&mut app, &agent, key(KeyCode::Enter));
+    handle_key(&mut app, &agent, key(KeyCode::Char('e')));
+    handle_key(&mut app, &agent, key(KeyCode::End));
+    handle_key(&mut app, &agent, key(KeyCode::Char('!')));
+    assert!(app.viewer_editing());
+    handle_key(&mut app, &agent, key(KeyCode::Esc));
+    assert!(
+        app.viewer_editing(),
+        "first Esc with dirty buffer must arm, not discard"
+    );
+    handle_key(&mut app, &agent, key(KeyCode::Esc));
+    assert!(!app.viewer_editing(), "second Esc discards");
+    assert_eq!(
+        std::fs::read_to_string(dir.path().join("d.txt")).unwrap(),
+        "keep\n",
+        "discarded edits must never reach the file"
+    );
+}
+
+/// Saving refuses when the file changed underneath, and keeps a backup.
+#[tokio::test]
+async fn viewer_save_refuses_changed_underneath_and_keeps_backup() {
+    let (mut app, agent, _receivers, dir) = test_app_with_store();
+    std::fs::write(dir.path().join("r.txt"), "v1\n").unwrap();
+    handle_key(&mut app, &agent, key(KeyCode::F(6)));
+    let idx = app
+        .tree_rows
+        .iter()
+        .position(|r| r.rel == "r.txt")
+        .expect("r.txt listed");
+    app.tree_cursor = idx;
+    handle_key(&mut app, &agent, key(KeyCode::Enter));
+    handle_key(&mut app, &agent, key(KeyCode::Char('e')));
+    // Someone else writes first: our save must refuse, buffer intact.
+    std::fs::write(dir.path().join("r.txt"), "v2-external\n").unwrap();
+    handle_key(&mut app, &agent, key(KeyCode::End));
+    handle_key(&mut app, &agent, key(KeyCode::Char('!')));
+    handle_key(
+        &mut app,
+        &agent,
+        key_mod(KeyModifiers::ALT, KeyCode::Char('s')),
+    );
+    assert_eq!(
+        std::fs::read_to_string(dir.path().join("r.txt")).unwrap(),
+        "v2-external\n",
+        "another writer's bytes win over ours"
+    );
+    assert!(app.viewer_editing(), "refused save keeps the buffer open");
+    // Re-open fresh and save cleanly: backup holds the previous version.
+    handle_key(&mut app, &agent, key(KeyCode::Esc));
+    handle_key(&mut app, &agent, key(KeyCode::Esc));
+    handle_key(&mut app, &agent, key(KeyCode::Esc));
+    assert!(
+        !app.viewer_open(),
+        "Esc with a clean buffer closes the viewer"
+    );
+    handle_key(&mut app, &agent, key(KeyCode::Enter));
+    handle_key(&mut app, &agent, key(KeyCode::Char('e')));
+    handle_key(&mut app, &agent, key(KeyCode::End));
+    handle_key(&mut app, &agent, key(KeyCode::Char('!')));
+    handle_key(
+        &mut app,
+        &agent,
+        key_mod(KeyModifiers::ALT, KeyCode::Char('s')),
+    );
+    assert_eq!(
+        std::fs::read_to_string(dir.path().join("r.txt")).unwrap(),
+        "v2-external!\n"
+    );
+    assert_eq!(
+        std::fs::read_to_string(dir.path().join("r.txt.tui-bak")).unwrap(),
+        "v2-external\n",
+        "the backup holds the pre-save bytes"
+    );
+}
