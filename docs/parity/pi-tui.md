@@ -66,14 +66,14 @@ back; it is a reading of the test's source, not a report of a run.
 
 **339 rows** are paired here: Pi's 323 `P-###` behaviours, the 4 `L-###` rows of its inherited `tui.*` keybinding
 table, and the 12 `T-###` rows of its text-measurement core. Every one carries a reference citation; 200 of them
-carry an `ours` citation and 139 do not, and those 139 say so. The counts below are the rows **actually written in
+carry an `ours` citation and 138 do not, and those 138 say so. The counts below are the rows **actually written in
 this document**, tallied from its own tables — not a projection.
 
 | area | rows | done | partial | missing | deliberately different |
 |---|---|---|---|---|---|
 | 1. Startup, header and resources | 20 | 1 | 6 | 12 | 1 |
 | 2. Layout and renderer | 10 | 3 | 2 | 4 | 1 |
-| 3. Composer and editor | 24 | 6 | 12 | 4 | 2 |
+| 3. Composer and editor | 24 | 6 | 12 | 3 | 3 |
 | 4. Slash commands and autocomplete | 13 | 2 | 5 | 5 | 1 |
 | 5. Transcript and streaming | 35 | 9 | 2 | 19 | 5 |
 | 6. Model picker and thinking | 9 | 0 | 4 | 5 | 0 |
@@ -89,14 +89,14 @@ this document**, tallied from its own tables — not a projection.
 | 16. Status indicators | 13 | 2 | 5 | 5 | 1 |
 | 17. Footer | 12 | 3 | 4 | 3 | 2 |
 | 18. Selector and overlay components | 79 | 18 | 17 | 36 | 8 |
-| **Total** | **339** | **69** | **100** | **138** | **32** |
+| **Total** | **339** | **69** | **100** | **137** | **33** |
 
 A further **17 rows are not in the counts above**: the 10 `Y-###` rows Pi ships outside its interactive mode (out of
 scope by design) and the 7 `AA-###` rows recording what was never inventoried. Both are listed in full near the end
 of this document, because a row that is silently dropped is how a rule goes unowned.
 
-The shape of that table is the honest shape of a port from a 356-row inventory to a 201-row one: **138 rows have no
-counterpart established on our side, 100 are half-built, 69 are exercised, and 32 are decisions.** The 138 are not
+The shape of that table is the honest shape of a port from a 356-row inventory to a 202-row one: **137 rows have no
+counterpart established on our side, 100 are half-built, 69 are exercised, and 33 are decisions.** The 138 are not
 69/339 failures; most of them sit in Pi's extension, settings-overlay, mermaid, image and tree-navigation surface,
 much of which Epsilon deliberately does not have. Read [Open rows](#open-rows) before reading the table.
 
@@ -225,7 +225,7 @@ destination — steering — rather than steer-or-follow-up chosen by key.
 
 | id | behaviour | reference | status | ours | verified |
 |---|---|---|---|---|---|
-| P-013 | Text typed and submitted before startup finishes is kept, with a `Startup is still in progress` line | `packages/coding-agent/src/modes/interactive/interactive-mode.ts:3135-3138`, `:980-983` | missing | none — Epsilon has no deferred startup window; the key handlers are installed before the first frame (`crates/epsilon-tui/src/app.rs:1547`) | — |
+| P-013 | Text typed and submitted before startup finishes is kept, with a `Startup is still in progress` line | `packages/coding-agent/src/modes/interactive/interactive-mode.ts:3135-3138`, `:980-983` | deliberately different | Pi defers startup (async init before the first frame — the window the queue exists for); here startup is synchronous (`crates/epsilon-tui/src/app/event.rs:52` builds the app, and the event stream starts only after setup), so no keystroke can arrive before the handlers exist and there is no window to queue across | — |
 | P-022 | The editor border recolours the moment the text starts with `!`, and again encodes the thinking level otherwise | `packages/coding-agent/src/modes/interactive/interactive-mode.ts:3064-3070`, `:4429-4438` | done | `crates/epsilon-tui/src/app/view.rs` — this composer has no border by design (a rule, not a box), so the mode word is the signal: `bash` while the draft starts with `!`, `insert` otherwise (`idle_at_with_mode`); the thinking level rides the status mirror, pinned against the agent | `bang_prefix_switches_the_footer_to_bash_mode` (real key path, frame; always-insert control) |
 | P-023 | `!cmd` runs a shell command in the transcript; `!!cmd` keeps its result out of model context | `packages/coding-agent/src/modes/interactive/interactive-mode.ts:3287-3303`, `:6917-7008` | done | `crates/epsilon-tui/src/app.rs:1022` — both spellings route to the real `BashTool`, and `!!` marks the result excluded from context | `a_bang_runs_a_shell_command_and_shows_its_output`, `a_double_bang_says_the_output_stays_out_of_the_context` (both drive the key path one character at a time and drain to a deadline) |
 | P-025 | Escape has a four-way priority: abort the stream (restoring queued text), abort bash, leave bash mode, then arm a double-Escape timer | `packages/coding-agent/src/modes/interactive/interactive-mode.ts:3011-3037` | partial | `crates/epsilon-tui/src/app/keys.rs:1522` — Escape aborts a run and disarms the goal, and quits when idle; there is no bash-command abort, no bash-mode exit and no double-Escape arm | `a_rebound_interrupt_key_is_the_key_that_interrupts`, `aborting_a_run_disarms_the_goal_without_touching_it` (frame) |
@@ -764,7 +764,7 @@ row says so — that is a gap in the inventory, and closing it is cheap.
 |---|---|---|---|---|---|
 | 1. Startup, header and resources | 20 | 1 | 6 | 12 | 1 |
 | 2. Layout and renderer | 10 | 3 | 2 | 4 | 1 |
-| 3. Composer and editor | 24 | 6 | 12 | 4 | 2 |
+| 3. Composer and editor | 24 | 6 | 12 | 3 | 3 |
 | 4. Slash commands and autocomplete | 13 | 2 | 5 | 5 | 1 |
 | 5. Transcript and streaming | 35 | 9 | 2 | 19 | 5 |
 | 6. Model picker and thinking | 9 | 0 | 4 | 5 | 0 |
@@ -780,9 +780,9 @@ row says so — that is a gap in the inventory, and closing it is cheap.
 | 16. Status indicators | 13 | 2 | 5 | 5 | 1 |
 | 17. Footer | 12 | 3 | 4 | 3 | 2 |
 | 18. Selector and overlay components | 79 | 18 | 17 | 36 | 8 |
-| **Total** | **339** | **69** | **100** | **138** | **32** |
+| **Total** | **339** | **69** | **100** | **137** | **33** |
 
-### The `missing` rows — 138
+### The `missing` rows — 137
 
 Every row below has **no** `E-` row establishing the behaviour. Nothing here was found by browsing `crates/`, and
 nothing here is a claim that the behaviour cannot be built.
@@ -791,7 +791,7 @@ nothing here is a claim that the behaviour cannot be built.
 |---|---|
 | Startup, header and resources (12) | P-002, P-004, P-005, P-008, P-009, P-011, P-012, P-059, P-088, P-089, P-119, P-216 |
 | Layout and renderer (4) | P-015, P-020, P-021, P-220 |
-| Composer and editor (4) | P-013, P-032, P-212, P-213 |
+| Composer and editor (3) | P-032, P-212, P-213 |
 | Slash commands and autocomplete (5) | P-042, P-045, P-221, P-222, P-224 |
 | Transcript and streaming (19) | P-051, P-052, P-053, P-056, P-057, P-060, P-122, P-124, P-126, P-129, P-132, P-134, P-135, P-178, P-179, P-180, P-181, P-182, P-184 |
 | Model picker and thinking (5) | P-262, P-263, P-264, P-265, P-273 |

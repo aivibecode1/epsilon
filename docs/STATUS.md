@@ -434,6 +434,14 @@ the run. Up from 1,997: the checkpoint round-trip and restore-undo tests. (Previ
 > resolves live via `key_text`; viewer/tree literal hints match the overlay convention),
 > click rows P-003/P-125/P-143/P-185/P-223 unchanged (capture still OFF).
 >
+> **Goal 3, Phase 2 slice 1 (landed): P-013 judged.** Startup input queue — deliberately
+> different: pi defers startup (async init window), here setup is synchronous before the
+> event stream starts, so no keystroke can predate the handlers. Counts now
+> 69/100/137/33, prose and headings re-measured. P-032 (Enter-during-compaction
+> concurrency) and P-212/P-213 (extension keys — no protocol surface) stay `missing`
+> honestly: the first needs a run×compaction race probe, the second a protocol
+> decision, and neither is judged on an unproven claim.
+>
 > **Goal 3, Phase 1 (landed): AGENTS.md v4 draft for owner application.** Every v3
 > clause audited against the tree (13 crates, uniform 1.88, TERMINAL+WINDOW tables,
 > 15 legs, SUPPORTED only in a historical comment); the complete v4 text sits in
