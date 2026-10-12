@@ -576,6 +576,10 @@ the run. Up from 1,997: the checkpoint round-trip and restore-undo tests. (Previ
 > control fails it) but no per-miss rebill sentence; notices are durable rows, so
 > same-line coalescing would rewrite history. Counts now 78/108/71/82.
 >
+> **P-051 partial (this session): stopped answers marked.** Both live and replay paths
+> pin `Response was stopped before completion`; in-flight tool cards are not
+> retro-fitted and there is no `/bug` to suggest. Counts now 78/109/70/82.
+>
 > **Goal 3, Phase 1 (landed): AGENTS.md v4 draft for owner application.** Every v3
 > clause audited against the tree (13 crates, uniform 1.88, TERMINAL+WINDOW tables,
 > 15 legs, SUPPORTED only in a historical comment); the complete v4 text sits in

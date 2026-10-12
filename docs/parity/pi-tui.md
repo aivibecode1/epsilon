@@ -66,7 +66,7 @@ back; it is a reading of the test's source, not a report of a run.
 
 **339 rows** are paired here: Pi's 323 `P-###` behaviours, the 4 `L-###` rows of its inherited `tui.*` keybinding
 table, and the 12 `T-###` rows of its text-measurement core. Every one carries a reference citation; 200 of them
-carry an `ours` citation and 72 do not, and those 72 say so. The counts below are the rows **actually written in
+carry an `ours` citation and 71 do not, and those 71 say so. The counts below are the rows **actually written in
 this document**, tallied from its own tables — not a projection.
 
 | area | rows | done | partial | missing | deliberately different |
@@ -75,7 +75,7 @@ this document**, tallied from its own tables — not a projection.
 | 2. Layout and renderer | 10 | 3 | 2 | 0 | 5 |
 | 3. Composer and editor | 24 | 6 | 12 | 2 | 4 |
 | 4. Slash commands and autocomplete | 13 | 2 | 5 | 5 | 1 |
-| 5. Transcript and streaming | 35 | 9 | 3 | 17 | 6 |
+| 5. Transcript and streaming | 35 | 9 | 4 | 16 | 6 |
 | 6. Model picker and thinking | 9 | 0 | 4 | 1 | 4 |
 | 7. Auth, login and permissions | 8 | 0 | 4 | 2 | 2 |
 | 8. Sessions | 17 | 7 | 6 | 1 | 3 |
@@ -89,14 +89,14 @@ this document**, tallied from its own tables — not a projection.
 | 16. Status indicators | 13 | 2 | 5 | 1 | 5 |
 | 17. Footer | 12 | 4 | 4 | 1 | 3 |
 | 18. Selector and overlay components | 79 | 22 | 19 | 25 | 13 |
-| **Total** | **339** | **78** | **108** | **71** | **82** |
+| **Total** | **339** | **78** | **109** | **70** | **82** |
 
 A further **17 rows are not in the counts above**: the 10 `Y-###` rows Pi ships outside its interactive mode (out of
 scope by design) and the 7 `AA-###` rows recording what was never inventoried. Both are listed in full near the end
 of this document, because a row that is silently dropped is how a rule goes unowned.
 
-The shape of that table is the honest shape of a port from a 356-row inventory to a 268-row one: **71 rows have no
-counterpart established on our side, 108 are half-built, 78 are exercised, and 82 are decisions.** The 71 are not
+The shape of that table is the honest shape of a port from a 356-row inventory to a 269-row one: **70 rows have no
+counterpart established on our side, 109 are half-built, 78 are exercised, and 82 are decisions.** The 70 are not
 69/339 failures; most of them sit in Pi's extension, settings-overlay, mermaid, image and tree-navigation surface,
 much of which Epsilon deliberately does not have. Read [Open rows](#open-rows) before reading the table.
 
@@ -290,7 +290,7 @@ in each component.
 | P-039 | One key flips a single expansion flag applied to every expandable transcript row | `packages/coding-agent/src/modes/interactive/interactive-mode.ts:4470-4490` | done | `crates/epsilon-tui/src/render_cache.rs:83` — `ctrl+x` flips the global toggle **and** records the newest card's own state, so a hand-opened card stays open after the toggle goes back off; key path and draw path read the same rule | `ctrl_x_opens_the_newest_card_and_leaves_the_others_alone` (frame), `the_drawn_and_recorded_answers_to_an_open_card_are_the_same_answer` |
 | P-040 | `Ctrl+T` hides thinking blocks across the transcript and persists the choice globally | `packages/coding-agent/src/modes/interactive/interactive-mode.ts:4502-4507`, `:4493-4500` | partial | `Alt+T` (`app.thinking.toggle` — `Ctrl+T` cycles generation level here, and the nearby `Ctrl` letters are terminal-dangerous) flips `UiState::hide_thinking`, persisted globally in config `[display] hide_thinking`; the render cache filters Thinking lines under a cache key that covers the flag, so hiding is instant and unhiding restores — plus the live tail, which the same flag quiets. Not `Ctrl+T`, and not the reference's exact affordance shape | `hide_thinking_round_trips_and_leaves_other_keys_alone` (config) + `thinking_blocks_hide_when_toggled` (frame: committed history and live tail hide; unhide restores; negative control run). The chord arm itself is untested by design (it writes the global config; cf. the favorites toggle) |
 | P-050 | A tool card is created when the model calls the tool, before it runs, and re-used by the execution event | `packages/coding-agent/src/modes/interactive/interactive-mode.ts:3469-3493`, `:3545-3569` | done | `crates/epsilon-tui/src/ui/card.rs:223` — one card; the result settles the call's own card rather than adding a second. **`todo` was the exception and is fixed (round 90):** its result arm returned before the settle, so every multi-step turn drew `▸ todo · pending` above `✓ todo …` — now the checklist is the card body, so the title, gutter, cap and `… N more lines (ctrl+x to open)` all apply | `a_tool_result_is_a_card_whose_title_carries_name_status_and_duration` (frame), `a_completed_tool_call_is_drawn_once_on_a_real_frame` (frame), `a_todo_result_settles_its_call_and_nests_its_checklist` (frame, both widths, double-draw control) |
-| P-051 | An aborted or errored turn retro-fits every in-flight tool card with one error line and suggests `/bug` | `packages/coding-agent/src/modes/interactive/interactive-mode.ts:3514-3525`, `:3499-3511` | missing | none | — |
+| P-051 | An aborted or errored turn retro-fits every in-flight tool card with one error line and suggests `/bug` | `packages/coding-agent/src/modes/interactive/interactive-mode.ts:3514-3525`, `:3499-3511` | partial | The stopped answer is marked (`Response was stopped before completion`, both live and replay paths) — but in-flight tool cards are not retro-fitted with an error line, and there is no `/bug` to suggest | `a_stopped_reply_says_so` |
 | P-052 | A cache miss is explained: `Cache miss: 18.2K tokens re-billed (~$0.42)` | `packages/coding-agent/src/modes/interactive/interactive-mode.ts:4100-4126` | partial | The miss is marked, not priced: tokens moved in an unpriced bucket floor the total and the header carries a trailing `+` (`crates/epsilon-tui/src/ui/cost.rs:152`) — no per-miss rebill sentence with dollars | `unpriced_bucket_movement_marks_the_total_a_floor` (floor-forced-false control fails it) |
 | P-053 | Anthropic's silently dropped thinking blocks are reported with a delta-based count | `packages/coding-agent/src/modes/interactive/interactive-mode.ts:4070-4098`, `:4054-4068` | missing | none | — |
 | P-054 | Compaction rebuilds the transcript and inserts a summary card plus a billed-cost line | `packages/coding-agent/src/modes/interactive/interactive-mode.ts:3623-3673`, `:4041-4052` | partial | The billed-cost line is `crates/epsilon-tui/src/state.rs:1639`'s `CompactionFinished` arm — now `── context compacted · from 96k tokens · ↑12k ↓310 · 21k re-read ──` — and the digest rides the row as its expandable payload (the arm; the row predicate at `crates/epsilon-tui/src/state.rs:627`; `render_cache.rs`'s event-row branch; `ui/card.rs:325`'s `event_body`). **Replay half landed for the terminal**, and **both halves landed for the window** (same slice): the reducer folds `CompactionFinished` into a cost-plus-summary notice (`push_compaction_digest`, one builder with the terminal), resume/jump paths reattach via `Transcript::from_history`, and the `/compact` channel reports only non-success outcomes — it used to print "context compacted" on any `Ok`, including `Failed` | `a_compaction_row_reports_the_same_tokens_it_records`, `a_compaction_row_opens_to_the_summary_it_carried` (collapsed names the chord and the count; `ctrl+x` opens the digest whole, nested under the continuation gutter; frames read at 80×24 and 100×30), `a_resumed_compaction_marker_regains_its_digest`, `a_marker_without_a_digest_stays_a_plain_line`, `resume_reattaches_the_compaction_digest` (end to end through real `/resume`, with a wire-removal control), `a_replayed_compaction_row_renders_like_the_live_one` (same drawn rows at 80 and 100; frame read); window: `a_live_compaction_draws_its_cost_row_with_the_digest` (arm-removal control), `replayed_history_reattaches_the_compaction_digest`, `a_marker_without_a_digest_stays_a_user_row`, `resumed_compaction_digest_reaches_the_screen` (painted 1440×900, switch-removal control), `compact_from_the_typed_line_compacts_and_reports` (now pins the honest skip report, never a success row for failed work) |
@@ -766,7 +766,7 @@ row says so — that is a gap in the inventory, and closing it is cheap.
 | 2. Layout and renderer | 10 | 3 | 2 | 0 | 5 |
 | 3. Composer and editor | 24 | 6 | 12 | 2 | 4 |
 | 4. Slash commands and autocomplete | 13 | 2 | 5 | 5 | 1 |
-| 5. Transcript and streaming | 35 | 9 | 3 | 17 | 6 |
+| 5. Transcript and streaming | 35 | 9 | 4 | 16 | 6 |
 | 6. Model picker and thinking | 9 | 0 | 4 | 1 | 4 |
 | 7. Auth, login and permissions | 8 | 0 | 4 | 2 | 2 |
 | 8. Sessions | 17 | 7 | 6 | 1 | 3 |
@@ -780,9 +780,9 @@ row says so — that is a gap in the inventory, and closing it is cheap.
 | 16. Status indicators | 13 | 2 | 5 | 1 | 5 |
 | 17. Footer | 12 | 4 | 4 | 1 | 3 |
 | 18. Selector and overlay components | 79 | 22 | 19 | 25 | 13 |
-| **Total** | **339** | **78** | **108** | **71** | **82** |
+| **Total** | **339** | **78** | **109** | **70** | **82** |
 
-### The `missing` rows — 71
+### The `missing` rows — 70
 
 Every row below has **no** `E-` row establishing the behaviour. Nothing here was found by browsing `crates/`, and
 nothing here is a claim that the behaviour cannot be built.
@@ -792,7 +792,7 @@ nothing here is a claim that the behaviour cannot be built.
 | Startup, header and resources (2) | P-004, P-088 |
 | Composer and editor (2) | P-212, P-213 |
 | Slash commands and autocomplete (5) | P-042, P-045, P-221, P-222, P-224 |
-| Transcript and streaming (17) | P-051, P-053, P-056, P-060, P-122, P-124, P-126, P-129, P-132, P-134, P-135, P-178, P-179, P-180, P-181, P-182, P-184 |
+| Transcript and streaming (16) | P-053, P-056, P-060, P-122, P-124, P-126, P-129, P-132, P-134, P-135, P-178, P-179, P-180, P-181, P-182, P-184 |
 | Model picker and thinking (1) | P-273 |
 | Auth, login and permissions (2) | P-061, P-063 |
 | Sessions (1) | P-081 |
@@ -803,7 +803,7 @@ nothing here is a claim that the behaviour cannot be built.
 | Footer (1) | P-208 |
 | Selector and overlay components (25) | P-230, P-239, P-251, P-256, P-257, P-258, P-259, P-261, P-281, P-283, P-284, P-285, P-286, P-300, P-304, P-306, P-307, P-308, P-311, P-314, P-316, P-317, P-318, P-319, P-323 |
 
-### The `partial` rows — 108
+### The `partial` rows — 109
 
 An `E-` row covers these and something is not finished. The reason column is the shortest honest statement of what.
 
@@ -813,7 +813,7 @@ An `E-` row covers these and something is not finished. The reason column is the
 | Layout and renderer (2) | P-217, P-218 | the jump affordance is a footer badge, not a pill in the viewport; matches are counted, not highlighted in the transcript |
 | Composer and editor (12) | P-025, P-027, P-028, P-034, P-035, P-036, P-209, P-210, L-000, L-001, L-002, L-003 | mostly: the behaviour exists in the source with **no test**, or only one half is built. P-022 has no test typing `!`; P-030 is pinned by no test at all; P-036's tests run the spawner seam and assert no frame; L-000 carries 23 ids, not 47 entries |
 | Slash commands and autocomplete (5) | P-043, P-044, P-046, P-047, P-084 | the `/` menu lists slash items only; no per-command argument completer; no refresh-then-open fallback; `/scoped-models` and `/changelog` are driven only by the all-heads sweep |
-| Transcript and streaming (3) | P-040, P-052, P-054 | thinking hides on Alt+T, not Ctrl+T, with a narrower affordance; unpriced-bucket spend floors the total with a trailing `+` but no per-miss rebill sentence; the compaction digest expands live and on replay in the terminal (as markdown when open) and draws as cost notice plus markdown digest in the window — the card concept itself is terminal-only; abort text lands on a system row, not the answer |
+| Transcript and streaming (4) | P-040, P-051, P-052, P-054 | thinking hides on Alt+T, not Ctrl+T, with a narrower affordance; stopped answers marked but in-flight tool cards not retro-fitted and no `/bug` to suggest; unpriced-bucket spend floors the total with a trailing `+` but no per-miss rebill sentence; the compaction digest expands live and on replay in the terminal (as markdown when open) and draws as cost notice plus markdown digest in the window — the card concept itself is terminal-only; abort text lands on a system row, not the answer |
 | Model picker and thinking (4) | P-037, P-038, P-048, P-272 | the `/think` head parses but no row establishes the argument form or a picker; no per-model override submenu; P-037 has no no-reasoning message (the catalog carries no reasoning flag); P-038 cycles favorites, not all models (M23, deliberate) |
 | Auth, login and permissions (4) | P-062, P-064, P-065, P-067 | one masked modal instead of an auth-type → provider → dialog chain with `onBack`; one of four dialog event kinds; the TUI path for `/logout <provider>` is unpinned; bedrock resolves through the ambient chain with the marker-never-a-key rule pinned, but no dialog states the profiles hint in words |
 | Sessions (6) | P-070, P-072, P-074, P-077, P-080, P-082 | no cross-directory scope / rename / delete in the picker; no branch summarisation; fork is at the leaf, not at a chosen message; no cache-warming status; reload covers four resource kinds, not six; share exports HTML and tries gh gist but has no Radius preference and no dedicated happy-path test |
