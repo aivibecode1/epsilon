@@ -483,6 +483,11 @@ the run. Up from 1,997: the checkpoint round-trip and restore-undo tests. (Previ
 > version exists to display. P-004 (quiet mode) and P-088 (tmux probe) stay
 > `missing`: unbuilt, no decision recorded. Counts now 74/103/108/54.
 >
+> **Settings trio (this session): P-105/P-106 judged, P-112 partial.** Mermaid and
+> images are excluded scope (no settings over nonexistent pipelines); both queue
+> delivery modes exist and are tested with no user-facing switch yet. Counts now
+> 74/104/105/56.
+>
 > **Startup trio (this session): P-005 partial, P-008/P-119 judged.** The model scope
 > lives persistently in the header rather than printed once to scrollback; extension
 > slash commands cannot collide (closed static vocabulary); extension failures are

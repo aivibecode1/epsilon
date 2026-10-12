@@ -66,7 +66,7 @@ back; it is a reading of the test's source, not a report of a run.
 
 **339 rows** are paired here: Pi's 323 `P-###` behaviours, the 4 `L-###` rows of its inherited `tui.*` keybinding
 table, and the 12 `T-###` rows of its text-measurement core. Every one carries a reference citation; 200 of them
-carry an `ours` citation and 109 do not, and those 109 say so. The counts below are the rows **actually written in
+carry an `ours` citation and 106 do not, and those 106 say so. The counts below are the rows **actually written in
 this document**, tallied from its own tables — not a projection.
 
 | area | rows | done | partial | missing | deliberately different |
@@ -80,7 +80,7 @@ this document**, tallied from its own tables — not a projection.
 | 7. Auth, login and permissions | 8 | 0 | 3 | 4 | 1 |
 | 8. Sessions | 17 | 7 | 6 | 1 | 3 |
 | 9. Themes | 18 | 0 | 6 | 8 | 4 |
-| 10. Settings | 22 | 1 | 9 | 11 | 1 |
+| 10. Settings | 22 | 1 | 10 | 8 | 3 |
 | 11. Project trust | 4 | 1 | 2 | 0 | 1 |
 | 12. Tool cards | 16 | 3 | 6 | 0 | 7 |
 | 13. Bash cards | 11 | 5 | 6 | 0 | 0 |
@@ -89,14 +89,14 @@ this document**, tallied from its own tables — not a projection.
 | 16. Status indicators | 13 | 2 | 5 | 5 | 1 |
 | 17. Footer | 12 | 4 | 4 | 1 | 3 |
 | 18. Selector and overlay components | 79 | 18 | 17 | 36 | 8 |
-| **Total** | **339** | **74** | **103** | **108** | **54** |
+| **Total** | **339** | **74** | **104** | **105** | **56** |
 
 A further **17 rows are not in the counts above**: the 10 `Y-###` rows Pi ships outside its interactive mode (out of
 scope by design) and the 7 `AA-###` rows recording what was never inventoried. Both are listed in full near the end
 of this document, because a row that is silently dropped is how a rule goes unowned.
 
-The shape of that table is the honest shape of a port from a 356-row inventory to a 231-row one: **108 rows have no
-counterpart established on our side, 103 are half-built, 74 are exercised, and 54 are decisions.** The 108 are not
+The shape of that table is the honest shape of a port from a 356-row inventory to a 234-row one: **105 rows have no
+counterpart established on our side, 104 are half-built, 74 are exercised, and 56 are decisions.** The 105 are not
 69/339 failures; most of them sit in Pi's extension, settings-overlay, mermaid, image and tree-navigation surface,
 much of which Epsilon deliberately does not have. Read [Open rows](#open-rows) before reading the table.
 
@@ -450,14 +450,14 @@ surface, and it is why most rows below are `missing` rather than `partial`: ther
 | P-268 | The always-present toggles and their offered ranges: auto-resize, block images, skill commands, hardware cursor, editor padding, output padding, autocomplete height, clear-on-shrink, terminal progress | `packages/coding-agent/src/modes/interactive/components/settings-selector.ts:777`, `:838`, `:786`, `:796`, `:806`, `:816`, `:826`, `:836`, `:846`, `:856` | missing | none | — |
 | P-103 | `outputPad` is exactly 0 or 1 (anything else coerces to 1) and `editorPaddingX` clamps to 0–3 | `packages/coding-agent/src/core/settings-manager.ts:1488-1490`, `:1482-1486` | missing | none — the gutter is a constant two columns (`crates/epsilon-tui/src/ui/transcript.rs:179`) and the composer inset is fixed | — |
 | P-104 | The autocomplete row count is configurable, clamped to 3–20, default 5 | `packages/coding-agent/src/core/settings-manager.ts:1502-1506`, `packages/coding-agent/src/modes/interactive/interactive-mode.ts:639` | partial | `crates/epsilon-tui/src/app/panels.rs:921` — the popup is a fixed eight rows; there is no setting and no clamp | `an_ascii_frame_draws_no_character_a_legacy_console_cannot` (frame) paints the popup but asserts only the CP437 repertoire |
-| P-105 | Mermaid fences render live, at the end, or never, with `off`/`final` honoured and anything else falling back to streaming | `packages/coding-agent/src/core/settings-manager.ts:1512-1515`, `packages/coding-agent/src/modes/interactive/interactive-mode.ts:513-516` | missing | none — Epsilon has no mermaid renderer | — |
-| P-106 | Four distinct image settings: render inline, on-screen width, downscale before sending, block sending | `packages/coding-agent/src/core/settings-manager.ts:1288-1290`, `:1301-1307`, `:1403-1405`, `:1416-1418` | missing | none — Epsilon draws no inline images in the transcript | — |
+| P-105 | Mermaid fences render live, at the end, or never, with `off`/`final` honoured and anything else falling back to streaming | `packages/coding-agent/src/core/settings-manager.ts:1512-1515`, `packages/coding-agent/src/modes/interactive/interactive-mode.ts:513-516` | deliberately different | Mermaid is excluded scope for this product — there is no fence renderer and therefore no render-mode setting to honour | — |
+| P-106 | Four distinct image settings: render inline, on-screen width, downscale before sending, block sending | `packages/coding-agent/src/core/settings-manager.ts:1288-1290`, `:1301-1307`, `:1403-1405`, `:1416-1418` | deliberately different | As P-105 for images: excluded scope, no image pipeline, so four settings over it would be four knobs with nothing behind them | — |
 | P-107 | A project's settings override the user's key by key with nested objects merged, unless the project is untrusted — then it contributes nothing and writes are refused | `packages/coding-agent/src/core/settings-manager.ts:413`, `:474-476`, `:662-666` | partial | `crates/epsilon-tui/src/trust_store.rs:132`, `crates/epsilon-tui/src/app.rs:841` — a changed project config raises a review, and project roots (prompt templates) are skipped while it holds; there is no layered merge in either direction | `trust_review_holds_submits_until_answered` (frame), `empty_store_asks_set_get_clear_roundtrip` |
 | P-108 | Keybindings live in a separate file and legacy short ids migrate on load | `packages/coding-agent/src/core/keybindings.ts:379-383`, `:240-300`, `:320-340` | partial | `crates/epsilon-tui/src/app/commands.rs:1522-1524` — `keybindings.json` is a separate file re-read by `/reload`, and every id is declared once; there is no migration table and a malformed value is not silently dropped by a migration pass | `a_rebound_submit_key_is_the_key_that_submits` |
 | P-109 | One predicate decides the Windows-flavoured defaults: `win32`, or Linux with `WSL_DISTRO_NAME`/`WSL_INTEROP` set | `packages/coding-agent/src/core/keybindings.ts:62-67`, `:73` | partial | `crates/epsilon-tui/src/ui/theme.rs:462`, `:481` — a Windows predicate exists for the **glyph repertoire**, not for chords; no binding is rebound per platform | `the_repertoire_default_is_ascii_on_a_legacy_windows_console` |
 | P-110 | Pi declares 44 app-level actions plus the `tui.*` set, four of which have no default key at all | `packages/coding-agent/src/core/keybindings.ts:75-238`, `:146-149` | partial | `crates/epsilon-contracts/src/keybind.rs:242` — 23 ids, every one with a `keybindings.matches(...)` arm; `app.transcript.halfUp` / `halfDown` have handlers (`crates/epsilon-tui/src/app/keys.rs:1893`, `:1691`) but no table entry at all — bindable by hand, with the reason at `crates/epsilon-contracts/src/keybind.rs:337-346` | `no_chord_is_bound_to_two_ids_by_default`, `a_hint_label_parses_back_to_the_chord_it_names` |
 | P-111 | Every outbound warning is individually switchable under `warnings`, and the whole object is editable in `/settings` | `packages/coding-agent/src/core/settings-manager.ts:90-92`, `:1524`, `:716-729` | missing | none | — |
-| P-112 | Steering and follow-up delivery are one-at-a-time by default, each switchable to deliver all at once | `packages/coding-agent/src/core/settings-manager.ts:830-832`, `:840-842` | missing | none — Epsilon has one queue destination and no setting (`crates/epsilon-tui/src/app.rs:1050`) | — |
+| P-112 | Steering and follow-up delivery are one-at-a-time by default, each switchable to deliver all at once | `packages/coding-agent/src/core/settings-manager.ts:830-832`, `:840-842` | partial | Both delivery modes exist and are tested (`QueueMode::OneAtATime` default, `QueueMode::All` explicit — `crates/epsilon-contracts/src/queue_mode.rs:40`); what is missing is the user-facing switch (no setting or command moves between them, only code) | `default_followups_wait_for_separate_stop_boundaries`, `explicit_all_followups_share_one_stop_boundary` |
 | P-113 | Cache warming is readable only from the **global** settings layer, because a cache refresh costs money | `packages/coding-agent/src/core/settings-manager.ts:1023-1026`, `:182` | missing | none | — |
 | P-114 | The startup tool set is four tools, and a settings layer listing only `+name`/`-name` **modifies** the inherited set; an empty array means "no tools" | `packages/coding-agent/src/core/settings-manager.ts:215`, `:236-247`, `:225-230` | missing | none | — |
 | P-274 | With no configured providers the per-model list shows one actionable entry naming the next step, not a bare emptiness | `packages/coding-agent/src/modes/interactive/components/settings-selector.ts:634`, `:636` | partial | `crates/epsilon-tui/src/app/commands.rs:1967` — `/templates` with nothing installed names the two directories to drop files into, which is the same actionable-empty-state rule applied somewhere else | `templates_command_explains_where_to_put_files_when_empty` |
@@ -771,7 +771,7 @@ row says so — that is a gap in the inventory, and closing it is cheap.
 | 7. Auth, login and permissions | 8 | 0 | 3 | 4 | 1 |
 | 8. Sessions | 17 | 7 | 6 | 1 | 3 |
 | 9. Themes | 18 | 0 | 6 | 8 | 4 |
-| 10. Settings | 22 | 1 | 9 | 11 | 1 |
+| 10. Settings | 22 | 1 | 10 | 8 | 3 |
 | 11. Project trust | 4 | 1 | 2 | 0 | 1 |
 | 12. Tool cards | 16 | 3 | 6 | 0 | 7 |
 | 13. Bash cards | 11 | 5 | 6 | 0 | 0 |
@@ -780,9 +780,9 @@ row says so — that is a gap in the inventory, and closing it is cheap.
 | 16. Status indicators | 13 | 2 | 5 | 5 | 1 |
 | 17. Footer | 12 | 4 | 4 | 1 | 3 |
 | 18. Selector and overlay components | 79 | 18 | 17 | 36 | 8 |
-| **Total** | **339** | **74** | **103** | **108** | **54** |
+| **Total** | **339** | **74** | **104** | **105** | **56** |
 
-### The `missing` rows — 108
+### The `missing` rows — 105
 
 Every row below has **no** `E-` row establishing the behaviour. Nothing here was found by browsing `crates/`, and
 nothing here is a claim that the behaviour cannot be built.
@@ -798,13 +798,13 @@ nothing here is a claim that the behaviour cannot be built.
 | Auth, login and permissions (4) | P-061, P-063, P-065, P-066 |
 | Sessions (1) | P-081 |
 | Themes (8) | P-092, P-094, P-095, P-096, P-098, P-101, P-270, P-271 |
-| Settings (11) | P-103, P-105, P-106, P-111, P-112, P-113, P-114, P-267, P-268, P-275, P-277 |
+| Settings (8) | P-103, P-111, P-113, P-114, P-267, P-268, P-275, P-277 |
 | Markdown, mermaid and truncation (9) | P-167, P-168, P-169, P-170, P-171, P-172, P-173, T-010, T-012 |
 | Status indicators (5) | P-019, P-191, P-192, P-193, P-194 |
 | Footer (1) | P-208 |
 | Selector and overlay components (36) | P-230, P-232, P-234, P-235, P-239, P-242, P-244, P-245, P-248, P-251, P-255, P-256, P-257, P-258, P-259, P-261, P-281, P-283, P-284, P-285, P-286, P-296, P-297, P-300, P-304, P-306, P-307, P-308, P-310, P-311, P-314, P-316, P-317, P-318, P-319, P-323 |
 
-### The `partial` rows — 103
+### The `partial` rows — 104
 
 An `E-` row covers these and something is not finished. The reason column is the shortest honest statement of what.
 
@@ -819,7 +819,7 @@ An `E-` row covers these and something is not finished. The reason column is the
 | Auth, login and permissions (3) | P-062, P-064, P-067 | one masked modal instead of an auth-type → provider → dialog chain with `onBack`; one of four dialog event kinds; the TUI path for `/logout <provider>` is unpinned |
 | Sessions (6) | P-070, P-072, P-074, P-077, P-080, P-082 | no cross-directory scope / rename / delete in the picker; no branch summarisation; fork is at the leaf, not at a chosen message; no cache-warming status; reload covers four resource kinds, not six; share exports HTML and tries gh gist but has no Radius preference and no dedicated happy-path test |
 | Themes (6) | P-091, P-093, P-097, P-099, P-102, P-269 | three palettes and no file-loaded themes; the measured contrast floor is asserted for `high-contrast` only; an unknown name is refused rather than silently reverted; no theme-token language; the ASCII repertoire is overridable but colour depth is not; no theme submenu |
-| Settings (9) | P-104, P-107, P-108, P-109, P-110, P-274, P-276, P-278, P-280 | a fixed eight-row popup; a trust review rather than a layered merge; no keybinding migration; a Windows predicate for glyphs, not chords; 23 ids against 44+; empty states live in transcript notices; one enum edited by name; capacity measured rather than a ten-row cap; the stage is named by the title, not `Step N/M` |
+| Settings (10) | P-104, P-107, P-108, P-109, P-110, P-112, P-274, P-276, P-278, P-280 | a fixed eight-row popup; a trust review rather than a layered merge; no keybinding migration; a Windows predicate for glyphs, not chords; 23 ids against 44+; empty states live in transcript notices; one enum edited by name; capacity measured rather than a ten-row cap; the stage is named by the title, not `Step N/M`; delivery modes both exist (OneAtATime default, All explicit) with no user-facing switch |
 | Project trust (2) | P-115, P-117 | a hash-triggered review answered in the composer, not a five-option dialog naming parent-folder trust; the trigger is a changed config hash, not one of eight named resource kinds |
 | Tool cards (6) | P-138, P-140, P-142, P-145, P-146, P-147 | a named headline instead of bare JSON for an unregistered tool; a title row survives an empty body; twelve rows rather than ten; per-card call-heads adapted from pairs (expanded pairs have no counterpart); arguments not re-rendered as they stream; the diff arrives as a result field, so there is no partial-args guard |
 | Bash cards (6) | P-153, P-154, P-155, P-156, P-158, P-177 | `!!` exclusion named on running, result and error rows (`kept out of context`); the run state is in the header, not a cancellable card line; tab/CR normalisation pinned by source only; twelve rows and which end is kept is unestablished; the `(cancelled)` half is open (no `CardStatus` names one) but the exit **number** is on the card now; duration yes, truncation warning no |
