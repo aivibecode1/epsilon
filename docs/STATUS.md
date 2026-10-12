@@ -4,7 +4,7 @@
 in flight, what is cut, what is broken. The permanent rules live in
 [`../AGENTS.md`](../AGENTS.md), which is locked. Do not put moving state in `AGENTS.md`.
 
-Last updated: 2026-10-11 (goal session: audit, AGENTS.md v3, digest halves, parity verdicts, ADR-037, green battery gate-goal-s3)
+Last updated: 2026-10-12 (goal session: window workspace switching, session rename/archive doors, quit-dialog leftovers, Pi tree/transcript partials, green battery gate-goal-s4)
 
 > **Picking this up from someone else? Read [`HANDOFF.md`](HANDOFF.md) first**, then
 > [`plans/024-finishing-the-objective.md`](plans/024-finishing-the-objective.md) for what is left and
@@ -33,7 +33,7 @@ fixed; `AGENTS.md` v3 rewritten from the tree, validated and relocked.
 - ADR-037 keeps egui on fresh measurements with a defined (not started) experiment path.
 - Hardening: goal-read already cached by design; safety 62 + contrast suites green.
 
-Battery green (`gate-goal-s3-20261011`, 15/15 legs, 2,355/0/19) — goal session complete;
+Battery green (`gate-goal-s4-20261012`, 15/15 legs, 2,385/0/19) — goal session complete;
 see evidence files. Carried owner-side: `auth.json` plaintext (R6),
 real screen-reader run (R5), release tag (R7).
 
@@ -362,15 +362,11 @@ instead of newlining, and the sessions sidebar being a keyboard trap. What remai
 
 ## Verification (what is actually true)
 
-**Latest green battery: [`gate-goal-s3-20261011.txt`](../audit/evidence/gate-goal-s3-20261011.txt),
-2026-10-11 — the tree this file describes, and it is the one HEAD holds.** Fifteen legs, all
-`[exit=0]`, `GATE PASS`. **2,355 passed / 0 failed / 19 ignored across 78 binaries**, summed from
-that one log's `test result:` lines. `CARGO_PROFILE_DEV_DEBUG=0` and `CARGO_PROFILE_TEST_DEBUG=1`,
-both in the log's own header — the second for **fresh metadata**, because the filename the machine
-blocks is derived from the profile hash and moves when the knob does. (Two earlier attempts this
-session failed on machine faults, both preserved: `gate-goal-s1` ran out of disk mid-demo —
-13/15 legs green including the full suite — and `gate-goal-s2`'s test leg went green before the
-runner was killed with it mid-demo.)
+**Latest green battery: [`gate-goal-s4-20261012.txt`](../audit/evidence/gate-goal-s4-20261012.txt),
+2026-10-12 — the tree this file describes, and it is the one HEAD holds.** Fifteen legs, all
+`[exit=0]`, `GATE PASS`. **2,385 passed / 0 failed / 19 ignored across 78 binaries**, summed from
+that one log's `test result:` lines. `CARGO_BUILD_JOBS=1`, single build owner, no edits during
+the run, green first time. (Previous: `gate-goal-s3-20261011`, 2,355/0/19.)
 
 > **Ten findings closed in a row** (rounds 138–147). Rounds 138–144 were things that *happened*
 > wrongly, 145–146 were things that *went unsaid*, and 147 is the first one that **adds a
