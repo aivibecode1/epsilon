@@ -479,6 +479,10 @@ the run. Up from 1,997: the checkpoint round-trip and restore-undo tests. (Previ
 > tail subset of the 64KB-capped model view plus the spill locator — all four cited
 > tests re-run green. Counts now 74/102/122/41.
 >
+> **Think-panel cluster judged (this session): P-262–P-265 dd.** No panel by design:
+> a searchable picker over a handful of levels served by chord+command would be
+> chrome; `ctrl+s` already promises the model default. Counts now 74/102/118/45.
+>
 > **Diffs pair done (this session): P-162/P-163.** Intra-line pairing fires only for
 > one-removed/one-added over whole-token spans, and the leading indent never enters
 > the highlight — both pinned with unit tests (unstripped-spans control fails the
