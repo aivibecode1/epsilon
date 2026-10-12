@@ -640,6 +640,10 @@ the run. Up from 1,997: the checkpoint round-trip and restore-undo tests. (Previ
 > **P-135 judged (this session): no transformer chain, no flag.** User text is never
 > parsed (P-134), so streaming/not has no reader. Counts now 81/111/42/105.
 >
+> **Settings pair judged (this session): P-267/P-268 dd.** Excluded images need no
+> conditional settings; nine fixed-or-keyed behaviors need no toggles. Counts now
+> 81/111/40/107.
+>
 > **Goal 3, Phase 1 (landed): AGENTS.md v4 draft for owner application.** Every v3
 > clause audited against the tree (13 crates, uniform 1.88, TERMINAL+WINDOW tables,
 > 15 legs, SUPPORTED only in a historical comment); the complete v4 text sits in

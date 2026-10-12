@@ -66,7 +66,7 @@ back; it is a reading of the test's source, not a report of a run.
 
 **339 rows** are paired here: Pi's 323 `P-###` behaviours, the 4 `L-###` rows of its inherited `tui.*` keybinding
 table, and the 12 `T-###` rows of its text-measurement core. Every one carries a reference citation; 200 of them
-carry an `ours` citation and 43 do not, and those 43 say so. The counts below are the rows **actually written in
+carry an `ours` citation and 41 do not, and those 41 say so. The counts below are the rows **actually written in
 this document**, tallied from its own tables — not a projection.
 
 | area | rows | done | partial | missing | deliberately different |
@@ -80,7 +80,7 @@ this document**, tallied from its own tables — not a projection.
 | 7. Auth, login and permissions | 8 | 0 | 4 | 2 | 2 |
 | 8. Sessions | 17 | 7 | 6 | 1 | 3 |
 | 9. Themes | 18 | 0 | 6 | 2 | 10 |
-| 10. Settings | 22 | 1 | 10 | 7 | 4 |
+| 10. Settings | 22 | 1 | 10 | 5 | 6 |
 | 11. Project trust | 4 | 1 | 2 | 0 | 1 |
 | 12. Tool cards | 16 | 3 | 6 | 0 | 7 |
 | 13. Bash cards | 11 | 5 | 6 | 0 | 0 |
@@ -89,14 +89,14 @@ this document**, tallied from its own tables — not a projection.
 | 16. Status indicators | 13 | 2 | 5 | 0 | 6 |
 | 17. Footer | 12 | 4 | 4 | 0 | 4 |
 | 18. Selector and overlay components | 79 | 22 | 19 | 25 | 13 |
-| **Total** | **339** | **81** | **111** | **42** | **105** |
+| **Total** | **339** | **81** | **111** | **40** | **107** |
 
 A further **17 rows are not in the counts above**: the 10 `Y-###` rows Pi ships outside its interactive mode (out of
 scope by design) and the 7 `AA-###` rows recording what was never inventoried. Both are listed in full near the end
 of this document, because a row that is silently dropped is how a rule goes unowned.
 
-The shape of that table is the honest shape of a port from a 356-row inventory to a 297-row one: **42 rows have no
-counterpart established on our side, 111 are half-built, 81 are exercised, and 105 are decisions.** The 42 are not
+The shape of that table is the honest shape of a port from a 356-row inventory to a 299-row one: **40 rows have no
+counterpart established on our side, 111 are half-built, 81 are exercised, and 107 are decisions.** The 40 are not
 69/339 failures; most of them sit in Pi's extension, settings-overlay, mermaid, image and tree-navigation surface,
 much of which Epsilon deliberately does not have. Read [Open rows](#open-rows) before reading the table.
 
@@ -446,8 +446,8 @@ surface, and it is why most rows below are `missing` rather than `partial`: ther
 | id | behaviour | reference | status | ours | verified |
 |---|---|---|---|---|---|
 | P-266 | `/settings` opens a bordered, type-to-search list of about thirty settings, each row showing its value | `packages/coding-agent/src/modes/interactive/components/settings-selector.ts:868`, `:983`, `:866`, `:987` | deliberately different | `crates/epsilon-tui/src/app/commands.rs:2069`, `:2004` — `/settings` pushes the resolved global and project config paths, the current model and thinking level, recents and favourites, and tells the reader to edit the TOML and run `/reload` | `no_slash_command_panics_when_typed` |
-| P-267 | `Show images` and `Image width` appear only when the terminal reports image support; the sending rows always appear | `packages/coding-agent/src/modes/interactive/components/settings-selector.ts:469`, `:758`, `:767` | missing | none | — |
-| P-268 | The always-present toggles and their offered ranges: auto-resize, block images, skill commands, hardware cursor, editor padding, output padding, autocomplete height, clear-on-shrink, terminal progress | `packages/coding-agent/src/modes/interactive/components/settings-selector.ts:777`, `:838`, `:786`, `:796`, `:806`, `:816`, `:826`, `:836`, `:846`, `:856` | missing | none | — |
+| P-267 | `Show images` and `Image width` appear only when the terminal reports image support; the sending rows always appear | `packages/coding-agent/src/modes/interactive/components/settings-selector.ts:469`, `:758`, `:767` | deliberately different | Images are excluded scope, so no image settings appear conditionally or otherwise | — |
+| P-268 | The always-present toggles and their offered ranges: auto-resize, block images, skill commands, hardware cursor, editor padding, output padding, autocomplete height, clear-on-shrink, terminal progress | `packages/coding-agent/src/modes/interactive/components/settings-selector.ts:777`, `:838`, `:786`, `:796`, `:806`, `:816`, `:826`, `:836`, `:846`, `:856` | deliberately different | No toggles surface exists (`/settings` is guidance notices): every behavior on the list is either fixed (padding, clear-on-shrink, autocomplete height), excluded (images), or already a key (skill commands, cursor) — nine knobs with nothing behind them | — |
 | P-103 | `outputPad` is exactly 0 or 1 (anything else coerces to 1) and `editorPaddingX` clamps to 0–3 | `packages/coding-agent/src/core/settings-manager.ts:1488-1490`, `:1482-1486` | deliberately different | Layout geometry is constants, not settings: the gutter is a fixed two columns and the composer inset is fixed, so padding knobs with coercion ranges have nothing to turn | — |
 | P-104 | The autocomplete row count is configurable, clamped to 3–20, default 5 | `packages/coding-agent/src/core/settings-manager.ts:1502-1506`, `packages/coding-agent/src/modes/interactive/interactive-mode.ts:639` | partial | `crates/epsilon-tui/src/app/panels.rs:921` — the popup is a fixed eight rows; there is no setting and no clamp | `an_ascii_frame_draws_no_character_a_legacy_console_cannot` (frame) paints the popup but asserts only the CP437 repertoire |
 | P-105 | Mermaid fences render live, at the end, or never, with `off`/`final` honoured and anything else falling back to streaming | `packages/coding-agent/src/core/settings-manager.ts:1512-1515`, `packages/coding-agent/src/modes/interactive/interactive-mode.ts:513-516` | deliberately different | Mermaid is excluded scope for this product — there is no fence renderer and therefore no render-mode setting to honour | — |
@@ -771,7 +771,7 @@ row says so — that is a gap in the inventory, and closing it is cheap.
 | 7. Auth, login and permissions | 8 | 0 | 4 | 2 | 2 |
 | 8. Sessions | 17 | 7 | 6 | 1 | 3 |
 | 9. Themes | 18 | 0 | 6 | 2 | 10 |
-| 10. Settings | 22 | 1 | 10 | 7 | 4 |
+| 10. Settings | 22 | 1 | 10 | 5 | 6 |
 | 11. Project trust | 4 | 1 | 2 | 0 | 1 |
 | 12. Tool cards | 16 | 3 | 6 | 0 | 7 |
 | 13. Bash cards | 11 | 5 | 6 | 0 | 0 |
@@ -780,9 +780,9 @@ row says so — that is a gap in the inventory, and closing it is cheap.
 | 16. Status indicators | 13 | 2 | 5 | 0 | 6 |
 | 17. Footer | 12 | 4 | 4 | 0 | 4 |
 | 18. Selector and overlay components | 79 | 22 | 19 | 25 | 13 |
-| **Total** | **339** | **81** | **111** | **42** | **105** |
+| **Total** | **339** | **81** | **111** | **40** | **107** |
 
-### The `missing` rows — 42
+### The `missing` rows — 40
 
 Every row below has **no** `E-` row establishing the behaviour. Nothing here was found by browsing `crates/`, and
 nothing here is a claim that the behaviour cannot be built.
@@ -794,7 +794,7 @@ nothing here is a claim that the behaviour cannot be built.
 | Auth, login and permissions (2) | P-061, P-063 |
 | Sessions (1) | P-081 |
 | Themes (2) | P-096, P-098 |
-| Settings (7) | P-111, P-113, P-114, P-267, P-268, P-275, P-277 |
+| Settings (5) | P-111, P-113, P-114, P-275, P-277 |
 | Markdown, mermaid and truncation (1) | T-010 |
 | Selector and overlay components (25) | P-230, P-239, P-251, P-256, P-257, P-258, P-259, P-261, P-281, P-283, P-284, P-285, P-286, P-300, P-304, P-306, P-307, P-308, P-311, P-314, P-316, P-317, P-318, P-319, P-323 |
 
