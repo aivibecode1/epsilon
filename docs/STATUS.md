@@ -673,6 +673,15 @@ the run. Matrix at 81/111/24/123. (Previous: `gate-goal3-phase6-20261012`, 2,011
 > uniformly under a filter; a prefix boost would complicate the single comparator.
 > Counts now 81/111/24/123.
 >
+> **P-314 judged (this session): auth state is always on, not conditional.** Each
+> provider row already names credential presence (`key` / `key (env: NAME)` / `—`)
+> plus an `oauth` capability word where a login flow exists — one row per provider
+> answering "how do I authenticate here", not one row per auth-type option. Pi's
+> tag disambiguates multiple auth-type options across rows and hides when uniform;
+> hiding our state words when uniform would remove the answer, not the redundancy.
+> Revisit if a provider ever offers two selectable auth-type rows in one list.
+> Counts now 81/111/23/124.
+>
 > **Goal 3, Phase 1 (landed): AGENTS.md v4 draft for owner application.** Every v3
 > clause audited against the tree (13 crates, uniform 1.88, TERMINAL+WINDOW tables,
 > 15 legs, SUPPORTED only in a historical comment); the complete v4 text sits in
