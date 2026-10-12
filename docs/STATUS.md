@@ -474,6 +474,11 @@ the run. Up from 1,997: the checkpoint round-trip and restore-undo tests. (Previ
 > within seconds. P-208 stays `missing`: no experimental flags exist. Counts now
 > 70/102/126/41.
 >
+> **Startup trio (this session): P-005 partial, P-008/P-119 judged.** The model scope
+> lives persistently in the header rather than printed once to scrollback; extension
+> slash commands cannot collide (closed static vocabulary); extension failures are
+> typed values with a crash budget, not stack traces. Counts now 74/103/115/47.
+>
 > **Bash pair done (this session): P-024/P-160.** Streaming rows already are transcript
 > rows above the composer (no defer/move dance needed) and the card shows a 40-line
 > tail subset of the 64KB-capped model view plus the spill locator — all four cited
