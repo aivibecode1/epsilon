@@ -66,7 +66,7 @@ back; it is a reading of the test's source, not a report of a run.
 
 **339 rows** are paired here: Pi's 323 `P-###` behaviours, the 4 `L-###` rows of its inherited `tui.*` keybinding
 table, and the 12 `T-###` rows of its text-measurement core. Every one carries a reference citation; 200 of them
-carry an `ours` citation and 63 do not, and those 63 say so. The counts below are the rows **actually written in
+carry an `ours` citation and 58 do not, and those 58 say so. The counts below are the rows **actually written in
 this document**, tallied from its own tables — not a projection.
 
 | area | rows | done | partial | missing | deliberately different |
@@ -74,7 +74,7 @@ this document**, tallied from its own tables — not a projection.
 | 1. Startup, header and resources | 20 | 1 | 7 | 2 | 10 |
 | 2. Layout and renderer | 10 | 3 | 2 | 0 | 5 |
 | 3. Composer and editor | 24 | 6 | 12 | 2 | 4 |
-| 4. Slash commands and autocomplete | 13 | 2 | 5 | 5 | 1 |
+| 4. Slash commands and autocomplete | 13 | 2 | 5 | 0 | 6 |
 | 5. Transcript and streaming | 35 | 12 | 4 | 9 | 10 |
 | 6. Model picker and thinking | 9 | 0 | 5 | 0 | 4 |
 | 7. Auth, login and permissions | 8 | 0 | 4 | 2 | 2 |
@@ -89,14 +89,14 @@ this document**, tallied from its own tables — not a projection.
 | 16. Status indicators | 13 | 2 | 5 | 1 | 5 |
 | 17. Footer | 12 | 4 | 4 | 1 | 3 |
 | 18. Selector and overlay components | 79 | 22 | 19 | 25 | 13 |
-| **Total** | **339** | **81** | **110** | **62** | **86** |
+| **Total** | **339** | **81** | **110** | **57** | **91** |
 
 A further **17 rows are not in the counts above**: the 10 `Y-###` rows Pi ships outside its interactive mode (out of
 scope by design) and the 7 `AA-###` rows recording what was never inventoried. Both are listed in full near the end
 of this document, because a row that is silently dropped is how a rule goes unowned.
 
-The shape of that table is the honest shape of a port from a 356-row inventory to a 277-row one: **62 rows have no
-counterpart established on our side, 110 are half-built, 81 are exercised, and 86 are decisions.** The 62 are not
+The shape of that table is the honest shape of a port from a 356-row inventory to a 282-row one: **57 rows have no
+counterpart established on our side, 110 are half-built, 81 are exercised, and 91 are decisions.** The 57 are not
 69/339 failures; most of them sit in Pi's extension, settings-overlay, mermaid, image and tree-navigation surface,
 much of which Epsilon deliberately does not have. Read [Open rows](#open-rows) before reading the table.
 
@@ -262,18 +262,18 @@ The four easter eggs at the end of this area are listed for completeness; none i
 | id | behaviour | reference | status | ours | verified |
 |---|---|---|---|---|---|
 | P-041 | 24 built-in slash commands are offered from one table that also drives conflict detection | `packages/coding-agent/src/core/slash-commands.ts:19-44`, `packages/coding-agent/src/modes/interactive/interactive-mode.ts:3140-3338` | done | `crates/epsilon-contracts/src/command.rs:47`, `:383` — 43 items over 37 heads, with the desktop's capability derived by subtraction rather than a second list | `no_slash_command_panics_when_typed` (drives every head through the real key path), `every_offered_command_is_reachable_from_slash_items`, `every_head_in_command_heads_is_parsed` |
-| P-042 | `/debug`, `/arminsayshi` and `/dementedelves` work but appear in no list | `packages/coding-agent/src/modes/interactive/interactive-mode.ts:3261-3275`, `:6860-6891` | missing | none | — |
+| P-042 | `/debug`, `/arminsayshi` and `/dementedelves` work but appear in no list | `packages/coding-agent/src/modes/interactive/interactive-mode.ts:3261-3275`, `:6860-6891` | deliberately different | No hidden commands exist: every head in `COMMAND_HEADS` is reachable from `SLASH_ITEMS` (`crates/epsilon-contracts/src/command.rs:47`, `:407`) — an unlisted verb is a gap, not a feature | `every_offered_command_is_reachable_from_slash_items` pins it (`command.rs:670`) |
 | P-043 | The `/` menu merges built-ins, prompt templates, extension commands and `/skill:<name>` in one list | `packages/coding-agent/src/modes/interactive/interactive-mode.ts:776-811` | partial | `crates/epsilon-tui/src/app/completion.rs:23` — the popup is built from `slash_items`; skills and templates exist as commands (`crates/epsilon-tui/src/app/commands.rs:321`, `:1900`) but no `/skill:` entries or extension commands are composed into the menu | `slash_popup_opens_and_arrows_move_selection` (state only) |
 | P-044 | `/model`, `/thinking` and `/login` each complete their own arguments | `packages/coding-agent/src/modes/interactive/interactive-mode.ts:722-773` | partial | `crates/epsilon-tui/src/app/keys.rs:1478` — the picker and the tree read the composer buffer as their filter; there is no per-command argument completer | `filtered_results_are_ranked_by_fuzzy_score_best_first`, `two_stage_picker_descends_and_applies_model` |
-| P-045 | Non-built-in completion descriptions are prefixed with a bracketed scope tag (`[u]`, `[p]`, `p:git:…`) | `packages/coding-agent/src/modes/interactive/interactive-mode.ts:665-689`, `:691-697` | missing | none — descriptions are drawn dim and right-aligned (`crates/epsilon-tui/src/app/panels.rs:946`), but carry no source tag | — |
+| P-045 | Non-built-in completion descriptions are prefixed with a bracketed scope tag (`[u]`, `[p]`, `p:git:…`) | `packages/coding-agent/src/modes/interactive/interactive-mode.ts:665-689`, `:691-697` | deliberately different | Every completion item is built in (`SLASH_ITEMS` derives from `COMMAND_HEADS`), so there are no scopes to tag — descriptions ride dim in the hint column instead (`crates/epsilon-tui/src/app/panels.rs:939`) | — |
 | P-046 | `/model provider/id` switches immediately; only on a miss does it refresh the catalogs and open a pre-filled selector | `packages/coding-agent/src/modes/interactive/interactive-mode.ts:5116-5138`, `:5140-5172` | partial | `crates/epsilon-tui/src/app/keys.rs:1264` — an exact id applies instantly and pushes a notice; there is no refresh-then-open-picker fallback and no degradation message | `slash_model_direct_applies_instantly` |
 | P-047 | `/scoped-models` is a searchable checklist that rescopes the cycle list live and persists on `Ctrl+S` | `packages/coding-agent/src/modes/interactive/interactive-mode.ts:5302-5422`, `packages/coding-agent/src/core/keybindings.ts:186-209` | partial | `crates/epsilon-tui/src/app/commands.rs` (head `/scoped-models`, `crates/epsilon-contracts/src/command.rs:551`) — the head parses and runs; no `E-` row establishes the overlay | `no_slash_command_panics_when_typed` |
 | P-083 | `/hotkeys` prints a bordered table of the **resolved** bindings, not the defaults | `packages/coding-agent/src/modes/interactive/interactive-mode.ts:6728-6843` | done | `crates/epsilon-tui/src/app/commands.rs:2050`, `:1990` — a `bindings (effective — ~/.config/epsilon/keybindings.json):` header and one line per id, so a user who rebinds a key sees their chord | `no_slash_command_panics_when_typed`, `an_unbound_key_produces_a_visible_response` |
 | P-084 | `/changelog` renders every entry, newest first | `packages/coding-agent/src/modes/interactive/interactive-mode.ts:6693-6712` | partial | `crates/epsilon-tui/src/app/commands.rs` (head at `crates/epsilon-contracts/src/command.rs:547`) — driven only by the all-heads sweep | `no_slash_command_panics_when_typed` |
-| P-221 | `/arminsayshi` plays a 31×36 half-block animated portrait with one of seven reveal effects | `packages/coding-agent/src/modes/interactive/components/armin.ts:2` | missing | none — not a parity target | — |
-| P-222 | Selecting an `opencode` model whose id contains `kimi-k2.5` fires a portrait automatically, from three call sites | `packages/coding-agent/src/modes/interactive/interactive-mode.ts:6911-6915` | missing | none — not a parity target | — |
+| P-221 | `/arminsayshi` plays a 31×36 half-block animated portrait with one of seven reveal effects | `packages/coding-agent/src/modes/interactive/components/armin.ts:2` | deliberately different | A mascot portrait of another project's identity: `AGENTS.md` §10 and `CREDITS.md` forbid taking a name, logo, mascot or brand — never present others' work as ours | — |
+| P-222 | Selecting an `opencode` model whose id contains `kimi-k2.5` fires a portrait automatically, from three call sites | `packages/coding-agent/src/modes/interactive/interactive-mode.ts:6911-6915` | deliberately different | As P-221, plus unsolicited: an animation firing on model selection would interrupt the task it was selected for | — |
 | P-223 | Clicking the header logo plays a full-screen braille-dust overlay animation | `packages/coding-agent/src/modes/interactive/interactive-mode.ts:1058`, `packages/coding-agent/src/modes/interactive/components/pi-logo-animation.ts:778` | deliberately different | Pi captures clicks (`handleMouse`, `interactive-mode.ts:258` — the other side, cited honestly); this product does not (`crates/epsilon-tui/src/app.rs` — capture stays OFF so drag-select copies, and opencode ships `useMouse: false`, the same stance). An easter egg that needs a click the program never receives cannot be adopted, and a logo animation is not a behaviour a keyboard path can carry | — |
-| P-224 | `/dementedelves` appends an accent-bordered announcement card with a bundled PNG | `packages/coding-agent/src/modes/interactive/components/earendil-announcement.ts:32`, `:13` | missing | none — not a parity target | — |
+| P-224 | `/dementedelves` appends an accent-bordered announcement card with a bundled PNG | `packages/coding-agent/src/modes/interactive/components/earendil-announcement.ts:32`, `:13` | deliberately different | As P-221: third-party announcements and bundled images are out of scope twice over (brand rule plus mermaid/images exclusion) | — |
 
 ## 5. Transcript and streaming
 
@@ -765,7 +765,7 @@ row says so — that is a gap in the inventory, and closing it is cheap.
 | 1. Startup, header and resources | 20 | 1 | 7 | 2 | 10 |
 | 2. Layout and renderer | 10 | 3 | 2 | 0 | 5 |
 | 3. Composer and editor | 24 | 6 | 12 | 2 | 4 |
-| 4. Slash commands and autocomplete | 13 | 2 | 5 | 5 | 1 |
+| 4. Slash commands and autocomplete | 13 | 2 | 5 | 0 | 6 |
 | 5. Transcript and streaming | 35 | 12 | 4 | 9 | 10 |
 | 6. Model picker and thinking | 9 | 0 | 5 | 0 | 4 |
 | 7. Auth, login and permissions | 8 | 0 | 4 | 2 | 2 |
@@ -780,9 +780,9 @@ row says so — that is a gap in the inventory, and closing it is cheap.
 | 16. Status indicators | 13 | 2 | 5 | 1 | 5 |
 | 17. Footer | 12 | 4 | 4 | 1 | 3 |
 | 18. Selector and overlay components | 79 | 22 | 19 | 25 | 13 |
-| **Total** | **339** | **81** | **110** | **62** | **86** |
+| **Total** | **339** | **81** | **110** | **57** | **91** |
 
-### The `missing` rows — 62
+### The `missing` rows — 57
 
 Every row below has **no** `E-` row establishing the behaviour. Nothing here was found by browsing `crates/`, and
 nothing here is a claim that the behaviour cannot be built.
@@ -791,7 +791,6 @@ nothing here is a claim that the behaviour cannot be built.
 |---|---|
 | Startup, header and resources (2) | P-004, P-088 |
 | Composer and editor (2) | P-212, P-213 |
-| Slash commands and autocomplete (5) | P-042, P-045, P-221, P-222, P-224 |
 | Transcript and streaming (9) | P-053, P-056, P-135, P-178, P-179, P-180, P-181, P-182, P-184 |
 | Auth, login and permissions (2) | P-061, P-063 |
 | Sessions (1) | P-081 |

@@ -603,6 +603,11 @@ the run. Up from 1,997: the checkpoint round-trip and restore-undo tests. (Previ
 > exactly at kind change, never first/twice/inside continuations — pinned by a
 > new unit test (no-separation control fails it). Counts now 81/110/62/86.
 >
+> **Slash cluster judged (this session): P-042/P-045/P-221/P-222/P-224 dd.** No
+> hidden commands (enforced by test); all items built-in so no scope tags;
+> mascots and announcements refused by the credits rule. Counts now
+> 81/110/57/91.
+>
 > **Goal 3, Phase 1 (landed): AGENTS.md v4 draft for owner application.** Every v3
 > clause audited against the tree (13 crates, uniform 1.88, TERMINAL+WINDOW tables,
 > 15 legs, SUPPORTED only in a historical comment); the complete v4 text sits in
