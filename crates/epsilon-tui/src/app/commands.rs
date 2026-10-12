@@ -155,12 +155,17 @@ pub(crate) fn flatten_tree(
         ordered.sort_by_key(|n| !subtree_contains(n, leaf_id));
     }
     for n in ordered {
+        // P-304: indent grows only at branch points — a lone child keeps its
+        // parent's depth, so a long single lane reads flat instead of marching
+        // off the panel. (Filtered views recompute against the visible tree in
+        // `visible_depth`; this is the unfiltered structure.)
+        let child_depth = depth + usize::from(n.children.len() > 1);
         // P-305: pi's drop rule (`tree-selector.ts:346-356`) — a tool-only turn
         // is navigation noise. The recursion continues past a dropped row so
         // its children stay listed, exactly as pi's flat filter does; their
         // depth is recomputed downstream (`visible_depth` promotes orphans).
         if dropped_from_tree(&n.entry, leaf_id) {
-            flatten_tree(&n.children, depth + 1, active, labels, leaf_id, out);
+            flatten_tree(&n.children, child_depth, active, labels, leaf_id, out);
             continue;
         }
         out.push(crate::app::TimelineRow {
@@ -173,7 +178,7 @@ pub(crate) fn flatten_tree(
             parent: n.entry.parent_id.clone(),
             label: labels.get(&n.entry.id).cloned(),
         });
-        flatten_tree(&n.children, depth + 1, active, labels, leaf_id, out);
+        flatten_tree(&n.children, child_depth, active, labels, leaf_id, out);
     }
 }
 
@@ -252,24 +257,47 @@ pub(crate) fn apply_filter(
     }
     let by_id: std::collections::HashMap<&str, &crate::app::TimelineRow> =
         rows.iter().map(|r| (r.id.as_str(), r)).collect();
+    let child_counts = visible_child_counts(rows, &visible);
 
     rows.iter()
         .filter(|r| visible.contains(r.id.as_str()))
         .map(|r| {
             let mut row = r.clone();
-            row.depth = visible_depth(r, &visible, &by_id);
+            row.depth = visible_depth(r, &visible, &by_id, &child_counts);
             row
         })
         .collect()
 }
 
+/// Visible children per visible parent, for the branch-point indent rule.
+///
+/// Only visible children count: a sibling the filter hid does not fork the
+/// view, so it must not indent the rows that survived.
+fn visible_child_counts<'a>(
+    rows: &'a [crate::app::TimelineRow],
+    visible: &std::collections::HashSet<&str>,
+) -> std::collections::HashMap<&'a str, usize> {
+    let mut counts: std::collections::HashMap<&'a str, usize> = std::collections::HashMap::new();
+    for r in rows {
+        if !visible.contains(r.id.as_str()) {
+            continue;
+        }
+        if let Some(p) = r.parent.as_deref()
+            && visible.contains(p)
+        {
+            *counts.entry(p).or_default() += 1;
+        }
+    }
+    counts
+}
+
 /// A surviving row's depth in the **visible** tree.
 ///
-/// Walks up the parent chain and counts only the ancestors that are still on
-/// screen. A row whose parent was filtered out therefore becomes shallower --
-/// which is what "recalculate the indent based on the visible tree" means in
-/// pi (`tree-selector.ts:408`), and what stops a row from being indented under
-/// something the reader cannot see.
+/// P-304: indentation grows only at branch points. The walk counts visible
+/// ancestors with more than one visible child; single-child chains stay flat,
+/// so a 400-entry lane reads at depth 0 instead of marching off the panel.
+/// A row whose parent is gone from the view is still promoted to a root: the
+/// walk stops at the first invisible ancestor.
 ///
 /// The walk is bounded by the row count, which is enough even if a hand-edited
 /// file has a parent cycle: a cycle would otherwise loop forever, and the bound
@@ -278,6 +306,7 @@ fn visible_depth(
     row: &crate::app::TimelineRow,
     visible: &std::collections::HashSet<&str>,
     by_id: &std::collections::HashMap<&str, &crate::app::TimelineRow>,
+    child_counts: &std::collections::HashMap<&str, usize>,
 ) -> usize {
     let mut depth = 0usize;
     let mut cursor = row.parent.as_deref();
@@ -290,7 +319,9 @@ fn visible_depth(
             // here precisely because it passed on its own merits.
             break;
         }
-        depth += 1;
+        if child_counts.get(id).is_some_and(|&c| c > 1) {
+            depth += 1;
+        }
         cursor = by_id.get(id).and_then(|r| r.parent.as_deref());
     }
     depth
@@ -520,7 +551,33 @@ pub(crate) fn visible_rows(
     let filtered = apply_filter(all, filter, labels);
     let searched = apply_search(&filtered, query);
     let with_mandatory = apply_mandatory(all, searched);
-    apply_folds(&with_mandatory, folded)
+    let mut rows = apply_folds(&with_mandatory, folded);
+    // P-304, second half: search, mandatory rows and folds all change which
+    // rows are visible after `apply_filter` ran, so the depth it computed can
+    // dangle (indented under a row the fold just hid). Re-indent against the
+    // final on-screen set — pi's `recalculateVisualStructure` sits at the same
+    // point in its pipeline (`tree-selector.ts:408`).
+    reindent_visible(&mut rows);
+    rows
+}
+
+/// Re-indent finished rows against exactly the rows on screen (P-304).
+///
+/// Same branch-point rule as [`visible_depth`], rebuilt here because the
+/// caller only has the survivors: depths are computed first (the lookup
+/// borrows the rows) and assigned second.
+fn reindent_visible(rows: &mut [crate::app::TimelineRow]) {
+    let visible: std::collections::HashSet<&str> = rows.iter().map(|r| r.id.as_str()).collect();
+    let by_id: std::collections::HashMap<&str, &crate::app::TimelineRow> =
+        rows.iter().map(|r| (r.id.as_str(), r)).collect();
+    let child_counts = visible_child_counts(rows, &visible);
+    let depths: Vec<usize> = rows
+        .iter()
+        .map(|r| visible_depth(r, &visible, &by_id, &child_counts))
+        .collect();
+    for (row, depth) in rows.iter_mut().zip(depths) {
+        row.depth = depth;
+    }
 }
 
 /// The goal as a few lines of transcript.

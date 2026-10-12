@@ -5132,6 +5132,78 @@ fn a_filter_hides_entries_and_promotes_the_ones_left() {
     );
 }
 
+/// P-304: indentation grows only at branch points, recomputed against the
+/// visible tree after a filter.
+///
+/// A linear lane — root, two user turns, a fork with two leaves — reads flat
+/// until the fork: without the rule the last lane row would sit at depth 3
+/// and a 400-entry session would march off the panel.
+#[test]
+fn single_child_chains_stay_flat_and_only_forks_step() {
+    use super::commands::{apply_filter, visible_rows};
+    use crate::app::{TimelineRow, TreeFilter};
+
+    let row = |id: &str, parent: Option<&str>| TimelineRow {
+        seq: 0,
+        id: id.into(),
+        kind: "user".into(),
+        snippet: id.into(),
+        depth: 999,
+        on_active: true,
+        parent: parent.map(str::to_string),
+        label: None,
+    };
+    // root -> a -> b -> [c, d]: one lane, then a fork.
+    let rows = vec![
+        row("root", None),
+        row("a", Some("root")),
+        row("b", Some("a")),
+        row("c", Some("b")),
+        row("d", Some("b")),
+    ];
+    let depth_of = |out: &[TimelineRow], id: &str| {
+        out.iter().find(|r| r.id == id).expect("row survives").depth
+    };
+    let out = apply_filter(&rows, TreeFilter::All, &Default::default());
+    assert_eq!(depth_of(&out, "root"), 0, "root: {out:?}");
+    assert_eq!(
+        depth_of(&out, "a"),
+        0,
+        "single-child lane stays flat: {out:?}"
+    );
+    assert_eq!(
+        depth_of(&out, "b"),
+        0,
+        "single-child lane stays flat: {out:?}"
+    );
+    assert_eq!(depth_of(&out, "c"), 1, "fork children step once: {out:?}");
+    assert_eq!(depth_of(&out, "d"), 1, "fork children step once: {out:?}");
+
+    // Hiding one fork leaf collapses the fork: the survivor flattens, because
+    // its parent no longer forks the *visible* tree.
+    let minus_d: Vec<TimelineRow> = rows.iter().filter(|r| r.id != "d").cloned().collect();
+    let flat = apply_filter(&minus_d, TreeFilter::All, &Default::default());
+    assert_eq!(
+        depth_of(&flat, "c"),
+        0,
+        "a fork with one visible child is a lane: {flat:?}"
+    );
+
+    // Folds change the visible tree too: folding the fork hides the leaves,
+    // and the lane stays flat through the whole pipeline.
+    let mut folded = std::collections::HashSet::new();
+    folded.insert("b".to_string());
+    let piped = visible_rows(&rows, TreeFilter::All, &Default::default(), "", &folded);
+    assert!(
+        piped.iter().all(|r| r.depth == 0),
+        "folded fork leaves a flat lane: {piped:?}"
+    );
+    assert!(
+        !piped.iter().any(|r| r.id == "c" || r.id == "d"),
+        "folded leaves are hidden: {piped:?}"
+    );
+}
+
 #[test]
 fn cycling_the_filter_is_a_round_trip() {
     use crate::app::TreeFilter;
@@ -5803,6 +5875,84 @@ fn the_tree_panel_draws_its_filter_search_field_and_fold_glyphs() {
         "the seven-bit repertoire has to carry the same distinction or the panel is \
          unreadable on the console most people are using"
     );
+}
+
+/// P-304 on pixels: a lane reads flat, fork leaves step once.
+///
+/// Rows run through the real pipeline (`visible_rows`, filter All, no folds),
+/// so the frame pins the indent rule rather than hand-set depths. The `#`
+/// column is compared relatively — the selection bar is one cell either way,
+/// so selected and unselected rows share the same geometry.
+#[test]
+fn the_tree_panel_indents_only_at_branch_points() {
+    use super::commands::visible_rows;
+    use crate::app::{TimelineRow, TreeFilter};
+
+    let (mut app, _agent, _rx) = test_app();
+    let row = |seq: u64, id: &str, parent: Option<&str>, snippet: &str| TimelineRow {
+        seq,
+        id: id.into(),
+        kind: "user".into(),
+        snippet: snippet.into(),
+        depth: 999,
+        on_active: true,
+        parent: parent.map(str::to_string),
+        label: None,
+    };
+    // Lane of three, then a fork with two leaves.
+    let all = vec![
+        row(0, "root", None, "lane root words"),
+        row(1, "a", Some("root"), "lane middle words"),
+        row(2, "b", Some("a"), "lane tail words"),
+        row(3, "c", Some("b"), "fork left words"),
+        row(4, "d", Some("b"), "fork right words"),
+    ];
+    app.timeline_all = all;
+    app.timeline_entries = visible_rows(
+        &app.timeline_all.clone(),
+        TreeFilter::All,
+        &Default::default(),
+        "",
+        &Default::default(),
+    );
+    app.timeline_open = true;
+    app.timeline_index = 0;
+
+    for (width, height) in [(80u16, 24u16), (100, 30)] {
+        let rows = render_rows(&mut app, width, height);
+        let hash_col = |needle: &str| {
+            rows.iter()
+                .find(|r| r.contains(needle))
+                .unwrap_or_else(|| panic!("row {needle:?} must be on screen at {width}x{height}"))
+                // Character position, not byte index: the selection bar is
+                // one cell either way but not one byte, so byte columns would
+                // disagree between the selected row and the rest.
+                .chars()
+                .position(|c| c == '#')
+                .expect("a timeline row carries its #seq")
+        };
+        let lane = hash_col("lane middle words");
+        assert_eq!(
+            hash_col("lane root words"),
+            lane,
+            "the lane starts flat at {width}x{height}"
+        );
+        assert_eq!(
+            hash_col("lane tail words"),
+            lane,
+            "the lane stays flat at {width}x{height}"
+        );
+        assert_eq!(
+            hash_col("fork left words"),
+            lane + 2,
+            "one indent step is two columns at {width}x{height}"
+        );
+        assert_eq!(
+            hash_col("fork right words"),
+            lane + 2,
+            "both fork leaves step together at {width}x{height}"
+        );
+    }
 }
 
 /// **A search field wider than its panel must say it was cut, and on the frame.**

@@ -712,6 +712,18 @@ the run. Matrix at 81/111/24/123. (Previous: `gate-goal3-phase6-20261012`, 2,011
 > would spend user tokens on a report with no recipient. Revisit on a support
 > endpoint or a crash log. Counts now 84/111/18/126.
 >
+> **P-304 adapted (this session): branch-point indent, recomputed to the
+> screen.** Linear lanes stay flat in `flatten_tree` and in the visible
+> pipeline (only ancestors with more than one visible child count), with a
+> final re-indent at the end of `visible_rows` so search/mandatory/folds
+> cannot dangle. Two tests (unit lane/fork/collapse/fold + frame `#` columns
+> at 80x24 and 100x30; old unconditional rule fails both); full TUI suite
+> green, clippy clean. **P-311 judged:** fork executes at the highlight with
+> no dialog (P-310) — a captioned picker would select what is already chosen.
+> **P-239 judged:** one flat newest-first list by tested P-242 decision;
+> lineage surfaces per row; revisit if fork families go unfindable.
+> Counts now 85/111/15/128.
+>
 > **P-230 adapted (this session): Tab toggles workspace/all session scopes.** Bare
 > Tab flips `SessionScope` and rescans under the same filter (highlight restarts
 > at the top — the row it pointed at may not exist in the other scope); the All
