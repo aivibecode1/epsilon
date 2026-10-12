@@ -763,6 +763,11 @@ the run. Matrix at 81/111/24/123. (Previous: `gate-goal3-phase6-20261012`, 2,011
 > Error-jumps scoped out as slice 3: diagnostics reach the TUI only as
 > rendered strings, so jumping needs a structured channel that doesn't exist.
 >
+> **Phase 3 slice 3 verdict (this session): tree-to-error jumps NOT BUILT.**
+> Recorded as roadmap item 13 with its reopen trigger (structured diagnostics
+> query in `epsilon-lsp`, or `--lsp` default with servers present) — not
+> half-built. Phase 3 closes with find + tabs landed.
+>
 > **Phase 3 slice 1 (this session): viewer find.** `/` in view mode searches
 > the open file — plain substring, count `i of n`, Enter/Down/n forward,
 > Up/PageUp/p back, wrapping both ways, scroll following minimally, Esc
@@ -3082,6 +3087,14 @@ against the same bar and merge into the list above.
     16-point steps, and one small JSON file per workspace. **Still open:** the new bindings are
     in neither the palette nor `/hotkeys`, because both need a `Command` variant the shared
     registry does not yet exist to host — which is item 9, not a separate piece of work.
+13. **Tree-to-error jumps (Phase 3 slice 3) — NOT BUILT, recorded with its trigger.**
+    Diagnostics reach the TUI only as rendered strings: agent edits get an LSP report appended
+    to the tool result (`epsilon-tools/src/files.rs`), viewer saves consult no diagnostics at
+    all, and `DiagnosticsService::after_change` returns a report, not file+line structure.
+    Jumping needs a structured channel (per-file diagnostics query + TUI list + viewer jump)
+    that does not exist, behind `--lsp` plus installed servers. Building it now would be
+    infrastructure for narrow-gated value. **Trigger to reopen:** a structured diagnostics
+    query lands in `epsilon-lsp`, or `--lsp` becomes the default path with servers present.
 
 ### Considered and deliberately not doing
 
