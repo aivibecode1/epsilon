@@ -571,6 +571,11 @@ the run. Up from 1,997: the checkpoint round-trip and restore-undo tests. (Previ
 > the highlight — both pinned with unit tests (unstripped-spans control fails the
 > whitespace one). Counts now 72/102/124/41.
 >
+> **Cost-floor + notice-shape (later slices): P-052 partial, P-057 judged.** Unpriced
+> buckets floor the total with a trailing `+` (new unit test, floor-forced-false
+> control fails it) but no per-miss rebill sentence; notices are durable rows, so
+> same-line coalescing would rewrite history. Counts now 78/108/71/82.
+>
 > **Goal 3, Phase 1 (landed): AGENTS.md v4 draft for owner application.** Every v3
 > clause audited against the tree (13 crates, uniform 1.88, TERMINAL+WINDOW tables,
 > 15 legs, SUPPORTED only in a historical comment); the complete v4 text sits in

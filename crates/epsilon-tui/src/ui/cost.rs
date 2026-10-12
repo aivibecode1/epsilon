@@ -462,4 +462,31 @@ mod tests {
             "a free model is priced at zero, not unpriced"
         );
     }
+
+    /// Tokens moved in a bucket the registry does not price make the total a
+    /// floor, and the header marks it with a trailing `+` (P-052): a precise
+    /// total that silently omits real tokens is the failure this marks against.
+    #[test]
+    fn unpriced_bucket_movement_marks_the_total_a_floor() {
+        let priced = TokenPrices {
+            input: 3_000_000,
+            output: 15_000_000,
+            cache_read: 0,
+            cache_write: 0,
+        };
+        let moved_cache = TokenCounts {
+            input: 1_000,
+            output: 100,
+            cache_read: 5_000,
+            cache_write: 0,
+        };
+        assert!(
+            is_floor(moved_cache, priced),
+            "5k cache-read tokens at price 0 must floor the total"
+        );
+        assert!(
+            !is_floor(counts(1_000, 100), prices()),
+            "fully priced movement is exact, not a floor"
+        );
+    }
 }
