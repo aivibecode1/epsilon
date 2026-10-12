@@ -370,6 +370,17 @@ pub(crate) struct App {
     /// Plan 009: timeline picker overlay (pi timeline parity — not a notice dump).
     timeline_open: bool,
     timeline_index: usize,
+    /// Phase 3 (TUI as IDE): workspace tree sidebar open (F6). When open the
+    /// tree owns the keyboard like every other overlay (see `overlay_open`).
+    pub(crate) tree_open: bool,
+    /// Cursor row within `tree_rows`.
+    tree_cursor: usize,
+    /// Visible rows from the last `refresh_tree`.
+    tree_rows: Vec<crate::tree::TreeRow>,
+    /// Collapsed directory rels; everything starts expanded.
+    tree_collapsed: std::collections::BTreeSet<String>,
+    /// Whether the last refresh hit the row budget (drawn as a capped note).
+    tree_capped: bool,
     /// Rows in the `/tree` + `/timeline` picker, in display order.
     ///
     /// M196: this was `(seq, kind, snippet)` built from `branch_entries()` — the
@@ -1754,9 +1765,32 @@ fn draw(f: &mut Frame<'_>, app: &mut App) {
         );
         return;
     }
+    // Phase 3 (TUI as IDE): tree sidebar. A 30-column pane beside a transcript
+    // that keeps its own floor (`MIN_WIDTH`); narrower than that, the tree draws
+    // as a full-area overlay after the shell — one draw function, two rects.
+    let sidebar_wide = app.tree_open && area.width >= 30 + crate::ui::layout::MIN_WIDTH;
+    let main = if sidebar_wide {
+        let chunks = ratatui::layout::Layout::default()
+            .direction(ratatui::layout::Direction::Horizontal)
+            .constraints([
+                ratatui::layout::Constraint::Length(30),
+                ratatui::layout::Constraint::Min(crate::ui::layout::MIN_WIDTH),
+            ])
+            .split(area);
+        crate::tree::draw_tree(
+            f,
+            chunks[0],
+            &app.tree_rows,
+            app.tree_cursor,
+            app.tree_capped,
+        );
+        chunks[1]
+    } else {
+        area
+    };
     // The composer wraps to the same width the shell will draw it at, so the
     // caret lands in the column the text actually occupies.
-    let draft_width = crate::ui::shell::composer_text_width(area.width, &app.theme.glyphs);
+    let draft_width = crate::ui::shell::composer_text_width(main.width, &app.theme.glyphs);
     let (draft_rows, caret_row, caret_col) =
         composer_rows(&app.input, app.cursor_chars, draft_width); // Before the chrome, and before the hints that describe it: measure the
     // transcript's own region, not the frame, so the footer's position badge and
@@ -1768,7 +1802,7 @@ fn draw(f: &mut Frame<'_>, app: &mut App) {
     // draft row count — and [`App::measure_transcript_window`] is the one place
     // that knows both, so the two cannot drift apart silently.
     let draft_count = draft_rows.len().max(1) as u16;
-    app.geometry = app.measure_transcript_window(area, draft_count);
+    app.geometry = app.measure_transcript_window(main, draft_count);
     // The theme is `Copy`, so the closure below can still take `&mut app`: the
     // alternative — holding a borrow of `app.theme` across the call — is what the
     // borrow checker refuses, and rightly, since the closure mutates the app.
@@ -1804,7 +1838,7 @@ fn draw(f: &mut Frame<'_>, app: &mut App) {
         session_label: &session_label,
     };
     let geometry = app.geometry;
-    let painted = crate::ui::shell::paint(f, area, &shell, |f, transcript_area| {
+    let painted = crate::ui::shell::paint(f, main, &shell, |f, transcript_area| {
         draw_transcript(f, app, transcript_area, geometry);
     });
     let transcript_area = painted.transcript;
@@ -1833,6 +1867,15 @@ fn draw(f: &mut Frame<'_>, app: &mut App) {
     }
     if app.timeline_open {
         draw_timeline(f, app, f.area());
+    }
+    if app.tree_open && !sidebar_wide {
+        crate::tree::draw_tree(
+            f,
+            f.area(),
+            &app.tree_rows,
+            app.tree_cursor,
+            app.tree_capped,
+        );
     }
     draw_at_file(f, app, transcript_area);
     draw_slash_autocomplete(f, app, transcript_area);

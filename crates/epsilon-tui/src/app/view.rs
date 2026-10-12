@@ -413,6 +413,27 @@ impl App {
             } else {
                 Hints::approval_deny_only()
             }
+        } else if self.tree_open {
+            // The tree has no filter box, so the generic overlay hints' "type
+            // filter" would advertise a key the tree does not act on. Its own
+            // row names what the tree honours: arrows, Enter, Esc, and F6.
+            let arrows = crate::ui::overlay::up_down(
+                crate::ui::theme::Glyphs::detect().up,
+                crate::ui::theme::Glyphs::detect().down,
+            );
+            let mut keys = vec![
+                (arrows, "move".into()),
+                ("enter".into(), "open".into()),
+                ("esc".into(), "close".into()),
+            ];
+            if let Some(toggle) = self.keybindings.key_text("app.tree.toggle") {
+                keys.push((toggle, "tree".into()));
+            }
+            Hints {
+                mode: Some("tree".into()),
+                keys,
+                ..Hints::default()
+            }
         } else if self.overlay_open() {
             // Overlays own the keyboard; the footer points at their own keys
             // rather than advertising send/stop, which would not work. The
@@ -487,6 +508,7 @@ impl App {
             || self.label_prompt_open
             || self.auth_pick_open
             || self.timeline_open
+            || self.tree_open
             || self.session_browser.is_some()
             || self.pending_ask.is_some()
     }

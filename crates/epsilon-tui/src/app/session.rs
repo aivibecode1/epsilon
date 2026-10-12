@@ -133,6 +133,11 @@ impl App {
             timeline_open: false,
             timeline_index: 0,
             timeline_entries: Vec::new(),
+            tree_open: false,
+            tree_cursor: 0,
+            tree_rows: Vec::new(),
+            tree_collapsed: std::collections::BTreeSet::new(),
+            tree_capped: false,
             jump_mode: None,
             tree_filter: crate::app::TreeFilter::default(),
             tree_query: String::new(),
@@ -225,6 +230,36 @@ impl App {
         self.input.clear();
         self.cursor_chars = 0;
         self.session_browser = Some(browser);
+    }
+
+    /// Phase 3 (TUI as IDE): workspace tree sidebar (F6). Opens focused and
+    /// rebuilds from the workspace; closing returns the keyboard to the composer.
+    pub(super) fn toggle_tree(&mut self) {
+        self.tree_open = !self.tree_open;
+        if self.tree_open {
+            self.tree_cursor = 0;
+            self.refresh_tree();
+        }
+    }
+
+    /// Rebuild the sidebar rows from the workspace through the shared core
+    /// walk — same traversal, same ignore rules as `@` completion, with the
+    /// tree's own row budget (`tree.rs`). A workspace that cannot be read is
+    /// an empty tree with an honest empty state, not an error: the walk
+    /// already returns no rows there, and refusing to open would hide exactly
+    /// the message that teaches it (the P-243 rule, applied here).
+    pub(super) fn refresh_tree(&mut self) {
+        let ignore = epsilon_core::ignore::IgnoreSet::load(
+            &self.workspace_root,
+            crate::at_files::AT_IGNORE_FILES,
+        );
+        let mut budget = crate::tree::TREE_ROW_BUDGET;
+        let paths = epsilon_core::walk::walk_files(&self.workspace_root, &ignore, &mut budget);
+        self.tree_capped = paths.len() >= crate::tree::TREE_ROW_BUDGET;
+        self.tree_rows = crate::tree::build_visible_rows(&paths, &self.tree_collapsed);
+        if self.tree_cursor >= self.tree_rows.len() {
+            self.tree_cursor = self.tree_rows.len().saturating_sub(1);
+        }
     }
 
     /// M59: ask the event loop to open `$EDITOR` on the current draft.

@@ -553,6 +553,95 @@ pub(crate) fn handle_key(app: &mut App, agent: &Arc<Agent>, key: KeyEvent) -> bo
     if app.search.is_some() && !app.keybindings.matches("app.exit", &key) {
         return handle_search_key(app, key);
     }
+    // Phase 3 (TUI as IDE): the workspace tree owns the keyboard while open,
+    // like every other overlay. Esc/F6 always closes, so there is no trap;
+    // anything unhandled is swallowed, not typed into a composer the reader
+    // is not looking at. `app.exit` keeps its precedence (quitting drops the
+    // parked ask fail-closed, wherever the keyboard is).
+    if app.tree_open && !app.keybindings.matches("app.exit", &key) {
+        if app.keybindings.matches("app.tree.toggle", &key) {
+            app.tree_open = false;
+            return false;
+        }
+        match key.code {
+            KeyCode::Esc => {
+                app.tree_open = false;
+            }
+            KeyCode::Up => {
+                let total = app.tree_rows.len();
+                app.tree_cursor = app
+                    .tree_cursor
+                    .saturating_sub(1)
+                    .min(total.saturating_sub(1));
+            }
+            KeyCode::Down => {
+                let total = app.tree_rows.len();
+                if total > 0 {
+                    app.tree_cursor = (app.tree_cursor + 1).min(total - 1);
+                }
+            }
+            KeyCode::Left => {
+                if let Some(row) = app.tree_rows.get(app.tree_cursor).cloned() {
+                    if row.is_dir && !app.tree_collapsed.contains(&row.rel) {
+                        app.tree_collapsed.insert(row.rel.clone());
+                        app.refresh_tree();
+                        if let Some(i) = app.tree_rows.iter().position(|r| r.rel == row.rel) {
+                            app.tree_cursor = i;
+                        }
+                    } else if row.depth > 0 {
+                        // On a file (or an already-collapsed dir): step to the
+                        // parent dir, so Left always visibly moves somewhere.
+                        let mut i = app.tree_cursor;
+                        while i > 0 {
+                            i -= 1;
+                            if app.tree_rows[i].depth == row.depth - 1 {
+                                app.tree_cursor = i;
+                                break;
+                            }
+                        }
+                    }
+                }
+            }
+            KeyCode::Right => {
+                if let Some(row) = app.tree_rows.get(app.tree_cursor).cloned()
+                    && row.is_dir
+                    && app.tree_collapsed.remove(&row.rel)
+                {
+                    app.refresh_tree();
+                    if let Some(i) = app.tree_rows.iter().position(|r| r.rel == row.rel) {
+                        app.tree_cursor = i;
+                    }
+                }
+            }
+            KeyCode::Enter => {
+                if let Some(row) = app.tree_rows.get(app.tree_cursor).cloned() {
+                    if row.is_dir {
+                        if app.tree_collapsed.remove(&row.rel) {
+                            // was collapsed: expand.
+                        } else {
+                            app.tree_collapsed.insert(row.rel.clone());
+                        }
+                        app.refresh_tree();
+                        if let Some(i) = app.tree_rows.iter().position(|r| r.rel == row.rel) {
+                            app.tree_cursor = i;
+                        }
+                    } else {
+                        // A file reference the model's own read tool will honour
+                        // (same workspace-relative spelling `@` completion and
+                        // the tools use), inserted at the caret; the tree closes
+                        // so the composer owns the keyboard again.
+                        let insert = format!("@{} ", row.rel);
+                        for c in insert.chars() {
+                            app.insert_char(c);
+                        }
+                        app.tree_open = false;
+                    }
+                }
+            }
+            _ => {}
+        }
+        return false;
+    }
     // M32: masked API-key prompt takes all keys while open (Esc cancels, Enter saves).
     if app.auth_prompt_open {
         return handle_auth_key(app, agent, key);
@@ -1620,6 +1709,13 @@ pub(crate) fn handle_key(app: &mut App, agent: &Arc<Agent>, key: KeyEvent) -> bo
                     }
                 )),
             }
+            false
+        }
+        _ if app.keybindings.matches("app.tree.toggle", &key) => {
+            // Phase 3 (TUI as IDE): workspace tree sidebar. Opens focused and
+            // rebuilds from the workspace; closing returns to the composer.
+            // (While open, the early tree branch above owns the keyboard.)
+            app.toggle_tree();
             false
         }
         _ if app.keybindings.matches("app.palette", &key) => {

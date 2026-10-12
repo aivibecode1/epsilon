@@ -395,6 +395,17 @@ the run. The drop from 2,385/19/78 is the removed desktop crate itself (~410 win
 > (`epsilon-session/tests/session_store.rs`): the session-delete path refuses a directory on
 > every branch and touches nothing underneath; control (`remove_dir_all`) fails it.
 > Baselines green: safety+session+tools+core suites, tui 624+9 ignored.
+>
+> **Revised goal, Phase 3 slice 1 (this session, landed): workspace tree sidebar.**
+> F6 (`app.tree.toggle`, free F-key family) opens a keyboard-driven file tree beside the
+> transcript, built from the shared core walk with its own 500-row budget; Enter on a file
+> inserts `@path` at the caret and closes, arrows navigate, Left/Right collapse/expand,
+> Esc/F6 closes, empty workspace named, capped list noted. Footer carries a tree-specific
+> row (no "type filter" lie). Frames read at 80x24 and 100x30
+> (`audit/evidence/frames-tree-20261012/`): 30-col sidebar + live transcript + footer hints.
+> RED-first (no-field compile error), 5 pure unit tests + 3 app tests, clippy/fmt/checkers
+> green. Deliberately deferred: embedded viewer (Enter currently inserts `@`), mouse
+> clicks (capture stays OFF for drag-copy; wheel scrolls), both recorded follow-ups.
 
 > **Ten findings closed in a row** (rounds 138–147). Rounds 138–144 were things that *happened*
 > wrongly, 145–146 were things that *went unsaid*, and 147 is the first one that **adds a

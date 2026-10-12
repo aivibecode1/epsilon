@@ -412,6 +412,11 @@ pub const TERMINAL: &[(&str, &[&str])] = &[
     // `app.transcript.filter.cycle` at P-293. `alt+e` alone is what the row
     // prints, and it is the alt-prefixed spelling pi's own users reach for.
     ("app.editor.external", &["alt+e"]),
+    // Workspace tree sidebar (Phase 3, TUI as IDE): the tree beside the transcript,
+    // keyboard-driven. F-keys are the free chord family here (only f2/f4 are taken),
+    // and f6 was the retired window's focus-ring key — same family, no conflict:
+    // `no_chord_is_bound_to_two_ids_in_the_terminal_table` holds it.
+    ("app.tree.toggle", &["f6"]),
 ];
 
 /// The desktop window's default bindings.

@@ -8560,6 +8560,95 @@ fn bang_prefix_switches_the_footer_to_bash_mode() {
     );
 }
 
+/// F6 opens the workspace tree sidebar, and the tree lists the workspace's files.
+///
+/// The first of the TUI-as-IDE slices (Phase 3): a keyboard-driven file tree beside
+/// the transcript, built from the shared core walk — the traversal `at_files.rs`
+/// says the editor's tree wants with its own budget.
+#[tokio::test]
+async fn f6_opens_the_workspace_tree_showing_its_files() {
+    let (mut app, agent, _receivers, dir) = test_app_with_store();
+    std::fs::write(dir.path().join("main.rs"), "fn main() {}\n").unwrap();
+    std::fs::create_dir_all(dir.path().join("src")).unwrap();
+    std::fs::write(dir.path().join("src").join("lib.rs"), "").unwrap();
+    let quit = handle_key(&mut app, &agent, key(KeyCode::F(6)));
+    assert!(!quit, "F6 toggles the tree, it does not quit");
+    assert!(app.tree_open, "F6 must open the tree");
+    let frame = render_rows(&mut app, 100, 30).join("\n");
+    assert!(
+        frame.contains("main.rs") && frame.contains("lib.rs"),
+        "the tree must show the workspace's files: {frame}"
+    );
+}
+
+/// The tree navigates, collapses, and Enter on a file inserts `@path` and closes.
+#[tokio::test]
+async fn tree_navigate_collapse_and_enter_inserts_at_path() {
+    let (mut app, agent, _receivers, dir) = test_app_with_store();
+    std::fs::write(dir.path().join("main.rs"), "fn main() {}\n").unwrap();
+    std::fs::create_dir_all(dir.path().join("src")).unwrap();
+    std::fs::write(dir.path().join("src").join("lib.rs"), "").unwrap();
+    handle_key(&mut app, &agent, key(KeyCode::F(6)));
+    assert!(app.tree_open);
+    // Rows are dirs-first: src, src/lib.rs, main.rs. Move to main.rs.
+    handle_key(&mut app, &agent, key(KeyCode::Down));
+    handle_key(&mut app, &agent, key(KeyCode::Down));
+    assert_eq!(
+        app.tree_rows.get(app.tree_cursor).map(|r| r.rel.as_str()),
+        Some("main.rs")
+    );
+    // Collapse src from the top: cursor back up twice, Left collapses.
+    handle_key(&mut app, &agent, key(KeyCode::Up));
+    handle_key(&mut app, &agent, key(KeyCode::Up));
+    assert_eq!(
+        app.tree_rows.get(app.tree_cursor).map(|r| r.rel.as_str()),
+        Some("src")
+    );
+    handle_key(&mut app, &agent, key(KeyCode::Left));
+    assert!(app.tree_collapsed.contains("src"));
+    assert_eq!(
+        app.tree_rows.len(),
+        2,
+        "collapsed src hides its child: {:?}",
+        app.tree_rows
+    );
+    // Right re-expands; Enter on the file inserts `@main.rs ` and closes.
+    handle_key(&mut app, &agent, key(KeyCode::Right));
+    assert!(!app.tree_collapsed.contains("src"));
+    handle_key(&mut app, &agent, key(KeyCode::Down));
+    handle_key(&mut app, &agent, key(KeyCode::Down));
+    let quit = handle_key(&mut app, &agent, key(KeyCode::Enter));
+    assert!(!quit);
+    assert!(!app.tree_open, "Enter on a file closes the tree");
+    assert_eq!(
+        app.input, "@main.rs ",
+        "file inserts an @-reference, got {:?}",
+        app.input
+    );
+}
+
+/// Esc closes the tree without touching the draft; an empty workspace names itself.
+#[tokio::test]
+async fn tree_esc_closes_and_empty_workspace_names_itself() {
+    let (mut app, agent, _receivers, _dir) = test_app_with_store();
+    handle_key(&mut app, &agent, key(KeyCode::Char('x')));
+    handle_key(&mut app, &agent, key(KeyCode::F(6)));
+    assert!(app.tree_open);
+    let frame = render_rows(&mut app, 80, 24).join("\n");
+    assert!(
+        frame.contains("empty workspace"),
+        "empty tree must say so: {frame}"
+    );
+    let quit = handle_key(&mut app, &agent, key(KeyCode::Esc));
+    assert!(!quit);
+    assert!(!app.tree_open);
+    assert_eq!(
+        app.input, "x",
+        "Esc must not eat the draft, got {:?}",
+        app.input
+    );
+}
+
 /// Quitting with a parked approval ask denies it — fail closed.
 ///
 /// `handle_key` documents "quitting drops the parked ask, which resolves to Deny".
