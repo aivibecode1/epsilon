@@ -626,6 +626,10 @@ the run. Up from 1,997: the checkpoint round-trip and restore-undo tests. (Previ
 > pass, no plugin seam — a chain would be speculative generality for one caller.
 > T-010 stays `missing`. Counts now 81/111/47/100.
 >
+> **Composer pair judged (this session): P-212/P-213 dd.** The extension protocol
+> has no keybinding or editor surface (ADR-019) — nothing to consult or mirror.
+> Counts now 81/111/45/102.
+>
 > **Goal 3, Phase 1 (landed): AGENTS.md v4 draft for owner application.** Every v3
 > clause audited against the tree (13 crates, uniform 1.88, TERMINAL+WINDOW tables,
 > 15 legs, SUPPORTED only in a historical comment); the complete v4 text sits in

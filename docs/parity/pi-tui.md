@@ -66,14 +66,14 @@ back; it is a reading of the test's source, not a report of a run.
 
 **339 rows** are paired here: Pi's 323 `P-###` behaviours, the 4 `L-###` rows of its inherited `tui.*` keybinding
 table, and the 12 `T-###` rows of its text-measurement core. Every one carries a reference citation; 200 of them
-carry an `ours` citation and 48 do not, and those 48 say so. The counts below are the rows **actually written in
+carry an `ours` citation and 46 do not, and those 46 say so. The counts below are the rows **actually written in
 this document**, tallied from its own tables — not a projection.
 
 | area | rows | done | partial | missing | deliberately different |
 |---|---|---|---|---|---|
 | 1. Startup, header and resources | 20 | 1 | 7 | 2 | 10 |
 | 2. Layout and renderer | 10 | 3 | 2 | 0 | 5 |
-| 3. Composer and editor | 24 | 6 | 12 | 2 | 4 |
+| 3. Composer and editor | 24 | 6 | 12 | 0 | 6 |
 | 4. Slash commands and autocomplete | 13 | 2 | 5 | 0 | 6 |
 | 5. Transcript and streaming | 35 | 12 | 5 | 3 | 15 |
 | 6. Model picker and thinking | 9 | 0 | 5 | 0 | 4 |
@@ -89,14 +89,14 @@ this document**, tallied from its own tables — not a projection.
 | 16. Status indicators | 13 | 2 | 5 | 1 | 5 |
 | 17. Footer | 12 | 4 | 4 | 1 | 3 |
 | 18. Selector and overlay components | 79 | 22 | 19 | 25 | 13 |
-| **Total** | **339** | **81** | **111** | **47** | **100** |
+| **Total** | **339** | **81** | **111** | **45** | **102** |
 
 A further **17 rows are not in the counts above**: the 10 `Y-###` rows Pi ships outside its interactive mode (out of
 scope by design) and the 7 `AA-###` rows recording what was never inventoried. Both are listed in full near the end
 of this document, because a row that is silently dropped is how a rule goes unowned.
 
-The shape of that table is the honest shape of a port from a 356-row inventory to a 292-row one: **47 rows have no
-counterpart established on our side, 111 are half-built, 81 are exercised, and 100 are decisions.** The 47 are not
+The shape of that table is the honest shape of a port from a 356-row inventory to a 294-row one: **45 rows have no
+counterpart established on our side, 111 are half-built, 81 are exercised, and 102 are decisions.** The 45 are not
 69/339 failures; most of them sit in Pi's extension, settings-overlay, mermaid, image and tree-navigation surface,
 much of which Epsilon deliberately does not have. Read [Open rows](#open-rows) before reading the table.
 
@@ -242,8 +242,8 @@ destination — steering — rather than steer-or-follow-up chosen by key.
 | P-209 | Escape reaches the app as "interrupt" only when the autocomplete popup is closed; with the popup open it cancels the popup | `packages/coding-agent/src/modes/interactive/components/custom-editor.ts:104`, `:113` | partial | `crates/epsilon-tui/src/app/completion.rs:161` — Esc dismisses the popup and keeps the text | none — `slash_popup_opens_and_arrows_move_selection` is state only and does not press Esc |
 | P-210 | `Ctrl+D` falls through to delete-forward when the composer is not empty | `packages/coding-agent/src/modes/interactive/components/custom-editor.ts:119`, `:124` | partial | `crates/epsilon-tui/src/app/editing.rs:85` — the fall-through half holds; the empty-editor exit it falls through *from* does not exist (exit is `ctrl+q`) | `ctrl_d_forward_deletes_and_alt_backspace_kills_word` |
 | P-211 | Explicit history bindings beat application actions on the same key | `packages/coding-agent/src/modes/interactive/components/custom-editor.ts:130`, `:133` | done | `crates/epsilon-contracts/src/keybind.rs` — Pi's `tui.editor.historyPrevious`/`historyNext` (`up`/`down`, rebindable); the recall arms match these ids (not bare keycodes, which also caught Ctrl+Up and starved the prompt jump — fixed as part of this) and sit before app actions on the chord | `up_and_down_walk_prompt_history` (walk + empty-restore), `ctrl_up_jumps_to_prompts_instead_of_recalling` (split pinned; KeyCode-revert control) |
-| P-212 | Extension shortcuts are consulted before every built-in binding | `packages/coding-agent/src/modes/interactive/components/custom-editor.ts:90`, `packages/coding-agent/src/modes/interactive/interactive-mode.ts:2233-2246` | missing | none | — |
-| P-213 | An extension editor mirrors the main editor's keys and the same `$EDITOR` resolution | `packages/coding-agent/src/modes/interactive/components/extension-editor.ts:71`, `:92`, `:83` | missing | none | — |
+| P-212 | Extension shortcuts are consulted before every built-in binding | `packages/coding-agent/src/modes/interactive/components/custom-editor.ts:90`, `packages/coding-agent/src/modes/interactive/interactive-mode.ts:2233-2246` | deliberately different | The extension protocol has no keybinding surface (ADR-019: request/response over tool calls) — there are no extension shortcuts to consult, so built-ins stand unconsulted | — |
+| P-213 | An extension editor mirrors the main editor's keys and the same `$EDITOR` resolution | `packages/coding-agent/src/modes/interactive/components/extension-editor.ts:71`, `:92`, `:83` | deliberately different | As P-212: extensions have no editor surface to mirror keys into; `$EDITOR` resolution exists only on the main path (`request_external_editor`) | — |
 | P-214 | An extension input accepts a `placeholder` argument and discards it | `packages/coding-agent/src/modes/interactive/components/extension-input.ts:38`, `:37` | deliberately different | none — verified by grep: no extension-input surface exists here (extensions are tools and processes, no custom input widgets), so there is nothing to accept a placeholder; per `AGENTS.md` invariant 7 an accept-and-discard argument would be refused as a no-op, not implemented | — |
 | L-000 | The `tui.*` table: 47 editor, input, select and fullscreen-navigation bindings spread into the app table | `packages/tui/src/keybindings.ts:71-210`, `packages/coding-agent/src/core/keybindings.ts:76` | partial | `crates/epsilon-contracts/src/keybind.rs:242` — Epsilon declares 23 ids in one table and reads every key through it; the editor motions exist (`Ctrl+A`/`Ctrl+E`/Home/End at `crates/epsilon-tui/src/app/keys.rs:1730`, `Ctrl+J` newline at `:1777`) but there is no `tui.select.*` or `tui.altScreen.*` half | `a_rebound_submit_key_is_the_key_that_submits`, `no_chord_is_bound_to_two_ids_by_default` |
 | L-001 | Six shipped actions have handlers but **no default key**, so they do nothing until the user binds them | `packages/tui/src/keybindings.ts:74-81`, `:168-183` | partial | `crates/epsilon-contracts/src/keybind.rs:337-346` — `app.transcript.halfUp` / `halfDown` ship unbound with the reason written down (three chords were tried and each is already the composer's); two rather than six, and a different set | `no_chord_is_bound_to_two_ids_by_default` |
@@ -764,7 +764,7 @@ row says so — that is a gap in the inventory, and closing it is cheap.
 |---|---|---|---|---|---|
 | 1. Startup, header and resources | 20 | 1 | 7 | 2 | 10 |
 | 2. Layout and renderer | 10 | 3 | 2 | 0 | 5 |
-| 3. Composer and editor | 24 | 6 | 12 | 2 | 4 |
+| 3. Composer and editor | 24 | 6 | 12 | 0 | 6 |
 | 4. Slash commands and autocomplete | 13 | 2 | 5 | 0 | 6 |
 | 5. Transcript and streaming | 35 | 12 | 5 | 3 | 15 |
 | 6. Model picker and thinking | 9 | 0 | 5 | 0 | 4 |
@@ -780,9 +780,9 @@ row says so — that is a gap in the inventory, and closing it is cheap.
 | 16. Status indicators | 13 | 2 | 5 | 1 | 5 |
 | 17. Footer | 12 | 4 | 4 | 1 | 3 |
 | 18. Selector and overlay components | 79 | 22 | 19 | 25 | 13 |
-| **Total** | **339** | **81** | **111** | **47** | **100** |
+| **Total** | **339** | **81** | **111** | **45** | **102** |
 
-### The `missing` rows — 47
+### The `missing` rows — 45
 
 Every row below has **no** `E-` row establishing the behaviour. Nothing here was found by browsing `crates/`, and
 nothing here is a claim that the behaviour cannot be built.
@@ -790,7 +790,6 @@ nothing here is a claim that the behaviour cannot be built.
 | area | ids |
 |---|---|
 | Startup, header and resources (2) | P-004, P-088 |
-| Composer and editor (2) | P-212, P-213 |
 | Transcript and streaming (3) | P-053, P-056, P-135 |
 | Auth, login and permissions (2) | P-061, P-063 |
 | Sessions (1) | P-081 |
