@@ -365,11 +365,11 @@ instead of newlining, and the sessions sidebar being a keyboard trap. What remai
 
 ## Verification (what is actually true)
 
-**Latest green battery: [`gate-goal3-phase6-20261012.txt`](../audit/evidence/gate-goal3-phase6-20261012.txt),
+**Latest green battery: [`gate-goal3-rows-20261012.txt`](../audit/evidence/gate-goal3-rows-20261012.txt),
 2026-10-12 — the tree this file describes, and it is the one HEAD holds.** Fifteen legs, all
 `[exit=0]`, `GATE PASS`. **2,011 passed / 0 failed / 10 ignored across 73 binaries**, summed from
 that one log's `test result:` lines. `CARGO_BUILD_JOBS=1`, single build owner, no edits during
-the run. (Previous: `gate-one-undo-20261012`, 1,999/0/10.)
+the run. Matrix at 81/111/24/123. (Previous: `gate-goal3-phase6-20261012`, 2,011/0/10.)
 
 > **Revised goal, Phase 1 (2026-10-12, this session).** The desktop frontend is removed
 > (ADR-039): `crates/epsilon-desktop` (~31k lines) deleted, workspace member + `eframe`/`egui`
