@@ -66,7 +66,7 @@ back; it is a reading of the test's source, not a report of a run.
 
 **339 rows** are paired here: Pi's 323 `P-###` behaviours, the 4 `L-###` rows of its inherited `tui.*` keybinding
 table, and the 12 `T-###` rows of its text-measurement core. Every one carries a reference citation; 200 of them
-carry an `ours` citation and 70 do not, and those 70 say so. The counts below are the rows **actually written in
+carry an `ours` citation and 68 do not, and those 68 say so. The counts below are the rows **actually written in
 this document**, tallied from its own tables — not a projection.
 
 | area | rows | done | partial | missing | deliberately different |
@@ -75,7 +75,7 @@ this document**, tallied from its own tables — not a projection.
 | 2. Layout and renderer | 10 | 3 | 2 | 0 | 5 |
 | 3. Composer and editor | 24 | 6 | 12 | 2 | 4 |
 | 4. Slash commands and autocomplete | 13 | 2 | 5 | 5 | 1 |
-| 5. Transcript and streaming | 35 | 9 | 4 | 15 | 7 |
+| 5. Transcript and streaming | 35 | 9 | 4 | 13 | 9 |
 | 6. Model picker and thinking | 9 | 0 | 4 | 1 | 4 |
 | 7. Auth, login and permissions | 8 | 0 | 4 | 2 | 2 |
 | 8. Sessions | 17 | 7 | 6 | 1 | 3 |
@@ -89,14 +89,14 @@ this document**, tallied from its own tables — not a projection.
 | 16. Status indicators | 13 | 2 | 5 | 1 | 5 |
 | 17. Footer | 12 | 4 | 4 | 1 | 3 |
 | 18. Selector and overlay components | 79 | 22 | 19 | 25 | 13 |
-| **Total** | **339** | **78** | **109** | **69** | **83** |
+| **Total** | **339** | **78** | **109** | **67** | **85** |
 
 A further **17 rows are not in the counts above**: the 10 `Y-###` rows Pi ships outside its interactive mode (out of
 scope by design) and the 7 `AA-###` rows recording what was never inventoried. Both are listed in full near the end
 of this document, because a row that is silently dropped is how a rule goes unowned.
 
-The shape of that table is the honest shape of a port from a 356-row inventory to a 270-row one: **69 rows have no
-counterpart established on our side, 109 are half-built, 78 are exercised, and 83 are decisions.** The 69 are not
+The shape of that table is the honest shape of a port from a 356-row inventory to a 272-row one: **67 rows have no
+counterpart established on our side, 109 are half-built, 78 are exercised, and 85 are decisions.** The 67 are not
 69/339 failures; most of them sit in Pi's extension, settings-overlay, mermaid, image and tree-navigation surface,
 much of which Epsilon deliberately does not have. Read [Open rows](#open-rows) before reading the table.
 
@@ -301,12 +301,12 @@ in each component.
 | P-121 | Assistant prose is markdown indented by `outputPad`, with no vertical padding of its own | `packages/coding-agent/src/modes/interactive/components/assistant-message.ts:114`, `packages/coding-agent/src/modes/interactive/interactive-mode.ts:3893-3900` | deliberately different | `crates/epsilon-tui/src/ui/transcript.rs:25` — a fixed two-column gutter (`GUTTER = 2`): every row aligns its glyph on one column and every body starts at exactly two (`:179`, `:429`); the band fill, the card continuation gutter and the repertoire width math all measure from it. **Decided: no `outputPad` setting, and the difference is structural.** Pi's pad is a 0/1 user toggle (`core/settings-manager.ts:1488-1496`, default 1) indenting message content. Epsilon's gutter is not an indent preference but the alignment column the presentation system is built on (P-136 blocks, the card continuation): 0 would delete the column every row aligns on, and 1 would misalign the glyph-plus-space pairs the repertoire measures in display width (`:174-179`). At 80 columns the two columns cost 2.5% of the width | `a_wrapped_banded_message_keeps_every_row_inside_the_frame` (frame) |
 | P-122 | A blank line precedes an assistant block only when it has visible content | `packages/coding-agent/src/modes/interactive/components/assistant-message.ts:102` | missing | none | — |
 | P-123 | Consecutive thinking blocks render as one joined block | `packages/coding-agent/src/modes/interactive/components/assistant-message.ts:118`, `:147` | done | `crates/epsilon-tui/src/state.rs:1417` — one reasoning row per reply, committed from the single reasoning field, so the blocks never appear separately | `an_answer_and_its_reasoning_are_distinguishable_on_a_real_frame_without_colour` (frame) |
-| P-124 | A hidden thinking block becomes a dim italic `Thinking...` label | `packages/coding-agent/src/modes/interactive/components/assistant-message.ts:145`, `packages/coding-agent/src/modes/interactive/interactive-mode.ts:484` | missing | none — there is no hidden-thinking state | — |
+| P-124 | A hidden thinking block becomes a dim italic `Thinking...` label | `packages/coding-agent/src/modes/interactive/components/assistant-message.ts:145`, `packages/coding-agent/src/modes/interactive/interactive-mode.ts:484` | deliberately different | none — excluded, not labeled (`RenderCache::reconcile` filters `LineKind::Thinking` under the flag) — the toggle plus the filter state is the signal, and a label per hidden block would re-add the rows the reader hid | `ctrl_t_cycles_the_thinking_ladder` |
 | P-125 | A thinking block toggles individually on left-click | `packages/coding-agent/src/modes/interactive/components/assistant-message.ts:163`, `:143` | deliberately different | Pi captures the click (`interactive-mode.ts:258`); capture is OFF here (`crates/epsilon-tui/src/app.rs`) so drag-select copies, opencode's `useMouse: false` concurring. The behaviour — toggling what thinking shows — is carried by keyboard instead: `ctrl+t` cycles the thinking ladder | `ctrl_t_cycles_the_thinking_ladder` |
 | P-126 | Thinking is followed by a blank line only when more assistant content follows | `packages/coding-agent/src/modes/interactive/components/assistant-message.ts:138`, `:171` | missing | none | — |
 | P-127 | A reply that hit the token limit appends `Response was truncated before completion.` | `packages/coding-agent/src/modes/interactive/components/assistant-message.ts:182` | done | `crates/epsilon-tui/src/state.rs` — both assistant paths (`apply` for live turns, `hydrate_from_history` for resumed sessions) append the line as a `System` notice when `stop_reason` is `MaxTokens`, beside the M62 error marker | `a_truncated_reply_says_so` (frame: one truncated + one whole reply, exactly one notice) + `a_resumed_truncated_reply_says_so` (frame over replayed history; negative control run on the history arm) |
 | P-128 | An aborted reply shows its message or `Operation aborted`; an errored one shows `Error: …` | `packages/coding-agent/src/modes/interactive/components/assistant-message.ts:188`, `:195` | deliberately different | `crates/epsilon-tui/src/state.rs` — an aborted run produces a harness-authored row, not text on the answer's own row, and the errored half draws as a **failure** rather than as a quiet notice (the `SystemErr` row P-058 describes) | **Decided, round 106, with P-058:** the fixed `Error: ` prefix is not adopted here — the `SystemErr` row already carries the severity (cross glyph, danger colour, error band, its own gutter, all proven under `NO_COLOR` by `every_role_is_distinguishable_without_colour`), and the notice's own wording names the failure. Evidence: `the_error_marker_and_the_auth_note_draw_as_failures`, `a_run_failure_draws_with_the_cross_and_not_the_bullet` |
-| P-129 | Abort/error text is suppressed on the assistant block when the message contains tool calls | `packages/coding-agent/src/modes/interactive/components/assistant-message.ts:180` | missing | none | — |
+| P-129 | Abort/error text is suppressed on the assistant block when the message contains tool calls | `packages/coding-agent/src/modes/interactive/components/assistant-message.ts:180` | deliberately different | Marked unconditionally instead: a cut-off answer that reads as complete is the failure C-110 exists to prevent, and tool calls beside it do not change that — both live and replay paths pin the sentence | `a_stopped_reply_says_so` |
 | P-130 | A theme change rebuilds assistant markdown from the cached **source**, not a rendered string | `packages/coding-agent/src/modes/interactive/components/assistant-message.ts:51` | done | `crates/epsilon-tui/src/app/commands.rs:1604` — `/theme` clears the transcript render cache so rows already drawn do not survive in the old colours | `switching_the_palette_redraws_the_transcript_and_not_just_the_chrome` (frame) |
 | P-131 | The markdown chain is told `assistant` vs `assistant-thinking`; thinking is italic with its own token | `packages/coding-agent/src/modes/interactive/components/assistant-message.ts:115`, `:156` | done | `crates/epsilon-tui/src/ui/transcript.rs:70` — the two carry different gutter glyphs, so they stay apart under `NO_COLOR` as well as on colour | `an_answer_and_its_reasoning_are_distinguishable_on_a_real_frame_without_colour` (frame) |
 | P-132 | Assistant and user blocks are wrapped in OSC 133 prompt zones; a block **with tool calls** is left unwrapped | `packages/coding-agent/src/modes/interactive/components/assistant-message.ts:80`, `packages/coding-agent/src/modes/interactive/components/user-message.ts:61` | missing | none | — |
@@ -766,7 +766,7 @@ row says so — that is a gap in the inventory, and closing it is cheap.
 | 2. Layout and renderer | 10 | 3 | 2 | 0 | 5 |
 | 3. Composer and editor | 24 | 6 | 12 | 2 | 4 |
 | 4. Slash commands and autocomplete | 13 | 2 | 5 | 5 | 1 |
-| 5. Transcript and streaming | 35 | 9 | 4 | 15 | 7 |
+| 5. Transcript and streaming | 35 | 9 | 4 | 13 | 9 |
 | 6. Model picker and thinking | 9 | 0 | 4 | 1 | 4 |
 | 7. Auth, login and permissions | 8 | 0 | 4 | 2 | 2 |
 | 8. Sessions | 17 | 7 | 6 | 1 | 3 |
@@ -780,9 +780,9 @@ row says so — that is a gap in the inventory, and closing it is cheap.
 | 16. Status indicators | 13 | 2 | 5 | 1 | 5 |
 | 17. Footer | 12 | 4 | 4 | 1 | 3 |
 | 18. Selector and overlay components | 79 | 22 | 19 | 25 | 13 |
-| **Total** | **339** | **78** | **109** | **69** | **83** |
+| **Total** | **339** | **78** | **109** | **67** | **85** |
 
-### The `missing` rows — 69
+### The `missing` rows — 67
 
 Every row below has **no** `E-` row establishing the behaviour. Nothing here was found by browsing `crates/`, and
 nothing here is a claim that the behaviour cannot be built.
@@ -792,7 +792,7 @@ nothing here is a claim that the behaviour cannot be built.
 | Startup, header and resources (2) | P-004, P-088 |
 | Composer and editor (2) | P-212, P-213 |
 | Slash commands and autocomplete (5) | P-042, P-045, P-221, P-222, P-224 |
-| Transcript and streaming (15) | P-053, P-056, P-122, P-124, P-126, P-129, P-132, P-134, P-135, P-178, P-179, P-180, P-181, P-182, P-184 |
+| Transcript and streaming (13) | P-053, P-056, P-122, P-126, P-132, P-134, P-135, P-178, P-179, P-180, P-181, P-182, P-184 |
 | Model picker and thinking (1) | P-273 |
 | Auth, login and permissions (2) | P-061, P-063 |
 | Sessions (1) | P-081 |
