@@ -608,6 +608,10 @@ the run. Up from 1,997: the checkpoint round-trip and restore-undo tests. (Previ
 > mascots and announcements refused by the credits rule. Counts now
 > 81/110/57/91.
 >
+> **Extension-render quintet judged (this session): P-178–P-182 dd.** No render
+> surface, no registered renderers, nothing reaching the transcript — same
+> rationale as P-020/P-021/P-060. Counts now 81/110/52/96.
+>
 > **Goal 3, Phase 1 (landed): AGENTS.md v4 draft for owner application.** Every v3
 > clause audited against the tree (13 crates, uniform 1.88, TERMINAL+WINDOW tables,
 > 15 legs, SUPPORTED only in a historical comment); the complete v4 text sits in
