@@ -1773,26 +1773,30 @@ fn draw(f: &mut Frame<'_>, app: &mut App) {
         );
         return;
     }
-    // Phase 3 (TUI as IDE): tree sidebar. A 30-column pane beside a transcript
-    // that keeps its own floor (`MIN_WIDTH`); narrower than that, the tree draws
-    // as a full-area overlay after the shell — one draw function, two rects.
-    let sidebar_wide = app.tree_open && area.width >= 30 + crate::ui::layout::MIN_WIDTH;
+    // Tree sidebar, docked RIGHT with a one-column gutter: transcript | gap | tree.
+    // The pane scales with the window (30% clamped to 24–38 columns) instead of a
+    // fixed width, and the transcript keeps its own floor (`MIN_WIDTH`);
+    // narrower than that, the tree draws as a full-area overlay after the
+    // shell — one draw function, two rects.
+    let side_w = (area.width * 30 / 100).clamp(24, 38);
+    let sidebar_wide = app.tree_open && area.width >= side_w + 1 + crate::ui::layout::MIN_WIDTH;
     let main = if sidebar_wide {
         let chunks = ratatui::layout::Layout::default()
             .direction(ratatui::layout::Direction::Horizontal)
             .constraints([
-                ratatui::layout::Constraint::Length(30),
                 ratatui::layout::Constraint::Min(crate::ui::layout::MIN_WIDTH),
+                ratatui::layout::Constraint::Length(1),
+                ratatui::layout::Constraint::Length(side_w),
             ])
             .split(area);
         crate::tree::draw_tree(
             f,
-            chunks[0],
+            chunks[2],
             &app.tree_rows,
             app.tree_cursor,
             app.tree_capped,
         );
-        chunks[1]
+        chunks[0]
     } else {
         area
     };
@@ -1877,6 +1881,9 @@ fn draw(f: &mut Frame<'_>, app: &mut App) {
         draw_timeline(f, app, f.area());
     }
     if app.tree_open && !sidebar_wide {
+        // The overlay covers the transcript: clear first, or the two texts
+        // interleave on narrow screens (read on a 60x20 frame).
+        f.render_widget(ratatui::widgets::Clear, f.area());
         crate::tree::draw_tree(
             f,
             f.area(),

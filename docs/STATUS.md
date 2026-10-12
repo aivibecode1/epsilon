@@ -434,6 +434,13 @@ the run. Up from 1,993: editor, lease and viewer-guard tests. (Previous:
 > resolves live via `key_text`; viewer/tree literal hints match the overlay convention),
 > click rows P-003/P-125/P-143/P-185/P-223 unchanged (capture still OFF).
 >
+> **Follow-up (owner request, landed): tree docks right, layout adapts.** The sidebar
+> now sits right of the transcript (`transcript | gutter | tree`), 30% of the width
+> clamped to 24–38 columns with the transcript floor held; below that the tree falls
+> back to a cleared full-area overlay (a 60x20 frame caught text interleaving — fixed
+> with `Clear`). RED-first right-dock+gutter test; frames read at 80x24, 100x30 and
+> 60x20 (`audit/evidence/frames-rtree-20261012/`).
+>
 > **Audit rework (this session, landed).** Four objections closed: (1) **editor** — the
 > viewer gains edit mode (`e` edits, alt+s saves with changed-underneath guard +
 > `.tui-bak` backup, two-stage Esc discards, grapheme-safe ops, cursor drawn;

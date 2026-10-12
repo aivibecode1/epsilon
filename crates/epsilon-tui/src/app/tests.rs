@@ -8928,3 +8928,26 @@ async fn viewer_save_refuses_changed_underneath_and_keeps_backup() {
         "the backup holds the pre-save bytes"
     );
 }
+
+/// The tree sidebar docks RIGHT of the transcript with a separating gap.
+#[tokio::test]
+async fn tree_sidebar_docks_right_with_a_separating_gap() {
+    let (mut app, agent, _receivers, dir) = test_app_with_store();
+    std::fs::write(dir.path().join("main.rs"), "fn main() {}\n").unwrap();
+    handle_key(&mut app, &agent, key(KeyCode::F(6)));
+    assert!(app.tree_open);
+    let rows = render_rows(&mut app, 100, 30);
+    let tree_col = rows[0].find("tree").expect("tree title on the top row");
+    assert!(
+        tree_col > 50,
+        "tree must dock right of the transcript, found at col {tree_col}"
+    );
+    // Separating gap: a blank column between transcript and tree border.
+    let left_edge = rows[0].find('┌').expect("tree border");
+    assert!(left_edge > 50);
+    let gap = &rows[0][..left_edge];
+    assert!(
+        gap.ends_with(' ') || gap.ends_with('│'),
+        "a gutter must separate transcript from tree"
+    );
+}
