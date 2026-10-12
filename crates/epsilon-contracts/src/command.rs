@@ -168,6 +168,15 @@ pub const SLASH_ITEMS: &[SlashItem] = &[
         description: "import and resume a session from a JSONL file",
     },
     SlashItem {
+        // Window-only: the terminal is bound to its process directory, so it refuses
+        // `/open` by name and says where the door lives. Listed here because a head
+        // in COMMAND_HEADS that no surface offers is the gap
+        // `every_offered_command_is_reachable_from_slash_items` exists to close —
+        // and the description says who answers it, so the offer never lies.
+        value: "/open ",
+        description: "open a workspace directory (desktop window; the terminal refuses by name)",
+    },
+    SlashItem {
         // The name is the file and the verb is the argument, because "restore" on its own
         // says which history it means. `/restore <path>` states the plan and changes
         // nothing; the description names the second half so a reader who types the first
@@ -340,6 +349,15 @@ pub enum Command {
     Export(Option<String>),
     /// Import a session JSONL (path in tail).
     Import(String),
+    /// Open a workspace directory in the window (`/open <dir>`; D-046/S-105).
+    ///
+    /// The tail carries a **directory path**, carried whole like `/resume` and `/import`.
+    /// Window-only: the terminal is bound to its process directory, so it refuses this
+    /// by name and says where the door lives. The executor validates (exists, is a
+    /// directory), asks (`yes` switches, anything else repeats without acting), and
+    /// switches through a fresh `resolve_launch` + `IdeSession::start` — the same
+    /// composition startup runs, so a switch behaves exactly like launching there.
+    Open(String),
     /// Put a file back to the checkpoint recorded before the agent's last write or edit.
     ///
     /// The tail carries a **path**, and carrying it whole is the safe choice here for the
@@ -405,6 +423,7 @@ pub const COMMAND_HEADS: &[&str] = &[
     "reload",
     "export",
     "import",
+    "open",
     // M277: the rollback half of a checkpoint, and a real command with a real executor.
     //
     // **The reason this line once carried is no longer true, and that matters more than the
@@ -536,6 +555,7 @@ pub fn parse_command(input: &str) -> Option<Command> {
             Some(tail.to_string())
         })),
         "import" => Some(Command::Import(tail.to_string())),
+        "open" => Some(Command::Open(tail.to_string())),
         "restore" => Some(Command::Restore(tail.to_string())),
         "share" => Some(Command::Share),
         "copy" => Some(Command::Copy),
@@ -778,6 +798,13 @@ mod tests {
         assert_eq!(
             parse_command("/import ./in.jsonl"),
             Some(Command::Import("./in.jsonl".into()))
+        );
+        // D-046/S-105: the window's workspace door. The tail is a directory path,
+        // carried whole like `/resume` and `/import` — splitting a path is how
+        // `src/my dir` becomes two arguments and a switch to nowhere.
+        assert_eq!(
+            parse_command("/open ../other"),
+            Some(Command::Open("../other".into()))
         );
         assert_eq!(parse_command("/share"), Some(Command::Share));
         assert_eq!(parse_command("/copy"), Some(Command::Copy));

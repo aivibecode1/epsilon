@@ -4191,6 +4191,28 @@ async fn no_slash_command_panics_when_typed() {
     }
 }
 
+/// `/open` in the terminal names the window instead of failing unknown (D-046/S-105).
+///
+/// The head parses (it is in COMMAND_HEADS for the window's parser), but this
+/// frontend is bound to its process directory — so the sentence must name where
+/// the door lives, not report a typo. RED first: the notice reads "unknown command".
+#[tokio::test]
+async fn open_in_the_terminal_names_the_window() {
+    let (mut app, agent, _rx) = test_app();
+    assert!(!type_and_enter(&mut app, &agent, "/open /tmp"));
+    let texts: Vec<String> = app.ui.lines().iter().map(|l| l.text.clone()).collect();
+    assert!(
+        texts
+            .iter()
+            .any(|t| t.contains("/open") && t.contains("desktop window")),
+        "the refusal must name the command and where it works: {texts:?}"
+    );
+    assert!(
+        texts.iter().any(|t| t.contains("/resume")),
+        "and offer the terminal's nearest door: {texts:?}"
+    );
+}
+
 #[tokio::test]
 async fn a_prompt_template_expands_before_the_command_parser_sees_it() {
     let (mut app, _agent, (_f, _n)) = test_app();

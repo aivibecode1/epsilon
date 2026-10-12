@@ -2017,6 +2017,53 @@ fn compact_from_the_typed_line_compacts_and_reports() {
     );
 }
 
+/// `/open` switches the workspace live (D-046/S-105).
+///
+/// End to end through the real composer, the real pending question and the real
+/// spawn: ask on a valid directory, answer `yes`, and the window recomposes in
+/// the new workspace — new agent, reloaded tree, retitled window. RED first: the
+/// window stays where it was, still showing the old workspace.
+#[test]
+fn open_workspace_switches_live() {
+    use epsilon_desktop::commands::Outcome;
+
+    let ws1 = tempfile::tempdir().expect("first workspace");
+    let ws2 = tempfile::tempdir().expect("second workspace");
+    let (ctx, mut app) = wire(ws1.path());
+
+    let Outcome::Ran(said) = app.try_command(&format!("/open {}", ws2.path().display())) else {
+        panic!("a valid directory must ask, not refuse or send");
+    };
+    assert!(
+        said.contains("(yes/no)"),
+        "the switch must ask first: {said:?}"
+    );
+    app.set_draft("yes");
+    app.send_draft();
+
+    // Composition scans extensions: seconds, off the paint thread. Pump frames
+    // the way the window would until the swap lands.
+    let mut switched = false;
+    for _ in 0..600 {
+        std::thread::sleep(std::time::Duration::from_millis(10));
+        let _ = paint_once(&ctx, &mut app, 1440.0, 900.0);
+        if app.workspace().file_name() == ws2.path().file_name() {
+            switched = true;
+            break;
+        }
+    }
+    assert!(switched, "the window must move to the second workspace");
+    let frame = paint_once(&ctx, &mut app, 1440.0, 900.0);
+    assert!(
+        frame
+            .region("agent")
+            .iter()
+            .any(|t| t.contains("opened workspace")),
+        "the arrival must say where it landed.\n{}",
+        frame.describe()
+    );
+}
+
 /// The refusal table and the parser have not drifted apart — and, unlike the two lists, the
 /// window is asked.
 ///

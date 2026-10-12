@@ -522,6 +522,10 @@ pub const WINDOW: &[(&str, &[&str])] = &[
     // dispatch. Rebindable like every other row in this table.
     ("window.session.new", &["ctrl+n"]),
     ("window.session.fork", &["ctrl+alt+f"]),
+    // Open a workspace directory from inside the window (D-046/S-105): the chord
+    // types the `/open` head for the reader, who completes the path and confirms.
+    // `ctrl+o` is free in this table (the terminal's filter cycle lives in TERMINAL).
+    ("window.workspace.open", &["ctrl+o"]),
     // Ask to delete the highlighted session (S-106 to S-108, and the asymmetry
     // round 96 left behind). The terminal's browser grew a delete in round 96
     // over `epsilon_session::delete_session_file`; this is the *same* primitive

@@ -980,6 +980,22 @@ pub struct IdeSession {
     dropped_events: Arc<std::sync::atomic::AtomicU64>,
 }
 
+/// A composed replacement session for a window workspace switch (D-046/S-105).
+///
+/// Built off the paint thread by [`IdeSession::start_for_workspace`] and handed to the
+/// frame through the workspace channel: everything the swap touches travels in one
+/// value, so the paint thread never composes. The old session (and its lease, released
+/// on drop) is replaced whole — one workspace per window, which is why L-120's
+/// multi-root tree stays out of scope.
+pub struct WorkspaceSwitch {
+    /// The new session, composed for the new workspace.
+    pub session: IdeSession,
+    /// The workspace it was composed for.
+    pub workspace: std::path::PathBuf,
+    /// Launch diagnostics to show (a window has no stderr).
+    pub notices: Vec<String>,
+}
+
 impl IdeSession {
     /// Compose an agent for `launch` on `runtime` and start listening to it.
     /// Switch this session to a stored conversation.
@@ -1077,6 +1093,47 @@ impl IdeSession {
             running: AtomicBool::new(false),
             dropped_events: Arc::new(std::sync::atomic::AtomicU64::new(0)),
         })
+    }
+
+    /// Compose a session for a *different* workspace, for a window switch (D-046/S-105).
+    ///
+    /// The same composition startup runs (`resolve_launch` + [`IdeSession::start`]), so
+    /// opening a workspace behaves exactly like launching the binary in it — except for
+    /// the two things that belong to the reader, not the directory: an offline session
+    /// stays offline (a test or demo session that phoned home on switch would be a
+    /// data-loss-shaped surprise), and an explicitly chosen model travels along (a
+    /// folder change must not change the model). Trust is never carried: the new
+    /// workspace resolves its own project state fresh. Blocking I/O throughout — call
+    /// off the paint thread (the `/open` spawn runs this in `spawn_blocking`, where
+    /// `block_on` is legal).
+    pub fn start_for_workspace(
+        runtime: std::sync::Arc<tokio::runtime::Runtime>,
+        workspace: std::path::PathBuf,
+        current: epsilon_runtime::Launch,
+    ) -> Result<WorkspaceSwitch, String> {
+        let mut request = epsilon_runtime::LaunchRequest::for_workspace(&workspace);
+        if current.offline {
+            request.provider = epsilon_runtime::ProviderChoice::Faux;
+        }
+        if current.model_explicit {
+            request.model_reference = Some(current.model_id.clone());
+        }
+        let launch = epsilon_runtime::resolve_launch(&request)?;
+        let notices = launch.notices.clone();
+        let session = runtime.block_on(Self::start(runtime.clone(), launch))?;
+        Ok(WorkspaceSwitch {
+            session,
+            workspace,
+            notices,
+        })
+    }
+
+    /// The current session's thread pool, for handing to its replacement (D-046/S-105).
+    ///
+    /// Cloned, not referenced: the old session is dropped by the swap, and the pool
+    /// must outlive it — which it does, through the new session's own `Arc`.
+    pub(crate) fn runtime_arc(&self) -> std::sync::Arc<tokio::runtime::Runtime> {
+        self.runtime.clone()
     }
 
     /// How many agent events this window has lost to lag (M312).

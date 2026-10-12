@@ -1698,6 +1698,17 @@ impl App {
                     "unknown command '/{word}'{hint} — /help lists commands"
                 ));
             }
+            // Window-only, refused by name (D-046/S-105): the terminal is bound to
+            // its process directory, so there is no workspace to switch to here.
+            // The sentence names the door rather than leaving a bare unknown —
+            // and `/resume <path>` for opening another *session*.
+            crate::picker::Command::Open(_) => {
+                self.ui.push_notice(
+                    "/open switches workspaces in the desktop window — here the workspace \
+                     is this shell's directory; /resume <path> opens another session"
+                        .to_string(),
+                );
+            }
             crate::picker::Command::Editor => {
                 self.request_external_editor();
             }

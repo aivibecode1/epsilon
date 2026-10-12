@@ -27,7 +27,7 @@
 //! test still enforces it for the case where there is genuinely no agent.
 use crate::Options;
 use crate::layout::{IdeLayout, Preferences, SIDEBAR_MAX, SIDEBAR_MIN, SIDEBAR_STEP, Tier};
-use crate::session::{IdeSession, RowKind, Transcript};
+use crate::session::{IdeSession, RowKind, Transcript, WorkspaceSwitch};
 use crate::theme::IdeTheme;
 use epsilon_contracts::agent_event::PermissionDecision;
 use std::sync::Arc;
@@ -2694,6 +2694,12 @@ pub struct IdeApp {
     /// privilege-raising act. `pub(crate)` for the command arm and the
     /// tests, like `keys`.
     pub(crate) pending_preset: Option<String>,
+    /// Pending `/open` workspace target (D-046/S-105): the directory, held while
+    /// the reader confirms. `None` means no question is open. Answered in
+    /// `send_draft` next to the import gate: a switch drops the current workspace
+    /// from view, so it asks first. `pub(crate)` for the command arm and the
+    /// tests, like `keys`.
+    pub(crate) pending_workspace: Option<std::path::PathBuf>,
     /// The OS window title to show (`<session> — Epsilon`).
     ///
     /// Recomputed where the session can change it (start, resume, rename,
@@ -2823,6 +2829,14 @@ pub struct IdeApp {
     /// success is never printed twice.
     compact_tx: tokio::sync::mpsc::UnboundedSender<String>,
     compact_rx: tokio::sync::mpsc::UnboundedReceiver<String>,
+    /// A composed workspace switch, built off the paint thread (D-046/S-105).
+    ///
+    /// Composition scans extensions and opens a lease — seconds of blocking I/O —
+    /// so `/open` resolves and starts the new session in `spawn_workspace_switch`
+    /// and the frame that finds the answer swaps it in (`take_workspace_result`).
+    /// Carries everything the swap touches, so the paint thread never composes.
+    workspace_tx: tokio::sync::mpsc::UnboundedSender<Result<WorkspaceSwitch, String>>,
+    workspace_rx: tokio::sync::mpsc::UnboundedReceiver<Result<WorkspaceSwitch, String>>,
     /// The `gh gist create` answer comes back on a channel, same shape as
     /// the compaction's: the upload is a network call and must not run on
     /// the paint thread.
@@ -3279,6 +3293,7 @@ impl IdeApp {
         // *count*, which `begin_goal_round` moves before it sends anything.
         let (goal_round_tx, goal_round_rx) = tokio::sync::mpsc::unbounded_channel();
         let (compact_tx, compact_rx) = tokio::sync::mpsc::unbounded_channel();
+        let (workspace_tx, workspace_rx) = tokio::sync::mpsc::unbounded_channel();
         let (share_tx, share_rx) = tokio::sync::mpsc::unbounded_channel();
         // Copied before `opts` moves into the struct below.
         let hide_thinking = opts.hide_thinking;
@@ -3332,6 +3347,8 @@ impl IdeApp {
             metrics: None,
             compact_tx,
             compact_rx,
+            workspace_tx,
+            workspace_rx,
             share_tx,
             share_rx,
             palette_rects: Vec::new(),
@@ -3353,6 +3370,7 @@ impl IdeApp {
             timeline_rects: Vec::new(),
             pending_import: None,
             pending_preset: None,
+            pending_workspace: None,
             window_title: String::new(),
             sent_title: String::new(),
             tabs: Vec::new(),
@@ -3384,6 +3402,7 @@ impl IdeApp {
         // Bound once, as in `new` — see there for why this used to be two channels.
         let (goal_round_tx, goal_round_rx) = tokio::sync::mpsc::unbounded_channel();
         let (compact_tx, compact_rx) = tokio::sync::mpsc::unbounded_channel();
+        let (workspace_tx, workspace_rx) = tokio::sync::mpsc::unbounded_channel();
         let (share_tx, share_rx) = tokio::sync::mpsc::unbounded_channel();
         // Copied before `opts` moves into the struct below.
         let hide_thinking = opts.hide_thinking;
@@ -3445,6 +3464,8 @@ impl IdeApp {
             metrics: None,
             compact_tx,
             compact_rx,
+            workspace_tx,
+            workspace_rx,
             share_tx,
             share_rx,
             palette_rects: Vec::new(),
@@ -3466,6 +3487,7 @@ impl IdeApp {
             timeline_rects: Vec::new(),
             pending_import: None,
             pending_preset: None,
+            pending_workspace: None,
             window_title: String::new(),
             sent_title: String::new(),
             tabs: Vec::new(),
@@ -3645,6 +3667,15 @@ impl IdeApp {
         if self.keys.take(ctx, "window.session.fork") {
             let outcome = self.run_fork_session("fork", "forked");
             self.notice_outcome(outcome);
+        }
+        // **Open a workspace (D-046/S-105).** The chord types the `/open` head for
+        // the reader, who completes the path and confirms — a transparent macro,
+        // not a hidden action: the draft shows exactly what will run, and Esc
+        // clears it. Below the palette guard with the other chords.
+        if self.keys.take(ctx, "window.workspace.open") {
+            self.set_draft("/open ");
+            self.focus = FocusTarget::Agent;
+            ctx.memory_mut(|m| m.request_focus(composer_id()));
         }
         // **Hide thinking blocks (P-040, window half).** Same preference as
         // the terminal, through the same config key: memory wins, disk is
@@ -4141,7 +4172,7 @@ impl IdeApp {
     /// Twice in a frame is not twice the work: the drain is a queue read, and the second
     /// call finds it empty. Making it conditional on *how* the frame was reached would
     /// leave two paths that can disagree about what is on screen.
-    fn pump(&mut self) {
+    fn pump(&mut self, ctx: &egui::Context) {
         // A refusal describes a condition — "a run is already in flight" — and conditions
         // end. Nothing cleared `self.refusal` but a later successful submit, so the status bar
         // could sit beside `idle` claiming a turn was running. It clears when the window is no
@@ -4179,6 +4210,17 @@ impl IdeApp {
         }
         if let Some(said) = self.take_compact_notice() {
             self.transcript.push_notice(&said);
+        }
+        // A composed workspace switch lands here (D-046/S-105): the frame that finds
+        // the answer swaps it in, with the context for the bridge. Failure reports
+        // with the reason — a switch that silently did nothing would strand the
+        // reader in the old workspace believing they moved.
+        match self.take_workspace_result() {
+            Some(Ok(switch)) => self.apply_workspace_switch(ctx, switch),
+            Some(Err(e)) => self
+                .transcript
+                .push_failure(format!("workspace switch failed: {e}")),
+            None => {}
         }
         if let Some(said) = self.take_share_notice() {
             self.transcript.push_notice(&said);
@@ -4496,6 +4538,77 @@ impl IdeApp {
     /// Drain whatever the compaction reported, if anything is waiting.
     fn take_compact_notice(&mut self) -> Option<String> {
         self.compact_rx.try_recv().ok()
+    }
+
+    /// Compose a new workspace's session off the paint thread (D-046/S-105).
+    ///
+    /// Called with a validated directory from `answer_pending_workspace` ("yes").
+    /// Resolution + composition block for seconds, so the work runs in
+    /// `spawn_blocking` inside an async spawn (the share precedent) and the answer
+    /// lands on the workspace channel; the frame that finds it swaps it in.
+    /// The pool is the current session's, shared — never a second pool.
+    pub(crate) fn spawn_workspace_switch(&mut self, workspace: std::path::PathBuf) {
+        let Some(session) = self.session.as_ref() else {
+            return;
+        };
+        if session.running() {
+            return;
+        }
+        let runtime = session.runtime_arc();
+        let current = session.launch().clone();
+        let tx = self.workspace_tx.clone();
+        // Cloned for the spawn call: the future below moves the pool into the
+        // blocking thread, and `spawn` borrows it to schedule — one Arc each.
+        runtime.clone().spawn(async move {
+            let out = tokio::task::spawn_blocking(move || {
+                crate::session::IdeSession::start_for_workspace(runtime, workspace, current)
+            })
+            .await;
+            let result = match out {
+                // `JoinError` has no test constructor (the `/share` precedent),
+                // so the mapping is reviewed: a dead spawn reports, never silences.
+                Err(e) => Err(format!("workspace switch task failed: {e}")),
+                Ok(Err(e)) => Err(e),
+                Ok(Ok(switch)) => Ok(switch),
+            };
+            tx.send(result).ok();
+        });
+    }
+
+    /// Drain a composed workspace switch, if one is waiting.
+    fn take_workspace_result(&mut self) -> Option<Result<crate::session::WorkspaceSwitch, String>> {
+        self.workspace_rx.try_recv().ok()
+    }
+
+    /// Swap in a composed workspace (D-046/S-105).
+    ///
+    /// The old session (and its lease, released on drop) is replaced whole: new agent
+    /// with its bridge attached, fresh transcript seeded from its history plus the
+    /// launch diagnostics (a window has no stderr), reloaded file tree and
+    /// preferences, retitled window, refreshed figures, cleared editor and draft.
+    /// One function so the swap cannot half-happen: every surface moves together.
+    fn apply_workspace_switch(
+        &mut self,
+        ctx: &egui::Context,
+        switch: crate::session::WorkspaceSwitch,
+    ) {
+        let history = switch.session.agent().history();
+        let session = std::sync::Arc::new(switch.session);
+        session.attach_bridge(ctx);
+        self.session = Some(session.clone());
+        self.opts.workspace = switch.workspace.clone();
+        self.tree = crate::workspace::FileTree::load(&switch.workspace);
+        self.prefs = Preferences::load_from(&switch.workspace, None);
+        self.transcript = crate::session::Transcript::from_history(session.agent(), &history);
+        self.notices = switch.notices;
+        self.open = None;
+        self.draft.clear();
+        self.refresh_window_title();
+        self.refresh_metrics();
+        self.transcript.push_notice(&format!(
+            "opened workspace {} (fresh session — /resume lists its stored ones)",
+            switch.workspace.display()
+        ));
     }
 
     /// Write the session's HTML export to `dest`.
@@ -4909,7 +5022,7 @@ impl IdeApp {
         ui.ctx().set_style_of(theme, scaled);
         // The drain lives in `pump`, which both `paint` and `eframe::App::logic` call — see
         // there for why neither call site can be the only one.
-        self.pump();
+        self.pump(ui.ctx());
         // **The armed recorder owns the keyboard before every other handler — even
         // approvals.** The chord being recorded must not also fire the command it
         // is aimed at: recording `ctrl+p` must not open the palette, and
@@ -9054,6 +9167,18 @@ impl IdeApp {
             }
             return None;
         }
+        // A pending `/open` owns the next submit (D-046/S-105): `yes` switches
+        // workspaces, `no` cancels, anything else repeats the question. Answered
+        // here — after the running guard (never switch mid-run), before templates
+        // and commands (the answer is not a prompt) — like the import gate.
+        if self.pending_workspace.is_some() {
+            let answer = text.clone();
+            self.draft.clear();
+            if let Some(said) = self.answer_pending_workspace(&answer) {
+                self.transcript.push_notice(&said);
+            }
+            return None;
+        }
         // **A command is not a prompt.** Before this, anything starting with `/` went
         // straight to the model as text, so a reader who knew the terminal asked the model to
         // compact and got a plausible paragraph back. `try_command` answers with what the
@@ -9396,8 +9521,7 @@ impl eframe::App for IdeApp {
     /// happen here too. It takes `&mut self` and must not paint, which is exactly what
     /// draining is.
     fn logic(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
-        self.pump();
-        let _ = ctx;
+        self.pump(ctx);
     }
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         ui.ctx().set_visuals(self.theme.visuals());
@@ -13265,6 +13389,26 @@ mod tests {
             listed_before + 1,
             "one session file added, the previous one kept.\n{}",
             frame.describe()
+        );
+    }
+
+    /// `Ctrl+O` types `/open ` for the workspace flow (D-046/S-105).
+    ///
+    /// Driven through the real key path with real modifiers, like the session
+    /// chords: the defect class is chords that parse in the table and never fire.
+    /// The chord is a transparent macro — it types the head, and the reader
+    /// completes the path and confirms — so the assertion is the draft, not a swap.
+    /// RED first: the chord falls through to whatever holds the keyboard.
+    #[test]
+    fn control_o_types_the_open_head() {
+        let (ws, _keep) = scratch_workspace("chord-open");
+        let (session, notices) = faux_session(&ws);
+        let mut h = Harness::with_session(ws.clone(), session, notices);
+        h.chord(egui::Modifiers::CTRL, egui::Key::O);
+        assert_eq!(
+            h.app.draft(),
+            "/open ",
+            "Ctrl+O must type the workspace head for the reader to complete"
         );
     }
 

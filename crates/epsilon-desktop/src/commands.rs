@@ -27,7 +27,7 @@
 //!
 //! # Why this file holds no list of commands
 //!
-//! It held two, and the second was the expensive one. [`SUPPORTED`] is thirty-seven names and is
+//! It held two, and the second was the expensive one. [`SUPPORTED`] is thirty-eight names and is
 //! still here — it is the declaration, and it stays. What went is a 38-arm `head_of` that
 //! spelled every [`Command`] variant out by hand, plus a `refusal_head` that existed only to
 //! re-derive the refusal set through it. Adding a terminal command meant editing that match
@@ -389,6 +389,12 @@ impl IdeApp {
             // `switch_session` — with its own words ("imported", not
             // "resumed"): the state-changing core is shared, the verb is not.
             Command::Import(path) => self.run_import_session(path),
+            // **`/open` switches the workspace live (D-046/S-105).** A typed path is
+            // validated (exists, is a directory, not the current one), then asked
+            // (`yes` switches, anything else repeats) like the import gate — a swap
+            // drops the current workspace from view. Window-only: the terminal is
+            // bound to its process directory and refuses this by name.
+            Command::Open(path) => self.run_open_workspace(path),
             // **`/help` opens the command palette.** The terminal's `/help` prints
             // the command reference; the window's equivalent surface is the
             // palette, which lists every file and every command this window
@@ -763,6 +769,99 @@ impl IdeApp {
             }
             _ => Some(format!(
                 "Replace current session with '{}'? (yes/no)",
+                abs.display()
+            )),
+        }
+    }
+
+    /// Open a workspace directory: validate, ask, switch live (D-046/S-105).
+    ///
+    /// Argument errors report before the session and busy checks (L-127's honest
+    /// equivalent — a refusal with a reason): a typo is about the argument, and
+    /// checking it first keeps the validation unit-testable without an agent.
+    /// The switch itself is async (composition scans extensions) and lands through
+    /// a channel like `/compact`; see `answer_pending_workspace`.
+    fn run_open_workspace(&mut self, path: String) -> Outcome {
+        let p = path.trim();
+        if p.is_empty() {
+            return Outcome::Ran(
+                "usage: /open <directory> — switches workspace live (Ctrl+O types this for you)"
+                    .to_string(),
+            );
+        }
+        // Lexical normalization only (no filesystem touch): `..` spellings compare
+        // equal to the workspace they name, and escaping the current workspace is
+        // the point of this command, so the inside flag is ignored by design.
+        let (abs, _inside) = epsilon_core::paths::lexically_normalize(self.workspace(), p);
+        if !abs.exists() {
+            return Outcome::Ran(format!(
+                "open: no directory at '{}' — check the path",
+                abs.display()
+            ));
+        }
+        if !abs.is_dir() {
+            return Outcome::Ran(format!(
+                "open: '{}' is a file, not a directory",
+                abs.display()
+            ));
+        }
+        if abs == self.workspace() {
+            return Outcome::Ran(format!("already in {} — nothing to open", abs.display()));
+        }
+        let Some(session) = self.session.as_ref() else {
+            return Outcome::Ran("open: no agent attached to this window".to_string());
+        };
+        if session.running() {
+            return Outcome::Ran(
+                "open: busy — wait for the current run to finish, then /open again".to_string(),
+            );
+        }
+        // Ask first: a switch drops the current workspace from view.
+        // Answered in `send_draft`, next to the import gate.
+        self.pending_workspace = Some(abs.clone());
+        Outcome::Ran(format!(
+            "Open workspace '{}'? The current transcript will be replaced. (yes/no)",
+            abs.display()
+        ))
+    }
+
+    /// Answer a pending `/open`: `yes` switches, `no` cancels, anything
+    /// else repeats the question (the gate must not eat a prompt).
+    ///
+    /// Called from `send_draft` before anything else, like the terminal.
+    /// Returns the sentence, or `None` when no question is open. The switch
+    /// composes off the paint thread and lands through the workspace channel;
+    /// `yes` therefore reports the start, and the arrival reports the result.
+    pub(crate) fn answer_pending_workspace(&mut self, text: &str) -> Option<String> {
+        let abs = self.pending_workspace.clone()?;
+        match text.trim().to_ascii_lowercase().as_str() {
+            "yes" | "y" => {
+                self.pending_workspace = None;
+                let Some(session) = self.session.as_ref() else {
+                    return Some("open: no agent attached to this window".to_string());
+                };
+                if session.running() {
+                    return Some(
+                        "open: a run started while asking — wait for it to finish, then /open again"
+                            .to_string(),
+                    );
+                }
+                // The workspace may have vanished between the ask and the answer.
+                if !abs.is_dir() {
+                    return Some(format!(
+                        "open: '{}' is gone — nothing to switch to",
+                        abs.display()
+                    ));
+                }
+                self.spawn_workspace_switch(abs.clone());
+                Some(format!("opening {} …", abs.display()))
+            }
+            "no" | "n" => {
+                self.pending_workspace = None;
+                Some("open cancelled — still in the current workspace".to_string())
+            }
+            _ => Some(format!(
+                "Open workspace '{}'? The current transcript will be replaced. (yes/no)",
                 abs.display()
             )),
         }
@@ -1568,6 +1667,7 @@ pub const SUPPORTED: &[&str] = &[
     "model",
     "name",
     "new",
+    "open",
     "preset",
     "reload",
     "restore",
@@ -1831,8 +1931,7 @@ mod tests {
         );
     }
 
-    /// **The window runs exactly the heads it declares it runs.**
-    ///
+    /// **The window runs exactly the heads it declares it runs.**    ///
     /// [`SUPPORTED`] is the declaration and the arms of [`IdeApp::try_command`] are the
     /// implementation, and this is the only place the two are compared. Spelled out by hand
     /// on purpose: the whole point of this file is that the command list is *read*, so a
@@ -1874,6 +1973,7 @@ mod tests {
             Command::Models,
             Command::Name(None),
             Command::New,
+            Command::Open(String::new()),
             Command::Preset(None),
             Command::Reload,
             Command::Restore(String::new()),
@@ -1902,6 +2002,89 @@ mod tests {
             "`try_command` runs {implemented:?} and SUPPORTED declares {SUPPORTED:?}; a head \
              declared but not run is refused by the reader's own hand while the product says \
              the window has it"
+        );
+    }
+
+    /// `/open` validates before it asks (D-046/S-105, L-127's honest equivalent).
+    ///
+    /// Argument errors are about the argument, so they come before the session and
+    /// busy checks — a typo reports the typo even in a broken window, and the order
+    /// is unit-testable without an agent. RED first: no `run_open_workspace` arm.
+    #[test]
+    fn open_validates_the_path_before_anything_else() {
+        use crate::Options;
+        use crate::app::IdeApp;
+        let ws = tempfile::tempdir().unwrap();
+        let mut app = IdeApp::without_agent(Options::for_workspace(ws.path()));
+
+        let said = app.try_command("/open");
+        assert!(
+            matches!(&said, crate::commands::Outcome::Ran(s) if s.starts_with("usage: /open")),
+            "bare /open must state usage: {said:?}"
+        );
+
+        let said = app.try_command("/open /no/such/dir-anywhere");
+        assert!(
+            matches!(&said, crate::commands::Outcome::Ran(s) if s.contains("no directory")),
+            "a missing directory must be named, not swapped to: {said:?}"
+        );
+
+        let file = ws.path().join("f.txt");
+        std::fs::write(&file, "x").unwrap();
+        let said = app.try_command(&format!("/open {}", file.display()));
+        assert!(
+            matches!(&said, crate::commands::Outcome::Ran(s) if s.contains("not a directory")),
+            "a file must be refused as not-a-directory: {said:?}"
+        );
+
+        let said = app.try_command(&format!("/open {}", ws.path().display()));
+        assert!(
+            matches!(&said, crate::commands::Outcome::Ran(s) if s.contains("already")),
+            "the current workspace must say so, not rebuild: {said:?}"
+        );
+    }
+
+    /// A valid directory asks first and never swaps silently.
+    ///
+    /// The arm needs an agent to ask (the spawn borrows its pool), so the ask
+    /// itself is pinned end to end in `tests/window.rs`; here the answer halves
+    /// are driven with the question held directly — `pub(crate)` for exactly this.
+    #[test]
+    fn open_pending_answer_cancels_repeats_or_reports_no_agent() {
+        use crate::Options;
+        use crate::app::IdeApp;
+        let ws = tempfile::tempdir().unwrap();
+        let other = tempfile::tempdir().unwrap();
+        let mut app = IdeApp::without_agent(Options::for_workspace(ws.path()));
+
+        app.pending_workspace = Some(other.path().to_path_buf());
+        let said = app.answer_pending_workspace("maybe");
+        assert!(
+            said.is_some() && app.pending_workspace.is_some(),
+            "anything but yes/no repeats without acting"
+        );
+        let said = app.answer_pending_workspace("no");
+        assert!(
+            said.map(|s| s.contains("cancelled")).unwrap_or(false)
+                && app.pending_workspace.is_none(),
+            "no must cancel and drop the question"
+        );
+
+        // `yes` with no agent to borrow a pool from: a refusal, not a spawn.
+        app.pending_workspace = Some(other.path().to_path_buf());
+        let said = app.answer_pending_workspace("yes");
+        let refused_no_agent = said
+            .as_ref()
+            .map(|s| s.contains("no agent attached"))
+            .unwrap_or(false);
+        assert!(
+            refused_no_agent && app.pending_workspace.is_none(),
+            "yes without an agent must refuse and drop the question: {said:?}"
+        );
+        // Answered with nothing held: silence, not a default answer.
+        assert!(
+            app.answer_pending_workspace("yes").is_none(),
+            "no open question means no answer"
         );
     }
 
