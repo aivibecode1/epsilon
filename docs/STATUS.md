@@ -478,6 +478,11 @@ the run. Up from 1,997: the checkpoint round-trip and restore-undo tests. (Previ
 > to announce between, nothing ever downloaded (supply-chain refusal), updater
 > machinery excluded scope. Counts now 74/103/111/51.
 >
+> **Startup trio judged (this session): P-002/P-011/P-216 dd.** The chord is taken
+> and discovery is triple-covered; fixed palettes never query the terminal; no
+> version exists to display. P-004 (quiet mode) and P-088 (tmux probe) stay
+> `missing`: unbuilt, no decision recorded. Counts now 74/103/108/54.
+>
 > **Startup trio (this session): P-005 partial, P-008/P-119 judged.** The model scope
 > lives persistently in the header rather than printed once to scrollback; extension
 > slash commands cannot collide (closed static vocabulary); extension failures are

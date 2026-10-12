@@ -66,12 +66,12 @@ back; it is a reading of the test's source, not a report of a run.
 
 **339 rows** are paired here: Pi's 323 `P-###` behaviours, the 4 `L-###` rows of its inherited `tui.*` keybinding
 table, and the 12 `T-###` rows of its text-measurement core. Every one carries a reference citation; 200 of them
-carry an `ours` citation and 112 do not, and those 112 say so. The counts below are the rows **actually written in
+carry an `ours` citation and 109 do not, and those 109 say so. The counts below are the rows **actually written in
 this document**, tallied from its own tables — not a projection.
 
 | area | rows | done | partial | missing | deliberately different |
 |---|---|---|---|---|---|
-| 1. Startup, header and resources | 20 | 1 | 7 | 5 | 7 |
+| 1. Startup, header and resources | 20 | 1 | 7 | 2 | 10 |
 | 2. Layout and renderer | 10 | 3 | 2 | 4 | 1 |
 | 3. Composer and editor | 24 | 6 | 12 | 2 | 4 |
 | 4. Slash commands and autocomplete | 13 | 2 | 5 | 5 | 1 |
@@ -89,14 +89,14 @@ this document**, tallied from its own tables — not a projection.
 | 16. Status indicators | 13 | 2 | 5 | 5 | 1 |
 | 17. Footer | 12 | 4 | 4 | 1 | 3 |
 | 18. Selector and overlay components | 79 | 18 | 17 | 36 | 8 |
-| **Total** | **339** | **74** | **103** | **111** | **51** |
+| **Total** | **339** | **74** | **103** | **108** | **54** |
 
 A further **17 rows are not in the counts above**: the 10 `Y-###` rows Pi ships outside its interactive mode (out of
 scope by design) and the 7 `AA-###` rows recording what was never inventoried. Both are listed in full near the end
 of this document, because a row that is silently dropped is how a rule goes unowned.
 
-The shape of that table is the honest shape of a port from a 356-row inventory to a 228-row one: **111 rows have no
-counterpart established on our side, 103 are half-built, 74 are exercised, and 51 are decisions.** The 111 are not
+The shape of that table is the honest shape of a port from a 356-row inventory to a 231-row one: **108 rows have no
+counterpart established on our side, 103 are half-built, 74 are exercised, and 54 are decisions.** The 108 are not
 69/339 failures; most of them sit in Pi's extension, settings-overlay, mermaid, image and tree-navigation surface,
 much of which Epsilon deliberately does not have. Read [Open rows](#open-rows) before reading the table.
 
@@ -172,7 +172,7 @@ transcript notices pushed **before** the first frame so it survives the alternat
 | id | behaviour | reference | status | ours | verified |
 |---|---|---|---|---|---|
 | P-001 | A header draws the Pi logo, `v<version>` and a one-line key hint; terminals that cannot draw the logo get a `Pi vX` wordmark | `packages/coding-agent/src/modes/interactive/interactive-mode.ts:996`, `:1001-1006`, `:1051-1057` | partial | `crates/epsilon-tui/src/ui/transcript.rs:264` — a welcome panel with wordmark, one instruction and the three composer prefixes; **no version, and the key hints live in the footer (E-082), not the header** | `an_empty_session_gets_the_first_run_screen_inside_a_well_formed_frame` (frame) |
-| P-002 | `Ctrl+O` expands the startup help from one compact line to a ~20-line instruction list | `packages/coding-agent/src/modes/interactive/interactive-mode.ts:1036-1043`, `:1011-1035`, `:4470-4472` | missing | none — Epsilon has no compact/expanded startup hint; its `Ctrl+O` is the external editor (`crates/epsilon-contracts/src/keybind.rs:355`) | — |
+| P-002 | `Ctrl+O` expands the startup help from one compact line to a ~20-line instruction list | `packages/coding-agent/src/modes/interactive/interactive-mode.ts:1036-1043`, `:1011-1035`, `:4470-4472` | deliberately different | Two blockers, both structural: the chord is taken — `ctrl+o` cycles the transcript filter (P-293, with the collision rationale in `crates/epsilon-contracts/src/keybind.rs`) — and discovery is already covered three ways (welcome panel, `/help`, palette), so an expandable startup line would duplicate all three | — |
 | P-003 | Clicking the first two logo columns starts the logo animation | `packages/coding-agent/src/modes/interactive/interactive-mode.ts:254-263`, `:1058` | deliberately different | Mouse capture is deliberately off (`crates/epsilon-tui/src/app.rs:1549`), so there is no click to animate from — and the mark would be Pi's, not this product's (CREDITS: never take a name, logo or brand) | — |
 | P-004 | `quietStartup` has three states: hide everything, header only, or both | `packages/coding-agent/src/core/settings-manager.ts:1089-1092`, `packages/coding-agent/src/modes/interactive/interactive-mode.ts:1410-1417` | missing | none | — |
 | P-005 | The model scope is printed to stdout at startup so it scrolls away in the terminal's own scrollback | `packages/coding-agent/src/modes/interactive/interactive-mode.ts:940-953` | partial | The scope is shown persistently in the header instead of printed once to scrollback (`crates/epsilon-contracts/src/command.rs:551` names the scope; the header names the provider it is actually calling) — always visible rather than scrolled away, but not in the scrollback record | `an_offline_launch_names_the_provider_it_is_actually_calling` |
@@ -181,7 +181,7 @@ transcript notices pushed **before** the first frame so it survives the alternat
 | P-008 | An extension command whose name collides with a built-in is reported, not silently dropped | `packages/coding-agent/src/modes/interactive/interactive-mode.ts:699-712`, `:784-791` | deliberately different | No collision surface exists: the slash vocabulary is a closed static table (`COMMAND_HEADS`/`SLASH_ITEMS`, `crates/epsilon-tui/src/picker.rs:355`) and extensions contribute tools, hooks and skills — never slash commands — so there is no name for a collision to happen on | — |
 | P-009 | A bordered `What's New` block appears once per version, never on a resumed session, never on a fresh install | `packages/coding-agent/src/modes/interactive/interactive-mode.ts:832-860`, `:1319-1344` | deliberately different | There are no versioned releases to announce between (the release is untagged; install is from source), so a per-version block would fire on every run or never — `/changelog` (`crates/epsilon-tui/src/app/commands.rs:598`) covers the on-demand half instead | — |
 | P-010 | A project with untrusted `.pi` resources gets a warning line telling the user to run `/trust` | `packages/coding-agent/src/modes/interactive/interactive-mode.ts:4145-4164`, `:4134` | done | `crates/epsilon-tui/src/app.rs:890`, `:835` — the review line lands in the transcript and every submit is bounced until `trust` or `trust no` | `trust_review_holds_submits_until_answered` (frame), `trust_gate_blocks_palette_and_stages_initial_task` |
-| P-011 | The system theme queries the terminal's reported colours (OSC 10/11) and renders grayscale until they arrive | `packages/coding-agent/src/modes/interactive/interactive-mode.ts:991-993`, `packages/coding-agent/src/cli/startup-ui.ts:88-89` | missing | none — Epsilon reads `COLORTERM` / `WT_SESSION` / `TERM_PROGRAM` from the environment and never queries the terminal (`crates/epsilon-tui/src/ui/theme.rs:1086`) | — |
+| P-011 | The system theme queries the terminal's reported colours (OSC 10/11) and renders grayscale until they arrive | `packages/coding-agent/src/modes/interactive/interactive-mode.ts:991-993`, `packages/coding-agent/src/cli/startup-ui.ts:88-89` | deliberately different | Fixed palettes by design: three named palettes chosen by name, read from `COLORTERM` / `WT_SESSION` / `TERM_PROGRAM` (`crates/epsilon-tui/src/ui/theme.rs:1086`) — never queried from the terminal, so there is no waiting state to paint grey through | — |
 | P-012 | `fd` and `rg` are downloaded after the TUI is already drawing, with progress in the transcript | `packages/coding-agent/src/modes/interactive/interactive-mode.ts:987`, `:1075-1079`, `:3742-3753` | deliberately different | Nothing is ever downloaded: `grep` is a native tool (`crates/epsilon-tui/src/renderers/mod.rs:39`), and fetching-and-executing binaries is a supply chain this port refuses (`crates/epsilon-lsp/src/server.rs:5`). No download means no progress group to render | — |
 | P-059 | Managed-tool download progress renders as one contiguous group with a leading spacer | `packages/coding-agent/src/modes/interactive/interactive-mode.ts:3742-3753` | deliberately different | As P-012: with no downloads there is no progress to group, contiguously or otherwise | — |
 | P-086 | Shutdown is ordered — drain pending input, stop the TUI, dispose the runtime, then exit — so nothing repaints a dying frame | `packages/coding-agent/src/modes/interactive/interactive-mode.ts:4233-4249`, `:4211-4231` | partial | `crates/epsilon-tui/src/app.rs:1547`, `:1433` — the restore guard is armed before anything that can panic and every step is idempotent; there is no input drain and no in-process extension teardown to order against | `the_terminal_guard_restore_is_reachable_and_idempotent` |
@@ -190,7 +190,7 @@ transcript notices pushed **before** the first frame so it survives the alternat
 | P-089 | An `Update Available` block and a `Package Updates Available` block render as bordered blocks | `packages/coding-agent/src/modes/interactive/interactive-mode.ts:4548-4578`, `:4580-4598` | deliberately different | Installer/updater machinery is excluded scope for this product — there is no update check to report, so both blocks have no trigger by design, not by omission | — |
 | P-119 | A throwing extension prints `Extension "<path>" error: …` with its stack indented and dimmed, first stack line skipped | `packages/coding-agent/src/modes/interactive/interactive-mode.ts:2989-3002` | deliberately different | Different runtime, different failure shape: extension failures are typed values (`ExtError::Timeout/Crashed/Protocol/ToolFailed`, `crates/epsilon-ext/src/host.rs:54`), counted against a crash budget with disable — there are no JS stacks to print, skip, or dim | `crashing_child_is_counted_and_eventually_disabled`, `stalled_child_hits_invoke_timeout` |
 | P-120 | First run may show a two-step setup dialog (theme, then analytics opt-in), gated on four conditions | `packages/coding-agent/src/cli/startup-ui.ts:131-148`, `packages/coding-agent/src/modes/interactive/components/first-time-setup.ts:64-70`, `:71-88` | partial | `crates/epsilon-cli/src/main.rs:1364` — the palette resolves most-explicit-first from flags, env and config with no dialog; there is no analytics opt-in because there is no analytics | `the_light_flag_selects_the_light_palette_regardless_of_the_environment` |
-| P-216 | The version rides on the logo's first line and the first key hint on its second | `packages/coding-agent/src/modes/interactive/interactive-mode.ts:1004`, `:1005` | missing | none — the welcome panel carries no version (`crates/epsilon-tui/src/ui/transcript.rs:227` — the `welcome` panel carries no version line) | — |
+| P-216 | The version rides on the logo's first line and the first key hint on its second | `packages/coding-agent/src/modes/interactive/interactive-mode.ts:1004`, `:1005` | deliberately different | There is no version to display: the release is untagged and install is from source, so a version line would print a workspace version nobody released (P-001 already records the welcome panel carries none) | — |
 
 ## 2. Layout and renderer
 
@@ -762,7 +762,7 @@ row says so — that is a gap in the inventory, and closing it is cheap.
 
 | area | rows | done | partial | missing | deliberately different |
 |---|---|---|---|---|---|
-| 1. Startup, header and resources | 20 | 1 | 7 | 5 | 7 |
+| 1. Startup, header and resources | 20 | 1 | 7 | 2 | 10 |
 | 2. Layout and renderer | 10 | 3 | 2 | 4 | 1 |
 | 3. Composer and editor | 24 | 6 | 12 | 2 | 4 |
 | 4. Slash commands and autocomplete | 13 | 2 | 5 | 5 | 1 |
@@ -780,16 +780,16 @@ row says so — that is a gap in the inventory, and closing it is cheap.
 | 16. Status indicators | 13 | 2 | 5 | 5 | 1 |
 | 17. Footer | 12 | 4 | 4 | 1 | 3 |
 | 18. Selector and overlay components | 79 | 18 | 17 | 36 | 8 |
-| **Total** | **339** | **74** | **103** | **111** | **51** |
+| **Total** | **339** | **74** | **103** | **108** | **54** |
 
-### The `missing` rows — 111
+### The `missing` rows — 108
 
 Every row below has **no** `E-` row establishing the behaviour. Nothing here was found by browsing `crates/`, and
 nothing here is a claim that the behaviour cannot be built.
 
 | area | ids |
 |---|---|
-| Startup, header and resources (5) | P-002, P-004, P-011, P-088, P-216 |
+| Startup, header and resources (2) | P-004, P-088 |
 | Layout and renderer (4) | P-015, P-020, P-021, P-220 |
 | Composer and editor (2) | P-212, P-213 |
 | Slash commands and autocomplete (5) | P-042, P-045, P-221, P-222, P-224 |
