@@ -612,6 +612,10 @@ the run. Up from 1,997: the checkpoint round-trip and restore-undo tests. (Previ
 > surface, no registered renderers, nothing reaching the transcript — same
 > rationale as P-020/P-021/P-060. Counts now 81/110/52/96.
 >
+> **P-184 partial (this session): compaction count reported.** The digest row reports
+> the tokens it records (test green); branch/skill wordings moot — no such cards.
+> Counts now 81/111/51/96.
+>
 > **Goal 3, Phase 1 (landed): AGENTS.md v4 draft for owner application.** Every v3
 > clause audited against the tree (13 crates, uniform 1.88, TERMINAL+WINDOW tables,
 > 15 legs, SUPPORTED only in a historical comment); the complete v4 text sits in
