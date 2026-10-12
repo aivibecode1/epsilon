@@ -12172,6 +12172,46 @@ mod tests {
         );
     }
 
+    /// Removal control for the archive chord: rebound elsewhere, `Ctrl+Shift+A`
+    /// arms nothing — the arm reads the table, not a literal chord. Without
+    /// this, a chord that fired from a hardcoded key would pass every test above.
+    #[test]
+    fn archive_chord_rebound_arms_nothing() {
+        let (ws, _keep) = scratch_workspace("sessions-archive-rebound");
+        let sessions_root = epsilon_runtime::sessions_root(&ws);
+        std::fs::create_dir_all(&sessions_root).expect("sessions root");
+        let other = sessions_root.join("spared.jsonl");
+        epsilon_session::SessionStore::open_in(other.clone(), &ws).expect("a store opens");
+        let (session, notices) = faux_session(&ws);
+        let mut h = Harness::with_session(ws.clone(), session, notices);
+        h.app.set_sidebar_view(SidebarView::Sessions);
+        h.app.set_focus(FocusTarget::Sidebar);
+        let target = h
+            .app
+            .session
+            .as_ref()
+            .expect("a session")
+            .sessions(&ws)
+            .into_iter()
+            .find(|s| s.path == other)
+            .expect("the planted session is listed")
+            .path
+            .clone();
+        h.app.session_cursor = Some(target);
+        let dir = h.keys_dir().to_path_buf();
+        h.app
+            .keys
+            .set_in(&dir, "window.session.archive", &["f12".to_string()])
+            .expect("a rebind writes");
+
+        let _ = h.chord(egui::Modifiers::CTRL | egui::Modifiers::SHIFT, egui::Key::A);
+        assert!(
+            h.app.pending_archive.is_none(),
+            "a chord no binding owns must arm no question"
+        );
+        assert!(other.exists(), "and the file is untouched");
+    }
+
     /// Cancelling the archive leaves the file live, and any key cancels — the
     /// other half of the guard, same as deletion's.
     #[test]
