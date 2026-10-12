@@ -705,6 +705,13 @@ the run. Matrix at 81/111/24/123. (Previous: `gate-goal3-phase6-20261012`, 2,011
 > epsilon-llm + epsilon-tui suites green, fmt + clippy clean.
 > Counts now 84/111/19/125.
 >
+> **P-081 judged (this session): no half of `/bug` has a target.** Upload goes
+> to the Radius gateway (absent, P-066); a Zip export would need a new
+> dependency to re-wrap what `/export` + `/share` already move; there is no
+> crash log or diagnostics collector to bundle, and a model-written summary
+> would spend user tokens on a report with no recipient. Revisit on a support
+> endpoint or a crash log. Counts now 84/111/18/126.
+>
 > **P-230 adapted (this session): Tab toggles workspace/all session scopes.** Bare
 > Tab flips `SessionScope` and rescans under the same filter (highlight restarts
 > at the top — the row it pointed at may not exist in the other scope); the All

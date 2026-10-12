@@ -78,7 +78,7 @@ this document**, tallied from its own tables — not a projection.
 | 5. Transcript and streaming | 35 | 12 | 5 | 2 | 16 |
 | 6. Model picker and thinking | 9 | 0 | 5 | 0 | 4 |
 | 7. Auth, login and permissions | 8 | 2 | 4 | 0 | 2 |
-| 8. Sessions | 17 | 7 | 6 | 1 | 3 |
+| 8. Sessions | 17 | 7 | 6 | 0 | 4 |
 | 9. Themes | 18 | 0 | 6 | 2 | 10 |
 | 10. Settings | 22 | 1 | 10 | 2 | 9 |
 | 11. Project trust | 4 | 1 | 2 | 0 | 1 |
@@ -89,14 +89,14 @@ this document**, tallied from its own tables — not a projection.
 | 16. Status indicators | 13 | 2 | 5 | 0 | 6 |
 | 17. Footer | 12 | 4 | 4 | 0 | 4 |
 | 18. Selector and overlay components | 79 | 23 | 19 | 10 | 27 |
-| **Total** | **339** | **84** | **111** | **19** | **125** |
+| **Total** | **339** | **84** | **111** | **18** | **126** |
 
 A further **17 rows are not in the counts above**: the 10 `Y-###` rows Pi ships outside its interactive mode (out of
 scope by design) and the 7 `AA-###` rows recording what was never inventoried. Both are listed in full near the end
 of this document, because a row that is silently dropped is how a rule goes unowned.
 
-The shape of that table is the honest shape of a port from a 356-row inventory to a 315-row one: **19 rows have no
-counterpart established on our side, 111 are half-built, 84 are exercised, and 125 are decisions.** The 19 are not
+The shape of that table is the honest shape of a port from a 356-row inventory to a 315-row one: **18 rows have no
+counterpart established on our side, 111 are half-built, 84 are exercised, and 126 are decisions.** The 18 are not
 69/339 failures; most of them sit in Pi's extension, settings-overlay, mermaid, image and tree-navigation surface,
 much of which Epsilon deliberately does not have. Read [Open rows](#open-rows) before reading the table.
 
@@ -402,7 +402,7 @@ rather than into dialogs: a fork writes a **new** session file with a fresh head
 | P-078 | `/export` writes HTML, or JSONL when the path ends `.jsonl` | `packages/coding-agent/src/modes/interactive/interactive-mode.ts:6439-6455`, `:6457-6484` | done | `crates/epsilon-tui/src/app/commands.rs:2254`, `:2215` — HTML by default to `.epsilon/exports/`, `html`/`json`/`jsonl` explicit, a bare path inferred from a `.json`/`.jsonl` suffix | `export_command_writes_html_and_json` (writers) + `export_bare_defaults_to_html_in_exports`, `export_json_fmt_and_jsonl_suffix` (inference and destination; dir-mutation control) |
 | P-079 | `/import <path>` asks `Replace current session with …?` before doing anything | `packages/coding-agent/src/modes/interactive/interactive-mode.ts:6486-6528` | done | `crates/epsilon-tui/src/app/commands.rs:2294` (`Command::Import` — refuses while a run is in flight and reports a missing file), `:2320-2324` (the path held in `pending_import`, the `Replace current session with …? (yes/no)` prompt, answered next to the trust gate; `no` cancels, anything else repeats). The window asks through the same words (`commands.rs`, `send_draft` gate) | `import_asks_before_swapping_and_only_yes_swaps`, `import_yes_swaps_the_store` (TUI) + `slash_import_switches_live` (window confirm flow; arm-removal controls both) |
 | P-080 | `/share` prefers Radius, else renders HTML and shells out to `gh gist create --public=false` | `packages/coding-agent/src/modes/interactive/interactive-mode.ts:6530-6539`, `packages/coding-agent/src/modes/interactive/session-share.ts:57-96`, `:175` | partial | `crates/epsilon-tui/src/app/commands.rs:2441` — HTML export plus the `gh gist create --public=false` attempt with honest fallbacks (gist parse failure, gh missing, store missing) are built; the Radius preference has no target here (no such service), and no dedicated test drives the happy path — only the no-store crash guard below | `a_command_needing_the_session_store_says_so_instead_of_crashing` (refusal half only) |
-| P-081 | `/bug` is a consented multi-step report: what is included, transcript choice, model summary, then Upload / Export as Zip / Cancel | `packages/coding-agent/src/modes/interactive/bug-report.ts:50-105`, `:107-147`, `:44-47` | missing | none | — |
+| P-081 | `/bug` is a consented multi-step report: what is included, transcript choice, model summary, then Upload / Export as Zip / Cancel | `packages/coding-agent/src/modes/interactive/bug-report.ts:50-105`, `:107-147`, `:44-47` | deliberately different | Each half of the flow has no target here. Upload goes to the Radius gateway — no Radius anywhere (P-066, zero references in `crates/`). Export as Zip would need a zip writer (no such dependency) to re-wrap what `/export` + `/share` already move with their own consent shape (`crates/epsilon-tui/src/app/commands.rs:2441`). The diagnostics half has no source: no crash log or diagnostics collector exists anywhere in the tree. A `/bug` that only re-wraps `/export` is a second door to the same room, and a model-written summary would spend user tokens on a report with no recipient. Revisit if a support endpoint exists (upload earns its place) or a crash log lands (the bundle earns its) | — |
 | P-082 | `/reload` re-reads keybindings, extensions, skills, prompts, themes and context files, and refuses while streaming or compacting | `packages/coding-agent/src/modes/interactive/interactive-mode.ts:6349-6437`, `:6350-6357` | partial | `crates/epsilon-tui/src/app/commands.rs:1473`, `:1403`, `:1414`, `:1450-1452` — skills roots, agent-def roots, prompt templates and `keybindings.json` are re-read in the running process; `config.toml` deliberately is not, and there are no extensions or themes to reload | `a_skill_root_reload_cannot_read_is_named_on_the_frame` (frame), `an_agents_root_reload_cannot_read_is_named_on_the_frame` (frame) |
 | P-085 | On exit, a persisted session prints `To resume this session: pi --session <id>` | `packages/coding-agent/src/modes/interactive/interactive-mode.ts:4244-4247`, `:335-348` | done | `crates/epsilon-cli/src/main.rs` — `tui_mode` prints `To resume this session: epsilon --resume <path>` after teardown (so it survives in scrollback) when the session file exists, resolved through the shared `session_path_for`; `--continue` is out of scope by design (re-resolving its target here could name a file the run created). Fresh and explicit-`--resume` launches covered | `resume_hint_names_persisted_sessions_only` (persisted fresh, persisted target, missing stays silent; negative control run) |
 
@@ -769,7 +769,7 @@ row says so — that is a gap in the inventory, and closing it is cheap.
 | 5. Transcript and streaming | 35 | 12 | 5 | 2 | 16 |
 | 6. Model picker and thinking | 9 | 0 | 5 | 0 | 4 |
 | 7. Auth, login and permissions | 8 | 2 | 4 | 0 | 2 |
-| 8. Sessions | 17 | 7 | 6 | 1 | 3 |
+| 8. Sessions | 17 | 7 | 6 | 0 | 4 |
 | 9. Themes | 18 | 0 | 6 | 2 | 10 |
 | 10. Settings | 22 | 1 | 10 | 2 | 9 |
 | 11. Project trust | 4 | 1 | 2 | 0 | 1 |
@@ -780,9 +780,9 @@ row says so — that is a gap in the inventory, and closing it is cheap.
 | 16. Status indicators | 13 | 2 | 5 | 0 | 6 |
 | 17. Footer | 12 | 4 | 4 | 0 | 4 |
 | 18. Selector and overlay components | 79 | 23 | 19 | 10 | 27 |
-| **Total** | **339** | **84** | **111** | **19** | **125** |
+| **Total** | **339** | **84** | **111** | **18** | **126** |
 
-### The `missing` rows — 19
+### The `missing` rows — 18
 
 Every row below has **no** `E-` row establishing the behaviour. Nothing here was found by browsing `crates/`, and
 nothing here is a claim that the behaviour cannot be built.
@@ -791,7 +791,6 @@ nothing here is a claim that the behaviour cannot be built.
 |---|---|
 | Startup, header and resources (1) | P-004 |
 | Transcript and streaming (2) | P-053, P-056 |
-| Sessions (1) | P-081 |
 | Themes (2) | P-096, P-098 |
 | Settings (2) | P-113, P-114 |
 | Markdown, mermaid and truncation (1) | T-010 |
