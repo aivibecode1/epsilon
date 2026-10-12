@@ -227,6 +227,14 @@ pub struct FileViewer {
     pub edit_col: usize,
     /// First Esc with a dirty buffer arms; the second discards.
     pub discard_armed: bool,
+    /// Find state (Phase 3 editor slice): `/` opens in view mode, typing narrows.
+    pub find_open: bool,
+    /// Current find query, plain substring (the transcript search's rule).
+    pub find_query: String,
+    /// Line indices in `lines` containing the query, in file order.
+    pub find_hits: Vec<usize>,
+    /// Position within `find_hits`.
+    pub find_index: usize,
 }
 
 /// Read `rel` under `root` for viewing. Refuses (rather than guessing) when the
@@ -256,6 +264,10 @@ pub fn open_viewer(root: &std::path::Path, rel: &str) -> Result<FileViewer, Stri
         edit_row: 0,
         edit_col: 0,
         discard_armed: false,
+        find_open: false,
+        find_query: String::new(),
+        find_hits: Vec::new(),
+        find_index: 0,
     })
 }
 
@@ -275,6 +287,65 @@ impl FileViewer {
     /// True when the buffer differs from what was opened.
     pub fn is_dirty(&self) -> bool {
         self.editing && self.edit_lines != self.lines
+    }
+
+    /// Open find: the query starts empty, showing no matches until typed.
+    pub fn find_open(&mut self) {
+        self.find_open = true;
+        self.find_query.clear();
+        self.find_hits.clear();
+        self.find_index = 0;
+    }
+
+    /// Close find and drop its state; the viewer stays open.
+    pub fn find_close(&mut self) {
+        self.find_open = false;
+        self.find_query.clear();
+        self.find_hits.clear();
+        self.find_index = 0;
+    }
+
+    /// Recompute matches for the current query (plain substring, file order).
+    /// Selection restarts at the first match: the list it pointed into is gone.
+    pub fn find_recompute(&mut self) {
+        self.find_hits = if self.find_query.is_empty() {
+            Vec::new()
+        } else {
+            self.lines
+                .iter()
+                .enumerate()
+                .filter(|(_, l)| l.contains(self.find_query.as_str()))
+                .map(|(i, _)| i)
+                .collect()
+        };
+        self.find_index = 0;
+        // Keep the selection visible when there is one to show.
+        if let Some(&line) = self.find_hits.first() {
+            self.scroll = line.min(self.scroll);
+        }
+    }
+
+    /// Step the selection through the matches, wrapping at both ends, with
+    /// the scroll following minimally so the match stays on screen.
+    /// `capacity` is the painted screenful; `max(1)` so a step before the
+    /// first paint still moves rather than silently doing nothing.
+    pub fn find_step(&mut self, forward: bool, capacity: usize) {
+        if self.find_hits.is_empty() {
+            return;
+        }
+        let n = self.find_hits.len();
+        if forward {
+            self.find_index = (self.find_index + 1) % n;
+        } else {
+            self.find_index = (self.find_index + n - 1) % n;
+        }
+        let cap = capacity.max(1);
+        let line = self.find_hits[self.find_index];
+        if line < self.scroll {
+            self.scroll = line;
+        } else if line >= self.scroll + cap {
+            self.scroll = line + 1 - cap;
+        }
     }
 
     /// Byte index of character `col` in `line` (clamped at line end).
@@ -431,10 +502,32 @@ pub(crate) fn draw_viewer(
         lines.push(Line::from(""));
     }
     let save = format!("{}+s", crate::keybindings::alt_name());
+    // Phase 3 viewer find, drawn inside the panel above the footer: a query
+    // that is not on screen while it is typed cannot be confirmed.
+    if viewer.find_open {
+        let count = if viewer.find_query.is_empty() {
+            "type to search".to_string()
+        } else if viewer.find_hits.is_empty() {
+            "no matches".to_string()
+        } else {
+            format!("{} of {}", viewer.find_index + 1, viewer.find_hits.len())
+        };
+        lines.push(Line::from(vec![
+            ratatui::text::Span::styled("/", theme.accent()),
+            ratatui::text::Span::raw(viewer.find_query.clone()),
+            ratatui::text::Span::styled("\u{2588}", theme.accent()),
+            ratatui::text::Span::styled(format!("  {count} · enter next · esc close"), theme.dim()),
+        ]));
+    }
     let hints: &[(&str, &str)] = if viewer.editing {
         &[("type/enter", "edit"), (&save, "save"), ("esc", "cancel")]
     } else {
-        &[("↑↓/pgup/pgdn", "scroll"), ("e", "edit"), ("esc", "close")]
+        &[
+            ("↑↓/pgup/pgdn", "scroll"),
+            ("/", "find"),
+            ("e", "edit"),
+            ("esc", "close"),
+        ]
     };
     lines.push(Line::from(overlay::hint_row(theme, hints).spans));
     f.render_widget(Paragraph::new(lines), inner);
@@ -500,5 +593,56 @@ mod viewer_tests {
         let dir = workspace();
         let err = open_viewer(dir.path(), "gone.txt").expect_err("missing refuses");
         assert!(err.contains("gone.txt"), "error names the file: {err}");
+    }
+
+    #[test]
+    fn find_matches_plain_substrings_in_file_order() {
+        let dir = workspace();
+        std::fs::write(dir.path().join("f.txt"), "apple\nbanana\nApple pie\n").unwrap();
+        let mut v = open_viewer(dir.path(), "f.txt").expect("opens");
+        v.find_open();
+        assert!(v.find_hits.is_empty(), "empty query matches nothing");
+        v.find_query = "apple".into();
+        v.find_recompute();
+        // Plain substring, case-sensitive like the transcript search: the
+        // capitalised line does not match.
+        assert_eq!(
+            v.find_hits,
+            vec![0],
+            "only the exact-case line: {:?}",
+            v.find_hits
+        );
+        assert_eq!(v.find_index, 0);
+    }
+
+    #[test]
+    fn find_steps_wrap_and_drag_the_scroll() {
+        let dir = workspace();
+        let body: String = (0..50).map(|i| format!("line {i}\n")).collect();
+        std::fs::write(dir.path().join("f.txt"), body).unwrap();
+        let mut v = open_viewer(dir.path(), "f.txt").expect("opens");
+        v.find_query = "line 4".into();
+        v.find_recompute();
+        // "line 4", "line 40".."line 49": eleven hits in file order.
+        assert_eq!(v.find_hits.len(), 11, "{:?}", v.find_hits);
+        assert_eq!(v.find_hits[0], 4);
+        v.scroll = 0;
+        v.find_step(true, 10);
+        assert_eq!(v.find_index, 1);
+        // Stepping to the last hit then once more wraps to the first.
+        for _ in 0..10 {
+            v.find_step(true, 10);
+        }
+        assert_eq!(v.find_index, 0, "forward wraps past the last hit");
+        v.find_step(false, 10);
+        assert_eq!(v.find_index, 10, "backward wraps past the first hit");
+        // The scroll followed the far hit and stays put for a visible one.
+        assert!(
+            v.scroll <= 49 && 49 < v.scroll + 10,
+            "far hit on screen: scroll={}",
+            v.scroll
+        );
+        v.find_close();
+        assert!(!v.find_open && v.find_hits.is_empty() && v.find_query.is_empty());
     }
 }

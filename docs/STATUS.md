@@ -749,6 +749,14 @@ the run. Matrix at 81/111/24/123. (Previous: `gate-goal3-phase6-20261012`, 2,011
 > code + expiry (adapter test) with one stated divergence — the pre-filled page
 > opens too when offered. Counts now 86/114/8/131.
 >
+> **Phase 3 slice 1 (this session): viewer find.** `/` in view mode searches
+> the open file — plain substring, count `i of n`, Enter/Down/n forward,
+> Up/PageUp/p back, wrapping both ways, scroll following minimally, Esc
+> closes (viewer stays open); edit mode keeps `/` as text. Matches counted,
+> not highlighted (transcript search's rule). Three tests (TUI open/step/wrap
+> with 80x24 + 100x30 frames, unit match-order + wrap/scroll/close; wrap-break
+> control fails both); full suite green, clippy clean.
+>
 > **Quartet judged (this session): P-096/P-098 theme files, P-113/P-114 layer
 > rules.** No theme files at any layer (named built-in palettes, P-101);
 > no cache-warming setting anywhere (verified by search); no tool-allowlist

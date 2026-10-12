@@ -5132,6 +5132,71 @@ fn a_filter_hides_entries_and_promotes_the_ones_left() {
     );
 }
 
+/// Phase 3, viewer find: `/` searches the open file, Enter steps through matches.
+///
+/// Matches are counted, not highlighted — the transcript search's own rule
+/// (P-217/P-218): the count plus the scroll following the match is the whole
+/// signal. View mode only; in edit mode `/` types.
+#[test]
+fn viewer_slash_finds_and_steps_through_matches() {
+    let (mut app, agent, _rx) = test_app();
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(
+        dir.path().join("notes.txt"),
+        "alpha line\nbeta needle gamma\nplain line\nbeta again\n",
+    )
+    .unwrap();
+    app.workspace_root = dir.path().to_path_buf();
+    app.viewer =
+        Some(crate::tree::open_viewer(&app.workspace_root, "notes.txt").expect("fixture opens"));
+    assert!(app.viewer_open(), "precondition: the viewer is open");
+
+    handle_key(&mut app, &agent, key(KeyCode::Char('/')));
+    assert!(
+        app.viewer.as_ref().is_some_and(|v| v.find_open),
+        "/ opens find in view mode"
+    );
+    for c in "beta".chars() {
+        handle_key(&mut app, &agent, key(KeyCode::Char(c)));
+    }
+    let (hits, index) = app
+        .viewer
+        .as_ref()
+        .map(|v| (v.find_hits.len(), v.find_index))
+        .unwrap();
+    assert_eq!(hits, 2, "both beta lines match");
+    assert_eq!(index, 0, "first match selected");
+
+    handle_key(&mut app, &agent, key(KeyCode::Enter));
+    assert_eq!(
+        app.viewer.as_ref().map(|v| v.find_index),
+        Some(1),
+        "Enter steps to the next match"
+    );
+    handle_key(&mut app, &agent, key(KeyCode::Enter));
+    assert_eq!(
+        app.viewer.as_ref().map(|v| v.find_index),
+        Some(0),
+        "stepping wraps past the last match"
+    );
+
+    // Count on screen at both sizes, through the production draw.
+    for (width, height) in [(80u16, 24u16), (100, 30)] {
+        let screen = render_rows(&mut app, width, height).join("\n");
+        assert!(
+            screen.contains("1 of 2"),
+            "match count reaches pixels at {width}x{height}: {screen}"
+        );
+    }
+
+    handle_key(&mut app, &agent, key(KeyCode::Esc));
+    assert!(
+        app.viewer.as_ref().is_some_and(|v| !v.find_open),
+        "Esc closes find; the viewer stays open"
+    );
+    assert!(app.viewer_open(), "Esc closes find, not the viewer");
+}
+
 /// P-307: inside `/tree`, the copy key takes the SELECTED entry's full text,
 /// not the 200-character preview on screen — and not the last assistant
 /// message, which is what the same key copies outside the picker.

@@ -655,9 +655,55 @@ pub(crate) fn handle_key(app: &mut App, agent: &Arc<Agent>, key: KeyEvent) -> bo
             }
             return false;
         }
+        // Phase 3 viewer find: while a find is open it owns the keyboard,
+        // like every overlay. Printable keys narrow the query (so `e` types
+        // here rather than starting an edit — Esc first, then `e`); Enter and
+        // Down step forward, Up steps back, Backspace widens, Esc closes.
+        // The `n`/`p` aliases mirror the transcript search's step keys.
+        if app.viewer.as_ref().is_some_and(|v| v.find_open) {
+            let capacity = app.viewer_capacity.max(1);
+            match key.code {
+                KeyCode::Esc => {
+                    if let Some(v) = app.viewer.as_mut() {
+                        v.find_close();
+                    }
+                }
+                KeyCode::Enter | KeyCode::Down | KeyCode::Char('n') => {
+                    if let Some(v) = app.viewer.as_mut() {
+                        v.find_step(true, capacity);
+                    }
+                }
+                KeyCode::Up | KeyCode::PageUp | KeyCode::Char('p') => {
+                    if let Some(v) = app.viewer.as_mut() {
+                        v.find_step(false, capacity);
+                    }
+                }
+                KeyCode::Backspace => {
+                    if let Some(v) = app.viewer.as_mut() {
+                        v.find_query.pop();
+                        v.find_recompute();
+                    }
+                }
+                KeyCode::Char(c) if key.modifiers == KeyModifiers::NONE && !c.is_control() => {
+                    if let Some(v) = app.viewer.as_mut() {
+                        v.find_query.push(c);
+                        v.find_recompute();
+                    }
+                }
+                _ => {}
+            }
+            return false;
+        }
         match key.code {
             KeyCode::Esc => {
                 app.viewer = None;
+            }
+            // `/` opens find (the timeline's convention for "search here").
+            // View mode only: in edit mode `/` is text.
+            KeyCode::Char('/') if key.modifiers == KeyModifiers::NONE => {
+                if let Some(v) = app.viewer.as_mut() {
+                    v.find_open();
+                }
             }
             KeyCode::Char('e' | 'E') if key.modifiers == KeyModifiers::NONE => {
                 // Read-only until asked: `e` starts the edit buffer from the
