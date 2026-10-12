@@ -66,7 +66,7 @@ back; it is a reading of the test's source, not a report of a run.
 
 **339 rows** are paired here: Pi's 323 `P-###` behaviours, the 4 `L-###` rows of its inherited `tui.*` keybinding
 table, and the 12 `T-###` rows of its text-measurement core. Every one carries a reference citation; 200 of them
-carry an `ours` citation and 83 do not, and those 83 say so. The counts below are the rows **actually written in
+carry an `ours` citation and 78 do not, and those 78 say so. The counts below are the rows **actually written in
 this document**, tallied from its own tables — not a projection.
 
 | area | rows | done | partial | missing | deliberately different |
@@ -79,7 +79,7 @@ this document**, tallied from its own tables — not a projection.
 | 6. Model picker and thinking | 9 | 0 | 4 | 1 | 4 |
 | 7. Auth, login and permissions | 8 | 0 | 4 | 3 | 1 |
 | 8. Sessions | 17 | 7 | 6 | 1 | 3 |
-| 9. Themes | 18 | 0 | 6 | 8 | 4 |
+| 9. Themes | 18 | 0 | 6 | 3 | 9 |
 | 10. Settings | 22 | 1 | 10 | 8 | 3 |
 | 11. Project trust | 4 | 1 | 2 | 0 | 1 |
 | 12. Tool cards | 16 | 3 | 6 | 0 | 7 |
@@ -89,14 +89,14 @@ this document**, tallied from its own tables — not a projection.
 | 16. Status indicators | 13 | 2 | 5 | 1 | 5 |
 | 17. Footer | 12 | 4 | 4 | 1 | 3 |
 | 18. Selector and overlay components | 79 | 21 | 17 | 28 | 13 |
-| **Total** | **339** | **77** | **105** | **82** | **75** |
+| **Total** | **339** | **77** | **105** | **77** | **80** |
 
 A further **17 rows are not in the counts above**: the 10 `Y-###` rows Pi ships outside its interactive mode (out of
 scope by design) and the 7 `AA-###` rows recording what was never inventoried. Both are listed in full near the end
 of this document, because a row that is silently dropped is how a rule goes unowned.
 
-The shape of that table is the honest shape of a port from a 356-row inventory to a 257-row one: **82 rows have no
-counterpart established on our side, 105 are half-built, 77 are exercised, and 75 are decisions.** The 82 are not
+The shape of that table is the honest shape of a port from a 356-row inventory to a 262-row one: **77 rows have no
+counterpart established on our side, 105 are half-built, 77 are exercised, and 80 are decisions.** The 77 are not
 69/339 failures; most of them sit in Pi's extension, settings-overlay, mermaid, image and tree-navigation surface,
 much of which Epsilon deliberately does not have. Read [Open rows](#open-rows) before reading the table.
 
@@ -418,10 +418,10 @@ several Pi rows have nothing to pair with at all, and are recorded that way rath
 |---|---|---|---|---|---|
 | P-090 | The default theme is `system`, generated from the terminal's reported colours | `packages/coding-agent/src/modes/interactive/theme/theme.ts:757`, `packages/coding-agent/src/modes/interactive/theme/theme-controller.ts:175` | deliberately different | `crates/epsilon-tui/src/ui/theme.rs:102`, `crates/epsilon-tui/src/app/commands.rs:1608` — three named palettes and no generated one; an unrecognised theme value falls back to **dark**, not to a terminal-derived palette, because there is no such thing to fall back to | `an_unrecognised_theme_value_falls_back_to_dark_not_to_the_config` |
 | P-091 | Exactly two theme files ship: `dark.json` and `light.json`; everything else is user- or package-supplied | `packages/coding-agent/src/modes/interactive/theme/theme.ts:445-456`, `packages/coding-agent/src/modes/interactive/theme/dark.json:3-4` | partial | `crates/epsilon-tui/src/ui/theme.rs:936` — dark, light and a third `high-contrast` palette; nothing is loaded from a file, so there is no "everything else" | `the_high_contrast_palette_clears_the_aaa_floor_on_black` |
-| P-092 | A theme name of exactly `light/dark` is a pair chosen by the terminal's appearance | `packages/coding-agent/src/modes/interactive/theme/theme.ts:652-667`, `:669-680` | missing | none — Epsilon has no appearance detection to choose between a pair | — |
+| P-092 | A theme name of exactly `light/dark` is a pair chosen by the terminal's appearance | `packages/coding-agent/src/modes/interactive/theme/theme.ts:652-667`, `:669-680` | deliberately different | Three named palettes chosen by name (`/theme`), never by appearance detection: a detector that misreads over SSH, tmux or a plain console silently picks the wrong palette, while an explicit choice cannot | — |
 | P-093 | The generated system theme solves per-token contrast so body text keeps 4.5:1 on whatever background it lands on | `packages/coding-agent/src/modes/interactive/theme/system-theme.ts:350`, `:49-64`, `:510-520`, `:620-635` | partial | `crates/epsilon-tui/src/ui/theme.rs:936`, `:955` — contrast is **measured** rather than solved, and asserted at 7:1 — but only the high-contrast palette has a measured floor in the tree; the dark and light palettes' contrast is not asserted by any test | `the_high_contrast_palette_clears_the_aaa_floor_on_black` (walks every role against 7:1, with the dark palette's own `text_faint` as the control) |
-| P-094 | Light-vs-dark is decided from the terminal's reported foreground, then background contrast, then its report, then `COLORFGBG`, defaulting to dark | `packages/coding-agent/src/modes/interactive/theme/system-theme.ts:416-431`, `packages/coding-agent/src/modes/interactive/theme/theme.ts:702-710`, `:689-695` | missing | none — Epsilon reads `COLORTERM` / `WT_SESSION` / `TERM_PROGRAM` for colour **depth** (`crates/epsilon-tui/src/ui/theme.rs:1086`), never for appearance | — |
-| P-095 | In automatic mode Pi follows the terminal's colour-scheme notification and repaints live | `packages/coding-agent/src/modes/interactive/theme/theme-controller.ts:225-229`, `:241-247` | missing | none | — |
+| P-094 | Light-vs-dark is decided from the terminal's reported foreground, then background contrast, then its report, then `COLORFGBG`, defaulting to dark | `packages/coding-agent/src/modes/interactive/theme/system-theme.ts:416-431`, `packages/coding-agent/src/modes/interactive/theme/theme.ts:702-710`, `:689-695` | deliberately different | Fixed palettes by design: `COLORTERM` / `WT_SESSION` / `TERM_PROGRAM` are read for colour **depth** only (`crates/epsilon-tui/src/ui/theme.rs:1086`), never for appearance — a reported-foreground chain that degrades to a default is a guess dressed as detection | — |
+| P-095 | In automatic mode Pi follows the terminal's colour-scheme notification and repaints live | `packages/coding-agent/src/modes/interactive/theme/theme-controller.ts:225-229`, `:241-247` | deliberately different | As P-092: with no automatic mode there is nothing to follow and no live repaint owed — the palette changes exactly when the reader asks (`/theme` applies live) | — |
 | P-096 | Custom themes load from three places; editing the active one repaints within a debounce, and a broken file leaves the last good theme on screen | `packages/coding-agent/src/core/resource-loader.ts:1042`, `packages/coding-agent/src/config.ts:571-573`, `packages/coding-agent/src/modes/interactive/theme/theme.ts:831-861` | missing | none — there is no theme file to load or watch | — |
 | P-097 | A theme that fails to load keeps rendering in system colours and only shows the error when asked; the remembered name resets | `packages/coding-agent/src/modes/interactive/theme/theme.ts:764-769`, `packages/coding-agent/src/modes/interactive/theme/theme-controller.ts:182-184` | partial | `crates/epsilon-tui/src/app/commands.rs:1609` — an unrecognised name is refused by name with the options listed and the palette left exactly as it was, rather than reverting silently | `theme_command_toggles_and_names_the_palette`, `the_palette_is_selected_by_name_and_survives_a_bad_one` |
 | P-098 | A theme missing a required colour token is rejected naming the tokens, not with a stack trace | `packages/coding-agent/src/modes/interactive/theme/theme-json.ts:105-138`, `packages/coding-agent/src/modes/interactive/theme/theme-schema.json:43-95`, `:322` | missing | none | — |
@@ -431,8 +431,8 @@ several Pi rows have nothing to pair with at all, and are recorded that way rath
 | P-102 | `terminal.trueColor`, `terminal.images` and `terminal.hyperlinks` override what Pi detected | `packages/coding-agent/src/core/settings-manager.ts:1278-1286`, `packages/coding-agent/src/modes/interactive/interactive-mode.ts:599`, `:2040` | partial | `crates/epsilon-cli/src/main.rs:483`, `crates/epsilon-tui/src/ui/theme.rs:481` — the ASCII repertoire is overridable in **both** directions by `EPSILON_ASCII`; colour depth and image support are not overridable | `the_repertoire_default_is_ascii_on_a_legacy_windows_console`, `ascii_glyphs_are_seven_bit_only` |
 | P-215 | The logo's brand colours are fixed across themes | `packages/coding-agent/src/modes/interactive/components/pi-logo.ts:19`, `:23` | deliberately different | `crates/epsilon-tui/src/ui/transcript.rs:227` (`welcome` — the wordmark follows the palette) — the welcome wordmark follows the palette, and Epsilon takes no third party's logo, mascot or brand ([`../../AGENTS.md`](../../AGENTS.md) §10) | `an_empty_session_gets_the_first_run_screen_inside_a_well_formed_frame` (frame) |
 | P-269 | Choosing Theme opens a submenu in place; `automatic` switches it into split mode | `packages/coding-agent/src/modes/interactive/components/settings-selector.ts:752`, `:313`, `:221`, `:216` | partial | `crates/epsilon-tui/src/app/commands.rs:1605` — a palette is chosen by name on the command line; there is no submenu and no `automatic` entry | `every_palette_the_description_advertises_is_one_the_product_has` |
-| P-270 | Automatic light/dark gets its own four-row submenu (`Light theme`, `Dark theme`, `Apply`, `Change mode`) | `packages/coding-agent/src/modes/interactive/components/settings-selector.ts:332`, `:446`, `:407`, `:338` | missing | none | — |
-| P-271 | Cancelling the theme submenu restores whatever was active when it opened | `packages/coding-agent/src/modes/interactive/components/settings-selector.ts:325`, `:454`, `:326`, `:355` | missing | none | — |
+| P-270 | Automatic light/dark gets its own four-row submenu (`Light theme`, `Dark theme`, `Apply`, `Change mode`) | `packages/coding-agent/src/modes/interactive/components/settings-selector.ts:332`, `:446`, `:407`, `:338` | deliberately different | As P-092: no automatic mode, so no submenu to configure it — `/theme` names the three palettes directly | — |
+| P-271 | Cancelling the theme submenu restores whatever was active when it opened | `packages/coding-agent/src/modes/interactive/components/settings-selector.ts:325`, `:454`, `:326`, `:355` | deliberately different | As P-270: with no submenu there is nothing to cancel out of — `/theme` applies immediately and says so, which is the restore problem dissolved rather than solved | — |
 | P-322 | A theme-list component exists with a live preview but **no production caller** — the picker the user actually sees is a submenu elsewhere | `packages/coding-agent/src/modes/interactive/components/theme-selector.ts:31`, `:54`, `packages/coding-agent/src/modes/interactive/components/index.ts:31` | deliberately different | `crates/epsilon-tui/src/app/commands.rs:1609` — Epsilon ships one reachable theme path, `/theme`; invariant 7 says a control nothing opens must not be advertised, and nothing is | `the_palette_is_selected_by_name_and_survives_a_bad_one` |
 
 ## 10. Settings
@@ -770,7 +770,7 @@ row says so — that is a gap in the inventory, and closing it is cheap.
 | 6. Model picker and thinking | 9 | 0 | 4 | 1 | 4 |
 | 7. Auth, login and permissions | 8 | 0 | 4 | 3 | 1 |
 | 8. Sessions | 17 | 7 | 6 | 1 | 3 |
-| 9. Themes | 18 | 0 | 6 | 8 | 4 |
+| 9. Themes | 18 | 0 | 6 | 3 | 9 |
 | 10. Settings | 22 | 1 | 10 | 8 | 3 |
 | 11. Project trust | 4 | 1 | 2 | 0 | 1 |
 | 12. Tool cards | 16 | 3 | 6 | 0 | 7 |
@@ -780,9 +780,9 @@ row says so — that is a gap in the inventory, and closing it is cheap.
 | 16. Status indicators | 13 | 2 | 5 | 1 | 5 |
 | 17. Footer | 12 | 4 | 4 | 1 | 3 |
 | 18. Selector and overlay components | 79 | 21 | 17 | 28 | 13 |
-| **Total** | **339** | **77** | **105** | **82** | **75** |
+| **Total** | **339** | **77** | **105** | **77** | **80** |
 
-### The `missing` rows — 82
+### The `missing` rows — 77
 
 Every row below has **no** `E-` row establishing the behaviour. Nothing here was found by browsing `crates/`, and
 nothing here is a claim that the behaviour cannot be built.
@@ -796,7 +796,7 @@ nothing here is a claim that the behaviour cannot be built.
 | Model picker and thinking (1) | P-273 |
 | Auth, login and permissions (3) | P-061, P-063, P-066 |
 | Sessions (1) | P-081 |
-| Themes (8) | P-092, P-094, P-095, P-096, P-098, P-101, P-270, P-271 |
+| Themes (3) | P-096, P-098, P-101 |
 | Settings (8) | P-103, P-111, P-113, P-114, P-267, P-268, P-275, P-277 |
 | Markdown, mermaid and truncation (3) | P-167, P-168, T-010 |
 | Status indicators (1) | P-194 |

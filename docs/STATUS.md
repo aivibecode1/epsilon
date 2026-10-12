@@ -527,6 +527,12 @@ the run. Up from 1,997: the checkpoint round-trip and restore-undo tests. (Previ
 > P-230 (cross-directory scope) and P-239 (threaded tree) stay `missing`.
 > Counts now 77/105/82/75.
 >
+> **Theme auto-mode quintet judged (this session): P-092/P-094/P-095/P-270/P-271 dd.**
+> Named palettes by explicit choice — detectors misread over SSH/tmux/consoles,
+> and there is no automatic mode to follow, configure, or cancel out of.
+> P-096/P-098 (theme files) and P-101 (settings preview) stay `missing`.
+> Counts now 77/105/77/80.
+>
 > **P-234 done (this session): delete confirms inline, stricter.** `ctrl+d` arms,
 > Enter deletes, any other key cancels and closes; active session refused by name
 > (three cited tests re-run green). Also corrected a stale ours cell claiming the
