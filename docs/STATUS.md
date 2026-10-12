@@ -768,6 +768,17 @@ the run. Matrix at 81/111/24/123. (Previous: `gate-goal3-phase6-20261012`, 2,011
 > query in `epsilon-lsp`, or `--lsp` default with servers present) — not
 > half-built. Phase 3 closes with find + tabs landed.
 >
+> **Phase 4 verdict (this session): owner-side items deferred with triggers,
+> in writing.** No owner input arrived this run, and all three need a person:
+> (1) `auth.json` plaintext — owner signature on plan 026 R6 / proposal 7
+> (the AGENTS.md §6 violation stays open and no new plaintext secret lands);
+> (2) real screen-reader pass (R5) — eleven regions are asserted against the
+> real accesskit tree in tests, but no screen reader has ever run against the
+> window, and only a person with one can close that; (3) release tag (R7) —
+> agents never push or publish (AGENTS.md §11), so the tag is the owner's act.
+> Triggers: owner's signature / a reader-and-keyboard pass by a person /
+> owner's release run.
+>
 > **Phase 3 slice 1 (this session): viewer find.** `/` in view mode searches
 > the open file — plain substring, count `i of n`, Enter/Down/n forward,
 > Up/PageUp/p back, wrapping both ways, scroll following minimally, Esc
