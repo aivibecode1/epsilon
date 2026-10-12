@@ -88,15 +88,15 @@ this document**, tallied from its own tables — not a projection.
 | 15. Markdown, mermaid and truncation | 22 | 6 | 7 | 1 | 8 |
 | 16. Status indicators | 13 | 2 | 5 | 0 | 6 |
 | 17. Footer | 12 | 4 | 4 | 0 | 4 |
-| 18. Selector and overlay components | 79 | 25 | 20 | 2 | 32 |
-| **Total** | **339** | **86** | **112** | **10** | **131** |
+| 18. Selector and overlay components | 79 | 25 | 22 | 0 | 32 |
+| **Total** | **339** | **86** | **114** | **8** | **131** |
 
 A further **17 rows are not in the counts above**: the 10 `Y-###` rows Pi ships outside its interactive mode (out of
 scope by design) and the 7 `AA-###` rows recording what was never inventoried. Both are listed in full near the end
 of this document, because a row that is silently dropped is how a rule goes unowned.
 
-The shape of that table is the honest shape of a port from a 356-row inventory to a 315-row one: **10 rows have no
-counterpart established on our side, 112 are half-built, 86 are exercised, and 131 are decisions.** The 10 are not
+The shape of that table is the honest shape of a port from a 356-row inventory to a 315-row one: **8 rows have no
+counterpart established on our side, 114 are half-built, 86 are exercised, and 131 are decisions.** The 8 are not
 69/339 failures; most of them sit in Pi's extension, settings-overlay, mermaid, image and tree-navigation surface,
 much of which Epsilon deliberately does not have. Read [Open rows](#open-rows) before reading the table.
 
@@ -726,8 +726,8 @@ the per-selector ones.
 | P-315 | Three distinct auth empty states: no providers available, none logged in, no matching providers | `packages/coding-agent/src/modes/interactive/components/oauth-selector.ts:182`, `:186` | partial | `crates/epsilon-tui/src/app/commands.rs:659` — `/logout` distinguishes removed from nothing-to-remove and says which; there is no provider-selector overlay to have an empty state | `no_slash_command_panics_when_typed` |
 | P-316 | The `Sign in with Radius` option shimmers through four brand colours, only while selected | `packages/coding-agent/src/modes/interactive/components/radius-login-selector.ts:11`, `:18`, `:72` | deliberately different | As P-066: zero references to Radius anywhere in `crates/` — no login flow, no provider, nothing to shimmer | — |
 | P-317 | The shimmer is a post-render string patch that finds the rendered line and replaces it, and disappears silently if the line wrapped | `packages/coding-agent/src/modes/interactive/components/radius-login-selector.ts:78`, `:81`, `:41-44` | deliberately different | As P-316: no Radius row exists to animate. And as already recorded: if an animated row is ever added it must be a widget honouring reduced motion ([`../../AGENTS.md`](../../AGENTS.md) §8), not a string substitution | — |
-| P-318 | The OAuth dialog replaces the composer with a panel that opens the browser **without a keypress** | `packages/coding-agent/src/modes/interactive/components/login-dialog.ts:96`, `:111`, `:102`, `:124` | missing | none | — |
-| P-319 | The device-code flow shows the verification URI and a code and does **not** open a browser | `packages/coding-agent/src/modes/interactive/components/login-dialog.ts:118`, `:128`, `:152-153` | missing | none | — |
+| P-318 | The OAuth dialog replaces the composer with a panel that opens the browser **without a keypress** | `packages/coding-agent/src/modes/interactive/components/login-dialog.ts:96`, `:111`, `:102`, `:124` | partial | The behaviour matches and the surface differs: the PKCE path prints the URL and opens the browser with no keypress (`crates/epsilon-llm/src/oauth_login.rs:1288-1294`, opener at `:1117`), but through transcript notices plus the masked paste overlay (`crates/epsilon-tui/src/app/login.rs:63`) rather than a composer-replacing panel. The spawn itself is reviewed, not driven — no test opens a real browser | `the_login_adapter_carries_notices_and_the_device_code_to_the_transcript` (adapter surface, real-gated) |
+| P-319 | The device-code flow shows the verification URI and a code and does **not** open a browser | `packages/coding-agent/src/modes/interactive/components/login-dialog.ts:118`, `:128`, `:152-153` | partial | The URI + code + expiry line reaches the transcript (`crates/epsilon-tui/src/app/login.rs:59`, pinned by the adapter test below) — but with one stated divergence: when the server offers a pre-filled `verification_uri_complete`, ours best-effort opens that page too and says so (`crates/epsilon-llm/src/oauth_login.rs:1332`), where pi never opens. The code is still shown and typed either way, so the extra open saves typing rather than replacing the flow | `the_login_adapter_carries_notices_and_the_device_code_to_the_transcript` (URI, code and expiry all on the notice) |
 | P-320 | A submitted login input is replaced in place with `> value`; Esc aborts and reports `Login cancelled` | `packages/coding-agent/src/modes/interactive/components/login-dialog.ts:77`, `:83`, `:225`, `:65` | deliberately different | `crates/epsilon-tui/src/app/panels.rs:1178` — Epsilon renders one bullet glyph per character and never the value, not even an echo of the digits; the path is named instead | `cancelling_a_key_entry_says_what_was_kept`, `auth_file_is_owner_only_on_unix` |
 | P-321 | The auth selector clamps and keeps its position after filtering, where the model selector resets — three navigation policies across three pickers | `packages/coding-agent/src/modes/interactive/components/oauth-selector.ts:198`, `:204`, `:139`, `:146` | deliberately different | `crates/epsilon-tui/src/app/keys.rs:1334` — one policy everywhere (see P-312): clamp at both ends, reset the highlight only on a new query | `a_page_key_moves_by_the_window_the_list_actually_drew` (frame) |
 | P-323 | A `Show images` Yes/No selector exists with no production caller; the reachable setting is a row in `/settings` | `packages/coding-agent/src/modes/interactive/components/show-images-selector.ts:19`, `:31`, `packages/coding-agent/src/modes/interactive/components/index.ts:29` | deliberately different | Excluded scope needs no gate: image blobs collapse to a one-line `[image: … — graphics deferred]` fallback (`crates/epsilon-tui/src/state.rs:156`) and are never drawn, so a Yes/No setting would toggle nothing. Pi's own selector has no production caller either (AA-006) | — |
@@ -779,10 +779,10 @@ row says so — that is a gap in the inventory, and closing it is cheap.
 | 15. Markdown, mermaid and truncation | 22 | 6 | 7 | 1 | 8 |
 | 16. Status indicators | 13 | 2 | 5 | 0 | 6 |
 | 17. Footer | 12 | 4 | 4 | 0 | 4 |
-| 18. Selector and overlay components | 79 | 25 | 20 | 2 | 32 |
-| **Total** | **339** | **86** | **112** | **10** | **131** |
+| 18. Selector and overlay components | 79 | 25 | 22 | 0 | 32 |
+| **Total** | **339** | **86** | **114** | **8** | **131** |
 
-### The `missing` rows — 10
+### The `missing` rows — 8
 
 Every row below has **no** `E-` row establishing the behaviour. Nothing here was found by browsing `crates/`, and
 nothing here is a claim that the behaviour cannot be built.
@@ -794,9 +794,8 @@ nothing here is a claim that the behaviour cannot be built.
 | Themes (2) | P-096, P-098 |
 | Settings (2) | P-113, P-114 |
 | Markdown, mermaid and truncation (1) | T-010 |
-| Selector and overlay components (2) | P-318, P-319 |
 
-### The `partial` rows — 112
+### The `partial` rows — 114
 
 An `E-` row covers these and something is not finished. The reason column is the shortest honest statement of what.
 
@@ -818,7 +817,7 @@ An `E-` row covers these and something is not finished. The reason column is the
 | Markdown, mermaid and truncation (7) | P-176, T-003, T-004, T-005, T-006, T-008, T-011 | hint placement has no keep-last mode; stripping established at two boundaries, not one central measure; hyperlink/reset closing held by a different mechanism with a re-measure backstop; span-dropping, not column slicing; style is per-`Span`, so no reset ladder; row caching, but no ASCII fast path or bounded width cache; CJK as a word character unestablished for completion |
 | Status indicators (5) | P-018, P-186, P-188, P-189, P-190 | a drawn spinner rather than the terminal's progress state; one run-state slot rather than four kinds; whole-gauge dropping rather than a four-step border ladder; a retry notice and elapsed seconds rather than a cancelable countdown; one compaction wording rather than three |
 | Footer (4) | P-200, P-203, P-205, P-206 | no `~` substitution and no `• session-name` segment; no routed-model `→ id`; the footer's own recompute trigger unestablished; the no-spawn `.git/HEAD` read unestablished |
-| Selector and overlay components (20) | P-226, P-228, P-231, P-233, P-236, P-237, P-238, P-241, P-246, P-248, P-250, P-255, P-260, P-282, P-288, P-294, P-306, P-309, P-313, P-315 | per-overlay focus targets; no overlay-scoped id space; fixed sort, path always shown, current session marked not protected, rename outside the picker, no phrase/regex search, no message count, no resource overlay, capacity derived, no tree-specific key list, no provider-selector empty state, provider badges in this window's visual language rather than Pi's literals; the picker's provider-first order is built and pinned, the scoped overlay's opposite order is not (one picker, one order); no Tab scope toggle but empty-scope warnings exist; favorites apply immediately and globally with no session-only layer; the transcript filter cycles three of five modes (`ctrl+o`/`shift+ctrl+o`), the other two not being representable on a live transcript; an uncatalogued configured model is struck and badged, but there is no unsaved state to mark because the saving actions write through; the tree pages by the screenful but never wraps |
+| Selector and overlay components (22) | P-226, P-228, P-231, P-233, P-236, P-237, P-238, P-241, P-246, P-248, P-250, P-255, P-260, P-282, P-288, P-294, P-306, P-309, P-313, P-315, P-318, P-319 | per-overlay focus targets; no overlay-scoped id space; fixed sort, path always shown, current session marked not protected, rename outside the picker, no phrase/regex search, no message count, no resource overlay, capacity derived, no tree-specific key list, no provider-selector empty state, provider badges in this window's visual language rather than Pi's literals; the picker's provider-first order is built and pinned, the scoped overlay's opposite order is not (one picker, one order); no Tab scope toggle but empty-scope warnings exist; favorites apply immediately and globally with no session-only layer; the transcript filter cycles three of five modes (`ctrl+o`/`shift+ctrl+o`), the other two not being representable on a live transcript; an uncatalogued configured model is struck and badged, but there is no unsaved state to mark because the saving actions write through; the tree pages by the screenful but never wraps; OAuth opens the browser through notices plus the paste overlay rather than a composer panel, and the device flow opens the pre-filled page when offered |
 
 ### Four gaps that are not about features at all
 

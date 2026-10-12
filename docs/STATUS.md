@@ -743,6 +743,12 @@ the run. Matrix at 81/111/24/123. (Previous: `gate-goal3-phase6-20261012`, 2,011
 > with history kept. Full suite green, clippy clean.
 > Counts now 86/112/13/128.
 >
+> **P-318/P-319 partial (this session): both OAuth shapes exist, both surfaces
+> differ.** PKCE prints the URL and opens the browser keypress-free through
+> notices + paste overlay (spawn reviewed, not driven); device shows URI +
+> code + expiry (adapter test) with one stated divergence — the pre-filled page
+> opens too when offered. Counts now 86/114/8/131.
+>
 > **Trio judged (this session): P-316/P-317 Radius shimmer, P-323 images
 > gate.** Zero Radius references anywhere (P-066's rule,
 > re-verified); image blobs collapse to a one-line deferred fallback that is
