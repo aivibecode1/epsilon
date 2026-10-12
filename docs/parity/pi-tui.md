@@ -66,7 +66,7 @@ back; it is a reading of the test's source, not a report of a run.
 
 **339 rows** are paired here: Pi's 323 `P-###` behaviours, the 4 `L-###` rows of its inherited `tui.*` keybinding
 table, and the 12 `T-###` rows of its text-measurement core. Every one carries a reference citation; 200 of them
-carry an `ours` citation and 52 do not, and those 52 say so. The counts below are the rows **actually written in
+carry an `ours` citation and 51 do not, and those 51 say so. The counts below are the rows **actually written in
 this document**, tallied from its own tables — not a projection.
 
 | area | rows | done | partial | missing | deliberately different |
@@ -79,7 +79,7 @@ this document**, tallied from its own tables — not a projection.
 | 6. Model picker and thinking | 9 | 0 | 5 | 0 | 4 |
 | 7. Auth, login and permissions | 8 | 0 | 4 | 2 | 2 |
 | 8. Sessions | 17 | 7 | 6 | 1 | 3 |
-| 9. Themes | 18 | 0 | 6 | 3 | 9 |
+| 9. Themes | 18 | 0 | 6 | 2 | 10 |
 | 10. Settings | 22 | 1 | 10 | 8 | 3 |
 | 11. Project trust | 4 | 1 | 2 | 0 | 1 |
 | 12. Tool cards | 16 | 3 | 6 | 0 | 7 |
@@ -89,14 +89,14 @@ this document**, tallied from its own tables — not a projection.
 | 16. Status indicators | 13 | 2 | 5 | 1 | 5 |
 | 17. Footer | 12 | 4 | 4 | 1 | 3 |
 | 18. Selector and overlay components | 79 | 22 | 19 | 25 | 13 |
-| **Total** | **339** | **81** | **111** | **51** | **96** |
+| **Total** | **339** | **81** | **111** | **50** | **97** |
 
 A further **17 rows are not in the counts above**: the 10 `Y-###` rows Pi ships outside its interactive mode (out of
 scope by design) and the 7 `AA-###` rows recording what was never inventoried. Both are listed in full near the end
 of this document, because a row that is silently dropped is how a rule goes unowned.
 
-The shape of that table is the honest shape of a port from a 356-row inventory to a 288-row one: **51 rows have no
-counterpart established on our side, 111 are half-built, 81 are exercised, and 96 are decisions.** The 51 are not
+The shape of that table is the honest shape of a port from a 356-row inventory to a 289-row one: **50 rows have no
+counterpart established on our side, 111 are half-built, 81 are exercised, and 97 are decisions.** The 50 are not
 69/339 failures; most of them sit in Pi's extension, settings-overlay, mermaid, image and tree-navigation surface,
 much of which Epsilon deliberately does not have. Read [Open rows](#open-rows) before reading the table.
 
@@ -427,7 +427,7 @@ several Pi rows have nothing to pair with at all, and are recorded that way rath
 | P-098 | A theme missing a required colour token is rejected naming the tokens, not with a stack trace | `packages/coding-agent/src/modes/interactive/theme/theme-json.ts:105-138`, `packages/coding-agent/src/modes/interactive/theme/theme-schema.json:43-95`, `:322` | missing | none | — |
 | P-099 | `""` means the terminal's own default foreground or background, and tokens are slot-strict | `packages/coding-agent/src/modes/interactive/theme/theme.ts:290-299`, `:119-126`, `:216-219` | partial | `crates/epsilon-tui/src/ui/theme.rs:1090` — on a 16-colour terminal body text becomes `Color::Reset`, which is the same effect at the cell; there is no theme-token language with slot strictness or optional-with-fallback tokens | `no_color_still_distinguishes_roles_by_attribute`, `bands_are_withheld_when_the_terminal_cannot_do_them` |
 | P-100 | The active theme lives on a `globalThis` symbol so extensions loaded through a second module instance share it | `packages/coding-agent/src/modes/interactive/theme/theme.ts:722-733`, `:735-738`, `:730` | deliberately different | `crates/epsilon-tui/src/ui/theme.rs:1062` — no global registry is needed in one binary; roles resolve per frame and no repaint call is made, which is the *behaviour* Pi's sharing trick exists to produce | `switching_the_palette_redraws_the_transcript_and_not_just_the_chrome` (frame) |
-| P-101 | Moving the highlight in `/settings` → Theme live-previews the candidate; cancelling restores | `packages/coding-agent/src/modes/interactive/theme/theme-controller.ts:146-153`, `packages/coding-agent/src/modes/interactive/components/settings-selector.ts:454-457` | missing | none — Epsilon has no theme list to preview from | — |
+| P-101 | Moving the highlight in `/settings` → Theme live-previews the candidate; cancelling restores | `packages/coding-agent/src/modes/interactive/theme/theme-controller.ts:146-153`, `packages/coding-agent/src/modes/interactive/components/settings-selector.ts:454-457` | deliberately different | As P-271: `/settings` is guidance notices, not a picker — there is no highlight to move and no candidate to preview; `/theme` applies immediately and says so | — |
 | P-102 | `terminal.trueColor`, `terminal.images` and `terminal.hyperlinks` override what Pi detected | `packages/coding-agent/src/core/settings-manager.ts:1278-1286`, `packages/coding-agent/src/modes/interactive/interactive-mode.ts:599`, `:2040` | partial | `crates/epsilon-cli/src/main.rs:483`, `crates/epsilon-tui/src/ui/theme.rs:481` — the ASCII repertoire is overridable in **both** directions by `EPSILON_ASCII`; colour depth and image support are not overridable | `the_repertoire_default_is_ascii_on_a_legacy_windows_console`, `ascii_glyphs_are_seven_bit_only` |
 | P-215 | The logo's brand colours are fixed across themes | `packages/coding-agent/src/modes/interactive/components/pi-logo.ts:19`, `:23` | deliberately different | `crates/epsilon-tui/src/ui/transcript.rs:227` (`welcome` — the wordmark follows the palette) — the welcome wordmark follows the palette, and Epsilon takes no third party's logo, mascot or brand ([`../../AGENTS.md`](../../AGENTS.md) §10) | `an_empty_session_gets_the_first_run_screen_inside_a_well_formed_frame` (frame) |
 | P-269 | Choosing Theme opens a submenu in place; `automatic` switches it into split mode | `packages/coding-agent/src/modes/interactive/components/settings-selector.ts:752`, `:313`, `:221`, `:216` | partial | `crates/epsilon-tui/src/app/commands.rs:1605` — a palette is chosen by name on the command line; there is no submenu and no `automatic` entry | `every_palette_the_description_advertises_is_one_the_product_has` |
@@ -770,7 +770,7 @@ row says so — that is a gap in the inventory, and closing it is cheap.
 | 6. Model picker and thinking | 9 | 0 | 5 | 0 | 4 |
 | 7. Auth, login and permissions | 8 | 0 | 4 | 2 | 2 |
 | 8. Sessions | 17 | 7 | 6 | 1 | 3 |
-| 9. Themes | 18 | 0 | 6 | 3 | 9 |
+| 9. Themes | 18 | 0 | 6 | 2 | 10 |
 | 10. Settings | 22 | 1 | 10 | 8 | 3 |
 | 11. Project trust | 4 | 1 | 2 | 0 | 1 |
 | 12. Tool cards | 16 | 3 | 6 | 0 | 7 |
@@ -780,9 +780,9 @@ row says so — that is a gap in the inventory, and closing it is cheap.
 | 16. Status indicators | 13 | 2 | 5 | 1 | 5 |
 | 17. Footer | 12 | 4 | 4 | 1 | 3 |
 | 18. Selector and overlay components | 79 | 22 | 19 | 25 | 13 |
-| **Total** | **339** | **81** | **111** | **51** | **96** |
+| **Total** | **339** | **81** | **111** | **50** | **97** |
 
-### The `missing` rows — 51
+### The `missing` rows — 50
 
 Every row below has **no** `E-` row establishing the behaviour. Nothing here was found by browsing `crates/`, and
 nothing here is a claim that the behaviour cannot be built.
@@ -794,7 +794,7 @@ nothing here is a claim that the behaviour cannot be built.
 | Transcript and streaming (3) | P-053, P-056, P-135 |
 | Auth, login and permissions (2) | P-061, P-063 |
 | Sessions (1) | P-081 |
-| Themes (3) | P-096, P-098, P-101 |
+| Themes (2) | P-096, P-098 |
 | Settings (8) | P-103, P-111, P-113, P-114, P-267, P-268, P-275, P-277 |
 | Markdown, mermaid and truncation (3) | P-167, P-168, T-010 |
 | Status indicators (1) | P-194 |
