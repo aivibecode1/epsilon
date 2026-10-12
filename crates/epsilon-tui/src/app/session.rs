@@ -274,15 +274,12 @@ impl App {
         self.viewer.as_ref().is_some_and(|v| v.editing)
     }
 
-    /// Save the viewer's edit buffer with two guards and a way back.
-    ///
-    /// The shipped TUI names `epsilon-tools` only in tests by design, so this
-    /// does not go through the checkpoint store (that edge would make the
-    /// shipped binary depend on the tool crate for one call). Instead:
-    /// (1) a changed-underneath guard refuses rather than silently overwriting
-    /// a file something else touched since it was opened; (2) the previous
-    /// bytes are kept beside the file as `<name>.tui-bak`, named in the notice.
-    /// A failed write keeps the buffer — the words stay on screen — and reports.
+    /// Save the viewer's edit buffer through the checkpoint store, so `/restore`
+    /// undoes a human save exactly like an agent edit — one undo, via
+    /// `epsilon_runtime::checkpoint_save` (the shipped TUI cannot name the tool
+    /// crate, so the runtime owns the store edge, as it already does for restore).
+    /// The changed-underneath guard and the keep-the-buffer-on-failure rule stay:
+    /// a refused or failed save loses nothing and says why.
     pub(super) fn save_viewer(&mut self) {
         let Some(viewer) = self.viewer.as_ref() else {
             return;
@@ -314,17 +311,14 @@ impl App {
             }
             _ => {}
         }
-        if path.exists() {
-            let mut bak = path.as_os_str().to_os_string();
-            bak.push(".tui-bak");
-            if let Err(e) = std::fs::copy(&path, &bak) {
-                self.ui.push_notice(format!(
-                    "save failed (no backup: {e}) — nothing was written"
-                ));
-                return;
-            }
-        }
-        if let Err(e) = std::fs::write(&path, &text) {
+        // No `.tui-bak` sidecar: the checkpoint entry IS the way back, and a
+        // second undo format is what this goal removes (ADR-040).
+        if let Err(e) = epsilon_runtime::checkpoint_save(
+            &self.workspace_root,
+            &path,
+            text.as_bytes(),
+            "tui-edit",
+        ) {
             self.ui.push_notice(format!(
                 "save failed ({e}) — your edits are still in the buffer"
             ));
@@ -338,9 +332,8 @@ impl App {
             viewer.scroll = viewer.scroll.min(viewer.lines.len().saturating_sub(1));
         }
         self.refresh_tree();
-        self.ui.push_notice(format!(
-            "saved {rel} — previous version kept at {rel}.tui-bak"
-        ));
+        self.ui
+            .push_notice(format!("saved {rel} — `/restore {rel}` puts it back"));
     }
 
     /// M59: ask the event loop to open `$EDITOR` on the current draft.

@@ -8874,7 +8874,7 @@ async fn viewer_esc_arms_before_discarding_dirty_edits() {
 
 /// Saving refuses when the file changed underneath, and keeps a backup.
 #[tokio::test]
-async fn viewer_save_refuses_changed_underneath_and_keeps_backup() {
+async fn viewer_save_refuses_changed_underneath_and_restore_undoes_it() {
     let (mut app, agent, _receivers, dir) = test_app_with_store();
     std::fs::write(dir.path().join("r.txt"), "v1\n").unwrap();
     handle_key(&mut app, &agent, key(KeyCode::F(6)));
@@ -8922,10 +8922,20 @@ async fn viewer_save_refuses_changed_underneath_and_keeps_backup() {
         std::fs::read_to_string(dir.path().join("r.txt")).unwrap(),
         "v2-external!\n"
     );
+    let sentence =
+        epsilon_runtime::restore_checkpoint(dir.path(), "r.txt").expect("restore undoes the save");
+    assert!(
+        sentence.contains("restored"),
+        "restore reports itself: {sentence}"
+    );
     assert_eq!(
-        std::fs::read_to_string(dir.path().join("r.txt.tui-bak")).unwrap(),
+        std::fs::read_to_string(dir.path().join("r.txt")).unwrap(),
         "v2-external\n",
-        "the backup holds the pre-save bytes"
+        "the checkpoint entry IS the way back — no .tui-bak sidecar"
+    );
+    assert!(
+        !dir.path().join("r.txt.tui-bak").exists(),
+        "no second undo format is left behind"
     );
 }
 

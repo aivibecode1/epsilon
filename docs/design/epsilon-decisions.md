@@ -3148,4 +3148,26 @@ the product owes its users and a window can. A return comes back as a new ADR wi
 battery shape — never as a quiet re-add, which the `check-verb-counts` guard fails on
 purpose.
 
+## ADR-040: Human editor saves go through the checkpoint store, owned by the runtime
+
+**Status: accepted (goal-directed, 2026-10-12).**
+
+**The question.** The TUI viewer editor saved through a `.tui-bak` sidecar while agent
+edits go through `CheckpointStore` (`record`/`amend_with_post_image`), so `/restore`
+could not undo a human save — two undo systems for one workspace. Three paths were
+probed: (a) relocate the checkpoint API to a crate the TUI may name; (b) expose
+save-with-undo through `epsilon-runtime`; (c) teach `/restore` to read `.tui-bak`.
+
+**Decision: (b).** `epsilon_runtime::checkpoint_save` records, writes and amends in the
+agent tool's own order, and the TUI calls it — the same edge `/restore` already uses
+(`restore_checkpoint`/`describe_checkpoint`), so one store, one format, one undo. (a)
+moves the store, its tests and every caller for one call site — the opposite of the
+smallest change. (c) keeps two undo formats forever, which is what the goal removes.
+The shipped TUI still names `epsilon-tools` in tests only; the `.tui-bak` sidecar is
+gone, and the save keeps its guards (changed-underneath refusal, keep-the-buffer on
+failure) with the notice now naming `/restore` as the way back.
+
+**Revisit trigger.** The checkpoint format versions, or a second writer needs undo that
+the store cannot express — then the save path moves with it, never around it.
+
 

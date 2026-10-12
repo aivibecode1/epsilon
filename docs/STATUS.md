@@ -434,6 +434,17 @@ the run. Up from 1,993: editor, lease and viewer-guard tests. (Previous:
 > resolves live via `key_text`; viewer/tree literal hints match the overlay convention),
 > click rows P-003/P-125/P-143/P-185/P-223 unchanged (capture still OFF).
 >
+> **Goal 2026-10-12: one undo for agent and human edits (landed).** The viewer editor
+> saved through a `.tui-bak` sidecar while agent edits go through `CheckpointStore`,
+> so `/restore` could not undo a human save. Decided by probe (ADR-040):
+> `epsilon_runtime::checkpoint_save` records, writes and amends in the agent tool's
+> own order — the shipped TUI cannot name the tool crate, so the runtime owns the
+> store edge as it already does for restore. The `.tui-bak` sidecar is gone; the
+> changed-underneath guard and keep-the-buffer rule stay, and the notice names
+> `/restore` as the way back. RED-first round-trip test (no-pre-image control fails
+> it); TUI tests prove save→`/restore` byte recovery and no sidecar left behind;
+> frames read at 80x24 and 100x30 (`audit/evidence/frames-restore-20261012/`).
+>
 > **Follow-up (owner request, landed): tree docks right, layout adapts.** The sidebar
 > now sits right of the transcript (`transcript | gutter | tree`), 30% of the width
 > clamped to 24–38 columns with the transcript floor held; below that the tree falls

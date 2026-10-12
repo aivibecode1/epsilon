@@ -1658,6 +1658,26 @@ pub fn restore_checkpoint(workspace: &Path, argument: &str) -> Result<String, St
     Ok(format!("restored {restored} bytes to {path}"))
 }
 
+/// Save `bytes` to `path` with checkpoint undo, for front ends that cannot name
+/// the tool crate (the shipped TUI names `epsilon-tools` in tests only, by design).
+///
+/// The agent edit tool's own order (`tools/files.rs`): record the pre-image before
+/// the first byte changes, write, then amend the post-image — so `/restore`
+/// (above) undoes a human save exactly like an agent edit. One store, one format,
+/// one undo; the `.tui-bak` sidecar it replaces is recorded in ADR-040.
+pub fn checkpoint_save(
+    workspace: &Path,
+    path: &Path,
+    bytes: &[u8],
+    tool: &str,
+) -> Result<u64, String> {
+    let store = epsilon_tools::checkpoint::CheckpointStore::open(workspace);
+    store.record(workspace, path, tool);
+    std::fs::write(path, bytes).map_err(|e| e.to_string())?;
+    store.amend_with_post_image(workspace, path, tool);
+    Ok(bytes.len() as u64)
+}
+
 /// Newest session under `dir` started from `cwd` (pi `findMostRecentSession`
 /// cwd match). `None` cwd disables the filter (same as [`latest_session_file`]).
 ///
@@ -6150,5 +6170,29 @@ mod launch_tests {
         req.preset = epsilon_safety::Preset::ReadOnly;
         let launch = resolve_launch(&req).expect("a faux launch always resolves");
         assert_eq!(launch.preset, epsilon_safety::Preset::ReadOnly);
+    }
+    /// A `checkpoint_save` is undone by `/restore`: one undo for agent and human edits.
+    #[test]
+    fn checkpoint_save_round_trips_through_restore() {
+        let tmp = tempfile::tempdir().expect("tmp");
+        let ws = tmp.path();
+        let path = ws.join("notes.txt");
+        std::fs::write(&path, "v1\n").expect("fixture");
+        checkpoint_save(ws, &path, b"v2 human\n", "tui-edit").expect("save lands");
+        assert_eq!(
+            std::fs::read_to_string(&path).unwrap(),
+            "v2 human\n",
+            "the save writes"
+        );
+        let sentence = restore_checkpoint(ws, "notes.txt").expect("restore undoes");
+        assert!(
+            sentence.contains("restored"),
+            "restore reports itself: {sentence}"
+        );
+        assert_eq!(
+            std::fs::read_to_string(&path).unwrap(),
+            "v1\n",
+            "pre-save bytes come back"
+        );
     }
 }
