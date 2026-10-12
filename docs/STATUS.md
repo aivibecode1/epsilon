@@ -533,6 +533,10 @@ the run. Up from 1,997: the checkpoint round-trip and restore-undo tests. (Previ
 > P-096/P-098 (theme files) and P-101 (settings preview) stay `missing`.
 > Counts now 77/105/77/80.
 >
+> **P-066 judged (this session): no Radius anywhere.** Zero references in `crates/`
+> — no login flow, no MCP server, nothing to reload. P-061/P-063 stay `missing`.
+> Counts now 77/105/76/81.
+>
 > **P-234 done (this session): delete confirms inline, stricter.** `ctrl+d` arms,
 > Enter deletes, any other key cancels and closes; active session refused by name
 > (three cited tests re-run green). Also corrected a stale ours cell claiming the
