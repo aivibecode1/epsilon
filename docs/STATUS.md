@@ -637,6 +637,9 @@ the run. Up from 1,997: the checkpoint round-trip and restore-undo tests. (Previ
 > spawn run inside composition — no async loader to border, nothing to cancel.
 > Counts now 81/111/43/104.
 >
+> **P-135 judged (this session): no transformer chain, no flag.** User text is never
+> parsed (P-134), so streaming/not has no reader. Counts now 81/111/42/105.
+>
 > **Goal 3, Phase 1 (landed): AGENTS.md v4 draft for owner application.** Every v3
 > clause audited against the tree (13 crates, uniform 1.88, TERMINAL+WINDOW tables,
 > 15 legs, SUPPORTED only in a historical comment); the complete v4 text sits in

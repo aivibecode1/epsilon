@@ -66,7 +66,7 @@ back; it is a reading of the test's source, not a report of a run.
 
 **339 rows** are paired here: Pi's 323 `P-###` behaviours, the 4 `L-###` rows of its inherited `tui.*` keybinding
 table, and the 12 `T-###` rows of its text-measurement core. Every one carries a reference citation; 200 of them
-carry an `ours` citation and 44 do not, and those 44 say so. The counts below are the rows **actually written in
+carry an `ours` citation and 43 do not, and those 43 say so. The counts below are the rows **actually written in
 this document**, tallied from its own tables — not a projection.
 
 | area | rows | done | partial | missing | deliberately different |
@@ -75,7 +75,7 @@ this document**, tallied from its own tables — not a projection.
 | 2. Layout and renderer | 10 | 3 | 2 | 0 | 5 |
 | 3. Composer and editor | 24 | 6 | 12 | 0 | 6 |
 | 4. Slash commands and autocomplete | 13 | 2 | 5 | 0 | 6 |
-| 5. Transcript and streaming | 35 | 12 | 5 | 3 | 15 |
+| 5. Transcript and streaming | 35 | 12 | 5 | 2 | 16 |
 | 6. Model picker and thinking | 9 | 0 | 5 | 0 | 4 |
 | 7. Auth, login and permissions | 8 | 0 | 4 | 2 | 2 |
 | 8. Sessions | 17 | 7 | 6 | 1 | 3 |
@@ -89,14 +89,14 @@ this document**, tallied from its own tables — not a projection.
 | 16. Status indicators | 13 | 2 | 5 | 0 | 6 |
 | 17. Footer | 12 | 4 | 4 | 0 | 4 |
 | 18. Selector and overlay components | 79 | 22 | 19 | 25 | 13 |
-| **Total** | **339** | **81** | **111** | **43** | **104** |
+| **Total** | **339** | **81** | **111** | **42** | **105** |
 
 A further **17 rows are not in the counts above**: the 10 `Y-###` rows Pi ships outside its interactive mode (out of
 scope by design) and the 7 `AA-###` rows recording what was never inventoried. Both are listed in full near the end
 of this document, because a row that is silently dropped is how a rule goes unowned.
 
-The shape of that table is the honest shape of a port from a 356-row inventory to a 296-row one: **43 rows have no
-counterpart established on our side, 111 are half-built, 81 are exercised, and 104 are decisions.** The 43 are not
+The shape of that table is the honest shape of a port from a 356-row inventory to a 297-row one: **42 rows have no
+counterpart established on our side, 111 are half-built, 81 are exercised, and 105 are decisions.** The 42 are not
 69/339 failures; most of them sit in Pi's extension, settings-overlay, mermaid, image and tree-navigation surface,
 much of which Epsilon deliberately does not have. Read [Open rows](#open-rows) before reading the table.
 
@@ -312,7 +312,7 @@ in each component.
 | P-132 | Assistant and user blocks are wrapped in OSC 133 prompt zones; a block **with tool calls** is left unwrapped | `packages/coding-agent/src/modes/interactive/components/assistant-message.ts:80`, `packages/coding-agent/src/modes/interactive/components/user-message.ts:61` | deliberately different | Epsilon emits no OSC sequences at all — semantic jumps work off `LineKind::User` instead (`crates/epsilon-tui/src/app/keys.rs:2141`, stated in code), so there are no prompt zones to wrap or leave unwrapped | — |
 | P-133 | User text is markdown tinted on a background that fills the whole block, not a box around it | `packages/coding-agent/src/modes/interactive/components/user-message.ts:48`, `packages/coding-agent/src/modes/interactive/interactive-mode.ts:3869-3884` | done | `crates/epsilon-tui/src/ui/transcript.rs:179` — a banded row's fill runs to the right edge; under `NO_COLOR` the fill and the trailing blanks go and the margin stays | `a_user_turn_carries_its_gutter_and_band_on_a_real_frame` (frame) |
 | P-134 | User markdown preserves ordered-list markers and backslash escapes that the assistant renderer normalises away | `packages/coding-agent/src/modes/interactive/components/user-message.ts:53`, `packages/coding-agent/src/modes/interactive/interactive-mode.ts:3878` | done | Stronger than preserving: user text is never parsed at all — `push_local_input` stores `plain` (no `md` payload) while assistant rows carry `assistant_md` for render-time expansion (`crates/epsilon-tui/src/state.rs:613`) | `user_markdown_stays_literal_while_assistant_renders` (markdown-routed control fails it), `assistant_markdown_renders_once_and_stays_cached` |
-| P-135 | A user block's markdown transformer is always told the message is not streaming | `packages/coding-agent/src/modes/interactive/components/user-message.ts:55` | missing | none — no transformer chain exists to take the flag (P-167); user text is pushed literal, never rendered | — |
+| P-135 | A user block's markdown transformer is always told the message is not streaming | `packages/coding-agent/src/modes/interactive/components/user-message.ts:55` | deliberately different | As P-167/P-168: with no transformer chain there is no flag to pass — and user text is never parsed at all (P-134), so the streaming/not distinction has no reader | — |
 | P-178 | An extension message with no renderer gets a bold `[customType]` label and its text on the custom-message background | `packages/coding-agent/src/modes/interactive/components/custom-message.ts:92`, `:107` | deliberately different | As P-020/P-021/P-060: extensions have no render surface — no renderer to miss, no label to print, no background to paint | — |
 | P-179 | A registered message renderer owns the entire block; returning nothing or throwing falls back to the default box | `packages/coding-agent/src/modes/interactive/components/custom-message.ts:69`, `:79` | deliberately different | As P-178: with no registered renderers there is no block to own and no fallback to take | — |
 | P-180 | A custom message without `display` is not rendered at all, and is not drawn just because it exists | `packages/coding-agent/src/modes/interactive/interactive-mode.ts:3822-3823` | deliberately different | As P-178: nothing extension-supplied reaches the transcript at all | — |
@@ -766,7 +766,7 @@ row says so — that is a gap in the inventory, and closing it is cheap.
 | 2. Layout and renderer | 10 | 3 | 2 | 0 | 5 |
 | 3. Composer and editor | 24 | 6 | 12 | 0 | 6 |
 | 4. Slash commands and autocomplete | 13 | 2 | 5 | 0 | 6 |
-| 5. Transcript and streaming | 35 | 12 | 5 | 3 | 15 |
+| 5. Transcript and streaming | 35 | 12 | 5 | 2 | 16 |
 | 6. Model picker and thinking | 9 | 0 | 5 | 0 | 4 |
 | 7. Auth, login and permissions | 8 | 0 | 4 | 2 | 2 |
 | 8. Sessions | 17 | 7 | 6 | 1 | 3 |
@@ -780,9 +780,9 @@ row says so — that is a gap in the inventory, and closing it is cheap.
 | 16. Status indicators | 13 | 2 | 5 | 0 | 6 |
 | 17. Footer | 12 | 4 | 4 | 0 | 4 |
 | 18. Selector and overlay components | 79 | 22 | 19 | 25 | 13 |
-| **Total** | **339** | **81** | **111** | **43** | **104** |
+| **Total** | **339** | **81** | **111** | **42** | **105** |
 
-### The `missing` rows — 43
+### The `missing` rows — 42
 
 Every row below has **no** `E-` row establishing the behaviour. Nothing here was found by browsing `crates/`, and
 nothing here is a claim that the behaviour cannot be built.
@@ -790,7 +790,7 @@ nothing here is a claim that the behaviour cannot be built.
 | area | ids |
 |---|---|
 | Startup, header and resources (2) | P-004, P-088 |
-| Transcript and streaming (3) | P-053, P-056, P-135 |
+| Transcript and streaming (2) | P-053, P-056 |
 | Auth, login and permissions (2) | P-061, P-063 |
 | Sessions (1) | P-081 |
 | Themes (2) | P-096, P-098 |
