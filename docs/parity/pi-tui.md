@@ -66,13 +66,13 @@ back; it is a reading of the test's source, not a report of a run.
 
 **339 rows** are paired here: Pi's 323 `P-###` behaviours, the 4 `L-###` rows of its inherited `tui.*` keybinding
 table, and the 12 `T-###` rows of its text-measurement core. Every one carries a reference citation; 200 of them
-carry an `ours` citation and 95 do not, and those 95 say so. The counts below are the rows **actually written in
+carry an `ours` citation and 91 do not, and those 91 say so. The counts below are the rows **actually written in
 this document**, tallied from its own tables — not a projection.
 
 | area | rows | done | partial | missing | deliberately different |
 |---|---|---|---|---|---|
 | 1. Startup, header and resources | 20 | 1 | 7 | 2 | 10 |
-| 2. Layout and renderer | 10 | 3 | 2 | 4 | 1 |
+| 2. Layout and renderer | 10 | 3 | 2 | 0 | 5 |
 | 3. Composer and editor | 24 | 6 | 12 | 2 | 4 |
 | 4. Slash commands and autocomplete | 13 | 2 | 5 | 5 | 1 |
 | 5. Transcript and streaming | 35 | 9 | 2 | 19 | 5 |
@@ -89,14 +89,14 @@ this document**, tallied from its own tables — not a projection.
 | 16. Status indicators | 13 | 2 | 5 | 1 | 5 |
 | 17. Footer | 12 | 4 | 4 | 1 | 3 |
 | 18. Selector and overlay components | 79 | 18 | 17 | 36 | 8 |
-| **Total** | **339** | **74** | **105** | **94** | **66** |
+| **Total** | **339** | **74** | **105** | **90** | **70** |
 
 A further **17 rows are not in the counts above**: the 10 `Y-###` rows Pi ships outside its interactive mode (out of
 scope by design) and the 7 `AA-###` rows recording what was never inventoried. Both are listed in full near the end
 of this document, because a row that is silently dropped is how a rule goes unowned.
 
-The shape of that table is the honest shape of a port from a 356-row inventory to a 245-row one: **94 rows have no
-counterpart established on our side, 105 are half-built, 74 are exercised, and 66 are decisions.** The 94 are not
+The shape of that table is the honest shape of a port from a 356-row inventory to a 249-row one: **90 rows have no
+counterpart established on our side, 105 are half-built, 74 are exercised, and 70 are decisions.** The 90 are not
 69/339 failures; most of them sit in Pi's extension, settings-overlay, mermaid, image and tree-navigation surface,
 much of which Epsilon deliberately does not have. Read [Open rows](#open-rows) before reading the table.
 
@@ -204,15 +204,15 @@ then agreement about what a body should do when space runs out.
 | id | behaviour | reference | status | ours | verified |
 |---|---|---|---|---|---|
 | P-014 | Two renderers: a main screen that leaves the terminal's scrollback alone, and a fullscreen alt screen that owns the display | `packages/coding-agent/src/modes/interactive/tui-renderer.ts:22-50` | deliberately different | `crates/epsilon-tui/src/app.rs:1538` — one renderer, always the alternate screen; Pi's default is `fullscreen`, and the regular screen exists so native scrollback survives. Epsilon has no scrollback to protect because the layout owns the whole frame | `the_binary_starts_a_tui_and_draws_its_chrome` (frame, real pty) |
-| P-015 | TUI mode is switchable live, and refused while an overlay is open | `packages/coding-agent/src/modes/interactive/interactive-mode.ts:879-930`, `:5029-5038` | missing | none — there is no second mode to switch to | — |
+| P-015 | TUI mode is switchable live, and refused while an overlay is open | `packages/coding-agent/src/modes/interactive/interactive-mode.ts:879-930`, `:5029-5038` | deliberately different | There is no second mode to switch to: one fullscreen terminal UI, with overlays (tree, viewer, palette, pickers) for the rest — a mode switch with one mode would be a control that does nothing, which `AGENTS.md` §2.7 forbids | — |
 | P-016 | Fullscreen is a scrolling transcript plus a fixed input dock that stacks pending messages, status, widgets, the editor and the footer | `packages/coding-agent/src/modes/interactive/chat-viewport.ts:22-45`, `packages/coding-agent/src/modes/interactive/interactive-mode.ts:957-970` | done | `crates/epsilon-tui/src/ui/layout.rs:84`, `:81` — five bands in a fixed order; the composer is capped at `min(8, height/3)` rows so a pasted document cannot claim the conversation's space | `the_shell_shows_a_header_a_body_and_a_footer_at_every_supported_size` (frame), `a_long_transcript_never_pushes_the_composer_off_the_screen` (frame) |
 | P-017 | The terminal title tracks the session name and the cwd basename | `packages/coding-agent/src/modes/interactive/interactive-mode.ts:1119-1127`, `:3429-3433` | done | `crates/epsilon-tui/src/app/session.rs` — `terminal_title` words it (`epsilon - {name} - {base}`, base alone without a name; control characters stripped because the name is user-typed) and `refresh_title` emits it after every change of what it names: startup (with name re-hydrated), session switch, rename | `title_tracks_name_and_base`, `title_strips_terminal_breakouts` (hostile BEL/ESC/C0/bidi must not survive; negative control run) |
-| P-020 | An extension can place persistent content above or below the composer, capped at ten lines | `packages/coding-agent/src/modes/interactive/interactive-mode.ts:2350-2390`, `:2438` | missing | none | — |
-| P-021 | An extension can replace the header, the footer or the editor wholesale, and `undefined` restores the built-in one | `packages/coding-agent/src/modes/interactive/interactive-mode.ts:2476-2498`, `:2503-2542`, `:2816-2891` | missing | none | — |
+| P-020 | An extension can place persistent content above or below the composer, capped at ten lines | `packages/coding-agent/src/modes/interactive/interactive-mode.ts:2350-2390`, `:2438` | deliberately different | The extension protocol has no screen surface by design (ADR-019: request/response over tool calls, fire-and-forget events) — extensions observe and interpose, never draw; chrome placement for third-party processes would hand strangers the pixels around the reader's own words | — |
+| P-021 | An extension can replace the header, the footer or the editor wholesale, and `undefined` restores the built-in one | `packages/coding-agent/src/modes/interactive/interactive-mode.ts:2476-2498`, `:2503-2542`, `:2816-2891` | deliberately different | As P-020, stronger: wholesale chrome replacement would let a third-party process redraw the permission boundary itself — the dialog a reader trusts must stay ours, so the protocol offers no such door | — |
 | P-217 | Scrolled away from the bottom, a pill offers to jump to the latest message | `packages/coding-agent/src/modes/interactive/tui-renderer.ts:30`, `:32` | partial | `crates/epsilon-tui/src/ui/footer.rs:77` — the affordance is a footer position badge (`↑ 12/40`) plus the key back to live, not a pill inside the viewport | `the_jump_to_live_key_returns_the_view_to_the_tail` (frame), `a_live_frame_never_advertises_the_frozen_position` (frame) |
 | P-218 | Search matches are underlined; the current match is bold and inverse | `packages/coding-agent/src/modes/interactive/tui-renderer.ts:26`, `:27`, `:29` | partial | `crates/epsilon-tui/src/app.rs:1881` — the search panel names the query and the current match (`3 of 7`); there is no in-transcript match highlight, because the transcript is paged by row offset rather than re-rendered with styled spans | `an_open_search_reports_itself_and_the_matches_it_found` (frame) |
 | P-219 | A failed copy returns the error **message** to the caller rather than throwing | `packages/coding-agent/src/modes/interactive/tui-renderer.ts:39`, `:44` | done | `crates/epsilon-tui/src/app/commands.rs:2417`, `:2364` — the outcome is a transcript notice naming which path ran, and with no assistant row nothing is put on the wire at all (an empty OSC 52 payload would *clear* the user's clipboard) | `copy_parks_a_sequence_that_carries_the_message_and_the_notice_names_the_path` |
-| P-220 | Components hold a proxy that forwards to whichever renderer is active, so a renderer can be swapped at runtime | `packages/coding-agent/src/modes/interactive/tui-renderer.ts:53`, `:61` | missing | none — with one renderer there is no swap for a component to survive | — |
+| P-220 | Components hold a proxy that forwards to whichever renderer is active, so a renderer can be swapped at runtime | `packages/coding-agent/src/modes/interactive/tui-renderer.ts:53`, `:61` | deliberately different | With one renderer (ratatui) there is no swap for a component to survive — a forwarding proxy would be indirection with one target, kept alive against a second renderer that will never come | — |
 
 ## 3. Composer and editor
 
@@ -763,7 +763,7 @@ row says so — that is a gap in the inventory, and closing it is cheap.
 | area | rows | done | partial | missing | deliberately different |
 |---|---|---|---|---|---|
 | 1. Startup, header and resources | 20 | 1 | 7 | 2 | 10 |
-| 2. Layout and renderer | 10 | 3 | 2 | 4 | 1 |
+| 2. Layout and renderer | 10 | 3 | 2 | 0 | 5 |
 | 3. Composer and editor | 24 | 6 | 12 | 2 | 4 |
 | 4. Slash commands and autocomplete | 13 | 2 | 5 | 5 | 1 |
 | 5. Transcript and streaming | 35 | 9 | 2 | 19 | 5 |
@@ -780,9 +780,9 @@ row says so — that is a gap in the inventory, and closing it is cheap.
 | 16. Status indicators | 13 | 2 | 5 | 1 | 5 |
 | 17. Footer | 12 | 4 | 4 | 1 | 3 |
 | 18. Selector and overlay components | 79 | 18 | 17 | 36 | 8 |
-| **Total** | **339** | **74** | **105** | **94** | **66** |
+| **Total** | **339** | **74** | **105** | **90** | **70** |
 
-### The `missing` rows — 94
+### The `missing` rows — 90
 
 Every row below has **no** `E-` row establishing the behaviour. Nothing here was found by browsing `crates/`, and
 nothing here is a claim that the behaviour cannot be built.
@@ -790,7 +790,6 @@ nothing here is a claim that the behaviour cannot be built.
 | area | ids |
 |---|---|
 | Startup, header and resources (2) | P-004, P-088 |
-| Layout and renderer (4) | P-015, P-020, P-021, P-220 |
 | Composer and editor (2) | P-212, P-213 |
 | Slash commands and autocomplete (5) | P-042, P-045, P-221, P-222, P-224 |
 | Transcript and streaming (19) | P-051, P-052, P-053, P-056, P-057, P-060, P-122, P-124, P-126, P-129, P-132, P-134, P-135, P-178, P-179, P-180, P-181, P-182, P-184 |

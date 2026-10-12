@@ -504,6 +504,11 @@ the run. Up from 1,997: the checkpoint round-trip and restore-undo tests. (Previ
 > removed proving the pair (either alone still passes: defense in depth). The dialog
 > hint wording itself stays missing. Counts now 74/105/94/66.
 >
+> **Layout quartet judged (this session): P-015/P-020/P-021/P-220 dd.** No second
+> mode to switch to; extensions observe and interpose but never draw (chrome stays
+> ours — a stranger must not redraw the permission boundary); one renderer needs
+> no forwarding proxy. Counts now 74/105/90/70.
+>
 > **Startup trio (this session): P-005 partial, P-008/P-119 judged.** The model scope
 > lives persistently in the header rather than printed once to scrollback; extension
 > slash commands cannot collide (closed static vocabulary); extension failures are
