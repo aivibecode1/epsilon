@@ -474,6 +474,10 @@ the run. Up from 1,997: the checkpoint round-trip and restore-undo tests. (Previ
 > within seconds. P-208 stays `missing`: no experimental flags exist. Counts now
 > 70/102/126/41.
 >
+> **Startup quartet judged (this session): P-009/P-012/P-059/P-089 dd.** No releases
+> to announce between, nothing ever downloaded (supply-chain refusal), updater
+> machinery excluded scope. Counts now 74/103/111/51.
+>
 > **Startup trio (this session): P-005 partial, P-008/P-119 judged.** The model scope
 > lives persistently in the header rather than printed once to scrollback; extension
 > slash commands cannot collide (closed static vocabulary); extension failures are
