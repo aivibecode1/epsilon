@@ -580,6 +580,11 @@ the run. Up from 1,997: the checkpoint round-trip and restore-undo tests. (Previ
 > pin `Response was stopped before completion`; in-flight tool cards are not
 > retro-fitted and there is no `/bug` to suggest. Counts now 78/109/70/82.
 >
+> **P-060 judged (this session): no extension render surface.** Same rationale as
+> P-020/P-021 — nothing to register against, no streaming component to sit above.
+> P-053/P-056 sharpened and held `missing` (no redaction detection; skills are
+> prompt context, never visible invocations). Counts now 78/109/69/83.
+>
 > **Goal 3, Phase 1 (landed): AGENTS.md v4 draft for owner application.** Every v3
 > clause audited against the tree (13 crates, uniform 1.88, TERMINAL+WINDOW tables,
 > 15 legs, SUPPORTED only in a historical comment); the complete v4 text sits in
