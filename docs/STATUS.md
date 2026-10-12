@@ -669,6 +669,10 @@ the run. (Previous: `gate-one-undo-20261012`, 1,999/0/10.)
 > screen that teaches would hide the message that matters (P-243). Counts now
 > 81/111/25/122.
 >
+> **P-251 judged (this session): one ranking rule, no special cases.** Score wins
+> uniformly under a filter; a prefix boost would complicate the single comparator.
+> Counts now 81/111/24/123.
+>
 > **Goal 3, Phase 1 (landed): AGENTS.md v4 draft for owner application.** Every v3
 > clause audited against the tree (13 crates, uniform 1.88, TERMINAL+WINDOW tables,
 > 15 legs, SUPPORTED only in a historical comment); the complete v4 text sits in

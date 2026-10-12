@@ -66,7 +66,7 @@ back; it is a reading of the test's source, not a report of a run.
 
 **339 rows** are paired here: Pi's 323 `P-###` behaviours, the 4 `L-###` rows of its inherited `tui.*` keybinding
 table, and the 12 `T-###` rows of its text-measurement core. Every one carries a reference citation; 200 of them
-carry an `ours` citation and 26 do not, and those 26 say so. The counts below are the rows **actually written in
+carry an `ours` citation and 25 do not, and those 25 say so. The counts below are the rows **actually written in
 this document**, tallied from its own tables — not a projection.
 
 | area | rows | done | partial | missing | deliberately different |
@@ -88,15 +88,15 @@ this document**, tallied from its own tables — not a projection.
 | 15. Markdown, mermaid and truncation | 22 | 6 | 7 | 1 | 8 |
 | 16. Status indicators | 13 | 2 | 5 | 0 | 6 |
 | 17. Footer | 12 | 4 | 4 | 0 | 4 |
-| 18. Selector and overlay components | 79 | 22 | 19 | 13 | 25 |
-| **Total** | **339** | **81** | **111** | **25** | **122** |
+| 18. Selector and overlay components | 79 | 22 | 19 | 12 | 26 |
+| **Total** | **339** | **81** | **111** | **24** | **123** |
 
 A further **17 rows are not in the counts above**: the 10 `Y-###` rows Pi ships outside its interactive mode (out of
 scope by design) and the 7 `AA-###` rows recording what was never inventoried. Both are listed in full near the end
 of this document, because a row that is silently dropped is how a rule goes unowned.
 
-The shape of that table is the honest shape of a port from a 356-row inventory to a 314-row one: **25 rows have no
-counterpart established on our side, 111 are half-built, 81 are exercised, and 122 are decisions.** The 25 are not
+The shape of that table is the honest shape of a port from a 356-row inventory to a 315-row one: **24 rows have no
+counterpart established on our side, 111 are half-built, 81 are exercised, and 123 are decisions.** The 24 are not
 69/339 failures; most of them sit in Pi's extension, settings-overlay, mermaid, image and tree-navigation surface,
 much of which Epsilon deliberately does not have. Read [Open rows](#open-rows) before reading the table.
 
@@ -678,7 +678,7 @@ the per-selector ones.
 | P-248 | Tab switches between all models and the cycling scope, with a warning in place of the line when nothing is scoped | `packages/coding-agent/src/modes/interactive/components/model-selector.ts:248`, `:364`, `:94` | partial | No Tab scope toggle (providers→models stages instead, `crates/epsilon-tui/src/app/keys.rs:1270`); but the empty-scope warning exists twice — `f2` guides when no favorites are starred and `/scoped-models` names the Ctrl+F path | `f2_cycles_favorites_and_guides_when_empty` |
 | P-249 | The list puts the current model first, the default second, then sorts by provider, marking `✓` and ` · default` | `packages/coding-agent/src/modes/interactive/components/model-selector.ts:231`, `:323`, `:329` | done | `crates/epsilon-tui/src/picker.rs` — empty-filter comparator is current → default → favorites → score → id (`None` provably order-preserving); the default row carries `is_default` and both front ends mark it (`· default` TUI) | `saved_default_orders_second_and_is_flagged` (decoy control) |
 | P-250 | The model selector ranks over `provider provider/id provider id name`; the scoped selector uses the opposite order, id first | `packages/coding-agent/src/modes/interactive/model-search.ts:17`, `:7-11`, `packages/coding-agent/src/modes/interactive/components/scoped-models-selector.ts:222` | partial | `crates/epsilon-tui/src/picker.rs` — one picker over one haystack, so it takes the **selector's** provider-first order (`{provider} {provider}/{id} {id} {label}`), and the scoped overlay's opposite order is deliberately not built: Epsilon has one picker, not two, and a second order for the same list would be a choice nobody can see. **The selector half is proven:** the query `openai` ranked `groq`'s `openai/gpt-oss-120b` first before this (`left: "groq"`, `right: "openai"`), and stage 2 answered its own provider's name with nothing at all — its haystack was `id label` with the provider absent, so descending into `groq` and typing `groq` drew the widen hint | `a_provider_query_ranks_that_providers_own_models_first` (RED `got openai/gpt-oss-120b`), `stage_two_answers_its_own_providers_name` (the sharper half) |
-| P-251 | Typing any prefix of `default` moves all default models to the top — even a single `d` | `packages/coding-agent/src/modes/interactive/components/model-selector.ts:262`, `:285` | missing | none | — |
+| P-251 | Typing any prefix of `default` moves all default models to the top — even a single `d` | `packages/coding-agent/src/modes/interactive/components/model-selector.ts:262`, `:285` | deliberately different | One ranking rule, no special cases: under a filter, score wins uniformly (`crates/epsilon-tui/src/picker.rs` filtered branch) — a prefix boost for one row would complicate the single comparator every other row relies on | — |
 | P-252 | Entering a query resets the selection to row 0 so the best match is highlighted | `packages/coding-agent/src/modes/interactive/components/model-selector.ts:301` | done | `crates/epsilon-tui/src/app/keys.rs:1456` — a printable character filters and the highlight resets | `typing_a_query_resets_the_picker_selection_to_row_zero` (descends, moves to row 1, types `x`, asserts row 0 with the filter kept; negative control run — without the reset it fails `left: 1, right: 0`) |
 | P-253 | The selector paints the cached snapshot immediately, refreshes behind it, and reports success, timeout or per-provider failure | `packages/coding-agent/src/modes/interactive/components/model-selector.ts:154`, `:185`, `:196`, `:216` | done | `crates/epsilon-tui/src/app.rs` — opening starts the silent fetch over the bundled snapshot; `record_live_result` merges and reports (`live listing: N models merged`, `live listing failed: …`), surfaced by the event loop; `Ctrl+G` forces with its own notices (no fetcher, no endpoint, no key all named) | `ctrl_g_reports_unavailable_without_the_real_feature` (real key path; notice-mutation control), `finished_refresh_reports_success_and_failure` (merge + report, both halves; notice-mutation control) |
 | P-254 | Enter applies to the session, `Ctrl+S` applies **and** writes settings, Esc cancels and aborts the refresh | `packages/coding-agent/src/modes/interactive/components/model-selector.ts:399`, `:387`, `:394`, `:137` | done | `crates/epsilon-tui/src/app/keys.rs` — `app.model.saveDefault` (`ctrl+s`, rebindable) saves the highlighted stage-2 row via `save_model_id_in` (override dir in tests, global in production) and refreshes memory; Enter applies, Esc cancels (unchanged) | `ctrl_s_in_the_picker_saves_the_default` (real key path, file + memory; binding-miss control). Window Ctrl+S deferred (no picker save surface yet) |
@@ -779,10 +779,10 @@ row says so — that is a gap in the inventory, and closing it is cheap.
 | 15. Markdown, mermaid and truncation | 22 | 6 | 7 | 1 | 8 |
 | 16. Status indicators | 13 | 2 | 5 | 0 | 6 |
 | 17. Footer | 12 | 4 | 4 | 0 | 4 |
-| 18. Selector and overlay components | 79 | 22 | 19 | 13 | 25 |
-| **Total** | **339** | **81** | **111** | **25** | **122** |
+| 18. Selector and overlay components | 79 | 22 | 19 | 12 | 26 |
+| **Total** | **339** | **81** | **111** | **24** | **123** |
 
-### The `missing` rows — 25
+### The `missing` rows — 24
 
 Every row below has **no** `E-` row establishing the behaviour. Nothing here was found by browsing `crates/`, and
 nothing here is a claim that the behaviour cannot be built.
@@ -796,7 +796,7 @@ nothing here is a claim that the behaviour cannot be built.
 | Themes (2) | P-096, P-098 |
 | Settings (2) | P-113, P-114 |
 | Markdown, mermaid and truncation (1) | T-010 |
-| Selector and overlay components (13) | P-230, P-239, P-251, P-304, P-306, P-307, P-311, P-314, P-316, P-317, P-318, P-319, P-323 |
+| Selector and overlay components (12) | P-230, P-239, P-304, P-306, P-307, P-311, P-314, P-316, P-317, P-318, P-319, P-323 |
 
 ### The `partial` rows — 111
 
