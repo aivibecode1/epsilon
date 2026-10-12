@@ -749,6 +749,12 @@ the run. Matrix at 81/111/24/123. (Previous: `gate-goal3-phase6-20261012`, 2,011
 > code + expiry (adapter test) with one stated divergence — the pre-filled page
 > opens too when offered. Counts now 86/114/8/131.
 >
+> **Quartet judged (this session): P-096/P-098 theme files, P-113/P-114 layer
+> rules.** No theme files at any layer (named built-in palettes, P-101);
+> no cache-warming setting anywhere (verified by search); no tool-allowlist
+> with layer modifiers — access is permission presets, not enable lists.
+> Counts now 86/114/4/135.
+>
 > **Trio judged (this session): P-316/P-317 Radius shimmer, P-323 images
 > gate.** Zero Radius references anywhere (P-066's rule,
 > re-verified); image blobs collapse to a one-line deferred fallback that is

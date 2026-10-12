@@ -79,8 +79,8 @@ this document**, tallied from its own tables — not a projection.
 | 6. Model picker and thinking | 9 | 0 | 5 | 0 | 4 |
 | 7. Auth, login and permissions | 8 | 2 | 4 | 0 | 2 |
 | 8. Sessions | 17 | 7 | 6 | 0 | 4 |
-| 9. Themes | 18 | 0 | 6 | 2 | 10 |
-| 10. Settings | 22 | 1 | 10 | 2 | 9 |
+| 9. Themes | 18 | 0 | 6 | 0 | 12 |
+| 10. Settings | 22 | 1 | 10 | 0 | 11 |
 | 11. Project trust | 4 | 1 | 2 | 0 | 1 |
 | 12. Tool cards | 16 | 3 | 6 | 0 | 7 |
 | 13. Bash cards | 11 | 5 | 6 | 0 | 0 |
@@ -89,14 +89,14 @@ this document**, tallied from its own tables — not a projection.
 | 16. Status indicators | 13 | 2 | 5 | 0 | 6 |
 | 17. Footer | 12 | 4 | 4 | 0 | 4 |
 | 18. Selector and overlay components | 79 | 25 | 22 | 0 | 32 |
-| **Total** | **339** | **86** | **114** | **8** | **131** |
+| **Total** | **339** | **86** | **114** | **4** | **135** |
 
 A further **17 rows are not in the counts above**: the 10 `Y-###` rows Pi ships outside its interactive mode (out of
 scope by design) and the 7 `AA-###` rows recording what was never inventoried. Both are listed in full near the end
 of this document, because a row that is silently dropped is how a rule goes unowned.
 
-The shape of that table is the honest shape of a port from a 356-row inventory to a 315-row one: **8 rows have no
-counterpart established on our side, 114 are half-built, 86 are exercised, and 131 are decisions.** The 8 are not
+The shape of that table is the honest shape of a port from a 356-row inventory to a 315-row one: **4 rows have no
+counterpart established on our side, 114 are half-built, 86 are exercised, and 135 are decisions.** The 4 are not
 69/339 failures; most of them sit in Pi's extension, settings-overlay, mermaid, image and tree-navigation surface,
 much of which Epsilon deliberately does not have. Read [Open rows](#open-rows) before reading the table.
 
@@ -422,9 +422,9 @@ several Pi rows have nothing to pair with at all, and are recorded that way rath
 | P-093 | The generated system theme solves per-token contrast so body text keeps 4.5:1 on whatever background it lands on | `packages/coding-agent/src/modes/interactive/theme/system-theme.ts:350`, `:49-64`, `:510-520`, `:620-635` | partial | `crates/epsilon-tui/src/ui/theme.rs:936`, `:955` — contrast is **measured** rather than solved, and asserted at 7:1 — but only the high-contrast palette has a measured floor in the tree; the dark and light palettes' contrast is not asserted by any test | `the_high_contrast_palette_clears_the_aaa_floor_on_black` (walks every role against 7:1, with the dark palette's own `text_faint` as the control) |
 | P-094 | Light-vs-dark is decided from the terminal's reported foreground, then background contrast, then its report, then `COLORFGBG`, defaulting to dark | `packages/coding-agent/src/modes/interactive/theme/system-theme.ts:416-431`, `packages/coding-agent/src/modes/interactive/theme/theme.ts:702-710`, `:689-695` | deliberately different | Fixed palettes by design: `COLORTERM` / `WT_SESSION` / `TERM_PROGRAM` are read for colour **depth** only (`crates/epsilon-tui/src/ui/theme.rs:1086`), never for appearance — a reported-foreground chain that degrades to a default is a guess dressed as detection | — |
 | P-095 | In automatic mode Pi follows the terminal's colour-scheme notification and repaints live | `packages/coding-agent/src/modes/interactive/theme/theme-controller.ts:225-229`, `:241-247` | deliberately different | As P-092: with no automatic mode there is nothing to follow and no live repaint owed — the palette changes exactly when the reader asks (`/theme` applies live) | — |
-| P-096 | Custom themes load from three places; editing the active one repaints within a debounce, and a broken file leaves the last good theme on screen | `packages/coding-agent/src/core/resource-loader.ts:1042`, `packages/coding-agent/src/config.ts:571-573`, `packages/coding-agent/src/modes/interactive/theme/theme.ts:831-861` | missing | none — there is no theme file to load or watch | — |
+| P-096 | Custom themes load from three places; editing the active one repaints within a debounce, and a broken file leaves the last good theme on screen | `packages/coding-agent/src/core/resource-loader.ts:1042`, `packages/coding-agent/src/config.ts:571-573`, `packages/coding-agent/src/modes/interactive/theme/theme.ts:831-861` | deliberately different | As the P-092/P-094/P-095/P-270/P-271 quintet: named built-in palettes by explicit choice (`/theme` applies immediately, P-101) — there is no theme file to load, watch, debounce, or fall back from, at any layer | — |
 | P-097 | A theme that fails to load keeps rendering in system colours and only shows the error when asked; the remembered name resets | `packages/coding-agent/src/modes/interactive/theme/theme.ts:764-769`, `packages/coding-agent/src/modes/interactive/theme/theme-controller.ts:182-184` | partial | `crates/epsilon-tui/src/app/commands.rs:1609` — an unrecognised name is refused by name with the options listed and the palette left exactly as it was, rather than reverting silently | `theme_command_toggles_and_names_the_palette`, `the_palette_is_selected_by_name_and_survives_a_bad_one` |
-| P-098 | A theme missing a required colour token is rejected naming the tokens, not with a stack trace | `packages/coding-agent/src/modes/interactive/theme/theme-json.ts:105-138`, `packages/coding-agent/src/modes/interactive/theme/theme-schema.json:43-95`, `:322` | missing | none | — |
+| P-098 | A theme missing a required colour token is rejected naming the tokens, not with a stack trace | `packages/coding-agent/src/modes/interactive/theme/theme-json.ts:105-138`, `packages/coding-agent/src/modes/interactive/theme/theme-schema.json:43-95`, `:322` | deliberately different | As P-096: with no theme files there is no schema to validate against and no token set to reject — palettes are code, reviewed, and contrast-tested per theme | — |
 | P-099 | `""` means the terminal's own default foreground or background, and tokens are slot-strict | `packages/coding-agent/src/modes/interactive/theme/theme.ts:290-299`, `:119-126`, `:216-219` | partial | `crates/epsilon-tui/src/ui/theme.rs:1090` — on a 16-colour terminal body text becomes `Color::Reset`, which is the same effect at the cell; there is no theme-token language with slot strictness or optional-with-fallback tokens | `no_color_still_distinguishes_roles_by_attribute`, `bands_are_withheld_when_the_terminal_cannot_do_them` |
 | P-100 | The active theme lives on a `globalThis` symbol so extensions loaded through a second module instance share it | `packages/coding-agent/src/modes/interactive/theme/theme.ts:722-733`, `:735-738`, `:730` | deliberately different | `crates/epsilon-tui/src/ui/theme.rs:1062` — no global registry is needed in one binary; roles resolve per frame and no repaint call is made, which is the *behaviour* Pi's sharing trick exists to produce | `switching_the_palette_redraws_the_transcript_and_not_just_the_chrome` (frame) |
 | P-101 | Moving the highlight in `/settings` → Theme live-previews the candidate; cancelling restores | `packages/coding-agent/src/modes/interactive/theme/theme-controller.ts:146-153`, `packages/coding-agent/src/modes/interactive/components/settings-selector.ts:454-457` | deliberately different | As P-271: `/settings` is guidance notices, not a picker — there is no highlight to move and no candidate to preview; `/theme` applies immediately and says so | — |
@@ -458,8 +458,8 @@ surface, and it is why most rows below are `missing` rather than `partial`: ther
 | P-110 | Pi declares 44 app-level actions plus the `tui.*` set, four of which have no default key at all | `packages/coding-agent/src/core/keybindings.ts:75-238`, `:146-149` | partial | `crates/epsilon-contracts/src/keybind.rs:242` — 23 ids, every one with a `keybindings.matches(...)` arm; `app.transcript.halfUp` / `halfDown` have handlers (`crates/epsilon-tui/src/app/keys.rs:1893`, `:1691`) but no table entry at all — bindable by hand, with the reason at `crates/epsilon-contracts/src/keybind.rs:337-346` | `no_chord_is_bound_to_two_ids_by_default`, `a_hint_label_parses_back_to_the_chord_it_names` |
 | P-111 | Every outbound warning is individually switchable under `warnings`, and the whole object is editable in `/settings` | `packages/coding-agent/src/core/settings-manager.ts:90-92`, `:1524`, `:716-729` | deliberately different | No toggles surface exists (`/settings` is guidance notices): warnings are always on, and an on/off switch over them would be a knob with one position | — |
 | P-112 | Steering and follow-up delivery are one-at-a-time by default, each switchable to deliver all at once | `packages/coding-agent/src/core/settings-manager.ts:830-832`, `:840-842` | partial | Both delivery modes exist and are tested (`QueueMode::OneAtATime` default, `QueueMode::All` explicit — `crates/epsilon-contracts/src/queue_mode.rs:40`); what is missing is the user-facing switch (no setting or command moves between them, only code) | `default_followups_wait_for_separate_stop_boundaries`, `explicit_all_followups_share_one_stop_boundary` |
-| P-113 | Cache warming is readable only from the **global** settings layer, because a cache refresh costs money | `packages/coding-agent/src/core/settings-manager.ts:1023-1026`, `:182` | missing | none | — |
-| P-114 | The startup tool set is four tools, and a settings layer listing only `+name`/`-name` **modifies** the inherited set; an empty array means "no tools" | `packages/coding-agent/src/core/settings-manager.ts:215`, `:236-247`, `:225-230` | missing | none | — |
+| P-113 | Cache warming is readable only from the **global** settings layer, because a cache refresh costs money | `packages/coding-agent/src/core/settings-manager.ts:1023-1026`, `:182` | deliberately different | No cache-warming setting exists at any layer — verified by search across `crates/` — so there is no read to scope and no layer rule to port | — |
+| P-114 | The startup tool set is four tools, and a settings layer listing only `+name`/`-name` **modifies** the inherited set; an empty array means "no tools" | `packages/coding-agent/src/core/settings-manager.ts:215`, `:236-247`, `:225-230` | deliberately different | No tool-allowlist setting with layer modifiers exists — tool access is governed by the permission gate and its named presets (`crates/epsilon-safety/src/engine.rs:164`, `:229`), not by an enable list, so there is nothing to modify, inherit, or empty | — |
 | P-274 | With no configured providers the per-model list shows one actionable entry naming the next step, not a bare emptiness | `packages/coding-agent/src/modes/interactive/components/settings-selector.ts:634`, `:636` | partial | `crates/epsilon-tui/src/app/commands.rs:1967` — `/templates` with nothing installed names the two directories to drop files into, which is the same actionable-empty-state rule applied somewhere else | `templates_command_explains_where_to_put_files_when_empty` |
 | P-275 | A `Warnings` row opens a nested list of toggles, displaying the literal word `configure` as its value | `packages/coding-agent/src/modes/interactive/components/settings-selector.ts:594`, `:156`, `:593` | deliberately different | As P-111: with no toggles there is no nested list to open and no value to display | — |
 | P-276 | Enum settings are edited by label and mapped back to values; an unmapped label is silently ignored | `packages/coding-agent/src/modes/interactive/components/settings-selector.ts:558`, `:923-924`, `:929`, `:931` | partial | `crates/epsilon-tui/src/app/commands.rs:1605`, `:1536` — one enum is edited by name (case-insensitive, `_` standing in for `-`) and a miss is refused with the options listed rather than silently ignored | `every_palette_the_description_advertises_is_one_the_product_has`, `theme_command_toggles_and_names_the_palette` |
@@ -770,8 +770,8 @@ row says so — that is a gap in the inventory, and closing it is cheap.
 | 6. Model picker and thinking | 9 | 0 | 5 | 0 | 4 |
 | 7. Auth, login and permissions | 8 | 2 | 4 | 0 | 2 |
 | 8. Sessions | 17 | 7 | 6 | 0 | 4 |
-| 9. Themes | 18 | 0 | 6 | 2 | 10 |
-| 10. Settings | 22 | 1 | 10 | 2 | 9 |
+| 9. Themes | 18 | 0 | 6 | 0 | 12 |
+| 10. Settings | 22 | 1 | 10 | 0 | 11 |
 | 11. Project trust | 4 | 1 | 2 | 0 | 1 |
 | 12. Tool cards | 16 | 3 | 6 | 0 | 7 |
 | 13. Bash cards | 11 | 5 | 6 | 0 | 0 |
@@ -780,9 +780,9 @@ row says so — that is a gap in the inventory, and closing it is cheap.
 | 16. Status indicators | 13 | 2 | 5 | 0 | 6 |
 | 17. Footer | 12 | 4 | 4 | 0 | 4 |
 | 18. Selector and overlay components | 79 | 25 | 22 | 0 | 32 |
-| **Total** | **339** | **86** | **114** | **8** | **131** |
+| **Total** | **339** | **86** | **114** | **4** | **135** |
 
-### The `missing` rows — 8
+### The `missing` rows — 4
 
 Every row below has **no** `E-` row establishing the behaviour. Nothing here was found by browsing `crates/`, and
 nothing here is a claim that the behaviour cannot be built.
@@ -791,8 +791,6 @@ nothing here is a claim that the behaviour cannot be built.
 |---|---|
 | Startup, header and resources (1) | P-004 |
 | Transcript and streaming (2) | P-053, P-056 |
-| Themes (2) | P-096, P-098 |
-| Settings (2) | P-113, P-114 |
 | Markdown, mermaid and truncation (1) | T-010 |
 
 ### The `partial` rows — 114
