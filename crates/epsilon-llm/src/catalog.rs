@@ -1306,4 +1306,18 @@ mod tests {
         let resolved = resolve_model_for_run_with("deepseek-chat", &|_| true).expect("resolves");
         assert!(resolved.replaced.is_none());
     }
+    /// The ambient-chain marker must never resolve as a bearer token (M49): sending the
+    /// literal string would be a confusing 403, and the transport signs SigV4 instead.
+    #[test]
+    fn bedrock_ambient_chain_marker_never_resolves_as_a_key() {
+        let tmp = tempfile::tempdir().expect("tmp");
+        let dir = tmp.path();
+        crate::auth::save_credential_in(dir, "amazon-bedrock", "USE_AMBIENT_AWS_CHAIN")
+            .expect("save");
+        assert_eq!(
+            resolve_api_key_in(dir, "amazon-bedrock", &|_| None),
+            None,
+            "the marker selects the ambient chain; it is not a key"
+        );
+    }
 }

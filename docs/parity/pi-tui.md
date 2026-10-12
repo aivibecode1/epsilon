@@ -66,7 +66,7 @@ back; it is a reading of the test's source, not a report of a run.
 
 **339 rows** are paired here: Pi's 323 `P-###` behaviours, the 4 `L-###` rows of its inherited `tui.*` keybinding
 table, and the 12 `T-###` rows of its text-measurement core. Every one carries a reference citation; 200 of them
-carry an `ours` citation and 96 do not, and those 96 say so. The counts below are the rows **actually written in
+carry an `ours` citation and 95 do not, and those 95 say so. The counts below are the rows **actually written in
 this document**, tallied from its own tables — not a projection.
 
 | area | rows | done | partial | missing | deliberately different |
@@ -77,7 +77,7 @@ this document**, tallied from its own tables — not a projection.
 | 4. Slash commands and autocomplete | 13 | 2 | 5 | 5 | 1 |
 | 5. Transcript and streaming | 35 | 9 | 2 | 19 | 5 |
 | 6. Model picker and thinking | 9 | 0 | 4 | 1 | 4 |
-| 7. Auth, login and permissions | 8 | 0 | 3 | 4 | 1 |
+| 7. Auth, login and permissions | 8 | 0 | 4 | 3 | 1 |
 | 8. Sessions | 17 | 7 | 6 | 1 | 3 |
 | 9. Themes | 18 | 0 | 6 | 8 | 4 |
 | 10. Settings | 22 | 1 | 10 | 8 | 3 |
@@ -89,14 +89,14 @@ this document**, tallied from its own tables — not a projection.
 | 16. Status indicators | 13 | 2 | 5 | 1 | 5 |
 | 17. Footer | 12 | 4 | 4 | 1 | 3 |
 | 18. Selector and overlay components | 79 | 18 | 17 | 36 | 8 |
-| **Total** | **339** | **74** | **104** | **95** | **66** |
+| **Total** | **339** | **74** | **105** | **94** | **66** |
 
 A further **17 rows are not in the counts above**: the 10 `Y-###` rows Pi ships outside its interactive mode (out of
 scope by design) and the 7 `AA-###` rows recording what was never inventoried. Both are listed in full near the end
 of this document, because a row that is silently dropped is how a rule goes unowned.
 
-The shape of that table is the honest shape of a port from a 356-row inventory to a 244-row one: **95 rows have no
-counterpart established on our side, 104 are half-built, 74 are exercised, and 66 are decisions.** The 95 are not
+The shape of that table is the honest shape of a port from a 356-row inventory to a 245-row one: **94 rows have no
+counterpart established on our side, 105 are half-built, 74 are exercised, and 66 are decisions.** The 94 are not
 69/339 failures; most of them sit in Pi's extension, settings-overlay, mermaid, image and tree-navigation surface,
 much of which Epsilon deliberately does not have. Read [Open rows](#open-rows) before reading the table.
 
@@ -372,7 +372,7 @@ against Pi, which stores credentials by its own design.
 | P-062 | `/login` walks auth type → provider → dialog, and cancelling a dialog reopens the selector it came from | `packages/coding-agent/src/modes/interactive/interactive-mode.ts:5809-5883`, `:5885-5928`, `:5798` | partial | `crates/epsilon-tui/src/app/commands.rs:622` — `/login <provider>` opens one masked modal directly; there is no auth-type selector, no provider list and no `onBack` chain | `oauth_need_code_opens_the_overlay_and_done_closes_it` — and no test renders the panel |
 | P-063 | After login Pi selects the provider's default model, or says which of four specific failures happened | `packages/coding-agent/src/modes/interactive/interactive-mode.ts:5990-6085` | missing | none | — |
 | P-064 | The login dialog renders four event kinds: auth URL, device code, info message, progress | `packages/coding-agent/src/modes/interactive/interactive-mode.ts:6227-6238`, `:6203-6225` | partial | `crates/epsilon-tui/src/app/panels.rs:1178` — the masked free-text prompt is one of the kinds; no URL, device-code or progress rendering | `oauth_need_code_opens_the_overlay_and_done_closes_it`; E-059 records that nothing renders this panel |
-| P-065 | The `amazon-bedrock` API-key dialog adds a hint about AWS profiles, IAM keys and role credentials | `packages/coding-agent/src/modes/interactive/interactive-mode.ts:6129-6135` | missing | none | — |
+| P-065 | The `amazon-bedrock` API-key dialog adds a hint about AWS profiles, IAM keys and role credentials | `packages/coding-agent/src/modes/interactive/interactive-mode.ts:6129-6135` | partial | Bedrock resolves through the ambient chain, not a bearer key: a stored `USE_AMBIENT_AWS_CHAIN` marker selects SigV4 via env/files the SDK reads itself (`crates/epsilon-llm/src/catalog.rs:605`), and the marker must never resolve as a key — but no dialog states the profiles/IAM/roles hint in words | `bedrock_ambient_chain_marker_never_resolves_as_a_key` (both marker guards removed → fails) |
 | P-066 | Logging in to Radius offers to configure its MCP server in the global `mcp.json` and reloads | `packages/coding-agent/src/modes/interactive/interactive-mode.ts:6296-6343` | missing | none | — |
 | P-067 | `/logout` removes the chosen stored credential and, with none stored, says explicitly that env vars and `models.json` are untouched | `packages/coding-agent/src/modes/interactive/interactive-mode.ts:5930-5988`, `:5966-5978` | partial | `crates/epsilon-tui/src/app/commands.rs:659` — three outcomes (removed / nothing-to-remove / error), so "nothing happened" is never reported as success | `no_slash_command_panics_when_typed` covers only the bare usage line; E-060 records that no test types `/logout <provider>` in the TUI |
 | P-068 | Pi has **no** permission system: every side-effecting tool runs with the permissions of the user that launched it, and the documented remedy is containerisation or an extension sandbox | `README.md:42`, `README.md:44-48` | deliberately different | `crates/epsilon-safety/src/gate.rs:140` (a deny rule is evaluated **before** the session "always allow" memory), `crates/epsilon-safety/src/channel_ui.rs:128` (a dropped responder resolves to deny), `crates/epsilon-tui/src/app/event.rs:287` (the ask reaches the screen) | `memory_promotion_cannot_override_a_fresh_deny`, `dropped_ask_denies_fail_closed`, `bash_defaults_to_ask_and_deny_carries_no_access`, `a_pending_approval_is_drawn_over_the_timeline` (frame) |
@@ -768,7 +768,7 @@ row says so — that is a gap in the inventory, and closing it is cheap.
 | 4. Slash commands and autocomplete | 13 | 2 | 5 | 5 | 1 |
 | 5. Transcript and streaming | 35 | 9 | 2 | 19 | 5 |
 | 6. Model picker and thinking | 9 | 0 | 4 | 1 | 4 |
-| 7. Auth, login and permissions | 8 | 0 | 3 | 4 | 1 |
+| 7. Auth, login and permissions | 8 | 0 | 4 | 3 | 1 |
 | 8. Sessions | 17 | 7 | 6 | 1 | 3 |
 | 9. Themes | 18 | 0 | 6 | 8 | 4 |
 | 10. Settings | 22 | 1 | 10 | 8 | 3 |
@@ -780,9 +780,9 @@ row says so — that is a gap in the inventory, and closing it is cheap.
 | 16. Status indicators | 13 | 2 | 5 | 1 | 5 |
 | 17. Footer | 12 | 4 | 4 | 1 | 3 |
 | 18. Selector and overlay components | 79 | 18 | 17 | 36 | 8 |
-| **Total** | **339** | **74** | **104** | **95** | **66** |
+| **Total** | **339** | **74** | **105** | **94** | **66** |
 
-### The `missing` rows — 95
+### The `missing` rows — 94
 
 Every row below has **no** `E-` row establishing the behaviour. Nothing here was found by browsing `crates/`, and
 nothing here is a claim that the behaviour cannot be built.
@@ -795,7 +795,7 @@ nothing here is a claim that the behaviour cannot be built.
 | Slash commands and autocomplete (5) | P-042, P-045, P-221, P-222, P-224 |
 | Transcript and streaming (19) | P-051, P-052, P-053, P-056, P-057, P-060, P-122, P-124, P-126, P-129, P-132, P-134, P-135, P-178, P-179, P-180, P-181, P-182, P-184 |
 | Model picker and thinking (1) | P-273 |
-| Auth, login and permissions (4) | P-061, P-063, P-065, P-066 |
+| Auth, login and permissions (3) | P-061, P-063, P-066 |
 | Sessions (1) | P-081 |
 | Themes (8) | P-092, P-094, P-095, P-096, P-098, P-101, P-270, P-271 |
 | Settings (8) | P-103, P-111, P-113, P-114, P-267, P-268, P-275, P-277 |
@@ -804,7 +804,7 @@ nothing here is a claim that the behaviour cannot be built.
 | Footer (1) | P-208 |
 | Selector and overlay components (36) | P-230, P-232, P-234, P-235, P-239, P-242, P-244, P-245, P-248, P-251, P-255, P-256, P-257, P-258, P-259, P-261, P-281, P-283, P-284, P-285, P-286, P-296, P-297, P-300, P-304, P-306, P-307, P-308, P-310, P-311, P-314, P-316, P-317, P-318, P-319, P-323 |
 
-### The `partial` rows — 104
+### The `partial` rows — 105
 
 An `E-` row covers these and something is not finished. The reason column is the shortest honest statement of what.
 
@@ -816,7 +816,7 @@ An `E-` row covers these and something is not finished. The reason column is the
 | Slash commands and autocomplete (5) | P-043, P-044, P-046, P-047, P-084 | the `/` menu lists slash items only; no per-command argument completer; no refresh-then-open fallback; `/scoped-models` and `/changelog` are driven only by the all-heads sweep |
 | Transcript and streaming (2) | P-040, P-054 | thinking hides on Alt+T, not Ctrl+T, with a narrower affordance; the compaction digest expands live and on replay in the terminal (as markdown when open) and draws as cost notice plus markdown digest in the window — the card concept itself is terminal-only; abort text lands on a system row, not the answer |
 | Model picker and thinking (4) | P-037, P-038, P-048, P-272 | the `/think` head parses but no row establishes the argument form or a picker; no per-model override submenu; P-037 has no no-reasoning message (the catalog carries no reasoning flag); P-038 cycles favorites, not all models (M23, deliberate) |
-| Auth, login and permissions (3) | P-062, P-064, P-067 | one masked modal instead of an auth-type → provider → dialog chain with `onBack`; one of four dialog event kinds; the TUI path for `/logout <provider>` is unpinned |
+| Auth, login and permissions (4) | P-062, P-064, P-065, P-067 | one masked modal instead of an auth-type → provider → dialog chain with `onBack`; one of four dialog event kinds; the TUI path for `/logout <provider>` is unpinned; bedrock resolves through the ambient chain with the marker-never-a-key rule pinned, but no dialog states the profiles hint in words |
 | Sessions (6) | P-070, P-072, P-074, P-077, P-080, P-082 | no cross-directory scope / rename / delete in the picker; no branch summarisation; fork is at the leaf, not at a chosen message; no cache-warming status; reload covers four resource kinds, not six; share exports HTML and tries gh gist but has no Radius preference and no dedicated happy-path test |
 | Themes (6) | P-091, P-093, P-097, P-099, P-102, P-269 | three palettes and no file-loaded themes; the measured contrast floor is asserted for `high-contrast` only; an unknown name is refused rather than silently reverted; no theme-token language; the ASCII repertoire is overridable but colour depth is not; no theme submenu |
 | Settings (10) | P-104, P-107, P-108, P-109, P-110, P-112, P-274, P-276, P-278, P-280 | a fixed eight-row popup; a trust review rather than a layered merge; no keybinding migration; a Windows predicate for glyphs, not chords; 23 ids against 44+; empty states live in transcript notices; one enum edited by name; capacity measured rather than a ten-row cap; the stage is named by the title, not `Step N/M`; delivery modes both exist (OneAtATime default, All explicit) with no user-facing switch |

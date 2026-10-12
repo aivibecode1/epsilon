@@ -499,6 +499,11 @@ the run. Up from 1,997: the checkpoint round-trip and restore-undo tests. (Previ
 > spinner with no bordered editor to agree with. P-194 stays `missing`: no
 > extension loading indicator exists. Counts now 74/104/95/66.
 >
+> **P-065 partial (this session): bedrock ambient-chain marker pinned.** The marker
+> selects SigV4 and must never resolve as a bearer key — tested, with each guard
+> removed proving the pair (either alone still passes: defense in depth). The dialog
+> hint wording itself stays missing. Counts now 74/105/94/66.
+>
 > **Startup trio (this session): P-005 partial, P-008/P-119 judged.** The model scope
 > lives persistently in the header rather than printed once to scrollback; extension
 > slash commands cannot collide (closed static vocabulary); extension failures are
