@@ -4357,3 +4357,70 @@ fn a_failed_append_leaves_no_phantom_entry_behind() {
     assert_eq!(e1.parent_id.as_deref(), Some(e0.id.as_str()));
     assert_eq!(e1.seq, e0.seq + 1, "no gap in the sequence");
 }
+
+/// A session file that shortened under an OPEN store is a refusal, never a panic and never a
+/// silent skip.
+///
+/// The index is built once at open, and nothing re-checks it: a file truncated by something
+/// outside this store (another writer, an over-eager `set_len` repair) leaves the scan's
+/// picture of the tail pointing past what is actually there. Two answers are wrong, and both
+/// were one keystroke away: `expect("index and file agree")` kills the process from inside a
+/// library, and skipping the missing entry reports a transcript one entry short as if nothing
+/// was missing (`AGENTS.md` §6: never lose a user's work).
+///
+/// The store's own fixtures supply the shape: three appended entries, then the file rewritten
+/// with only the header and the first line through a *separate* handle, so the live store's
+/// index still claims three.
+#[test]
+fn a_file_that_shrinks_under_an_open_store_is_a_named_refusal_not_a_panic() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("s.jsonl");
+    let mut store = SessionStore::open(&path).unwrap();
+    for t in ["one", "two", "three"] {
+        store
+            .append(EntryKind::Message {
+                message: user_msg(t),
+                api_request_sha256: None,
+            })
+            .unwrap();
+    }
+    assert_eq!(store.len(), 3, "three entries are indexed");
+
+    // Shorten the file behind the store's back: header + first line only.
+    let raw = std::fs::read_to_string(&path).unwrap();
+    let mut lines = raw.lines();
+    let header = lines.next().expect("a header line");
+    let first = lines.next().expect("a first entry line");
+    let shrunk = format!(
+        "{header}
+{first}
+"
+    );
+    assert!(
+        shrunk.len() < raw.len(),
+        "the fixture really is shorter: {} < {}",
+        shrunk.len(),
+        raw.len()
+    );
+    std::fs::write(&path, &shrunk).unwrap();
+
+    // **The assertion:** an `Err` that names the disagreement, not a panic. Reached through
+    // `read_all`, which is what `tree()`, `session_name()`, `has_entry()` and `branch_entries()`
+    // all funnel through — so the panic this replaced was reachable from every one of them.
+    let err = store
+        .read_all()
+        .expect_err("a shrunken file is a refusal, not a panic and not a partial read");
+    let msg = err.to_string();
+    assert!(
+        msg.contains("index and file disagree"),
+        "the refusal must name the disagreement, got: {msg}"
+    );
+    assert!(
+        msg.contains("entry #1"),
+        "and the sequence number of the first entry the file no longer holds, got: {msg}"
+    );
+
+    // The file is left exactly as the truncation left it — a refusal path must not touch what
+    // it refused to read (`AGENTS.md` §6).
+    assert_eq!(std::fs::read_to_string(&path).unwrap(), shrunk);
+}

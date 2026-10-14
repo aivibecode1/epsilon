@@ -3172,3 +3172,42 @@ failure) with the notice now naming `/restore` as the way back.
 the store cannot express — then the save path moves with it, never around it.
 
 
+
+## ADR-041: `quota exceeded` is two failures, and the metric phrasing decides
+
+**Status: accepted (defect fix, 2026-10-14).**
+
+**The question.** One spelling — `quota exceeded` — arrives as two opposite conditions.
+OpenAI's billing rejection wears it (`429 quota exceeded`, `insufficient_quota`), and
+Google's genuine rate limit wears it (`Quota exceeded for quota metric
+'GenerateRequests'`). The classifier's spending-limit list matched the phrase, so
+**every** Google per-metric throttle was classified `Other` — final, no retry, no
+backoff — while the billing spelling that also carries `429` fell through to the
+rate-limit arm and was retried five times before failing. The same word cost both
+directions at once.
+
+**Decision: order by what the phrase names, not by which list it sits in.**
+`is_metric_throttle` ("for quota metric", "quota metric '") is tested *before*
+`is_spending_limit`, so a phrase naming a **metric** is a throttle (backoff clears a
+per-minute limit) and a phrase naming the **account** is a bill (backoff never puts
+money in). pi resolves the collision the same way — its non-retryable pattern is
+tested first and `"429 quota exceeded"` is pinned non-retryable
+(`references/pi-1.0.0/packages/ai/src/utils/retry.ts:246-251`,
+`test/retry.test.ts:80-86`); this ADR records that we follow the precedence, not the
+literal spelling.
+
+**The behaviour change this records** (AGENTS.md §5): a Google per-metric throttle is
+now retried up to `RETRY_MAX_ATTEMPTS` with backoff instead of failing on the first
+occurrence. That is the point — a per-minute limit recovers on its own — but it is a
+behaviour change to a production classification path, recorded here rather than left
+as a diff. Both halves are pinned against each other: `a_billing_rejection_is_final_
+under_either_spelling` and `a_genuine_throttle_stays_retryable_even_when_it_says_quota`
+cannot both pass unless the discrimination is real (each control fails only its own
+test).
+
+**Known limit, priced rather than hidden:** a Google throttle spelled some other way
+(`RESOURCE_EXHAUSTED` with no metric phrase) still matches the billing needle and is
+final. The fix is for the observed spelling pair, not for a general taxonomy.
+
+**Revisit trigger.** A provider ships a third meaning for the phrase, or the catalog
+gains a retry-hint field that makes text classification unnecessary.

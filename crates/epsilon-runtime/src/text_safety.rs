@@ -14,8 +14,17 @@
 //! contents, model output, and a session replayed from disk. Two classes of character in
 //! that text are dangerous in a way ordinary escaping does not cover.
 //!
-//! **Control characters** are already handled — ratatui drops them, so an escape sequence
-//! in tool output cannot drive the terminal.
+//! **Control characters and control sequences are both handled.** A bare control byte is
+//! dropped; a full CSI sequence is dropped *whole*, because a command that colours its output
+//! prints `ESC [ 0;32 m` and stripping the escape alone leaves `[0;32m` on the card — printable
+//! ASCII that no other rule catches. This is the same rule pi applies to tool output
+//! (`stripAnsi`, `references/pi-1.0.0/packages/coding-agent/src/utils/ansi.ts:37`, called from
+//! `modes/interactive/components/bash-execution.ts:83`), for the same reason: the reader is
+//! shown what the command *did*, not what its escape sequences looked like.
+//!
+//! **A bare escape is not assumed to start a sequence.** The introducer is dropped on its own
+//! when no whole sequence follows it, so a truncated or hand-edited sequence cannot swallow
+//! the rest of the line — which would be a different way of hiding text from the reader.
 //!
 //! **Bidirectional overrides are not.** `U+202E` (RIGHT-TO-LEFT OVERRIDE) reverses the
 //! visual order of everything after it, so a command can be *displayed* as one thing and
@@ -63,6 +72,83 @@ fn is_hidden_control(c: char) -> bool {
     c.is_control() && !matches!(c, '\t' | '\n' | '\r')
 }
 
+/// Does this character introduce a control sequence?
+///
+/// `ESC` for the 7-bit form, `CSI` (`U+009B`) for the 8-bit form pi's own matcher also accepts.
+fn is_csi_introducer(c: char) -> bool {
+    c == '\u{1b}' || c == '\u{9b}'
+}
+
+/// Is this byte a CSI **final** byte, the one that terminates the sequence?
+///
+/// pi's class, from ansi-regex: `[\dA-PR-TZcf-nq-uy=><~]`
+/// (`references/pi-1.0.0/packages/coding-agent/src/utils/ansi.ts:37`).
+fn is_csi_final(b: u8) -> bool {
+    b.is_ascii_digit()
+        || matches!(
+            b,
+            b'A'..=b'P'
+                | b'R'..=b'T'
+                | b'Z'
+                | b'c'
+                | b'f'..=b'n'
+                | b'q'..=b'u'
+                | b'y'
+                | b'='
+                | b'>'
+                | b'<'
+                | b'~'
+        )
+}
+
+/// How many bytes of `rest` a CSI sequence occupies, or `None` when no whole one is there.
+///
+/// `rest` starts *after* an introducer. The matcher covers every form in real use, because the
+/// distinguisher here is not the colour but the shape:
+///
+/// | form | example | what the introducer class carries |
+/// |---|---|---|
+/// | 6-bit private | `ESC ( B`, `ESC [ ? 25 l` | `(`, `[`, `?` |
+/// | multi-group params | `ESC [ 0;32 m`, `ESC [ 1;5H` | `;` groups of digits |
+/// | bare two-char | `ESC c`, `ESC M` | final byte alone |
+///
+/// Without this, stripping the introducer leaves the parameters on screen as `[0;32m` — a
+/// display artefact that is not a glyph anybody asked for and not a control character, so
+/// nothing else removes it.
+fn csi_suffix_len(rest: &str) -> Option<usize> {
+    let b = rest.as_bytes();
+    let mut i = 0usize;
+    // Intermediate bytes: pi's `[\[\]()#;?]*`. `[` is one of them, which is why the bracket
+    // that follows every introducer is consumed here rather than being treated as residue.
+    while i < b.len() && matches!(b[i], b'[' | b']' | b'(' | b')' | b'#' | b';' | b'?') {
+        i += 1;
+    }
+    // Parameters: pi's `\d{1,4}(?:[;:]\d{0,4})*` — a leading group of up to four digits, then
+    // any number of `;`/`:` groups of up to four more. The whole group is optional, so a
+    // sequence may go straight from intermediates to its final byte.
+    let first_group = i;
+    while i < b.len() && i - first_group < 4 && b[i].is_ascii_digit() {
+        i += 1;
+    }
+    if i > first_group {
+        while i < b.len() && matches!(b[i], b';' | b':') {
+            let group = i + 1;
+            let mut j = group;
+            while j < b.len() && j - group < 4 && b[j].is_ascii_digit() {
+                j += 1;
+            }
+            i = j;
+        }
+    }
+    // The final byte is what makes it a sequence. Without one this is not a CSI, and only the
+    // introducer is dropped — swallowing what follows would eat the rest of the line.
+    if i < b.len() && is_csi_final(b[i]) {
+        Some(i + 1)
+    } else {
+        None
+    }
+}
+
 /// How much was removed, so the reader can be told.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct Stripped {
@@ -89,9 +175,22 @@ impl Stripped {
 /// The `Cow::Borrowed` fast path is the point: the overwhelming majority of lines contain
 /// none of these, and a transcript of two thousand rows must not allocate two thousand
 /// `String`s per frame to learn that nothing needed removing.
+///
+/// A control **sequence** is removed as a unit. Stripping its introducer and leaving the
+/// rest — `[0;32m` out of `ESC [ 0;32 m` — is the defect this whole method exists to avoid:
+/// the parameters are printable ASCII, so no other rule catches them, and they arrive on a
+/// card as though the command had printed them.
 pub fn display_safe(text: &str) -> (Cow<'_, str>, Stripped) {
     let mut stripped = Stripped::default();
-    for c in text.chars() {
+    // Walk twice: the first pass only measures, so the common "nothing to remove" line is
+    // answered without an allocation. The introducer's sequence bytes are printable ASCII, so
+    // counting the sequence here is the only place they are accounted for.
+    for (i, c) in text.char_indices() {
+        if is_csi_introducer(c) {
+            let rest = &text[i + c.len_utf8()..];
+            stripped.control += 1 + csi_suffix_len(rest).unwrap_or(0);
+            continue;
+        }
         if is_bidi(c) {
             stripped.bidi += 1;
         } else if is_hidden_control(c) {
@@ -102,7 +201,18 @@ pub fn display_safe(text: &str) -> (Cow<'_, str>, Stripped) {
         return (Cow::Borrowed(text), stripped);
     }
     let mut out = String::with_capacity(text.len());
-    for c in text.chars() {
+    // Byte-indexed, because a sequence must be consumed in one step: a char-at-a-time walk
+    // would push its parameter and final bytes straight back out.
+    let mut i = 0usize;
+    while i < text.len() {
+        let Some(c) = text[i..].chars().next() else {
+            break;
+        };
+        i += c.len_utf8();
+        if is_csi_introducer(c) {
+            i += csi_suffix_len(&text[i..]).unwrap_or(0);
+            continue;
+        }
         if is_bidi(c) || is_hidden_control(c) {
             continue;
         }
@@ -159,5 +269,84 @@ mod tests {
         assert_eq!(text, "bellend");
         assert_eq!(stripped.control, 2);
         assert_eq!(stripped.bidi, 0, "and they are not counted as bidi");
+    }
+
+    /// **A coloured line reaches the card without its escape residue.**
+    ///
+    /// `cargo build --color=always` and `grep --color=always` wrap real text in SGR sequences.
+    /// Stripping the escape *alone* left the parameters behind — `[0;32m` — and they are
+    /// printable ASCII, so no other rule in this module touches them: not bidi, not a control
+    /// byte, not layout. They reached the card as though the compiler had printed them.
+    ///
+    /// The exact output is asserted, because the failure mode is *extra* text rather than
+    /// missing text and only a whole-string comparison sees it. The shapes are pi's, which
+    /// strips the whole sequence for exactly this reason
+    /// (`references/pi-1.0.0/packages/coding-agent/src/utils/ansi.ts:37`, reached from bash
+    /// output at `modes/interactive/components/bash-execution.ts:83`).
+    #[test]
+    fn a_coloured_line_reaches_the_card_without_its_escape_residue() {
+        // A cargo line in green, reset at the end — the shape `--color=always` emits.
+        let (text, stripped) =
+            display_safe("\u{1b}[0;32m   Compiling epsilon-tui v0.1.0\u{1b}[0m\n");
+        assert_eq!(
+            text, "   Compiling epsilon-tui v0.1.0\n",
+            "the line must arrive exactly as the compiler wrote it, minus the colour"
+        );
+        assert_eq!(
+            stripped.control, 11,
+            "the two sequences must be reported as removed, so the reader is told: \
+             ESC[0;32m is 7 bytes and ESC[0m is 4"
+        );
+
+        // grep's match highlighting: two sequences, a private-form reset, and a cursor move.
+        let grep_line = "\u{1b}[1;31mmatch\u{1b}[0m:12\u{1b}[K";
+        let (text, _) = display_safe(grep_line);
+        assert_eq!(
+            text, "match:12",
+            "grep's colouring must not survive: {text:?}"
+        );
+    }
+
+    /// **The other half of the same rule: an escape that starts nothing.**
+    ///
+    /// A sequence matcher that swallows until it finds a final byte deletes the rest of the
+    /// line — hiding text from the reader, which is the worse failure. So only the introducer
+    /// is dropped when no whole sequence follows it, and the visible tail is kept.
+    #[test]
+    fn a_truncated_sequence_does_not_swallow_the_line() {
+        // No final byte anywhere: `[` and the digits stay, the escape does not.
+        let (text, _) = display_safe("\u{1b}[0;32");
+        assert_eq!(
+            text, "[0;32",
+            "the incomplete sequence must not eat the line"
+        );
+
+        // A bare escape followed by ordinary text is still just an escape.
+        let (text, _) = display_safe("a\u{1b}bc");
+        assert_eq!(
+            text, "abc",
+            "no sequence, so nothing but the escape is removed"
+        );
+    }
+
+    /// A sequence with a 6-bit or private introducer still goes: `ESC ( B`, `ESC [ ? 25 l`.
+    #[test]
+    fn a_private_or_six_bit_sequence_is_removed_whole() {
+        let (text, _) = display_safe("\u{1b}(Bplain\u{1b}[?25l");
+        assert_eq!(
+            text, "plain",
+            "charset and private-mode sequences must go: {text:?}"
+        );
+    }
+
+    /// The 8-bit introducer is a real CSI and is treated as one.
+    #[test]
+    fn the_eight_bit_csi_introducer_is_handled() {
+        let (text, stripped) = display_safe("\u{9b}0;32mgreen\u{9b}0m");
+        assert_eq!(text, "green", "U+009B is the 8-bit CSI: {text:?}");
+        assert_eq!(
+            stripped.control, 9,
+            "two sequences, introducer and all: {stripped:?} -- U+009B + 0;32m is 6, U+009B + 0m is 3"
+        );
     }
 }

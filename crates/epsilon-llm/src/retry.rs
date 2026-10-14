@@ -41,6 +41,19 @@ const SPENDING_LIMIT_NEEDLES: [&str; 8] = [
     "billing",
 ];
 
+/// Spellings that mean **a metric is throttling this account**, not **the account cannot pay**.
+///
+/// Google's genuine rate limit arrives as `Quota exceeded for quota metric '...'`: it names a
+/// *metric* and a limit, and a per-minute limit is exactly what backing off clears. Checking
+/// these first keeps it in the rate-limit arm instead of letting the `quota exceeded` spelling
+/// above make it final — the honest mirror of the billing case, and the more damaging half of
+/// the bug, because a per-minute limit recovers on its own and a final failure never gives it
+/// the chance. pi resolves the collision the same way, by testing its non-retryable pattern
+/// first (`references/pi-1.0.0/packages/ai/src/utils/retry.ts:246-251`) and pinning
+/// `"429 quota exceeded"` as non-retryable (`test/retry.test.ts:80-86`); a phrase that names a
+/// **metric** is not that spelling.
+const THROTTLE_OVERRIDE_NEEDLES: [&str; 2] = ["for quota metric", "quota metric '"];
+
 /// Is this a spending limit rather than a throttle?
 ///
 /// **A spending limit is not a throttle.** Backing off does not put money in an account, so
@@ -54,14 +67,28 @@ fn is_spending_limit(m: &str) -> bool {
         .any(|needle| m.contains(needle))
 }
 
+/// Is this a *metric-specific* throttle, which the spending-limit list must not swallow?
+///
+/// Called before [`is_spending_limit`] for the same reason pi tests its non-retryable pattern
+/// first: two spellings of one word (`quota exceeded`) mean opposite things, and the ordering
+/// is the whole discrimination. A phrase that names a metric is a throttle; a phrase that
+/// names the account is a bill.
+fn is_metric_throttle(m: &str) -> bool {
+    THROTTLE_OVERRIDE_NEEDLES
+        .iter()
+        .any(|needle| m.contains(needle))
+}
+
 /// Classify a failure by its message text. Deliberately conservative: unknown strings are
 /// `Other` (no retry), so classification bugs degrade to fail-fast rather than hammering.
 pub fn classify(detail: &str) -> FailureKind {
     let m = detail.to_ascii_lowercase();
-    // A spending limit first, and its classification is `Other` rather than `Auth` on
-    // purpose: `Auth` is a key problem, and the front ends render that as "the model was
-    // never reached". A billed-out account reached the model fine.
-    if is_spending_limit(&m) {
+    // A metric-specific throttle first, so `Quota exceeded for quota metric '...'` (Google's
+    // genuine rate limit) is not read as the `quota exceeded` billing spelling.
+    if !is_metric_throttle(&m) && is_spending_limit(&m) {
+        // A spending limit first, and its classification is `Other` rather than `Auth` on
+        // purpose: `Auth` is a key problem, and the front ends render that as "the model was
+        // never reached". A billed-out account reached the model fine.
         return FailureKind::Other;
     }
     if m.contains("rate limit")
@@ -200,6 +227,65 @@ mod tests {
                 classify(m),
                 FailureKind::RateLimit,
                 "a real throttle must stay retryable: {m}"
+            );
+        }
+    }
+
+    /// **One billing rejection, two spellings, two behaviours.**
+    ///
+    /// OpenAI's billing rejection is spelled `insufficient_quota` and arrives wearing a 429
+    /// and the word "quota", so the rate-limit arm claimed it first and the retry loop spent
+    /// five rounds of wall-clock before the same failure returned — while a 403 with the same
+    /// meaning was final immediately. Backing off does not put money in an account, so the
+    /// spelling has to be discriminated, not guessed at.
+    ///
+    /// Both spellings below are the same condition; the assertion is that both are final.
+    #[test]
+    fn a_billing_rejection_is_final_under_either_spelling() {
+        for m in [
+            // OpenAI's billing code, verbatim from its 429 error body.
+            "OpenAI API error (429): {\"error\":{\"code\":\"insufficient_quota\",\"message\":\"You exceeded your current quota, please check your plan and billing details.\"}}",
+            // The same condition wearing a 403 and none of the throttle words.
+            "HTTP 403: insufficient_quota",
+            // A gateway relaying it as "billed out".
+            "HTTP 429: quota exceeded — billing required for this model",
+        ] {
+            let kind = classify(m);
+            assert_eq!(
+                kind,
+                FailureKind::Other,
+                "a billed-out account reached the model fine, so this is not an Auth: {m}"
+            );
+            assert!(
+                !should_retry(kind, 0, 5),
+                "{m} classified {kind:?} and would have been retried five times"
+            );
+        }
+    }
+
+    /// **And the honest throttle must not be caught by the billing net.**
+    ///
+    /// `"quota exceeded"` is also Google's throttle spelling (`Quota exceeded for quota
+    /// metric '...'`), so the billing net alone made every genuine Google rate limit final —
+    /// the mirror of the billing defect, and the more damaging half, because a per-minute
+    /// limit is exactly what backoff clears. The net is now lifted for a phrase that names a
+    /// **metric**; a phrase that names the account (pi's pinned `"429 quota exceeded"`,
+    /// `test/retry.test.ts:80-86`) stays final. This is the other side of the assertion, so a
+    /// test that pins the billing spelling cannot pass by making everything final.
+    #[test]
+    fn a_genuine_throttle_stays_retryable_even_when_it_says_quota() {
+        for m in [
+            "Quota exceeded for quota metric 'GenerateRequests'",
+            "HTTP 429: You exceeded your current quota. Retry after 20s.",
+        ] {
+            assert_eq!(
+                classify(m),
+                FailureKind::RateLimit,
+                "a per-metric limit is a throttle, not a bill: {m}"
+            );
+            assert!(
+                should_retry(classify(m), 0, 5),
+                "so it must still retry: {m}"
             );
         }
     }

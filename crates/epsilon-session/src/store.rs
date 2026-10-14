@@ -1133,6 +1133,12 @@ impl SessionStore {
 
     /// Read one entry by sequence number (lazy: seeks and parses just that line;
     /// serves the parsed copy from [`SessionStore`]'s cache when it has one).
+    ///
+    /// A short read on an indexed sequence is re-worded before it leaves here. The index is
+    /// built once at open and never re-checked, so a file that shrank underneath a live store
+    /// reads short; the raw `UnexpectedEof` names no entry, no sequence and no path, which is
+    /// how a shrunken session becomes indistinguishable from a failing disk. The refusal names
+    /// all three and leaves the file intact — the repair path's job, not this function's.
     pub fn read_entry(&self, seq: u64) -> Result<Option<SessionEntry>, StoreError> {
         if let Some(cached) = self.cached_entries.get(seq as usize) {
             return Ok(Some(cached.clone()));
@@ -1143,7 +1149,22 @@ impl SessionStore {
         let mut buf = vec![0u8; loc.len];
         let mut f = &self.file;
         f.seek(SeekFrom::Start(loc.offset))?;
-        f.read_exact(&mut buf)?;
+        f.read_exact(&mut buf).map_err(|e| {
+            if e.kind() == std::io::ErrorKind::UnexpectedEof {
+                // A whole buffer short means the file no longer holds what the index recorded:
+                // name the entry and the path rather than reporting an anonymous EOF.
+                StoreError::Io(std::io::Error::new(
+                    std::io::ErrorKind::UnexpectedEof,
+                    format!(
+                        "index and file disagree: entry #{seq} is in the index but not in {} \
+                         — the file is shorter than the last scan recorded",
+                        self.path.display()
+                    ),
+                ))
+            } else {
+                StoreError::Io(e)
+            }
+        })?;
         let line = String::from_utf8_lossy(&buf);
         Ok(Some(serde_json::from_str(line.trim_end()).map_err(
             |_| {
@@ -1560,10 +1581,41 @@ impl SessionStore {
         Ok(entry)
     }
     /// Read every parsed entry (oldest first). Used by branch walks and validation tooling.
+    ///
+    /// **A file that no longer matches the index is a named refusal** — not a panic, not a
+    /// silent skip, and not an anonymous `unexpected end of file`.
+    ///
+    /// The index is built once, at open, and never re-checked, so anything that shortens the
+    /// file behind a live store — another process truncating it, a `set_len` repair cutting too
+    /// far — leaves the scan's picture of the tail pointing past what is actually there. Three
+    /// wrong answers are within reach, and the pre-fix code took two of them at once:
+    ///
+    /// - `.expect("index and file agree")` killed the process from inside a library;
+    /// - skipping the missing entry reported a transcript shorter than the one the user wrote,
+    ///   as though nothing was missing;
+    /// - and the route a real short file *does* take, a short read inside [`Self::read_entry`],
+    ///   surfaced as `UnexpectedEof` — a message naming no entry, no sequence and no path, so a
+    ///   caller could not tell "this file shrank" from "the disk failed".
+    ///
+    /// The refusal now names the entry, the sequence and the path ([`Self::read_entry`]), and it
+    /// is an [`StoreError`] the repair path already knows how to treat. It leaves the file
+    /// untouched (`AGENTS.md` §6: never lose a user's work).
     pub fn read_all(&self) -> Result<Vec<SessionEntry>, StoreError> {
         let mut out = Vec::with_capacity(self.index.len());
         for s in 0..self.index.len() as u64 {
-            out.push(self.read_entry(s)?.expect("index and file agree"));
+            let Some(entry) = self.read_entry(s)? else {
+                // The arm the `expect` guarded. Unreachable today — the loop's bound is the
+                // index's own length — but the correct answer when it is reached, and the reason
+                // it is an `Err` and not an `unwrap`.
+                return Err(StoreError::Io(std::io::Error::new(
+                    std::io::ErrorKind::InvalidData,
+                    format!(
+                        "index and file disagree: entry #{s} is in the index but not in {}",
+                        self.path.display()
+                    ),
+                )));
+            };
+            out.push(entry);
         }
         Ok(out)
     }

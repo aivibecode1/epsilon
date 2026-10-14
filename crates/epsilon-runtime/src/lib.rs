@@ -192,10 +192,21 @@ pub fn load_project_config(workspace: &Path) -> (ProjectConfig, TrustDecision, V
     // Only persist on first trust / confirmed-unchanged; a changed config keeps
     // the OLD hash until the user accepts it, so every run re-reports until then.
     if !matches!(decision, TrustDecision::Changed { .. }) || previous.is_none() {
-        let _ = std::fs::write(
+        // **A failed write is said, not swallowed.** `let _ =` here meant that a read-only
+        // workspace, an AV quarantine or a full disk silently re-opened the trust question on
+        // every run — with nothing on screen to say why. The hash is not the safety of the
+        // run (the decision above already loaded the config), so this is a notice and not a
+        // refusal, but `AGENTS.md` §2.7 makes the silent no-op the worse of the two failures.
+        if let Err(e) = std::fs::write(
             &trust_path,
             serde_json::json!({ "config_sha256": hash }).to_string(),
-        );
+        ) {
+            notices.push(format!(
+                "could not record the project trust hash in {}: {e} — the trust prompt will \
+                 reappear until this is writable",
+                trust_path.display()
+            ));
+        }
     }
 
     // ---- parse ----------------------------------------------------------------------
@@ -337,6 +348,48 @@ mod project_hash_tests {
         assert_eq!(
             epsilon_core::config::current_project_config_hash_in(tmp.path()),
             None
+        );
+    }
+
+    /// **A trust-hash write that fails is reported, not swallowed.**
+    ///
+    /// The write used to be `let _ =` — discarded by construction. A read-only workspace, an AV
+    /// quarantine or a full disk then meant the hash was never recorded, so *every* run saw a
+    /// config with no previous hash, re-trusted it and asked the trust question again — with
+    /// nothing on screen saying why. That is the silent no-op `AGENTS.md` §2.7 forbids, and it
+    /// stays invisible for exactly as long as the filesystem stays broken.
+    ///
+    /// A notice rather than a refusal: the decision was already made from bytes that were read
+    /// fine, so the run is safe — only the *memory* of the decision is lost, and the reader is
+    /// told that rather than left to assume the hash landed.
+    #[test]
+    fn a_trust_hash_that_cannot_be_written_is_said_out_loud() {
+        let tmp = tempfile::tempdir().unwrap();
+        let ws = tmp.path();
+        std::fs::create_dir_all(ws.join(".epsilon")).unwrap();
+        std::fs::write(
+            ws.join(".epsilon").join("config.toml"),
+            "[model]\nid = \"faux-9\"\n",
+        )
+        .unwrap();
+        // A *directory* at the trust file's path refuses a write on every platform, so the
+        // fixture does not depend on file permissions — which do not mean the same thing to
+        // Windows as they do to POSIX (and this machine is Windows).
+        std::fs::create_dir_all(ws.join(".epsilon").join("trust.json")).unwrap();
+
+        let (_cfg, decision, notices) = load_project_config(ws);
+        assert_eq!(
+            decision,
+            TrustDecision::Trusted,
+            "the config read fine, so the decision stands"
+        );
+        let said = notices
+            .iter()
+            .find(|n| n.contains("could not record the project trust hash"))
+            .unwrap_or_else(|| panic!("a failed hash write must be reported, got: {notices:?}"));
+        assert!(
+            said.contains("trust.json"),
+            "and it must name the file, so the reader can fix it: {said}"
         );
     }
 }
