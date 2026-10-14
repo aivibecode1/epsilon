@@ -4495,6 +4495,22 @@ things a newcomer could not decode were vocabulary, and one of them — `Ponytai
 
 ## Known-broken
 
+### The 2026-10-14 core split left 486 stale `lib.rs:<line>` citations
+
+The mechanical split of `crates/epsilon-core/src/lib.rs` (commit `58a3fb0`) moved the
+loop into seven child modules. **486 citations in `audit/`, `docs/`, `docs/qa/`,
+`agents/memory/` and inline test comments still name the old `lib.rs:<line>` numbers** —
+e.g. `audit/02-port-fidelity.md`'s `lib.rs:1452-1533` and test comments' `lib.rs:52-57`.
+They are not gate-visible (the citation checkers read full `crates/…` paths and the
+matrices, not bare `lib.rs:` prose), and the module named in each comment's prose is
+the code's new home, so every one is recoverable by reading one line — but a line
+number that resolves to nothing is indistinguishable from a fabricated one until
+someone checks. **Queued, with its shape:** a sweep that maps each citation through
+the split's symbol table (the commit's module map is the table), re-pointing only
+citations whose old line is past the new `lib.rs` length; dated milestone logs get
+a banner instead of an edit, per the archaeology rule. Until then, treat a bare
+`epsilon-core/src/lib.rs:<line>` citation in a live document as a lead, not a fact.
+
 ### The owner's report of 2026-10-04: "the model's output is not shown", traced to source
 
 **Reported verbatim:** a session where `> HELLO` ran a `bash` tool, printed
