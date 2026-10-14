@@ -30,5 +30,5 @@
 |                                                                                                    |
 |❯ ask anything                                                                                      |
 |────────────────────────────────────────────────────────────────────────────────────────────────────|
-|insert ↑ 5/60 · g jump to live · pageup further back                    …\Epsilon\crates\epsilon-tui|
+|insert ↑ 5/60 · g jump to live · pageup further back                       …\Epsilon\crates\epsilon…|
 +----------------------------------------------------------------------------------------------------+

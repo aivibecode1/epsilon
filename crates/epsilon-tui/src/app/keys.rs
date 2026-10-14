@@ -1709,13 +1709,26 @@ pub(crate) fn handle_key(app: &mut App, agent: &Arc<Agent>, key: KeyEvent) -> bo
             KeyCode::Enter => {
                 let entries = crate::picker::filter_palette(&app.input, &app.keybindings);
                 if let Some(entry) = entries.get(app.picker_index) {
+                    let action = entry.action;
                     let command = entry.command.clone();
                     app.palette_open = false;
                     app.picker_index = 0;
                     app.input.clear();
                     app.cursor_chars = 0;
-                    if let Some(parsed) = crate::picker::parse_command(&command) {
-                        return app.run_command(agent, parsed);
+                    match action {
+                        // A direct action, because the thing it names has no
+                        // command head: F6's workspace tree. Same call the key
+                        // makes, so the entry cannot drift from the binding it
+                        // advertises.
+                        Some(crate::picker::PaletteAction::ToggleFileTree) => {
+                            app.toggle_tree();
+                            return false;
+                        }
+                        None => {
+                            if let Some(parsed) = crate::picker::parse_command(&command) {
+                                return app.run_command(agent, parsed);
+                            }
+                        }
                     }
                 }
             }

@@ -163,13 +163,26 @@ pub fn row_style(theme: &Theme, kind: LineKind) -> (String, Style, Style, Style)
 /// through it. It used to be called only by this module's tests, which is exactly
 /// how the gutter and the bands came to be missing from the screen while the
 /// suite reported them covered.
+///
+/// `continued` marks a row that is the wrap of the row above it — the same
+/// logical line, second screen row. It takes the **continuation glyph** rather
+/// than its role's, so a wrapped answer is one paragraph and not a bulleted
+/// list, while the band stays the role's own: a wrapped user turn is still one
+/// band of speech, which `a_wrapped_banded_message_keeps_every_row_inside_the_frame`
+/// pins. The marker belongs to the first row and the rule belongs to the rest.
 pub fn decorate(
     theme: &Theme,
     kind: LineKind,
+    continued: bool,
     body: Vec<Span<'static>>,
     width: usize,
 ) -> Line<'static> {
     let (glyph, gutter_style, _body_style, band) = row_style(theme, kind);
+    let glyph = if continued {
+        theme.glyphs.vertical.to_string()
+    } else {
+        glyph
+    };
     let mut spans = Vec::with_capacity(body.len() + 2);
     // Measured, not `format!("{glyph:<GUTTER$}")`: a width counted in `char`s is
     // wrong the moment a repertoire holds a double-width glyph, and the gutter is
@@ -634,7 +647,13 @@ mod tests {
         }
         // And the fallback is what actually reaches a screen, through `decorate`
         // — the function the draw path calls.
-        let line = decorate(&plain, LineKind::Assistant, vec![Span::raw("body")], 40);
+        let line = decorate(
+            &plain,
+            LineKind::Assistant,
+            false,
+            vec![Span::raw("body")],
+            40,
+        );
         let head = line.spans.first().expect("gutter span").content.clone();
         assert!(
             head.starts_with(assistant_plain.as_str()),
@@ -658,7 +677,7 @@ mod tests {
                 LineKind::System,
                 LineKind::CardBody,
             ] {
-                let line = decorate(&theme, kind, vec![Span::raw("body")], 40);
+                let line = decorate(&theme, kind, false, vec![Span::raw("body")], 40);
                 let first = line.spans.first().expect("gutter span");
                 assert_eq!(
                     crate::ui::layout::display_width(&first.content),
@@ -677,7 +696,7 @@ mod tests {
     #[test]
     fn a_banded_row_fills_to_the_right_edge() {
         let theme = Theme::new(ColorMode::Truecolor, UNICODE);
-        let line = decorate(&theme, LineKind::User, vec![Span::raw("hi")], 20);
+        let line = decorate(&theme, LineKind::User, false, vec![Span::raw("hi")], 20);
         let total: usize = line
             .spans
             .iter()
@@ -691,7 +710,13 @@ mod tests {
         // Only banded roles pad: padding every row would write cells for nothing
         // and make `NO_COLOR` output differ from coloured output for no reason.
         let theme = Theme::new(ColorMode::None, ASCII);
-        let line = decorate(&theme, LineKind::Assistant, vec![Span::raw("hi")], 20);
+        let line = decorate(
+            &theme,
+            LineKind::Assistant,
+            false,
+            vec![Span::raw("hi")],
+            20,
+        );
         let total: usize = line
             .spans
             .iter()

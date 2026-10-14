@@ -658,18 +658,33 @@ impl FileViewer {
 }
 
 /// Draw the read-only viewer as a centered overlay: title is the path, body is
-/// a scroll window over the lines, footer names the keys. Records the visible
-/// capacity for the page keys, the same measured-window rule the pickers use.
+/// a scroll window over the lines, footer names the keys. **Returns** the
+/// visible capacity the page keys step by, the same measured-window rule the
+/// pickers use — a page key arrives in the key handler, which knows no
+/// geometry, so the paint is what teaches it how far a page is.
+///
+/// `outer` is the band the panel may occupy — the rows between the header and
+/// the footer — and the whole of it is cleared before the frame goes on. A
+/// panel narrower than that band would otherwise leave the live screen visible
+/// down both sides, sliced in half by the panel's rails: the transcript read
+/// `a coding` where it had said `…a coding agent…`, and the editor looked like
+/// something drawn *over* a broken screen rather than instead of one.
+///
+/// `undo_key` is the chord for `tui.editor.undo`, resolved by the caller from
+/// the live binding table: a rebinding moves the hint the footer prints, and an
+/// id that does not resolve prints nothing rather than a chord the handler
+/// would refuse.
 pub(crate) fn draw_viewer(
     f: &mut Frame<'_>,
     outer: Rect,
     theme: &crate::ui::theme::Theme,
+    undo_key: &str,
     viewer: &mut FileViewer,
     tab_strip: &[(String, bool)],
     active_tab: usize,
-    capacity_out: &mut usize,
-) {
+) -> usize {
     use crate::ui::overlay::{self, Panel, Width};
+    f.render_widget(ratatui::widgets::Clear, outer);
     let width = Width::PANEL.resolve(outer);
     let height = outer.height.saturating_sub(4).max(10);
     let title = if viewer.editing {
@@ -692,7 +707,6 @@ pub(crate) fn draw_viewer(
     let inner = panel.open(f);
     // One line is the footer; the rest is text.
     let capacity = inner.height.saturating_sub(1).max(1) as usize;
-    *capacity_out = capacity;
     let body: &[String] = if viewer.editing {
         &viewer.edit_lines
     } else {
@@ -768,6 +782,12 @@ pub(crate) fn draw_viewer(
         lines.push(Line::from(""));
     }
     let save = format!("{}+s", crate::keybindings::alt_name());
+    // **Ctrl+Z is bound, and now it says so.** The edit path implements undo
+    // (`app.undo` on `tui.editor.undo`) and the hint row named only
+    // type/save/cancel, so the one key that takes an edit back was a secret.
+    // The chord arrives resolved from the live table (see [`draw_viewer`]), so
+    // a user who rebinds undo moves this text with it.
+    let undo = undo_key;
     // Phase 3 viewer find, drawn inside the panel above the footer: a query
     // that is not on screen while it is typed cannot be confirmed.
     if viewer.find_open {
@@ -782,7 +802,14 @@ pub(crate) fn draw_viewer(
             ratatui::text::Span::styled("/", theme.accent()),
             ratatui::text::Span::raw(viewer.find_query.clone()),
             ratatui::text::Span::styled("\u{2588}", theme.accent()),
-            ratatui::text::Span::styled(format!("  {count} · enter next · esc close"), theme.dim()),
+            // The same vocabulary the transcript search uses (M157's panel),
+            // because `p` is bound here too: `Up`, `PageUp` and `p` all step
+            // back (`app/keys.rs`), and a hint row that names only the forward
+            // step hides half the keys it describes.
+            ratatui::text::Span::styled(
+                format!("  {count} · enter/n next · p previous · esc close"),
+                theme.dim(),
+            ),
         ]));
     }
 
@@ -801,7 +828,12 @@ pub(crate) fn draw_viewer(
     }
 
     let hints: &[(&str, &str)] = if viewer.editing {
-        &[("type/enter", "edit"), (&save, "save"), ("esc", "cancel")]
+        &[
+            ("type/enter", "edit"),
+            (&save, "save"),
+            (undo, "undo"),
+            ("esc", "cancel"),
+        ]
     } else if viewer.truncated {
         // Invariant 7: `e` does not edit a capped file (`start_edit`
         // refuses), so the footer must not offer it as edit.
@@ -837,6 +869,7 @@ pub(crate) fn draw_viewer(
             inner.y + (viewer.edit_row - start) as u16,
         ));
     }
+    capacity
 }
 
 #[cfg(test)]

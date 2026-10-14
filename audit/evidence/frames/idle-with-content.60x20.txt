@@ -14,11 +14,11 @@
 |                                                            |
 |• The layout module owns the spatial model.                 |
 |• It splits the frame into a header, a transcript, a        |
-|• composer and a footer.                                    |
+|│ composer and a footer.                                    |
 |• and it decides what happens when the terminal is too      |
-|• small.                                                    |
+|│ small.                                                    |
 |                                                            |
 |❯ and the composer?                                         |
 |────────────────────────────────────────────────────────────|
-|insert · enter send · pageup    …\Epsilon\crates\epsilon-tui|
+|insert · enter send · pageup scroll back     …\Epsilon\crat…|
 +------------------------------------------------------------+

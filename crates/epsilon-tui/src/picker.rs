@@ -822,6 +822,10 @@ pub struct PaletteEntry {
     /// Display title.
     pub title: String,
     /// Command executed when selected (slash-style parse input).
+    ///
+    /// Empty for an entry that carries a direct [`Self::action`] instead: there
+    /// is no command to parse, and inventing a spelling the parser would refuse
+    /// is how a palette entry becomes a silent no-op (M194).
     pub command: String,
     /// Keybinding this action runs, resolved through `KeybindingsManager::key_text`.
     ///
@@ -835,6 +839,21 @@ pub struct PaletteEntry {
     ///
     /// Resolved, never written: see [`Self::key_id`].
     pub binding: Option<String>,
+    /// What choosing this entry does, when it is not a slash command.
+    ///
+    /// The workspace file tree is the case: `app.tree.toggle` is a chord in the
+    /// terminal table with **no command head** (`/tree` is the *session* tree, a
+    /// different feature), so a palette entry that names it needs one action the
+    /// palette can run directly. It is the same call F6 makes — the entry names
+    /// the key rather than being a second way in.
+    pub action: Option<PaletteAction>,
+}
+
+/// An action a palette entry runs directly, with no slash command behind it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PaletteAction {
+    /// Open or close the workspace file tree (`app.tree.toggle`, F6).
+    ToggleFileTree,
 }
 
 /// All palette commands (slash commands + direct actions), in display order.
@@ -850,6 +869,7 @@ pub fn palette_entries(kb: &crate::keybindings::KeybindingsManager) -> Vec<Palet
             command: "/models".into(),
             key_id: Some("app.model.select"),
             binding: None,
+            action: None,
         },
         PaletteEntry {
             title: "Connect provider — set API key (paste, masked)".into(),
@@ -859,30 +879,50 @@ pub fn palette_entries(kb: &crate::keybindings::KeybindingsManager) -> Vec<Palet
             // for an action that has no key at all. Pressing it did nothing.
             key_id: None,
             binding: None,
+            action: None,
         },
         PaletteEntry {
             title: "Skills — list discovered skills".into(),
             command: "/skills".into(),
             key_id: None,
             binding: None,
+            action: None,
         },
         PaletteEntry {
             title: "Clear transcript".into(),
             command: "/clear".into(),
             key_id: None,
             binding: None,
+            action: None,
         },
         PaletteEntry {
             title: "Help — command reference".into(),
             command: "/help".into(),
             key_id: None,
             binding: None,
+            action: None,
         },
         PaletteEntry {
             title: "Quit session".into(),
             command: "/quit".into(),
             key_id: None,
             binding: None,
+            action: None,
+        },
+        PaletteEntry {
+            // **Invariant 7, in both directions.** F6 has opened the workspace
+            // tree since Phase 3 and no screen named it: not the first screen,
+            // not the palette, not the footer, not `/help`. A key nobody can
+            // find is a key nobody presses, and the entry below is the fix —
+            // the chord is resolved from the table, so a rebinding moves the
+            // hint with it.
+            title: "Files — workspace tree".into(),
+            // No command head: `/tree` is the *session* tree, and pointing at
+            // it would run a different feature than the entry names.
+            command: String::new(),
+            key_id: Some("app.tree.toggle"),
+            binding: None,
+            action: Some(PaletteAction::ToggleFileTree),
         },
         PaletteEntry {
             title: "Toggle tool output expand".into(),
@@ -895,6 +935,7 @@ pub fn palette_entries(kb: &crate::keybindings::KeybindingsManager) -> Vec<Palet
             // the palette was advertising it anyway.
             key_id: Some("app.tools.expand"),
             binding: None,
+            action: None,
         },
     ]
     .into_iter()

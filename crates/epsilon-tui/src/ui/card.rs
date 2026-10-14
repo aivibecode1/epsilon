@@ -124,9 +124,18 @@ pub fn title(card: &Card, theme: &Theme) -> String {
 
 /// The glyph *and* the word for one status. Both, always: the glyph is what a
 /// glance catches and the word is what survives a font that cannot draw it.
+///
+/// `Pending` and `Running` are two states and now say so. They used to share
+/// the word `pending`, so a card streaming output read `▸ bash $ cargo build ·
+/// pending` beside a header saying `running bash…` — three rows, three words,
+/// one tool. `Pending` is "asked for, not yet started" (the state a permission
+/// prompt leaves a call in, which `state.rs` keeps it in deliberately);
+/// `Running` is the one whose body is filling. The glyph is unchanged, so the
+/// gutter still looks the same at a glance.
 fn status_word(status: CardStatus, glyphs: &Glyphs) -> (&'static str, &'static str) {
     match status {
-        CardStatus::Pending | CardStatus::Running => (glyphs.tool_call, "pending"),
+        CardStatus::Pending => (glyphs.tool_call, "pending"),
+        CardStatus::Running => (glyphs.tool_call, "running"),
         CardStatus::Ok => (glyphs.tick, "ok"),
         // Deliberately not the tick, and deliberately not the cross. The tick would say the
         // result is whole when the harness knows it is short; the cross would say the command
@@ -959,6 +968,26 @@ mod tests {
         assert_eq!(status_word(CardStatus::Ok, &ASCII).0, ASCII.tick);
         assert_eq!(status_word(CardStatus::Failed, &UNICODE).1, "failed");
         assert_eq!(status_word(CardStatus::Failed, &ASCII).0, ASCII.cross);
+    }
+
+    /// **Two states, two words.** A card streaming its output used to read `pending`,
+    /// the same word as a call that had not started — so a frame showed a header
+    /// saying `running bash…` over a card saying `▸ bash $ cargo build · pending` for
+    /// one tool. The glyph is shared on purpose (the gutter's shape does not change
+    /// mid-call); the word is what tells the two apart, and it is what survives a
+    /// font that cannot draw the glyph.
+    #[test]
+    fn pending_and_running_are_two_words_over_one_glyph() {
+        for glyphs in [&UNICODE, &ASCII] {
+            let (pending_glyph, pending_word) = status_word(CardStatus::Pending, glyphs);
+            let (running_glyph, running_word) = status_word(CardStatus::Running, glyphs);
+            assert_eq!(pending_word, "pending");
+            assert_eq!(running_word, "running");
+            assert_eq!(
+                pending_glyph, running_glyph,
+                "the gutter glyph is the same for both: only the word separates them"
+            );
+        }
     }
 
     /// A tool's output keeps its line breaks on screen (M312).    ///

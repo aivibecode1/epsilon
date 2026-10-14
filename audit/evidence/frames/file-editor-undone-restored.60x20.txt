@@ -3,6 +3,7 @@
 +------------------------------------------------------------+
 |idle        Faux (offline scripted) • thinking off · offline|
 |                                                            |
+|                                                            |
 |      ╭ edit undo-demo.txt — alt+s saves, esc cancels       |
 |      │ the quick brown fox                          │      |
 |      │                                              │      |
@@ -12,13 +13,12 @@
 |      │                                              │      |
 |      │                                              │      |
 |      │                                              │      |
+|      │ type/enter edit · alt+s save · ctrl+z undo · │      |
 |      │                                              │      |
-|      │                                              │      |
-|      │                                              │      |
-|      │                                              │      |
-|▎ ❯ un│                                              │      |
-|      │ type/enter edit · alt+s save · esc cancel    │      |
-|❯ ask ╰──────────────────────────────────────────────╯      |
+|      ╰──────────────────────────────────────────────╯      |
+|                                                            |
+|                                                            |
+|❯ ask anything                                              |
 |────────────────────────────────────────────────────────────|
-|edit · type edit · enter · esc  …\Epsilon\crates\epsilon-tui|
+|edit · type edit · enter newline             …\Epsilon\crat…|
 +------------------------------------------------------------+

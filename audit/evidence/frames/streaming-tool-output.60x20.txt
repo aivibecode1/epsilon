@@ -14,11 +14,11 @@
 |                                                            |
 |▎ ❯ cargo build                                             |
 |                                                            |
-|▸ bash $ cargo build · pending                              |
+|▸ bash $ cargo build · running                              |
 |│ Compiling epsilon-core v0.1.0                             |
 |│ Compiling epsilon-tools v0.1.0                            |
 |                                                            |
 |❯ ask anything                                              |
 |────────────────────────────────────────────────────────────|
-|run · enter queue · pageup      …\Epsilon\crates\epsilon-tui|
+|run · enter queue · pageup scroll back       …\Epsilon\crat…|
 +------------------------------------------------------------+

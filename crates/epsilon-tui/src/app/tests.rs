@@ -856,10 +856,14 @@ fn oauth_completion_warns_once_about_subscription_billing() {
     assert!(app.anthropic_billing_warned, "the flag records the warning");
     // The warning reaches pixels at both sizes, through the production draw.
     // (Normalised: the terminal wraps words and gutters interrupt the line.)
+    // Both gutter marks are removed, not just the notice's bullet: a wrapped
+    // row carries the continuation rule (`decorate`'s `continued`), so the
+    // second half of a long notice arrives with `│` between the words the
+    // first half ended on and the words this one starts with.
     let mut flat = |w: u16, h: u16| {
         render_rows(&mut app, w, h)
             .join("\n")
-            .replace('\u{2022}', " ")
+            .replace(['\u{2022}', '\u{2502}'], " ")
             .split_whitespace()
             .collect::<Vec<_>>()
             .join(" ")
@@ -1808,6 +1812,14 @@ async fn a_bound_key_does_not_produce_a_not_bound_notice() {
 async fn every_palette_entry_names_a_command_that_parses() {
     let (app, _agent, _rx) = test_app();
     for entry in crate::picker::palette_entries(&app.keybindings) {
+        // An entry that carries a direct action has no command to parse: the
+        // workspace file tree (`app.tree.toggle`) is a chord with no command
+        // head, and inventing a spelling the parser would refuse is what would
+        // make choosing it a silent no-op. Such an entry is held to its action
+        // instead — see `the_palette_tree_entry_opens_the_tree`.
+        if entry.action.is_some() {
+            continue;
+        }
         assert!(
             crate::picker::parse_command(&entry.command).is_some(),
             "palette entry {:?} carries {:?}, which the parser cannot read — \

@@ -11,9 +11,9 @@
 |                                                                                |
 |                                                                                |
 |                ╭ search ──────────────────────────────────────╮                |
-|                │ n next · p previous · esc close              │                |
+|                │ find  needle                                 │                |
 |                │       1 of 2                                 │                |
-|                │                                              │                |
+|                │ n next · p previous · esc close              │                |
 |                ╰──────────────────────────────────────────────╯                |
 |                                                                                |
 |                                                                                |
@@ -24,5 +24,5 @@
 |                                                                                |
 |❯ ask anything                                                                  |
 |────────────────────────────────────────────────────────────────────────────────|
-|insert · enter send · pageup scroll back · pagedown …\Epsilon\crates\epsilon-tui|
+|insert · enter send · pageup scroll back · ctrl+j newline   …\Epsilon\crates\ep…|
 +--------------------------------------------------------------------------------+

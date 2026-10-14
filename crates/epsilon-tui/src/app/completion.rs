@@ -124,6 +124,13 @@ impl App {
     }
 
     /// Re-derive the @-file popup from the cursor-adjacent @-word (W1, pi editor.ts).
+    ///
+    /// **An unmatched fragment opens the popup rather than closing it.** The
+    /// rows are gone but the *question* is still on screen — the reader typed
+    /// `@zzz` and the screen said nothing at all, which is indistinguishable
+    /// from the popup not existing. Every sibling popup states its empty case
+    /// (`no matching commands` in the palette, `no sessions` in the browser), so
+    /// this one now says `no matching files` and keeps the keys that leave it.
     pub(super) fn sync_at_state(&mut self) {
         if let Some((_, frag)) = crate::editor_ops::at_word_before(&self.input, self.cursor_chars) {
             if self.at_fragment != frag || self.at_rows.is_none() {
@@ -136,15 +143,11 @@ impl App {
             {
                 self.at_index = 0;
             }
-            let has_rows = self
-                .at_rows
-                .as_ref()
-                .map(|r| !r.is_empty())
-                .unwrap_or(false);
-            self.at_open = has_rows;
-            if !has_rows {
-                self.at_index = 0;
-            }
+            // The fragment, not the row count: an @-word the workspace cannot
+            // match is a state with something to say, and a popup that closed
+            // on it left the reader with no way to learn why.
+            self.at_open = true;
+            self.at_index = 0;
         } else {
             self.at_open = false;
             self.at_index = 0;

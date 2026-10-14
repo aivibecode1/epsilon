@@ -20,5 +20,5 @@
 |                                                            |
 |❯ ask anything                                              |
 |────────────────────────────────────────────────────────────|
-|insert ↑ 5/60 · g jump to live  …\Epsilon\crates\epsilon-tui|
+|insert ↑ 5/60 · g jump to live               …\Epsilon\crat…|
 +------------------------------------------------------------+

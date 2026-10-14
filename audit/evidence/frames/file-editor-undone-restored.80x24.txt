@@ -3,6 +3,7 @@
 +--------------------------------------------------------------------------------+
 |idle           ?/1.0M · ↑0 ↓0 · Faux (offline scripted) • thinking off · offline|
 |                                                                                |
+|                                                                                |
 |        ╭ edit undo-demo.txt — alt+s saves, esc cancels ───────────────╮        |
 |        │ the quick brown fox                                          │        |
 |        │                                                              │        |
@@ -16,13 +17,12 @@
 |        │                                                              │        |
 |        │                                                              │        |
 |        │                                                              │        |
+|        │ type/enter edit · alt+s save · ctrl+z undo · esc cancel      │        |
 |        │                                                              │        |
-|        │                                                              │        |
-|        │                                                              │        |
-|        │                                                              │        |
-|▎ ❯ undo│                                                              │        |
-|        │ type/enter edit · alt+s save · esc cancel                    │        |
-|❯ ask an╰──────────────────────────────────────────────────────────────╯        |
+|        ╰──────────────────────────────────────────────────────────────╯        |
+|                                                                                |
+|                                                                                |
+|❯ ask anything                                                                  |
 |────────────────────────────────────────────────────────────────────────────────|
-|edit · type edit · enter newline · alt+s save · esc …\Epsilon\crates\epsilon-tui|
+|edit · type edit · enter newline · alt+s save · esc cancel  …\Epsilon\crates\ep…|
 +--------------------------------------------------------------------------------+

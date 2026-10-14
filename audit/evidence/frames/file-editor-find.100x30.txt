@@ -3,11 +3,11 @@
 +----------------------------------------------------------------------------------------------------+
 |idle                ?/1.0M · ↑0 ↓0 · R0 W0 CH n/a · Faux (offline scripted) • thinking off · offline|
 |                                                                                                    |
-|E P S I L ╭ edit find.txt — alt+s saves, esc cancels ────────────────────────────────────╮          |
-|a coding a│ a needle here                                                                │          |
+|                                                                                                    |
+|          ╭ edit find.txt — alt+s saves, esc cancels ────────────────────────────────────╮          |
+|          │ a needle here                                                                │          |
 |          │ nothing                                                                      │          |
-|Describe a│ and a needle again                                                           │          |
-|@ files · │                                                                              │          |
+|          │ and a needle again                                                           │          |
 |          │                                                                              │          |
 |          │                                                                              │          |
 |          │                                                                              │          |
@@ -22,13 +22,13 @@
 |          │                                                                              │          |
 |          │                                                                              │          |
 |          │                                                                              │          |
+|          │ /needle█  2 of 2 · enter/n next · p previous · esc close                     │          |
+|          │ type/enter edit · alt+s save · ctrl+z undo · esc cancel                      │          |
 |          │                                                                              │          |
-|          │                                                                              │          |
-|          │                                                                              │          |
-|          │                                                                              │          |
-|          │                                                                              │          |
-|          │ /needle█  2 of 2 · enter next · esc close                                    │          |
-|❯ ask anyt╰──────────────────────────────────────────────────────────────────────────────╯          |
+|          ╰──────────────────────────────────────────────────────────────────────────────╯          |
+|                                                                                                    |
+|                                                                                                    |
+|❯ ask anything                                                                                      |
 |────────────────────────────────────────────────────────────────────────────────────────────────────|
-|edit · type edit · enter newline · alt+s save · esc cancel              …\Epsilon\crates\epsilon-tui|
+|edit · type edit · enter newline · alt+s save · esc cancel                 …\Epsilon\crates\epsilon…|
 +----------------------------------------------------------------------------------------------------+

@@ -32,6 +32,33 @@ use crate::keybindings::KeybindingsManager;
 use crate::ui::layout::{Priority, clamp_line, display_width, room_beside, side_by_side};
 use crate::ui::theme::Theme;
 
+/// The columns the workspace location may take: at most a quarter of the row,
+/// and never less than [`LOCATION_FLOOR`].
+///
+/// The cap is what keeps the location from eating the key hints — at 80 columns
+/// the 28-column path `App::new` prepares is 35% of the row, and the hint that
+/// did not fit lost its action. The floor is the other half of the same rule:
+/// the location answers *which project am I about to let this thing edit*, and a
+/// path cut below a short path's own length stops answering it.
+const LOCATION_CAP: usize = 28;
+/// The narrowest a location is ever drawn, so a narrow terminal shortens the
+/// path rather than deleting the safety signal (`the_location_survives_a_narrow_terminal`).
+const LOCATION_FLOOR: usize = 10;
+
+/// The location as this row draws it: the path narrowed to its share of the
+/// frame, with the repertoire's own ellipsis.
+///
+/// One definition, read by both the draw and the tests that look for the
+/// location on a rendered row — a second copy in a test is how the two drift
+/// apart and the test starts passing against the wrong string.
+pub(crate) fn location_span(location: &str, width: usize, theme: &Theme) -> String {
+    crate::wrap::fit_width_with(
+        location,
+        (width / 4).clamp(LOCATION_FLOOR, LOCATION_CAP),
+        theme.glyphs.ellipsis,
+    )
+}
+
 /// Where the transcript view sits relative to the live tail.
 ///
 /// One value instead of two flags, because the two facts are one state: a view is
@@ -319,9 +346,12 @@ impl Hints {
 /// a row one column too long for its hints renders the last one as `pageup sc` —
 /// which is not a shorter hint, it is a *key that does not exist*, and it was
 /// measured on a 60-column frame (`audit/evidence/frames/m199-baseline/`). The
-/// same argument the header makes for `R0 W0 CH n/a` one row up, one row down: at
-/// 60 columns `pageup` on its own is honest, `pageup sc` is not, and the action
-/// can go without the key.
+/// same argument the header makes for `R0 W0 CH n/a` one row up, one row down:
+/// **a hint is emitted whole or not at all.** There used to be a key-only form
+/// as well — `pageup` with `scroll back` dropped — on the argument that a real
+/// key honestly named beats no key at all. Measured at 80 columns it lost that
+/// argument: the bare `pagedown` spent eleven columns that `ctrl+j newline`
+/// needed and could not get, so the row named two keys and explained one fewer.
 ///
 /// The budget is `room_beside` — the same subtraction and the same one-column gap
 /// the layout reserves — so the row a caller budgets and the row the layout emits
@@ -339,7 +369,10 @@ pub fn draw(f: &mut Frame<'_>, area: Rect, theme: &Theme, hints: &Hints) {
     // cannot yield.
     let mut right: Vec<Span<'static>> = Vec::new();
     if let Some(location) = &hints.location {
-        right.push(Span::styled(location.clone(), theme.faint()));
+        right.push(Span::styled(
+            location_span(location, width, theme),
+            theme.faint(),
+        ));
     }
     if let Some(branch) = &hints.branch {
         right.push(Span::styled(" · ", theme.faint()));
@@ -421,15 +454,16 @@ pub fn draw(f: &mut Frame<'_>, area: Rect, theme: &Theme, hints: &Hints) {
             left.push(Span::styled(key.clone(), theme.dim_strong()));
             left.push(Span::styled(format!(" {action}"), theme.faint()));
             used += full_w;
-        } else if used + sep + key_w <= budget {
-            // The key without its action: a real key, honestly named, one word
-            // short of an explanation. Never a fragment of either.
-            if sep > 0 {
-                left.push(Span::styled(" · ", theme.faint()));
-            }
-            left.push(Span::styled(key.clone(), theme.dim_strong()));
-            used += sep + key_w;
         }
+        // **The hint goes whole or not at all — there is no key-only form.**
+        // This used to have an `else if` that emitted the key with its action
+        // dropped, and it cost more than it gave: at 80 columns the idle row
+        // read `insert · enter send · pageup scroll back · pagedown`, where the
+        // eleven columns spent on a bare `pagedown` were exactly the columns
+        // `ctrl+j newline` (17) needed and could not get. A key with no words
+        // beside it also advertises a chord the reader cannot look up — the
+        // §2.7 shape from the other direction — while dropping it costs only a
+        // hint that did not fit anyway.
     }
 
     let line = side_by_side(left, right, width, Priority::Right);
@@ -450,8 +484,15 @@ mod tests {
         KeybindingsManager::from_map(HashMap::new())
     }
 
+    /// The palette every row in this module is rendered with — named so a test
+    /// that needs the same theme the draw used can ask for it rather than
+    /// building a second one that might differ.
+    fn theme() -> Theme {
+        Theme::new(ColorMode::Ansi16, ASCII)
+    }
+
     fn render(width: u16, hints: &Hints) -> String {
-        let theme = Theme::new(ColorMode::Ansi16, ASCII);
+        let theme = theme();
         let mut terminal = Terminal::new(TestBackend::new(width, 1)).expect("test terminal");
         terminal
             .draw(|f| draw(f, f.area(), &theme, hints))
@@ -685,12 +726,12 @@ mod tests {
             branch: Some("main".into()),
             ..Hints::idle(&defaults())
         };
-        // Every legal rendering of a hint, longest first so a prefix of a full
-        // hint cannot match the short form and pass.
+        // The only legal rendering of a hint is the whole one — `draw` has no
+        // key-only form any more, so a bare key on this row would be a cut
+        // rather than a choice.
         let mut legal: Vec<String> = Vec::new();
         for (key, action) in &hints.keys {
             legal.push(format!("{key} {action}"));
-            legal.push(key.clone());
         }
         for width in 20u16..=120 {
             let line = render(width, &hints);
@@ -699,7 +740,8 @@ mod tests {
                 "width {width} overflowed: {line:?}"
             );
             // Each `key [action]` the row carries must be one of the legal forms.
-            let head = line.split(" ~/work/api").next().unwrap_or(&line);
+            let shown = location_span("~/work/api", width as usize, &theme());
+            let head = line.split(&shown).next().unwrap_or(&line);
             for part in head.split(" · ").skip(1) {
                 let part = part.trim_end();
                 if part.is_empty() {
@@ -712,7 +754,7 @@ mod tests {
             }
             // And the location never touches the run before it. Skips the widths
             // where the location itself is trimmed, which is a different question.
-            if let Some(at) = line.find("~/work/api")
+            if let Some(at) = line.find(&shown)
                 && at > 0
             {
                 assert_eq!(
@@ -738,19 +780,24 @@ mod tests {
     /// |approval · y allow once · a always · n deny · e           ...\crates\epsilon-tui|
     /// ```
     ///
-    /// and I read the trailing `e` as `deny + guidance` cut mid-label. It is — but that is
-    /// **not** the defect this file names. `footer.rs:308-314` draws the distinction exactly:
-    /// `pageup sc` is a defect because it advertises *a key that does not exist*, while
-    /// `pageup` on its own is honest — *"the action can go without the key."* A bare `e` names
-    /// a key that is really bound and really handled; only its label is missing. **Degraded,
-    /// and honest.** This test's `legal` set encodes that distinction by accepting both
-    /// `"{key} {action}"` and a bare `key`, and it passes.
+    /// and I read the trailing `e` as `deny + guidance` cut mid-label. It was —
+    /// but that is **not** the defect this file names. `pageup sc` is a defect
+    /// because it advertises *a key that does not exist*, while a whole hint with
+    /// its words is the only form the row now draws at all.
     ///
-    /// What the frame did establish is worth keeping: the budget loop emits the key and the
-    /// action **together or not at all** (`footer.rs:400-412`), so the bare `e` came from
-    /// `side_by_side` cutting at a character *after* the budget had approved the pair. The
-    /// pre-budget is therefore not what produced it. Nothing here is broken today; the
-    /// property is now asserted over the states where a break would show first.
+    /// **The reading here was corrected in the same round.** The comment used to
+    /// argue that a bare `e` was "degraded, and honest", and this test's `legal`
+    /// set used to accept a bare `key` beside `"{key} {action}"` on that
+    /// argument. Measured at 80 columns, the key-only form cost more than it
+    /// gave: the eleven columns spent naming `pagedown` with no words were the
+    /// columns `ctrl+j newline` needed, so a row with two keys explained one
+    /// fewer. The `legal` set is now the whole hint only, which is the rule
+    /// `draw` enforces.
+    ///
+    /// What the frame did establish is worth keeping: the budget loop emits the
+    /// key and the action **together or not at all**, and `side_by_side` never
+    /// sees a pair it has to cut. Nothing here is broken today; the property is
+    /// now asserted over the states where a break would show first.
     #[test]
     fn the_approval_footer_never_prints_half_a_hint_either() {
         const LOCATION: &str = r"...\crates\epsilon-tui";
@@ -762,12 +809,10 @@ mod tests {
                 location: Some(LOCATION.into()),
                 ..base
             };
-            // Every legal rendering of a hint, longest first so a prefix of the full
-            // form cannot match the short one and pass.
+            // The only legal rendering of a hint is the whole one.
             let mut legal: Vec<String> = Vec::new();
             for (key, action) in &hints.keys {
                 legal.push(format!("{key} {action}"));
-                legal.push(key.clone());
             }
             for width in 20u16..=120 {
                 let line = render(width, &hints);
@@ -775,7 +820,15 @@ mod tests {
                     crate::ui::layout::display_width(&line) <= width as usize,
                     "{name} at width {width} overflowed: {line:?}"
                 );
-                let head = line.split(LOCATION).next().unwrap_or(&line);
+                // **The location as drawn, not as given.** The row narrows the
+                // path to its share of the frame (`location_span`), so below
+                // ~44 columns the constant here is no longer what the row
+                // shows — and splitting on the input string there left the
+                // *location's own cut* sitting in the hints half, where it was
+                // measured as a half-written key. Read the drawn form from the
+                // same function the draw uses.
+                let shown = location_span(LOCATION, width as usize, &theme());
+                let head = line.split(&shown).next().unwrap_or(&line);
                 for part in head.split(" · ").skip(1) {
                     let part = part.trim_end();
                     if part.is_empty() {

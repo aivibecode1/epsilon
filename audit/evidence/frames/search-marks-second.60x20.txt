@@ -9,9 +9,9 @@
 |                                                            |
 |                                                            |
 |       ╭ search ────────────────────────────────────╮       |
-|       │ n next · p previous · esc close            │       |
+|       │ find  needle                               │       |
 |       │       2 of 2                               │       |
-|       │                                            │       |
+|       │ n next · p previous · esc close            │       |
 |       ╰────────────────────────────────────────────╯       |
 |                                                            |
 |• the Needle sits in the first row                          |
@@ -20,5 +20,5 @@
 |                                                            |
 |❯ ask anything                                              |
 |────────────────────────────────────────────────────────────|
-|insert · enter send · pageup    …\Epsilon\crates\epsilon-tui|
+|insert · enter send · pageup scroll back     …\Epsilon\crat…|
 +------------------------------------------------------------+

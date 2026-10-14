@@ -2061,15 +2061,28 @@ fn draw(f: &mut Frame<'_>, app: &mut App) {
             })
             .collect();
         if let Some(viewer) = app.viewer_tabs.get_mut(tab) {
-            crate::tree::draw_viewer(
-                f,
-                f.area(),
-                &app.theme,
-                viewer,
-                &strip,
-                tab,
-                &mut app.viewer_capacity,
-            );
+            // **The band, not the frame.** The panel is centred in the rows
+            // between the header and the footer, so a 4/5-width editor never
+            // reaches the header's measurements or the footer's hints — and
+            // `draw_viewer` clears the band, so the transcript behind it is
+            // gone rather than sliced in half by the panel's left rail. Passing
+            // `f.area()` did both wrong: the panel covered the composer's row,
+            // and every row it occupied still showed the live screen on either
+            // side of it.
+            let band = Rect {
+                x: main.x,
+                y: main.y + 1,
+                width: main.width,
+                height: main.height.saturating_sub(4),
+            };
+            // The undo chord, resolved through the table rather than written:
+            // the editor footer names it, so a rebinding has to move it.
+            let undo_key = app
+                .keybindings
+                .key_text("tui.editor.undo")
+                .unwrap_or_default();
+            app.viewer_capacity =
+                crate::tree::draw_viewer(f, band, &app.theme, &undo_key, viewer, &strip, tab);
         }
     }
     draw_at_file(f, app, transcript_area);
@@ -2144,20 +2157,23 @@ fn draw_search(f: &mut Frame<'_>, app: &App, outer: Rect) {
         ]),
     ];
     f.render_widget(ratatui::widgets::Paragraph::new(body), inner);
-    if let Some(hint_row) = inner.height.checked_sub(3).map(|y| Rect {
+    // The hint goes on the LAST inner row, and the panel is sized to hold all
+    // three rows (query, position, hint — `3 + 2` above, two of them borders).
+    // It used to be placed at `inner.height - 3`, which on this panel is row 0:
+    // the hint row was drawn ON TOP of the query, so the one thing a reader
+    // needs to see while searching — what they typed — was the one thing the
+    // panel hid. `find needle` appeared nowhere and only the `n next · p
+    // previous · esc close` row survived.
+    let hint_row = Rect {
         x: inner.x,
-        y: inner.y + y,
+        y: inner.y + inner.height.saturating_sub(1),
         width: inner.width,
         height: 1,
-    }) {
-        f.render_widget(
-            crate::ui::overlay::hint_row(
-                theme,
-                &[("n", "next"), ("p", "previous"), ("esc", "close")],
-            ),
-            hint_row,
-        );
-    }
+    };
+    f.render_widget(
+        crate::ui::overlay::hint_row(theme, &[("n", "next"), ("p", "previous"), ("esc", "close")]),
+        hint_row,
+    );
 }
 
 /// Headless render seam used by `--tui-bench` (M16a): build a persistent [`App`]
@@ -2242,6 +2258,9 @@ mod golden;
 
 #[cfg(test)]
 mod panic_tests;
+
+#[cfg(test)]
+mod defect_tests;
 
 #[cfg(test)]
 mod tests;

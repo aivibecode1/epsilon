@@ -30,5 +30,5 @@
 |                                                                                                    |
 |❯ ask anything                                                                                      |
 |────────────────────────────────────────────────────────────────────────────────────────────────────|
-|insert · enter send · pageup scroll back · pagedown scroll forward      …\Epsilon\crates\epsilon-tui|
+|insert · enter send · pageup scroll back · pagedown scroll forward         …\Epsilon\crates\epsilon…|
 +----------------------------------------------------------------------------------------------------+

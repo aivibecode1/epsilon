@@ -18,11 +18,11 @@
 |                                                                                |
 |▎ ❯ cargo check                                                                 |
 |                                                                                |
-|▸ bash $ cat build.log · pending                                                |
+|▸ bash $ cat build.log · running                                                |
 |│ ｶﾞｶﾞｶﾞｶﾞｶﾞｶﾞｶﾞｶﾞｶﾞｶﾞｶﾞｶﾞｶﾞｶﾞｶﾞｶﾞｶﾞｶﾞｶﾞｶﾞｶﾞｶﾞｶﾞｶﾞｶﾞｶﾞｶﾞｶﾞｶﾞｶﾞｶﾞｶﾞｶﾞｶﾞｶﾞｶﾞｶﾞｶﾞｶﾞ|
 |│ ｶﾞ                                                                            |
 |                                                                                |
 |❯ ask anything                                                                  |
 |────────────────────────────────────────────────────────────────────────────────|
-|insert · enter send · pageup scroll back · pagedown …\Epsilon\crates\epsilon-tui|
+|insert · enter send · pageup scroll back · ctrl+j newline   …\Epsilon\crates\ep…|
 +--------------------------------------------------------------------------------+

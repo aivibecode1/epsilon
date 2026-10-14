@@ -57,6 +57,16 @@ impl Width {
     };
 
     /// Resolve against the screen.
+    ///
+    /// A fixed width keeps two columns of the frame to itself. Every other
+    /// overlay already does: the shares are floored at `min` and then clamped
+    /// to `outer.width`, and `centered` puts what is left on *both* sides — so
+    /// a panel is only flush with an edge when its own width was allowed to
+    /// grow past the screen. `Width::Fixed(64)` did exactly that at 60 columns
+    /// and the command palette drew its border in column 0 and column 59,
+    /// touching the frame while every sibling kept a margin. The height a
+    /// palette asks for already reserves two rows for the same reason; the
+    /// width now matches.
     pub fn resolve(self, outer: Rect) -> u16 {
         match self {
             Self::Share {
@@ -66,7 +76,7 @@ impl Width {
             } => (outer.width * numerator / denominator)
                 .max(min)
                 .min(outer.width),
-            Self::Fixed(width) => width.min(outer.width),
+            Self::Fixed(width) => width.min(outer.width.saturating_sub(2)).max(1),
         }
     }
 }

@@ -2180,12 +2180,17 @@ impl App {
                         item.description
                     ));
                 }
-                let mut guide: Vec<&str> = vec![
+                // `String`, because the F-key line is resolved from the binding
+                // table rather than written (see the format! below).
+                let mut guide: Vec<String> = vec![
                     "auth: /login anthropic sk-...  (paste inside TUI, masked) · /logout anthropic · keys saved to ~/.config/epsilon/auth.json",
                     "subscription login: /login anthropic oauth · /login xai oauth (device code) · /login openrouter oauth — browser round-trip, same store",
                     "also: /connect /auth are aliases for /login — same masked prompt, paste works inside it",
                     "thinking: Ctrl+T cycles · current level in the status bar",
-                ];
+                ]
+                .into_iter()
+                .map(String::from)
+                .collect();
                 // The header is the harness's own report on itself, and a report with
                 // no legend is only transparent to the person who wrote it.
                 //
@@ -2197,12 +2202,21 @@ impl App {
                 // `offline` — appeared in none of them. A legend kept beside the
                 // formatters is held to them by a test; a legend kept beside the help
                 // text is held to nothing.
-                guide.extend(crate::ui::metrics::LEGEND.iter().copied());
+                guide.extend(crate::ui::metrics::LEGEND.iter().map(|s| s.to_string()));
                 guide.extend([
-                    "goal: /goal <objective> parks one long-running objective in this session; the header line shows its phase and rounds",
-                    "      /goal shows it · edit · pause · resume · complete · blocked <code> <reason> · clear · the model has the same controls as tools",
-                    "keys: Enter submit · Esc aborts a run (quits when idle) · Ctrl+X expands tool output",
-                    "      PgUp/PgDn scroll transcript · Ctrl+M model picker · Ctrl+P command palette",
+                    "goal: /goal <objective> parks one long-running objective in this session; the header line shows its phase and rounds".to_string(),
+                    "      /goal shows it · edit · pause · resume · complete · blocked <code> <reason> · clear · the model has the same controls as tools".to_string(),
+                    "keys: Enter submit · Esc aborts a run (quits when idle) · Ctrl+X expands tool output".to_string(),
+                    "      PgUp/PgDn scroll transcript · Ctrl+M model picker · Ctrl+P command palette".to_string(),
+                    // F6 opens the workspace file tree (Phase 3, `app.tree.toggle`),
+                    // and until now no screen named it — the chord was real and
+                    // undiscoverable, which is invariant 7 read the other way
+                    // round. Resolved from the table rather than written, so a
+                    // rebinding moves this line with it.
+                    format!(
+                        "      {} opens the file tree · Enter opens a file · Esc closes",
+                        self.keybindings.key_text("app.tree.toggle").unwrap_or_default()
+                    ),
                 ]);
                 for line in guide {
                     self.ui.push_notice(line);

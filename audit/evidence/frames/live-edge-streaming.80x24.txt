@@ -19,10 +19,10 @@
 |▎ ❯ run the tests                                                               |
 |                                                                                |
 |▪ I will start by listing the files in the workspace and then read the layout   |
-|▪ module to understand how the frame is composed before making any changes to   |
-|▪ it.                                                                           |
+|│ module to understand how the frame is composed before making any changes to   |
+|│ it.                                                                           |
 |                                                                                |
 |❯ ask anything                                                                  |
 |────────────────────────────────────────────────────────────────────────────────|
-|insert · enter send · pageup scroll back · pagedown …\Epsilon\crates\epsilon-tui|
+|insert · enter send · pageup scroll back · ctrl+j newline   …\Epsilon\crates\ep…|
 +--------------------------------------------------------------------------------+

@@ -3,22 +3,22 @@
 +------------------------------------------------------------+
 |idle        Faux (offline scripted) • thinking off · offline|
 |                                                            |
-|E P S ╭ edit find.txt — alt+s saves, esc cancels ────╮      |
-|a codi│ a needle here                                │      |
+|                                                            |
+|      ╭ edit find.txt — alt+s saves, esc cancels ────╮      |
+|      │ a needle here                                │      |
 |      │ nothing                                      │      |
-|Descri│ and a needle again                           │      |
-|@ file│                                              │      |
+|      │ and a needle again                           │      |
 |      │                                              │      |
 |      │                                              │      |
 |      │                                              │      |
 |      │                                              │      |
+|      │ /needle█  2 of 2 · enter/n next · p previous │      |
+|      │ type/enter edit · alt+s save · ctrl+z undo · │      |
 |      │                                              │      |
-|      │                                              │      |
-|      │                                              │      |
-|      │                                              │      |
-|      │                                              │      |
-|      │ /needle█  2 of 2 · enter next · esc close    │      |
-|❯ ask ╰──────────────────────────────────────────────╯      |
+|      ╰──────────────────────────────────────────────╯      |
+|                                                            |
+|                                                            |
+|❯ ask anything                                              |
 |────────────────────────────────────────────────────────────|
-|edit · type edit · enter · esc  …\Epsilon\crates\epsilon-tui|
+|edit · type edit · enter newline             …\Epsilon\crat…|
 +------------------------------------------------------------+

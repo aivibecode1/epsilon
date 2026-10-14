@@ -25,10 +25,10 @@
 |                                                                                                    |
 |▎ ❯ cargo build                                                                                     |
 |                                                                                                    |
-|▸ bash $ cargo build · pending                                                                      |
+|▸ bash $ cargo build · running                                                                      |
 |│ cargo build                                                                                       |
 |                                                                                                    |
 |❯ ask anything                                                                                      |
 |────────────────────────────────────────────────────────────────────────────────────────────────────|
-|run · enter queue · pageup scroll back · pagedown scroll forward · esc  …\Epsilon\crates\epsilon-tui|
+|run · enter queue · pageup scroll back · pagedown scroll forward           …\Epsilon\crates\epsilon…|
 +----------------------------------------------------------------------------------------------------+

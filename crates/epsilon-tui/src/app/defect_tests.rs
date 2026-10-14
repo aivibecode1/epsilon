@@ -1,0 +1,714 @@
+//! Frame tests for the eleven verified screen defects of 2026-10-14.
+//!
+//! # Why this file exists
+//!
+//! Each of these defects was found by **reading a captured frame**, not by a failing
+//! test — which is `AGENTS.md`'s own warning in its own words: *a test that passes is
+//! not a claim that is true*. Several of them were invisible to the suite for a reason
+//! worth naming: the assertion that looked like it covered the search panel
+//! (`screen.contains("needle")`) passed against the broken frame, because the
+//! *transcript behind the panel* also contained the word. Every test below therefore
+//! asserts on the row that owns the claim — the panel's own query row, the hint row's
+//! own text, the header's own model name — and drives the real key path where a key is
+//! what a user would press.
+//!
+//! The theme is pinned the way `golden.rs` pins it: `Theme::detect()` reads the
+//! environment, so a test that names a glyph has to name the palette that draws it.
+//! Most of these use the bandless `Ansi16` mode, because that is where a gutter glyph
+//! is the only thing carrying the role.
+
+use super::tests_support::{render_buffer, render_rows, test_app};
+use super::*;
+use crate::ui::theme::{ColorMode as ThemeColorMode, Theme, UNICODE};
+use crossterm::event::KeyEventState;
+
+/// Pin the look so a frame test can assert exact glyphs.
+fn pin_theme(app: &mut App, mode: ThemeColorMode) {
+    app.theme = Theme::new(mode, UNICODE);
+}
+
+fn key(code: KeyCode) -> KeyEvent {
+    KeyEvent {
+        code,
+        modifiers: KeyModifiers::NONE,
+        kind: KeyEventKind::Press,
+        state: KeyEventState::NONE,
+    }
+}
+
+/// The workspace with one file in it, and an app pointed at it.
+fn app_with_a_file() -> (App, Arc<Agent>, tempfile::TempDir) {
+    let (mut app, agent, _rx) = test_app();
+    let dir = tempfile::tempdir().expect("a temporary workspace");
+    std::fs::write(
+        dir.path().join("notes.txt"),
+        "a needle here\nnothing at all\nand a needle again\n",
+    )
+    .expect("the fixture file");
+    app.workspace_root = dir.path().to_path_buf();
+    (app, agent, dir)
+}
+
+/// Open the file viewer on `notes.txt` through the tree's own key path.
+fn open_the_editor(app: &mut App, agent: &Arc<Agent>) {
+    super::keys::handle_key(app, agent, key(KeyCode::F(6)));
+    assert!(app.tree_open, "F6 opens the tree");
+    super::keys::handle_key(app, agent, key(KeyCode::Enter));
+    assert!(app.viewer_open(), "Enter opens the first file");
+}
+
+/// One assistant answer, committed the way the loop commits one.
+fn push_answer(app: &mut App, id: &str, text: &str) {
+    use epsilon_contracts::message::{AssistantMessage, Message, StopReason, Usage};
+    app.ui
+        .apply(&epsilon_contracts::agent_event::AgentEvent::MessageEnd {
+            message: Box::new(Message::Assistant(AssistantMessage {
+                id: id.into(),
+                timestamp_ms: 0,
+                provider: "faux".into(),
+                model_id: "faux-1".into(),
+                content: vec![epsilon_contracts::content::ContentBlock::text(text)],
+                stop_reason: StopReason::EndTurn,
+                error_message: None,
+                usage: Usage::default(),
+            })),
+        });
+}
+
+/// **Defect 1: the search panel drew its hint row over its query row.**
+///
+/// The frame audit's `search-marks.80x24` showed `n next · p previous · esc close`
+/// and `1 of 2` and no `needle` anywhere: the panel is five rows tall (three inner
+/// rows plus two borders) and the hint was placed at `inner.height - 3`, which is
+/// row 0 — on top of `find <query>`.
+///
+/// **Why the old assertion passed anyway.** `an_open_search_reports_itself_...` in
+/// `golden.rs` asserts `screen.contains("needle")`, and the transcript *behind* the
+/// panel also contains "needle" — so the row that mattered was never the row that was
+/// asserted on. This one asserts on the panel's own query row, and that the query is
+/// not sharing it with the hint.
+#[test]
+fn the_search_panel_shows_the_query_it_is_searching_for() {
+    let mut app = bench_app(UiState::new());
+    pin_theme(&mut app, ThemeColorMode::Ansi16);
+    for text in ["alpha", "the needle is here", "beta", "another needle"] {
+        app.ui.push_notice(text);
+    }
+    app.search_own_transcript("needle");
+    assert_eq!(
+        app.search.as_ref().map(|s| s.matches.len()),
+        Some(2),
+        "precondition: the query matches something"
+    );
+
+    let rows = render_rows(&mut app, 80, 24);
+    let query_row = rows
+        .iter()
+        .position(|r| r.contains("find"))
+        .unwrap_or_else(|| panic!("the panel's query row is nowhere on screen: {rows:#?}"));
+    assert!(
+        rows[query_row].contains("needle"),
+        "the query row must name what is being searched for: {:?}",
+        rows[query_row]
+    );
+    // The hint keeps its own row, so the two cannot be the same row again.
+    let hint_row = rows
+        .iter()
+        .position(|r| r.contains("n next"))
+        .unwrap_or_else(|| panic!("the key hint is nowhere on screen: {rows:#?}"));
+    assert_ne!(
+        query_row, hint_row,
+        "the hint is drawn over the query again"
+    );
+    // And the position row is its own too: three rows, three statements.
+    let position_row = rows
+        .iter()
+        .position(|r| r.contains("1 of 2"))
+        .expect("the match position is on screen");
+    assert_ne!(query_row, position_row);
+}
+
+/// **Defect 2: the file tree was bound to F6 and named nowhere.**
+///
+/// Not the first screen, not the palette, not the footer, not `/help` — a key
+/// nobody can find is a key nobody presses. This asserts both halves of invariant 7:
+/// the palette names it (with the chord the table resolves, not a typed `f6`), and
+/// choosing the entry runs it rather than being a silent no-op.
+#[tokio::test]
+async fn the_palette_names_the_file_tree_and_choosing_it_opens_the_tree() {
+    let (mut app, agent, _rx) = app_with_a_file();
+    // Ctrl+P is the palette's binding; drive it through the table rather than
+    // poking the field, so a rebinding cannot quietly orphan this test.
+    let _palette = app
+        .keybindings
+        .key_text("app.palette")
+        .expect("app.palette is bound");
+    super::keys::handle_key(
+        &mut app,
+        &agent,
+        KeyEvent {
+            code: KeyCode::Char('p'),
+            modifiers: KeyModifiers::CONTROL,
+            kind: KeyEventKind::Press,
+            state: KeyEventState::NONE,
+        },
+    );
+    assert!(app.palette_open, "ctrl+p opens the palette");
+    // "workspace" matches this entry and no other: the fuzzy filter is not the
+    // thing under test, and a query that also matched another row would make the
+    // selection below a coin toss.
+    for c in "workspace".chars() {
+        super::keys::handle_key(&mut app, &agent, key(KeyCode::Char(c)));
+    }
+    let rows = render_rows(&mut app, 80, 24);
+    let row = rows
+        .iter()
+        .find(|r| r.contains("workspace tree"))
+        .unwrap_or_else(|| panic!("the palette does not name the file tree: {rows:#?}"));
+    let chord = app
+        .keybindings
+        .key_text("app.tree.toggle")
+        .expect("app.tree.toggle is bound");
+    assert!(
+        row.contains(&format!("[{chord}]")),
+        "the entry must show the chord the table resolves ({chord}): {row:?}"
+    );
+
+    // And it is not a no-op: choosing it opens the tree, exactly as F6 does.
+    super::keys::handle_key(&mut app, &agent, key(KeyCode::Enter));
+    assert!(app.tree_open, "choosing the entry opens the tree");
+    assert!(!app.palette_open, "the palette closed");
+
+    // **And `/help` names it too.** The brief's defect was that F6 was named
+    // nowhere — not the first screen, not the palette, not the footer, not
+    // `/help`. A palette entry fixes half of that; the help guide is the other
+    // half, and the chord is resolved from the same table so the two cannot
+    // drift apart.
+    app.run_command(
+        &agent,
+        crate::picker::parse_command("/help").expect("/help parses"),
+    );
+    let notices = app.ui.lines().to_vec();
+    let promised = format!("{chord} opens the file tree");
+    assert!(
+        notices.iter().any(|n| n.text.contains(&promised)),
+        "/help must name the chord ({promised}) — a key nobody is told about is a \
+         key nobody presses: {:?}",
+        notices.iter().map(|n| n.text.clone()).collect::<Vec<_>>()
+    );
+}
+
+/// **Defect 3: a long tool phase ate the header's right half.**
+///
+/// At 80 columns the header read `⠋ running 0s · bash: Compiling epsilon-tools v0.1.0 ed)`
+/// — the model name cut to its last three letters, because the phase was emitted
+/// whole and `side_by_side` trims the half that yields (Priority::Left) from its far
+/// end, and the model is one span. The phase is the fragment with no length of its
+/// own, so it is the fragment that gets a budget.
+#[test]
+fn a_long_tool_phase_does_not_eat_the_model_name() {
+    use epsilon_contracts::agent_event::AgentEvent;
+    use epsilon_contracts::message::{AssistantMessage, Message, StopReason, Usage};
+    let (mut app, _agent, _rx) = test_app();
+    pin_theme(&mut app, ThemeColorMode::Ansi16);
+    app.ui.apply(&AgentEvent::MessageEnd {
+        message: Box::new(Message::Assistant(AssistantMessage {
+            id: "m-phase".into(),
+            timestamp_ms: 0,
+            provider: "faux".into(),
+            model_id: "faux-1".into(),
+            content: vec![epsilon_contracts::content::ContentBlock::ToolCall {
+                id: "tc-phase".into(),
+                name: "bash".into(),
+                arguments: serde_json::json!({ "command": "cargo build" }),
+            }],
+            stop_reason: StopReason::ToolUse,
+            error_message: None,
+            usage: Usage::default(),
+        })),
+    });
+    super::apply_with_scroll(
+        &mut app,
+        &AgentEvent::ToolExecutionStart {
+            tool_call_id: "tc-phase".into(),
+            tool_name: "bash".into(),
+            args: serde_json::json!({ "command": "cargo build" }),
+        },
+    );
+    // A tool status line in the tool's own words — the M63 partial, which is what
+    // `UiState::status` and therefore the header's phase are made of.
+    super::apply_with_scroll(
+        &mut app,
+        &AgentEvent::ToolExecutionUpdate {
+            tool_call_id: "tc-phase".into(),
+            tool_name: "bash".into(),
+            partial: epsilon_contracts::tool::ToolPartial {
+                content: vec![epsilon_contracts::content::ContentBlock::Text {
+                    text: "bash: Compiling epsilon-tools v0.1.0".into(),
+                }],
+                details: serde_json::Value::Null,
+            },
+        },
+    );
+    // The run is in flight: `run_state` reads that from the UiState flag, which
+    // the event that starts a turn sets in a real run.
+    app.ui.set_running_for_test(true);
+
+    let rows = render_rows(&mut app, 80, 24);
+    let label = app.metrics().model_label;
+    assert!(
+        rows[0].contains(&label),
+        "the model name must survive a long phase at 80 columns: {:?}",
+        rows[0]
+    );
+    assert!(
+        rows[0].contains("running"),
+        "the run state must survive too: {:?}",
+        rows[0]
+    );
+    // The phase is what pays: it may be cut, but it is still there saying something.
+    assert!(
+        rows[0].contains("bash"),
+        "the phase is the fragment that yields, so it is cut and not deleted: {:?}",
+        rows[0]
+    );
+    assert_eq!(
+        crate::ui::layout::display_width(&rows[0]),
+        80,
+        "the row is exactly the terminal's width: {:?}",
+        rows[0]
+    );
+}
+
+/// **Defect 4: the file editor left the live screen sliced in half behind it.**
+///
+/// The panel is centred at four fifths of the screen, so at 80 columns it occupies
+/// columns 8..72 and the transcript behind it was visible on both sides — cut
+/// mid-word by the panel's rails, which is what `file-editor-find.80x24` shows as
+/// `a coding│ a needle here`. The panel now owns the band it is drawn in.
+#[test]
+fn the_file_editor_clears_the_screen_behind_it() {
+    let (mut app, agent, _dir) = app_with_a_file();
+    // A transcript long enough that the rows behind the panel are not empty: an
+    // empty one would make this pass against the broken build.
+    for i in 0..40 {
+        app.ui
+            .push_notice(format!("transcript row {i} behind the open editor"));
+    }
+    open_the_editor(&mut app, &agent);
+    super::keys::handle_key(&mut app, &agent, key(KeyCode::Char('e')));
+    assert!(
+        app.active_viewer().is_some_and(|v| v.editing),
+        "precondition: the editor, not the viewer"
+    );
+
+    let (buffer, rows) = render_buffer(&mut app, 80, 24);
+    let top = rows
+        .iter()
+        .position(|r| r.contains("edit notes.txt"))
+        .unwrap_or_else(|| panic!("the editor panel is not on screen: {rows:#?}"));
+    // **The rails, by their own glyphs.** The first non-blank cell of the title
+    // row is NOT the panel's left rail when the screen behind it is still
+    // visible: the sliced transcript's own gutter starts in column 0, and
+    // measuring from there makes the loop below check no columns at all — which
+    // is how this test passed against the broken build the first time.
+    let left = rows[top]
+        .find(app.theme.glyphs.top_left)
+        .unwrap_or_else(|| panic!("the panel's left rail is not on screen: {rows:#?}"));
+    let right = rows[top]
+        .rfind(app.theme.glyphs.top_right)
+        .expect("the panel's right rail");
+    let bottom = rows
+        .iter()
+        .rposition(|r| r.contains("type/enter"))
+        .expect("the editor's own footer row");
+    let mut leaked = Vec::new();
+    for y in top + 1..bottom {
+        for x in 0..left as u16 {
+            if buffer[(x, y as u16)].symbol() != " " {
+                leaked.push(format!("row {y} column {x}: {:?}", rows[y]));
+                break;
+            }
+        }
+        for x in right as u16 + 1..80u16 {
+            if buffer[(x, y as u16)].symbol() != " " {
+                leaked.push(format!("row {y} column {x}: {:?}", rows[y]));
+                break;
+            }
+        }
+    }
+    assert!(
+        leaked.is_empty(),
+        "the live screen must not be visible beside the editor, sliced in half: {leaked:#?}\n{rows:#?}"
+    );
+}
+
+/// **Defect 5: the editor's find bar advertised only the step it supports forward.**
+///
+/// `Up`, `PageUp` and `p` all step back through the open file's matches
+/// (`app/keys.rs`), and the row said `enter next · esc close` — half the keys it
+/// describes, in a different vocabulary from the transcript search's own `n next ·
+/// p previous`. The two now spell the verb the same way.
+#[test]
+fn the_editor_find_bar_names_the_backward_step() {
+    let (mut app, agent, _dir) = app_with_a_file();
+    open_the_editor(&mut app, &agent);
+    super::keys::handle_key(&mut app, &agent, key(KeyCode::Char('/')));
+    // "eedle", not "needle": `n` is the forward step while find owns the
+    // keyboard (`app/keys.rs`), so it types nothing — which is the find bar's
+    // own story, not this one's.
+    for c in "eedle".chars() {
+        super::keys::handle_key(&mut app, &agent, key(KeyCode::Char(c)));
+    }
+    let rows = render_rows(&mut app, 80, 24);
+    let find_row = rows
+        .iter()
+        .position(|r| r.contains("/eedle"))
+        .unwrap_or_else(|| panic!("the find row is not on screen: {rows:#?}"));
+    assert!(
+        rows[find_row].contains("enter/n next · p previous · esc close"),
+        "the find row must name both steps the way the transcript search does: {:?}",
+        rows[find_row]
+    );
+}
+
+/// **Defect 6: a wrapped answer repeated its gutter glyph on every row.**
+///
+/// One assistant paragraph drew as three `▪` rows — a bulleted list nobody wrote.
+/// A card's body already nests under its title with the vertical rule; that rule now
+/// covers plain rows too, so the role glyph belongs to the line's first row and the
+/// continuation rows draw the rule.
+///
+/// **While it streams and after it is committed.** The tail is drawn at draw time
+/// (it is not in the render cache yet) and the committed line comes back out of the
+/// cache, so the two are two pieces of code and they have to agree: an answer that
+/// changes shape when the turn ends is the round-72 defect in a new place, and the
+/// marker is the part a reader counts.
+#[test]
+fn a_wrapped_answer_draws_one_marker_and_continuation_rules() {
+    let mut app = bench_app(UiState::new());
+    pin_theme(&mut app, ThemeColorMode::Ansi16);
+    let text = "The answer begins here with the first row of a paragraph that is deliberately \
+                long enough to wrap onto three rows at eighty columns, and the middle of it \
+                carries a distinctive phrase, while the tail of the same paragraph ends with a \
+                closing phrase.";
+    // The tail, exactly as a turn in flight draws it: a `MessageUpdate` delta is
+    // what a streaming turn sends.
+    use epsilon_contracts::message::{AssistantMessage, Message, StopReason, Usage};
+    app.ui.apply(&AgentEvent::MessageUpdate {
+        message: Box::new(Message::Assistant(AssistantMessage {
+            id: "stream".into(),
+            timestamp_ms: 0,
+            provider: "faux".into(),
+            model_id: "faux-1".into(),
+            content: vec![epsilon_contracts::content::ContentBlock::text(text)],
+            stop_reason: StopReason::EndTurn,
+            error_message: None,
+            usage: Usage::default(),
+        })),
+    });
+    let tail = render_rows(&mut app, 80, 24);
+    let tail_first = tail
+        .iter()
+        .position(|r| r.contains("The answer begins here"))
+        .expect("the streaming answer is on screen");
+    assert!(
+        tail[tail_first].starts_with(UNICODE.assistant),
+        "streaming: the first row carries the marker: {:?}",
+        tail[tail_first]
+    );
+    for word in ["distinctive phrase", "closing phrase"] {
+        let at = tail
+            .iter()
+            .position(|r| r.contains(word))
+            .unwrap_or_else(|| panic!("{word} is on screen: {tail:#?}"));
+        assert!(
+            tail[at].starts_with(UNICODE.vertical),
+            "streaming: the wrapped row for {word} draws the rule: {:?}",
+            tail[at]
+        );
+    }
+
+    // The same text, committed the way the loop commits it.
+    let mut committed = bench_app(UiState::new());
+    pin_theme(&mut committed, ThemeColorMode::Ansi16);
+    push_answer(&mut committed, "m-committed", text);
+    let rows = render_rows(&mut committed, 80, 24);
+    let first = rows
+        .iter()
+        .position(|r| r.contains("The answer begins here"))
+        .unwrap_or_else(|| panic!("the answer never reached the screen: {rows:#?}"));
+    let middle = rows
+        .iter()
+        .position(|r| r.contains("distinctive phrase"))
+        .expect("the wrapped middle row");
+    let tail_row = rows
+        .iter()
+        .position(|r| r.contains("closing phrase"))
+        .expect("the wrapped tail row");
+    assert!(
+        rows[first].starts_with(UNICODE.assistant),
+        "the line's FIRST row carries the role marker: {:?}",
+        rows[first]
+    );
+    for (name, row) in [("middle", middle), ("tail", tail_row)] {
+        assert!(
+            rows[row].starts_with(UNICODE.vertical),
+            "the {name} continuation row must draw the rule, not repeat the marker: {:?}",
+            rows[row]
+        );
+    }
+    // And the marker is not on any of them: a paragraph is not a list.
+    let markers = rows
+        .iter()
+        .filter(|r| r.trim_start().starts_with(UNICODE.assistant))
+        .count();
+    assert_eq!(
+        markers, 1,
+        "one answer, one marker — not one per wrapped row: {rows:#?}"
+    );
+}
+
+/// **Defect 7: the editor never named the undo key it implements.**
+///
+/// Ctrl+Z takes an edit back and the footer said `type/enter edit · alt+s save ·
+/// esc cancel`. Resolved through the table, so a rebinding moves the text.
+#[test]
+fn the_editor_footer_names_the_undo_key() {
+    let (mut app, agent, _dir) = app_with_a_file();
+    open_the_editor(&mut app, &agent);
+    super::keys::handle_key(&mut app, &agent, key(KeyCode::Char('e')));
+    let undo = app
+        .keybindings
+        .key_text("tui.editor.undo")
+        .expect("tui.editor.undo is bound");
+
+    let rows = render_rows(&mut app, 80, 24);
+    let footer = rows
+        .iter()
+        .find(|r| r.contains("type/enter"))
+        .unwrap_or_else(|| panic!("the editor's footer is not on screen: {rows:#?}"));
+    assert!(
+        footer.contains(&format!("{undo} undo")),
+        "the editor must name the key that undoes ({undo}): {footer:?}"
+    );
+}
+
+/// **Defect 8: the footer's last hint collapsed to a bare key at 80 columns.**
+///
+/// `idle-with-content.80x24` read `… · pageup scroll back · pagedown …\Epsilon\…`:
+/// the last hint lost its action and named a key with no words. The location was
+/// pinned at 28 columns — 35% of an 80-column row — so it now takes its share of
+/// the frame instead, and the hint fits whole.
+///
+/// **The bare-key arm in `draw` is deliberately left in place**, and this test is
+/// the reason it can be: with the location scaled, the row a reader gets at 80
+/// columns has no bare key on it. `the_approval_footer_never_prints_half_a_hint_either`
+/// pins the other half of that decision (a bare `e` on the approval row is a real,
+// bound, handled key with a missing label — degraded, not a lie).
+#[test]
+fn the_footer_at_80_columns_never_drops_a_hint_to_a_bare_key() {
+    let (mut app, _agent, _rx) = test_app();
+    app.ui.push_local_input("ask anything");
+
+    let rows = render_rows(&mut app, 80, 24);
+    let footer = rows.last().expect("the footer row");
+    let hints = app.hints();
+    let location = crate::ui::footer::location_span(
+        hints.location.as_deref().unwrap_or_default(),
+        80,
+        &app.theme,
+    );
+    let head = footer.split(&location).next().unwrap_or(footer);
+    let mut legal: Vec<String> = Vec::new();
+    if let Some(mode) = &hints.mode {
+        legal.push(mode.clone());
+    }
+    if let Some(goal) = &hints.goal {
+        legal.push(goal.clone());
+    }
+    if let Some(badge) = hints.view.badge(&app.theme) {
+        legal.push(badge);
+    }
+    for (key_text, action) in &hints.keys {
+        legal.push(format!("{key_text} {action}"));
+    }
+    for part in head.split(" · ").skip(1) {
+        let part = part.trim_end();
+        if part.is_empty() {
+            continue;
+        }
+        assert!(
+            legal.iter().any(|l| l == part),
+            "`{part}` is a key with no action — the hint was dropped to its key: {footer:?}"
+        );
+    }
+    // The symptom that started this: `scroll back` fits and keeps its words.
+    assert!(
+        footer.contains("scroll back"),
+        "the scroll hint must survive with its action at 80 columns: {footer:?}"
+    );
+}
+
+/// **Defect 9: the `@` file popup had no empty state.**
+///
+/// An unmatched fragment closed the popup and the screen said nothing — the reader
+/// typed a path, saw nothing change, and could not tell "no such file" from "the
+/// popup is broken". Every sibling popup names its empty case; this one now does.
+#[tokio::test]
+async fn an_unmatched_at_fragment_says_so_on_the_frame() {
+    let (mut app, agent, _rx) = app_with_a_file();
+    for c in "@zzz".chars() {
+        super::keys::handle_key(&mut app, &agent, key(KeyCode::Char(c)));
+    }
+    assert!(app.at_open, "the popup stays open on an unmatched fragment");
+
+    let rows = render_rows(&mut app, 80, 24);
+    assert!(
+        rows.iter().any(|r| r.contains("no matching files")),
+        "an unmatched fragment must say so, not go silent: {rows:#?}"
+    );
+    assert!(
+        rows.iter().any(|r| r.contains("zzz")),
+        "and it must name the fragment that matched nothing: {rows:#?}"
+    );
+}
+
+/// **Defect 10: the command palette touched the frame edge at 60 columns.**
+///
+/// `Width::Fixed(64)` was clamped to the frame's width, so a 60-column terminal
+/// drew a 60-column box flush against both edges while every other overlay kept a
+/// margin. The height already reserved two rows; the width now reserves two columns.
+#[tokio::test]
+async fn the_palette_keeps_a_margin_at_60_columns() {
+    let (mut app, agent, _rx) = test_app();
+    super::keys::handle_key(
+        &mut app,
+        &agent,
+        KeyEvent {
+            code: KeyCode::Char('p'),
+            modifiers: KeyModifiers::CONTROL,
+            kind: KeyEventKind::Press,
+            state: KeyEventState::NONE,
+        },
+    );
+    assert!(app.palette_open, "precondition: the palette is open");
+
+    let rows = render_rows(&mut app, 60, 20);
+    let title = rows
+        .iter()
+        .position(|r| r.contains("commands"))
+        .unwrap_or_else(|| panic!("the palette is not on screen: {rows:#?}"));
+    // The panel's own left rail, not the first non-blank cell on the row: the
+    // welcome screen's `E P S I L O N` is still drawn behind the palette at
+    // this width, and it starts in column 0.
+    let left = rows[title]
+        .find(app.theme.glyphs.top_left)
+        .unwrap_or_else(|| panic!("the palette's left rail is not on screen: {rows:#?}"));
+    assert_eq!(
+        left, 1,
+        "the palette must keep a column of frame either side, like every other overlay: {:?}",
+        rows[title]
+    );
+    // And the same box at 80 columns, where nothing about the width changes.
+    let rows = render_rows(&mut app, 80, 24);
+    let title = rows
+        .iter()
+        .position(|r| r.contains("commands"))
+        .expect("the palette at 80");
+    assert_eq!(
+        rows[title].find(app.theme.glyphs.top_left),
+        Some(8),
+        "80 columns: {:?}",
+        rows[title]
+    );
+    // **And nothing live shows through the band.** The margin fix cleared the
+    // box's own area only, so at 60 columns the transcript row sharing the
+    // bottom rail's row still printed through the margin — `▎╰────╯`, a rail
+    // that reads as broken. The palette now clears its row band across the
+    // full width before it draws, and this is the assertion that keeps it:
+    // every column either side of the box's rails is blank on every row the
+    // box occupies.
+    let band_top = title;
+    let band_bottom = rows
+        .iter()
+        .enumerate()
+        .skip(title)
+        .find(|(_, r)| r.contains(app.theme.glyphs.bottom_left))
+        .map(|(i, _)| i)
+        .unwrap_or_else(|| panic!("the palette's bottom rail is not on screen: {rows:#?}"));
+    for (i, row) in rows.iter().enumerate().take(band_bottom + 1).skip(band_top) {
+        let l = row
+            .find(app.theme.glyphs.top_left)
+            .or_else(|| row.find(app.theme.glyphs.vertical))
+            .unwrap_or(0);
+        let r = row
+            .rfind(app.theme.glyphs.top_right)
+            .or_else(|| row.rfind(app.theme.glyphs.vertical))
+            .unwrap_or(row.len());
+        for (c, ch) in row.chars().enumerate() {
+            if c < l || c > r {
+                assert_eq!(
+                    ch, ' ',
+                    "row {i} shows live page content ({ch:?}) beside the palette: {row:?}"
+                );
+            }
+        }
+    }
+}
+
+/// **Defect 11: a card that was streaming output read `pending`.**
+///
+/// The frame showed a header saying `running bash…` and a card saying `▸ bash $
+/// cargo build · pending` for the same tool — three rows, three words, one call.
+/// `Pending` is "asked for, not yet running" (which is what a permission prompt
+/// leaves a call in); `Running` is the one whose body is filling. The glyph is
+/// unchanged, so the gutter still looks the same at a glance.
+#[test]
+fn a_running_tool_card_says_running_and_not_pending() {
+    use epsilon_contracts::agent_event::AgentEvent;
+    use epsilon_contracts::message::{AssistantMessage, Message, StopReason, Usage};
+    let (mut app, _agent, _rx) = test_app();
+    pin_theme(&mut app, ThemeColorMode::Ansi16);
+    let call = AgentEvent::MessageEnd {
+        message: Box::new(Message::Assistant(AssistantMessage {
+            id: "m-card".into(),
+            timestamp_ms: 0,
+            provider: "faux".into(),
+            model_id: "faux-1".into(),
+            content: vec![epsilon_contracts::content::ContentBlock::ToolCall {
+                id: "tc-card".into(),
+                name: "bash".into(),
+                arguments: serde_json::json!({ "command": "cargo build" }),
+            }],
+            stop_reason: StopReason::ToolUse,
+            error_message: None,
+            usage: Usage::default(),
+        })),
+    };
+    super::apply_with_scroll(&mut app, &call);
+    // **The frame in between is the point.** Pending first: asked for, not started.
+    let pending = render_rows(&mut app, 80, 24).join("\n");
+    assert!(
+        pending.contains("cargo build · pending"),
+        "a call that has not started still says pending: {pending}"
+    );
+
+    super::apply_with_scroll(
+        &mut app,
+        &AgentEvent::ToolExecutionStart {
+            tool_call_id: "tc-card".into(),
+            tool_name: "bash".into(),
+            args: serde_json::json!({ "command": "cargo build" }),
+        },
+    );
+    let running = render_rows(&mut app, 80, 24).join("\n");
+    assert!(
+        running.contains("cargo build · running"),
+        "the same card, now running, must say running: {running}"
+    );
+    assert!(
+        !running.contains("cargo build · pending"),
+        "the card must not contradict the header's own `running`: {running}"
+    );
+}

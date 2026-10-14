@@ -3,6 +3,7 @@
 +----------------------------------------------------------------------------------------------------+
 |idle                ?/1.0M · ↑0 ↓0 · R0 W0 CH n/a · Faux (offline scripted) • thinking off · offline|
 |                                                                                                    |
+|                                                                                                    |
 |          ╭ edit undo-demo.txt — alt+s saves, esc cancels (modified) ────────────────────╮          |
 |          │ the quick brown fox!                                                         │          |
 |          │                                                                              │          |
@@ -22,13 +23,12 @@
 |          │                                                                              │          |
 |          │                                                                              │          |
 |          │                                                                              │          |
+|          │ type/enter edit · alt+s save · ctrl+z undo · esc cancel                      │          |
 |          │                                                                              │          |
-|          │                                                                              │          |
-|          │                                                                              │          |
-|          │                                                                              │          |
-|▎ ❯ undo-d│                                                                              │          |
-|          │ type/enter edit · alt+s save · esc cancel                                    │          |
-|❯ ask anyt╰──────────────────────────────────────────────────────────────────────────────╯          |
+|          ╰──────────────────────────────────────────────────────────────────────────────╯          |
+|                                                                                                    |
+|                                                                                                    |
+|❯ ask anything                                                                                      |
 |────────────────────────────────────────────────────────────────────────────────────────────────────|
-|edit · type edit · enter newline · alt+s save · esc cancel              …\Epsilon\crates\epsilon-tui|
+|edit · type edit · enter newline · alt+s save · esc cancel                 …\Epsilon\crates\epsilon…|
 +----------------------------------------------------------------------------------------------------+

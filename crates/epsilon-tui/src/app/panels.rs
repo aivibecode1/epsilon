@@ -473,7 +473,7 @@ pub(super) fn draw_transcript(
     // history + live tail in screen rows, including tails taller than the viewport.
     // The tail is not a transcript line yet, so its kind is decided here: it is
     // the assistant's own prose (or its reasoning) arriving token by token.
-    let mut tail_rows: Vec<(LineKind, Line<'static>)> = Vec::new();
+    let mut tail_rows: Vec<(LineKind, bool, Line<'static>)> = Vec::new();
     // P-040: the live thinking tail obeys the hide flag like committed
     // Thinking lines do — a hidden transcript that still streams reasoning
     // is not hidden.
@@ -505,17 +505,22 @@ pub(super) fn draw_transcript(
             // as a tail row for the skip arithmetic below — exactly like the
             // separator round 72 put above the whole tail.
             if tail_kinds_seen && last_tail_kind != Some(kind) {
-                tail_rows.push((LineKind::Blank, Line::from(Vec::new())));
+                tail_rows.push((LineKind::Blank, false, Line::from(Vec::new())));
             }
             tail_kinds_seen = true;
             last_tail_kind = Some(kind);
             for line in text.split('\n') {
-                for wrapped in crate::wrap::wrap_line(&[(line, style)], body_width) {
+                // The same continuation rule the cached rows get: the tail is
+                // not in the cache, so it has no `line_of_row` answer and has
+                // to count its own wrapped rows. Without it a streaming answer
+                // drew its role glyph on every row it wrapped to.
+                let wrapped = crate::wrap::wrap_line(&[(line, style)], body_width);
+                for (at, row) in wrapped.into_iter().enumerate() {
                     tail_rows.push((
                         kind,
+                        at != 0,
                         Line::from(
-                            wrapped
-                                .into_iter()
+                            row.into_iter()
                                 .map(|(text, style)| Span::styled(text, style))
                                 .collect::<Vec<_>>(),
                         ),
@@ -529,7 +534,30 @@ pub(super) fn draw_transcript(
     let total = app.render_cache.total_rows();
     let skip = geometry.skip;
     let visible = geometry.visible;
-    let mut rows = app.render_cache.visible_rows_with_kinds(skip, visible);
+    // **A wrapped row is a continuation, and it says so in the gutter.**
+    //
+    // Every row of a wrapped paragraph used to carry the paragraph's own glyph,
+    // so one assistant answer drew as three `▪` rows — a bulleted list nobody
+    // wrote. The role's own glyph now belongs to the line's FIRST row and the
+    // continuation rule (`glyphs.vertical`, the same one a card's body uses) to
+    // every row after it. The flag travels beside the kind rather than replacing
+    // it, because a wrapped user turn keeps its BAND: `decorate` reads the band
+    // from the kind and the glyph from this.
+    //
+    // `line_of_row` is the row→line map the search highlight already walks, so
+    // the two cannot disagree about which rows are one line.
+    let mut rows: Vec<(LineKind, bool, Line<'static>)> = app
+        .render_cache
+        .visible_rows_with_kinds(skip, visible)
+        .into_iter()
+        .enumerate()
+        .map(|(i, (kind, line))| {
+            let continued = i > 0
+                && app.render_cache.line_of_row(skip + i)
+                    == app.render_cache.line_of_row(skip + i - 1);
+            (kind, continued, line)
+        })
+        .collect();
     // The live tail is not a transcript line, so `push_line`'s separation
     // rule never sees it — without this it glues to the previous block
     // while streaming and only separates when committed. Same rule, at draw
@@ -539,9 +567,12 @@ pub(super) fn draw_transcript(
     if !tail_rows.is_empty()
         && rows
             .last()
-            .is_some_and(|(kind, _)| *kind != crate::state::LineKind::Blank)
+            .is_some_and(|(kind, _, _)| *kind != crate::state::LineKind::Blank)
     {
-        tail_rows.insert(0, (crate::state::LineKind::Blank, Line::from(Vec::new())));
+        tail_rows.insert(
+            0,
+            (crate::state::LineKind::Blank, false, Line::from(Vec::new())),
+        );
     }
     let remaining = visible.saturating_sub(rows.len());
     rows.extend(
@@ -594,7 +625,7 @@ pub(super) fn draw_transcript(
     // at the front the two no longer agree, and a highlight would land on
     // whatever the padding happened to push it onto.
     if let Some(s) = app.search.as_ref().filter(|s| !s.query.is_empty()) {
-        for (i, (_kind, line)) in rows.iter_mut().enumerate() {
+        for (i, (_kind, _continued, line)) in rows.iter_mut().enumerate() {
             // Every screen row of a matching line is a hit, so a hit that wrapped
             // is marked on both of its rows rather than half of it.
             let row_line = app.render_cache.line_of_row(skip + i);
@@ -617,7 +648,7 @@ pub(super) fn draw_transcript(
     }
 
     if spare > 0 {
-        let blank = (crate::state::LineKind::Blank, Line::from(Vec::new()));
+        let blank = (crate::state::LineKind::Blank, false, Line::from(Vec::new()));
         rows.splice(0..0, std::iter::repeat_n(blank, spare));
     }
 
@@ -626,9 +657,9 @@ pub(super) fn draw_transcript(
     // banded row reaches the terminal edge.
     let rows: Vec<Line<'static>> = rows
         .into_iter()
-        .map(|(kind, line)| {
+        .map(|(kind, continued, line)| {
             let body: Vec<Span<'static>> = line.spans;
-            crate::ui::transcript::decorate(&app.theme, kind, body, frame_width)
+            crate::ui::transcript::decorate(&app.theme, kind, continued, body, frame_width)
         })
         .collect();
 
@@ -660,6 +691,19 @@ pub(super) fn draw_palette(f: &mut Frame<'_>, app: &App, outer: Rect) {
         focused: true,
         border: None,
     };
+    // Clear the panel's row band across the full width, not just the box: at 60
+    // columns the palette is nearly the whole frame, and the transcript row that
+    // happens to sit on the box's bottom-rail row showed through the margin —
+    // `▎╰────╯` read as a broken rail. The tree overlay already clears before it
+    // draws for the same reason; a modal that owns the keys must not float over
+    // a sliver of the page it is covering.
+    let band = Rect {
+        x: outer.x,
+        y: panel.area.y,
+        width: outer.width,
+        height: panel.area.height,
+    };
+    f.render_widget(ratatui::widgets::Clear, band);
     let inner = panel.open(f);
 
     let capacity = inner.height.saturating_sub(2).max(1) as usize;
@@ -714,10 +758,50 @@ pub(super) fn draw_at_file(f: &mut Frame<'_>, app: &App, transcript_area: ratatu
     if !app.at_open {
         return;
     }
-    let Some(rows) = &app.at_rows else {
-        return;
-    };
+    let rows = app.at_rows.as_deref().unwrap_or(&[]);
     if rows.is_empty() {
+        // **The empty state, drawn rather than skipped.** This used to return
+        // here, so an unmatched `@fragment` closed the popup and the screen said
+        // nothing: the reader typed a path, saw nothing change, and had no way
+        // to tell "no such file" from "the popup is broken". The palette names
+        // its own empty row (`no matching commands`), and this is that row.
+        let height = 4u16.min(transcript_area.height);
+        if height == 0 {
+            return;
+        }
+        let y = transcript_area
+            .bottom()
+            .saturating_sub(height)
+            .saturating_sub(1);
+        let area = ratatui::layout::Rect {
+            x: transcript_area.x,
+            y,
+            width: transcript_area.width.min(64),
+            height,
+        };
+        let panel = crate::ui::overlay::Panel {
+            theme: &app.theme,
+            area,
+            title: "files",
+            focused: true,
+            border: None,
+        };
+        let inner = panel.open(f);
+        let mut lines: Vec<ratatui::text::Line<'static>> = vec![
+            ratatui::text::Line::from(ratatui::text::Span::styled(
+                format!("no matching files for '{}'", app.at_fragment),
+                app.theme.dim(),
+            )),
+            ratatui::text::Line::from(""),
+            crate::ui::overlay::hint_row(&app.theme, &[("backspace", "widen"), ("esc", "close")]),
+        ];
+        // Pad so the frame's bottom rule is drawn at the same row every time:
+        // a popup that changes height as the filter changes is a layout that
+        // moves under the reader's hands.
+        while lines.len() < inner.height as usize {
+            lines.push(ratatui::text::Line::from(""));
+        }
+        f.render_widget(ratatui::widgets::Paragraph::new(lines), inner);
         return;
     }
     let capacity = 8usize;

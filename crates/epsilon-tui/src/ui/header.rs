@@ -13,7 +13,7 @@ use ratatui::Frame;
 use ratatui::layout::Rect;
 use ratatui::text::Span;
 
-use crate::ui::layout::{Priority, clamp_line, display_width, room_beside, side_by_side};
+use crate::ui::layout::{HALF_GAP, Priority, clamp_line, display_width, room_beside, side_by_side};
 use crate::ui::metrics::{MetricRole, Metrics};
 use crate::ui::theme::Theme;
 
@@ -59,42 +59,113 @@ impl RunState {
 /// and the run state is truncated last: "is it still working" outranks "how many
 /// tokens". [`side_by_side`] enforces that, and guarantees the row occupies
 /// exactly `area.width` cells so nothing wraps onto the next line.
+///
+/// **The phase is budgeted here, before either half is joined.** The phase is the
+/// only fragment on this row with no length of its own — it is the tool's status
+/// line, in the tool's words — so it is the only one that has to be cut to fit.
+/// It used to be emitted whole and the right half was cut to whatever was left,
+/// which cut *through* the model name: at 80 columns a long `bash: Compiling
+/// epsilon-tools v0.1.0` turned `Faux (offline scripted)` into `ed)`, because
+/// [`side_by_side`] trims the half that yields from its far end and the model is
+/// one span. Budgeting the phase against the smallest right half there is
+/// ([`metric_spans`] built against the phase-less run state) keeps every
+/// measurement whole, and the phase is what pays for it.
 pub fn draw(f: &mut Frame<'_>, area: Rect, theme: &Theme, state: &RunState, metrics: &Metrics) {
     if area.width == 0 || area.height == 0 {
         return;
     }
-    let left = state_spans(theme, state);
-    let right = metric_spans(theme, metrics, room_beside(&left, area.width as usize));
-    // Every measurement here is emitted whole or not at all (`metric_spans`), so
-    // the layout below has nothing left to cut on a correct row: it is the
-    // backstop for a width table that disagrees with ratatui's, not the mechanism
-    // that decides what a narrow terminal keeps.
-    let line = side_by_side(left, right, area.width as usize, Priority::Left);
-    let line = clamp_line(line, area.width as usize);
+    let width = area.width as usize;
+    // The run state is built first because it is the half that does not yield:
+    // "is it still working" outranks "how many tokens". The phase is therefore
+    // budgeted against the **least** the measurements can be — their pinned tail
+    // — rather than against what they happen to want today.
+    let floor = state_spans_without_phase(theme, state);
+    let left = state_spans(theme, state, &floor, phase_budget(width, &floor, metrics));
+    let right = metric_spans(theme, metrics, room_beside(&left, width));
+    let line = side_by_side(left, right, width, Priority::Left);
+    let line = clamp_line(line, width);
     f.render_widget(line, area);
 }
 
-fn state_spans(theme: &Theme, state: &RunState) -> Vec<Span<'static>> {
+/// The run state's own words, without the phase: the words that are always there.
+fn state_spans_without_phase(theme: &Theme, state: &RunState) -> Vec<Span<'static>> {
     match state {
         RunState::Idle => vec![Span::styled("idle", theme.faint())],
         RunState::Running {
             frame,
-            phase,
             elapsed_secs,
+            ..
         } => {
             let frames = theme.glyphs.spinner;
             let glyph = frames[frame % frames.len()];
-            let label = if phase.is_empty() {
-                format!("running {elapsed_secs}s")
-            } else {
-                format!("running {elapsed_secs}s · {phase}")
-            };
             vec![
                 Span::styled(format!("{glyph} "), theme.accent()),
-                Span::styled(label, theme.dim_strong()),
+                Span::styled(format!("running {elapsed_secs}s"), theme.dim_strong()),
             ]
         }
     }
+}
+
+/// Columns the phase may occupy: what the fixed halves leave over, once the
+/// measurements have been reduced to the tail they never drop.
+///
+/// The other order — measuring the phase against the measurements' *full* width
+/// — starved it: at 80 columns the measurements want 80 columns of their own, so
+/// a 35-column tool status got a budget of zero and vanished from the row
+/// entirely. The measurements can always be dropped down to their pinned parts
+/// ([`crate::ui::metrics::MetricPart::pinned`]), so that is the width the phase
+/// is budgeted against, and [`metric_spans`] then drops whatever is left over.
+fn phase_budget(width: usize, floor: &[Span<'static>], metrics: &Metrics) -> usize {
+    let taken: usize = floor.iter().map(|s| display_width(&s.content)).sum();
+    let parts = metrics.parts();
+    let pinned: Vec<&crate::ui::metrics::MetricPart> = parts.iter().filter(|p| p.pinned).collect();
+    let pinned_width: usize = pinned.iter().map(|p| display_width(&p.text)).sum::<usize>()
+        + 3 * pinned.len().saturating_sub(1);
+    // ` · ` joins the phase to the run state, and it is spent even when the
+    // phase behind it is cut to a mark — a separator with nothing after it is
+    // noise, so the budget has to cover it before the phase gets a column.
+    //
+    // **Below the width where the pinned tail fits beside the run state, the run
+    // state owns the row instead.** `running 0s` is 12 columns and the pinned
+    // model-plus-qualifier is 48, so at 60 columns they cannot share one, and
+    // budgeting the phase against a tail that has nowhere to go gives it zero —
+    // which loses the phase entirely while the layout's backstop then slices
+    // the model name to squeeze the rest in: the defect this whole change is
+    // about, one width band down. So below that width the phase takes what the
+    // run state leaves and the measurements give way in whole parts.
+    if width < taken + HALF_GAP + pinned_width {
+        return width.saturating_sub(HALF_GAP + taken + 3);
+    }
+    width
+        .saturating_sub(taken)
+        .saturating_sub(pinned_width)
+        .saturating_sub(HALF_GAP)
+        .saturating_sub(3)
+}
+
+/// The run state as drawn, with the phase cut to what the row can spare.
+///
+/// `floor` is [`state_spans_without_phase`] for the same state, so the budget is
+/// measured against the text that is about to be emitted rather than a plan.
+fn state_spans(
+    theme: &Theme,
+    state: &RunState,
+    floor: &[Span<'static>],
+    budget: usize,
+) -> Vec<Span<'static>> {
+    let RunState::Running { phase, .. } = state else {
+        return floor.to_vec();
+    };
+    if phase.is_empty() || budget == 0 {
+        return floor.to_vec();
+    }
+    let shown = crate::wrap::fit_width_with(phase, budget, theme.glyphs.ellipsis);
+    if shown.is_empty() {
+        return floor.to_vec();
+    }
+    let mut spans = floor.to_vec();
+    spans.push(Span::styled(format!(" · {shown}"), theme.dim_strong()));
+    spans
 }
 
 /// The measurements, dropped whole until the rest fit in `room`.

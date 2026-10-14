@@ -20,5 +20,5 @@
 |                                                            |
 |❯ ask anything                                              |
 |────────────────────────────────────────────────────────────|
-|approval · y allow once · a · n …\Epsilon\crates\epsilon-tui|
+|approval · y allow once · a always · n deny  …\Epsilon\crat…|
 +------------------------------------------------------------+

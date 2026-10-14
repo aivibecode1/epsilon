@@ -20,5 +20,5 @@
 |                                                            |
 |❯ and the next thing?                                       |
 |────────────────────────────────────────────────────────────|
-|insert · enter send · pageup    …\Epsilon\crates\epsilon-tui|
+|insert · enter send · pageup scroll back     …\Epsilon\crat…|
 +------------------------------------------------------------+

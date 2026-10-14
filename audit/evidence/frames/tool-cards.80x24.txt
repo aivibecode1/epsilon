@@ -15,14 +15,14 @@
 |                                                                                |
 |▎ ❯ run the suite and tell me what broke                                        |
 |                                                                                |
-|▸ bash $ cargo test · pending                                                   |
+|▸ bash $ cargo test · running                                                   |
 |│ running 74 tests                                                              |
 |│ test result: ok. 74 passed; 0 failed                                          |
 |                                                                                |
-|▸ write src/missing.rs · pending                                                |
+|▸ write src/missing.rs · running                                                |
 |│ src/missing.rs                                                                |
 |                                                                                |
 |❯ ask anything                                                                  |
 |────────────────────────────────────────────────────────────────────────────────|
-|insert · enter send · pageup scroll back · pagedown …\Epsilon\crates\epsilon-tui|
+|insert · enter send · pageup scroll back · ctrl+j newline   …\Epsilon\crates\ep…|
 +--------------------------------------------------------------------------------+
