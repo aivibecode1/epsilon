@@ -88,7 +88,10 @@ Practical guidance:
 Pre-edit file checkpoints are recorded, and the store refuses to restore one it cannot verify: a
 restore compares **content**, not timestamps, and a file whose bytes differ from the capture is
 left alone rather than overwritten (F15, fixed in M100 and M104 — the two halves were deleting a
-file it could not restore, and clobbering edits made after the snapshot). What does not exist yet
-is a *user-facing* revert: nothing outside the tests calls the restore path, so treat checkpoints
-as an internal record rather than an undo key. Keep sessions under private backup for recovery;
-do not commit sensitive session transcripts to a public repository.
+file it could not restore, and clobbering edits made after the snapshot). The user-facing revert
+exists: **`/restore <path>`** previews the restore and applies it only after a trailing `yes`
+(M277, ADR-023); a file created by the agent and edited by you afterwards is protected too
+(M298, ADR-026). The ceiling, stated plainly: `/restore` reverts one file at a time and shows no
+diff, so a turn's whole footprint is not one undo away — the session tree (`/tree`, `/fork`) is
+the conversation-side tool. Keep sessions under private backup for recovery; do not commit
+sensitive session transcripts to a public repository.

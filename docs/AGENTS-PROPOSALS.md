@@ -480,6 +480,40 @@ the lock file is the last document still describing two front ends.
 
 ---
 
+## 16. §2.4 says the `WINDOW` keybinding table is read by every mode; nothing reads it
+
+**Filed:** 2026-10-14, production-readiness audit. **Measured on the tree, not recalled.**
+
+**The current text** (§2.4):
+
+> Slash commands (`COMMAND_HEADS`) and palette entries (derived from `COMMAND_HEADS`) and
+> keybindings (the `TERMINAL` table, plus the retained `WINDOW` table) are declared once in
+> `epsilon-contracts` and read by every mode, with per-mode capability declared as data rather
+> than as a second hand-maintained list.
+
+**The measurement.** `WINDOW` (`crates/epsilon-contracts/src/keybind.rs:457`) has **no reader
+outside its own module**: `grep -rn "WINDOW" crates/epsilon-tui/src crates/epsilon-runtime/src
+crates/epsilon-cli/src` returns nothing (the hits in `epsilon-core/src/util.rs`,
+`epsilon-safety`, `epsilon-tools` are the word inside other identifiers —
+`CASCADIA_HOSTING_WINDOW_CLASS` and friends). Its only consumers are the `contracts` re-export
+at `crates/epsilon-contracts/src/lib.rs:34` and its own self-tests
+(`keybind.rs:599,617,637`). `TERMINAL` is genuinely read by `epsilon-tui`'s
+`KeybindingsManager`.
+
+**Proposed**, replacing the parenthetical:
+
+> keybindings (the `TERMINAL` table — the `WINDOW` table is retained as the record of the
+> removed desktop's chords, read by nothing today)
+
+**Why this is a proposal and not an edit.** §2.4 is invariant law and this is a factual
+claim about the code, not a preference — the same shape as proposal 15, whose text
+("retained deliberately for the TUI IDE") this sharpens: retained it is, read it is not.
+**Recommendation:** either delete `WINDOW` outright (the desktop is gone, ADR-039; the table
+is 40-odd rows of dead data with self-tests holding it) or keep it deliberately as history
+with the wording above. Deletion is the smaller tree; the second is the smaller diff.
+
+---
+
 ## Closed proposals
 
 _Moved here when a proposal was applied and the lock re-issued. Kept, because deleting a

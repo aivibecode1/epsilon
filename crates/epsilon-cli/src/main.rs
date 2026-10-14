@@ -1,7 +1,7 @@
 //! Epsilon CLI.
 //!
 //! Modes (ADR-011: one session runtime beneath all frontends):
-//! - default             : scripted M5-style demo against the faux provider
+//! - default             : interactive TUI over the current directory
 //! - `-p "<task>"`       : print mode — headless single run, real tools, final text to stdout
 //! - `--tui ["task"]`    : interactive ratatui frontend; typing mid-run steers
 //! - `--serve [--port N] ["task"]` : HTTP/SSE server for remote frontends

@@ -5,17 +5,12 @@ The [audit](../../audit/README.md) records verified defects; the
 [ADR log](epsilon-decisions.md) records design intent. Accepted intent is not proof
 of implemented behavior. The pi port remains incomplete.
 
-> **Dated snapshot — audit era (2026-09-16), partly corrected since.** This guide was
-> written against the audited working tree, and an independent documentation audit later
-> verified it stale in more than one place: several claims describe code that has since
-> moved, and some `file:line` references have drifted onto unrelated lines. Four of its
-> defect claims were corrected on 2026-09-23 by the ledger sweep — the F04, F06, F07, F08,
-> F15 and F17 paragraphs now say what closed them and where the evidence is — and the
-> positions of those findings are the [defect ledger](../../audit/03-defects.md)'s,
-> not this file's. **Everything else here has not been re-verified against the code.**
-> The honest fix for the rest is a re-derivation pass or removing the guide, not a patch
-> per line; until one of those happens, read a specific claim here as a hypothesis to check
-> against the implementation rather than as current description.
+> **Dated snapshot — audit era (2026-09-16), re-derived 2026-10-14.** The 2026-10-14 pass
+> re-derived this guide against the tree: the dependency table from `cargo tree` on each
+> manifest, the composition path from `epsilon-cli/src/main.rs`, and the defect-status
+> sentences from `docs/history.md`'s milestone rows. What that pass could **not** re-verify
+> is named where it appears — read any remaining `file:line` as a lead to check, not as a
+> fact, because every commit moves them. Where a claim could not be settled it says so.
 
 ## Workspace and dependency graph
 
@@ -23,7 +18,8 @@ The existing Cargo workspace already provides conventional `crates/<name>/src/`
 and per-crate `tests/` directories. Unit tests also live beside their modules.
 There is no need for another workspace layer or empty benchmark/example directories.
 
-Direct internal production dependencies, as declared in crate manifests:
+Direct internal production dependencies, as declared in crate manifests and verified with
+`cargo tree -p <crate> --edges normal --depth 1` on 2026-10-14:
 
 | Crate | Internal dependencies | Responsibility |
 |---|---|---|
@@ -36,12 +32,14 @@ Direct internal production dependencies, as declared in crate manifests:
 | `epsilon-safety` | contracts, core | Permission rules, approvals, environment filtering and sandbox backends |
 | `epsilon-tools` | contracts, core, safety | Tool implementations, file observations, mutation exclusion and checkpoints |
 | `epsilon-mcp` | contracts, core | MCP connections and tool adaptation |
-| `epsilon-tui` | contracts, core, llm, safety, session | Terminal application, editor, dialogs and transcript |
+| `epsilon-tui` | contracts, core, llm, safety, session, **runtime** | Terminal application, editor, dialogs and transcript |
 | `epsilon-server` | contracts, core, llm, safety, tools | HTTP/SSE frontend |
 | `epsilon-runtime` | contracts, llm, core, tools, lsp, safety, session, ext, mcp | **The one composition point**: a workspace plus a configuration becomes a running agent (`build_runtime`, `resolve_launch`) |
-| `epsilon-cli` | all other workspace crates | Arguments, configuration and dispatch |
+| `epsilon-cli` | every crate above except `epsilon-ext` | Arguments, configuration and dispatch |
 
 > `epsilon-desktop` was a row here until ADR-039 removed it (2026-10-12) with its crate.
+> The `epsilon-cli` → `epsilon-ext` manifest edge still exists while nothing references it;
+> it is on the dead-edge removal list, not a claimed dependency.
 
 > **Two rows were missing until 2026-10-04, and the omission inverted the architecture.**
 > This table listed neither `epsilon-runtime` nor `epsilon-desktop`, and gave
@@ -59,23 +57,30 @@ Direct internal production dependencies, as declared in crate manifests:
 
 Cargo checks declared dependencies and rejects cycles; it does not enforce a
 separate allowed-edge policy. Libraries must not depend on CLI. The intended
-vocabulary-only contracts boundary has existing drift:
-`crates/epsilon-contracts/src/stream.rs:62–134` implements stateful stream folding
+vocabulary-only contracts boundary has existing drift: `epsilon-contracts` also
+implements stateful stream folding (`StreamFolder`, `crates/epsilon-contracts/src/stream.rs`)
 and provider collision handling. Do not treat that as an approved policy expansion.
 
 ## Composition and execution
 
-1. `crates/epsilon-cli/src/main.rs` parses modes/options. `runtime.rs` supplies
-   configuration and provider/resource composition. CLI attaches tools, a permission
-   gate and a durable store to `epsilon_core::Agent`.
-2. `crates/epsilon-core/src/lib.rs:900–934` admits a run; `:1037–1261` alternates
-   provider turns and tool batches with steering and follow-up queues. Core rejects
-   overlapping runs, but frontend acknowledgments do not yet share atomic admission.
+1. `crates/epsilon-cli/src/main.rs` parses modes/options and delegates every mode to the
+   one composition point: `epsilon_runtime::resolve_launch` (`main.rs:1181`) resolves the
+   launch, `build_runtime` (`main.rs:1269`, `:1459`, and the serve path) builds the agent.
+   `crates/epsilon-cli/src/lib.rs` is a re-export — `pub use epsilon_runtime as runtime` —
+   not a second composition. The TUI calls a handful of runtime helpers directly
+   (`restore_checkpoint`, `skill_roots`, `goal_command`, `summarize_request`,
+   `describe_checkpoint`, `checkpoint_save`, `resumed_model_to_use`) rather than
+   reimplementing them; that is the same rule, applied from the other side.
+2. `epsilon-core` admits a run and alternates provider turns and tool batches with
+   steering and follow-up queues. The loop lives in the crate's own modules — `run_.rs`
+   (`run`, `run_inner`, `stream_one_turn`), `session.rs`, `queue.rs`, `tasks.rs` — after
+   the 2026-10-14 split of the former 4,700-line `lib.rs`. Core rejects overlapping runs;
+   frontend acknowledgments do not yet share atomic admission.
 3. `crates/epsilon-core/src/exec.rs` validates and authorizes invocations, plans
    bounded resource-conflict groups and executes tools. Results are committed in
    model order; sequential tools force serial batch execution.
 4. `crates/epsilon-llm/src/providers/` owns native protocol adapters. Shared transport
-   lives in `providers/mod.rs`; `retry_stream.rs` and `fallback.rs` compose recovery.
+   lives in `providers/mod.rs`; `retry.rs` and `fallback.rs` compose recovery.
 5. `AgentEvent` broadcasts feed frontends and extension forwarding. This is not a
    durable replay protocol; RPC currently skips lagged broadcasts.
 
@@ -93,25 +98,34 @@ registers built-ins and optional services. File/search tools use native host cal
 BashTool receives the subprocess sandbox. MCP and process extensions are separate
 adapters, not evidence that arbitrary plugin execution is confined by BashTool.
 
-- `epsilon-safety/src/engine.rs:82–97`: matching denies take precedence; otherwise
-  the later matching allow/ask rule determines the decision.
-- Path identity remains lexical (F09). Core authorizes the original capability and
-  any derived external-path subject. Plan mode retains project rules and denies
-  native write/edit/bash/shell; it does not classify arbitrary plugin side effects.
-  [Permissions](../user/permissions.md) owns the current policy description.
+- `epsilon-safety/src/engine.rs`: matching denies take precedence — **any deny wins
+  immediately**, regardless of position (the rule is stated at `engine.rs:60` and
+  implemented at `:96-98`); otherwise the later matching allow/ask rule determines the
+  decision.
+- Path traversal is normalised and symlink-contained (F09, closed by M199: both walkers
+  refuse links out of the workspace, and the Windows branch tests the reparse-point
+  attribute because a junction needs no privilege and is the form `is_symlink()` does not
+  report). Core authorizes the original capability and any derived external-path subject.
+  Plan mode retains project rules and denies native write/edit/bash/shell; it does not
+  classify arbitrary plugin side effects. [Permissions](../user/permissions.md) owns the
+  current policy description.
 - `epsilon-safety/src/sandbox.rs`: Windows selects Job Objects; other platforms
   probe `bwrap` or report no available backend. Landlock and Seatbelt are not
   implemented backends in this tree.
 - Windows Job Objects constrain resources/processes, not filesystem or network
   access. Bubblewrap mounts host root read-only and unshares namespaces; read-only
   does not mean unreadable. Default shell execution refuses without a backend.
-- Process waits, cancellation and final pipe drains have inconsistent total-deadline
-  ownership (F11). Display caps apply after unlimited parent output collection (F12).
+- Process waits, cancellation and final pipe drains now share one total deadline
+  (F11, closed in three parts: M147 for bwrap, M148 for the unconfined caller's drains,
+  M150 for the Windows job-object path). Display caps still apply after unlimited
+  parent-output collection (F12, partial: a bounded head is read, the body is still
+  buffered whole before its size check).
 
 `epsilon-tools/src/mutation.rs` serializes writers by path. `read_log.rs` scopes
 observations to each agent's opaque lifetime token and invalidates sibling knowledge
 after writes. Restore renews the token; retired observers are reclaimed. F02 repaired
-shared knowledge, not resolved-object identity or race-resistant containment (F09).
+shared knowledge; resolved-object identity and race-resistant containment followed
+in M199.
 
 ## Persistence, context and recovery
 
@@ -133,13 +147,13 @@ the evidence rather than taking this list's word for it:
   (`is_whole_json` is the discriminator; the file stays byte-identical on refusal), and
   M113/M116 replaced the whole-session refusal with keeping a foreign entry and saying so.
 
-The lines below this section were written before those milestones and are stale where
-they cite these findings; the ledger rows are the current status.
-
-Leases live in `epsilon-session/src/lease.rs`. The TUI's `/fork` copies a session file
-without switching to it; `/tree` shows the active branch. No Rust `BranchSummary`
-producer was found. Neither the JSONL shape nor familiar commands establish pi
-session-file compatibility.
+Leases live in `epsilon-session/src/lease.rs`, with per-acquisition ownership tokens so a
+victim's `Drop` cannot delete a thief's lock (M294) and an `append` that refuses on a
+stolen lease (M312, ADR-028). The TUI's `/fork` branches through the store
+(`fork_branch_at`) and, since the 2026-10-13 picker slice, opens a message picker rather
+than copying a file. `SessionStore::branch_with_summary` (`store.rs:1749`) is the
+branch-summary producer — **correct, tested, and still without a production caller**,
+which is a capability gap rather than a missing primitive.
 
 `epsilon-core/src/prompt.rs` assembles stable/context/volatile sections;
 `compact.rs` owns context selection and summary construction. Deterministic assembly
@@ -149,14 +163,14 @@ a pass commits only on a non-failure stop reason, usable text and a successful d
 append, and the abort arms push their terminal message and emit `MessageEnd` like a
 completed turn. Byte-identical replay of every provider request is not established.
 
-`epsilon-tools/src/checkpoint.rs` records preimages before edits. The two restore defects
-the audit found are closed — M100 refuses a skipped capture instead of deleting the file it
-could not save, M104 compares content (not metadata) before overwriting and refuses an entry
-it cannot verify, and `append` reports its failure — but **nothing in the product calls
-`restore`**, so safe user undo is still not established: the consumer arrives with a rewind
-command that does not exist. The refusal is also deliberately bare ("revert it by hand"), and
-ledger-append serialization and blob-path validation remain on the finding's list. Do not
-replace the store with a second snapshot subsystem before its existing contracts work.
+`epsilon-tools/src/checkpoint.rs` records preimages before edits, and the user-facing
+undo arrived with M277: `/restore <path>` previews, then applies on a trailing `yes`
+(ADR-023), with the content-verification guard from M104 and the agent-created-file
+protection from M298 (ADR-026). The ceiling, stated rather than implied: `/restore`
+reverts one file at a time and draws no diff, so a turn's whole footprint is not one
+undo away. Ledger-append serialization and blob-path validation remain on the finding's
+list. Do not replace the store with a second snapshot subsystem before its existing
+contracts work.
 
 ## Frontends and integrations
 
@@ -170,8 +184,11 @@ replace the store with a second snapshot subsystem before its existing contracts
 | LSP | `epsilon-lsp` discovers user-installed servers and appends bounded-count error reports. Monotonic versions, total deadlines, cancellation-safe framing and freshness remain open (F14). |
 
 Provider fixtures and compilation do not establish every catalog model or OAuth flow.
-Shared SSE buffering/EOF behavior and refresh/fallback preparation have open defects
-(F03/F16). User-facing configuration and commands belong in the
+The SSE framing defect is closed (F03, M137: one HTTP chunk holding several frames no
+longer loses all but the first); OAuth refresh orchestration across login/fallback paths
+remains open (F16, last re-checked at HEAD by M134 — the 2026-10-14 `needs_oauth_refresh`
+guard removed one unconditional-refresh site, not the orchestration question).
+User-facing configuration and commands belong in the
 [user guides](../user/README.md), not duplicate API examples here.
 
 ## Maintenance and correction record
