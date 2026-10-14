@@ -3765,13 +3765,17 @@ against the same bar and merge into the list above.
      test behind it.**~~ **LANDED (M304).** See Roadmap item 1: the claim was false, it is now
      replaced by a real measurement pinned with the fixture it names, and the negative control
      is run.
-9. **Four parallel command registries.** **Re-measured 2026-10-05 from source, because three of
-   the five counts this row carried had drifted.** `Command` has **39** variants,
-   `COMMAND_HEADS` + `ALIAS_HEADS` hold **37 + 8 = 45** rows, `SLASH_ITEMS` has **43** rows and
-   `palette_entries()` returns **7** — the two that were right — and `keybindings::DEFAULTS` has
-   **24** ids, not 23. In `crates/epsilon-tui`: `crates/epsilon-contracts/src/command.rs:254`
-   (variants), `:383` (`COMMAND_HEADS`), `:458` (`ALIAS_HEADS`), `:47` (`SLASH_ITEMS`);
-   `crates/epsilon-tui/src/keybindings.rs:27`; `crates/epsilon-tui/src/picker.rs:541`.
+9. **Four parallel command registries.** **Re-measured 2026-10-14 from source, because the
+   2026-10-05 measurement had itself drifted** (`theme`, `expand`, `templates`, `preset` and
+   `catalog` heads landed since). Current counts: `Command` has **42** variants,
+   `COMMAND_HEADS` holds **40** heads, `ALIAS_HEADS` holds **8**, `SLASH_ITEMS` holds
+   **46** entries, and the binding table (`TERMINAL` in `crates/epsilon-contracts/src/keybind.rs`,
+   read as `DEFAULTS` by `crates/epsilon-tui/src/keybindings.rs`) has **38** ids. Definitions:
+   `crates/epsilon-contracts/src/command.rs` (the `Command` enum, `COMMAND_HEADS`,
+   `ALIAS_HEADS`, `SLASH_ITEMS`); `crates/epsilon-tui/src/keybindings.rs`;
+   `crates/epsilon-tui/src/picker.rs`. The audit's line-number citations
+   (`command.rs:254/:383/:458`) pointed at unrelated code on the 2026-10-14 re-read and
+   are replaced by symbol names, which a commit cannot move.
    Two of the structural claims are also now false in our favour: `app.transcript.halfUp` /
    `halfDown` **do** appear in `/hotkeys` through `effective()`, and the palette's key column is
    resolved from the binding table rather than typed.

@@ -9,6 +9,39 @@ but unverified** (a milestone says so; this audit does not believe it), **Fixed*
 
 ---
 
+# Reconciliation, 2026-10-14 (production-readiness audit)
+
+An independent re-verification pass over the open rows and the STATUS roadmap's
+code-anchored findings. **Verified by reading the tree on 2026-10-14; the anchors the
+records carried had moved in two of five cases.** Four findings are LIVE, one is STALE,
+and the eight findings the pass could not finish before its provider timed out are
+recorded as unverified rather than guessed at.
+
+| # | Recorded finding | Verdict | Verified at | What the code does now |
+|---|---|---|---|---|
+| 1 | `quota` is a rate limit while `403` is auth — the same billing rejection is retried five times under one spelling and final under the other (`epsilon-llm/src/retry.rs:29-42`) | **LIVE** | `retry.rs:59-81` | `classify` puts `quota` in the `RateLimit` arm (retried) beside `403` in `Auth` (final). OpenAI's billing rejection is spelled `insufficient_quota`, so it is retried five times before the honest error. The reference has no `quota` classifier to copy — this spelling split is ours. Smallest fix: an `insufficient_quota` arm ahead of the rate-limit bucket, with a test naming both spellings. |
+| 2 | `set_summarizer` is unreachable from production | **LIVE** | `epsilon-core/src/summarizer.rs:104-106` | `grep -rn "set_summarizer" crates/*/src` outside the definition returns nothing. The isolated-summarizer field exists; nothing sets it. Fix shape is a decision, not a patch: wire it at composition or delete the setter with its field. |
+| 3 | `read_all` can panic on a file that changed underneath it (`epsilon-session/src/store.rs:1547`) | **LIVE** | `store.rs:1563-1569` | `read_all` pushes `read_entry(s)?.expect("index and file agree")` — an entry that vanished between the index build and the read panics a library. Smallest fix: answer `Err` naming the disagreement (the repair path owns recovery) rather than skipping, and definitely not `expect`. |
+| 4 | The trust-hash write is discarded (`epsilon-runtime/src/lib.rs:195-198`) | **LIVE** | `lib.rs:197-201` | `let _ = std::fs::write(&trust_path, …)` — a failed write silently re-opens the trust question on the next run and the user is told nothing. Smallest fix: route the failure into `notices`, the sink sixteen sibling diagnostics already use. |
+| 5 | `epsilon-core` reports a task child's session-open failure with `eprintln!` (`lib.rs:3653`) | **STALE** | `tasks.rs:202-204` | The line is a **comment** explaining why the path does *not* `eprintln!` (a window has no console; the failure routes through the notice sink). No `eprintln!` exists on that path. The recorded anchor described an older revision. |
+
+**The eight the pass did not finish** (tool truncation marker vs card cap; `... N earlier
+lines` wrapped-row counting; CSI residue in sanitized text; `TranscriptLine::hidden`
+unread; sanitize bypass on orphaned results; `render_cache` per-frame complexity;
+`in_hunk` never reset; Class B dead-code re-derivation): the investigator returned a
+partial verdict set before its provider timed out, so this ledger records only what a
+reader verified. **They stay as recorded findings, unverified, and are the first task of
+the next audit pass.** The independent quality sweep the same day separately re-derived
+the dead-code ground (21 zero-reference `pub` items, 26 test-only `pub` items) — those
+lists are the current dead-code inventory and supersede Class B's file where they
+overlap.
+
+**One method note, because it is the third time:** the anchors moved in two of five
+rows. A finding re-read from a ledger without re-opening the file is a claim about an
+older revision — the very failure mode this section exists to prevent.
+
+---
+
 # Reconciliation, 2026-09-29 (M206)
 
 **A7 was already fixed when the ledger was written, and the ledger said it was open.** Re-derived
