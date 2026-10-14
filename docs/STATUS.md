@@ -12,6 +12,8 @@ Last updated: 2026-10-12 (revised goal: desktop removed, TUI-as-IDE; Phase 1 in 
 
 ## Current task
 
+**Scoreboard at 2026-10-14:** Pi matrix `docs/parity/pi-tui.md` — **339 rows: 89 done / 112 partial / 0 missing / 138 deliberately different** (`check-parity-counts` green). Every `missing` row is gone; the partials are half-built behaviours with their live halves named. Dated "Counts now …" rows in the phase log below are historical records of their day, not the current total.
+
 Revised goal (2026-10-12): remove the desktop frontend and focus on core solidity,
 docs/navigability, and an opencode-style full-screen TUI (tree + editor + agent, mouse,
 palette) that meets or beats the reference UX. Native terminal stack only.
