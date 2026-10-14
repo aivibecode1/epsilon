@@ -14,6 +14,35 @@ Last updated: 2026-10-12 (revised goal: desktop removed, TUI-as-IDE; Phase 1 in 
 
 **Scoreboard at 2026-10-14:** Pi matrix `docs/parity/pi-tui.md` — **339 rows: 89 done / 112 partial / 0 missing / 138 deliberately different** (`check-parity-counts` green). Every `missing` row is gone; the partials are half-built behaviours with their live halves named. Dated "Counts now …" rows in the phase log below are historical records of their day, not the current total.
 
+### 2026-10-14 production-readiness session — landed so far
+
+Five read-only audits (defect ledger, pi port, reference capabilities, TUI polish from the
+captured frames, code quality + docs honesty) ran against the tree; their reports live in the
+session note [`../agents/memory/2026-10-14-production-push.md`](../agents/memory/2026-10-14-production-push.md).
+What landed from them:
+
+- **`52b246d`** — the 22-slice uncommitted working stack settled into the commit record
+  (each slice carries its own GATE PASS log in `audit/evidence/`); all ten non-build gate
+  legs re-run green on the tree.
+- **`58a3fb0`** — `epsilon-core/src/lib.rs` split 4,709 → 417 lines across seven child
+  modules, re-exports keeping every original path; the architecture guide re-derived from
+  the tree with it.
+- **`58b35ea` / `79260c5` / `b76eede` / `b0985bb`** — parity honesty (P-054/P-183 withdrew
+  their desktop halves; matrix re-tallied), the ledger's reconciliation (4 live findings
+  with fix shapes, 1 stale, 8 recorded with drifted anchors), and the doc contradictions
+  fixed (plans row, checkpoints section, registry counts, main.rs module doc, proposal 16).
+- **`9af5d5b`** — eleven frame-visible TUI defects, each with a named test and a negative
+  control that was run: the search panel hiding its query, the unnamed F6 tree binding, a
+  long tool phase eating the header's right half, the file editor sliced over the live
+  screen, the find bar's half-hint, wrapped answers repeating their gutter glyph, the
+  unnamed editor undo, the footer's bare-key hints, the @ popup's missing empty state, the
+  palette flush at 60 columns, and a streaming card reading `pending`. All 63 evidence
+  frames regenerated and reviewed.
+- **In flight:** four core defects (retry's `insufficient_quota` spelling, `read_all`'s
+  panic, the discarded trust-hash write, CSI residue in `display_safe`), then the
+  remaining TUI/tools defect batch, then the dead-code and dependency-edge cleanup, then
+  the full battery and the real-console probe of the installed binary.
+
 Revised goal (2026-10-12): remove the desktop frontend and focus on core solidity,
 docs/navigability, and an opencode-style full-screen TUI (tree + editor + agent, mouse,
 palette) that meets or beats the reference UX. Native terminal stack only.
