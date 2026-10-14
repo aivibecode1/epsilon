@@ -25,16 +25,24 @@ recorded as unverified rather than guessed at.
 | 4 | The trust-hash write is discarded (`epsilon-runtime/src/lib.rs:195-198`) | **LIVE** | `lib.rs:197-201` | `let _ = std::fs::write(&trust_path, …)` — a failed write silently re-opens the trust question on the next run and the user is told nothing. Smallest fix: route the failure into `notices`, the sink sixteen sibling diagnostics already use. |
 | 5 | `epsilon-core` reports a task child's session-open failure with `eprintln!` (`lib.rs:3653`) | **STALE** | `tasks.rs:202-204` | The line is a **comment** explaining why the path does *not* `eprintln!` (a window has no console; the failure routes through the notice sink). No `eprintln!` exists on that path. The recorded anchor described an older revision. |
 
-**The eight the pass did not finish** (tool truncation marker vs card cap; `... N earlier
-lines` wrapped-row counting; CSI residue in sanitized text; `TranscriptLine::hidden`
-unread; sanitize bypass on orphaned results; `render_cache` per-frame complexity;
-`in_hunk` never reset; Class B dead-code re-derivation): the investigator returned a
-partial verdict set before its provider timed out, so this ledger records only what a
-reader verified. **They stay as recorded findings, unverified, and are the first task of
-the next audit pass.** The independent quality sweep the same day separately re-derived
-the dead-code ground (21 zero-reference `pub` items, 26 test-only `pub` items) — those
-lists are the current dead-code inventory and supersede Class B's file where they
-overlap.
+**The eight the pass did not finish** — **the pass's own results arrived afterwards, and
+their anchors drifted too.** The investigator's full verdict set (13 findings, returned
+as its provider connection dropped) recorded: truncation marker eaten by the card cap
+(`util.rs` marker vs `card.rs` cap); `... N earlier lines` counting rows while printing
+"lines"; CSI residue surviving `text_safety`'s control-byte strip; `TranscriptLine::hidden`
+written and never read; orphaned tool results and `Card.name` bypassing `Card::sanitize`;
+`render_cache`'s header claiming `O(visible)` while walking 128 columns × all lines;
+`in_hunk` never reset across a multi-file diff; and Class B needing fresh re-derivation.
+**Two of its anchors were re-checked against the tree and were wrong:** `util.rs:965-975`
+now lands inside the crate's test module, and `tasks.rs:596-599` is `update_task_entry`
+with no `eprintln!` anywhere in the file (the only hit is the comment at :202-204
+explaining why that path does not print) — so finding 13 stays **STALE**, and the audit's
+finding-4 anchor (`runtime/lib.rs:1140`) is off by ~950 lines from the live discarded
+write at :197-201. **The findings keep their fix shapes; the anchors do not survive the
+re-read.** They are queued as the next TUI/tools batch, each to be re-derived at edit
+time. The independent quality sweep the same day separately re-derived the dead-code
+ground (21 zero-reference `pub` items, 26 test-only `pub` items) — those lists are the
+current dead-code inventory and supersede Class B's file where they overlap.
 
 **One method note, because it is the third time:** the anchors moved in two of five
 rows. A finding re-read from a ledger without re-opening the file is a claim about an
