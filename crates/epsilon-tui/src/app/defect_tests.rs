@@ -712,3 +712,497 @@ fn a_running_tool_card_says_running_and_not_pending() {
         "the card must not contradict the header's own `running`: {running}"
     );
 }
+// ---------------------------------------------------------------------------
+// The 2026-10-14 (second) set: truncation marker, rows wording, hidden counts,
+// the sanitise hole, a cancelled card, the footer's session name, the retry
+// counter, and the CSI residue's reach into a card.
+//
+// Each test names the row that owns its claim and drives the real reducer, for
+// the reason this file's header gives: an assertion that would pass against the
+// broken frame is an assertion that has not been made yet.
+// ---------------------------------------------------------------------------
+
+/// One committed tool result, through the same reducer the event loop uses.
+fn push_tool_result(
+    app: &mut App,
+    tool_call_id: &str,
+    tool_name: &str,
+    body: &str,
+    is_error: bool,
+) {
+    use epsilon_contracts::message::{Message, ToolResultMessage};
+    super::apply_with_scroll(
+        app,
+        &AgentEvent::MessageEnd {
+            message: Box::new(Message::ToolResult(ToolResultMessage {
+                id: "msg-result".into(),
+                timestamp_ms: 0,
+                tool_call_id: tool_call_id.into(),
+                tool_name: tool_name.into(),
+                content: vec![epsilon_contracts::content::ContentBlock::text(body)],
+                details: serde_json::json!({}),
+                usage: None,
+                is_error,
+            })),
+        },
+    );
+}
+
+/// **C1: the card's cap ate the tool's own omission marker.**
+///
+/// `epsilon_tools::util::truncate_output` cuts a long output in half and writes
+/// its own marker between the halves — exact line and byte counts plus the spill
+/// locator. The card keeps the **tail** of a text body, so the marker sat in the
+/// dropped half and `cap` replaced it with its own plainer `… N earlier rows`.
+/// A reader therefore saw how many rows were hidden and nothing about how much
+/// *output* was dropped or where the rest of it lives.
+///
+/// **The body is the tool's own output, not a fixture.** The test calls
+/// `truncate_output` and feeds its result through the reducer, so the marker's
+/// wording, its position between the halves and the spill path are all the real
+/// ones — a hand-written `[... ...]` row would keep passing if the tool's
+/// wording ever changed.
+#[test]
+fn a_capped_body_keeps_the_tools_own_omission_marker() {
+    use epsilon_contracts::message::{AssistantMessage, Message, StopReason, Usage};
+    let (mut app, _agent, _rx) = test_app();
+    pin_theme(&mut app, ThemeColorMode::Ansi16);
+    // The shape `truncate_output` exists for: the first error at the top, the
+    // verdict at the bottom, thousands of noise lines between them.
+    let mut lines = vec!["error[E0308]: mismatched types at src/first.rs:12".to_string()];
+    for i in 0..4000 {
+        lines.push(format!("note: intermediate line {i}"));
+    }
+    lines.push("aborting due to 1 previous error".to_string());
+    let spill = tempfile::tempdir().expect("a spill directory");
+    let t = epsilon_tools::util::truncate_output(&lines.join("\n"), spill.path(), "build");
+    assert!(
+        t.truncated,
+        "precondition: the tool truncated its own output"
+    );
+    assert!(
+        t.text.contains("[... "),
+        "the tool wrote its own marker: {}",
+        &t.text[..t.text.len().min(200)]
+    );
+
+    super::apply_with_scroll(
+        &mut app,
+        &AgentEvent::MessageEnd {
+            message: Box::new(Message::Assistant(AssistantMessage {
+                id: "m-build".into(),
+                timestamp_ms: 0,
+                provider: "faux".into(),
+                model_id: "faux-1".into(),
+                content: vec![epsilon_contracts::content::ContentBlock::ToolCall {
+                    id: "tc-build".into(),
+                    name: "bash".into(),
+                    arguments: serde_json::json!({ "command": "cargo build" }),
+                }],
+                stop_reason: StopReason::ToolUse,
+                error_message: None,
+                usage: Usage::default(),
+            })),
+        },
+    );
+    push_tool_result(&mut app, "tc-build", "bash", &t.text, false);
+
+    let rows = render_rows(&mut app, 80, 24);
+    // The marker row, by its own opening: it starts at the body's column 0, so
+    // it is the row that begins with the tool's own `[... `.
+    let marker = rows
+        .iter()
+        .find(|r| r.contains("[..."))
+        .unwrap_or_else(|| panic!("the tool's omission marker is nowhere on screen: {rows:#?}"));
+    assert!(
+        marker.contains("lines /") && marker.contains("bytes omitted"),
+        "the marker carries the tool's exact counts: {marker:?}"
+    );
+    // And the tail the cap was designed to keep is still there.
+    assert!(
+        rows.iter()
+            .any(|r| r.contains("aborting due to 1 previous error")),
+        "the tail survives the cap: {rows:#?}"
+    );
+    // The card's own affordance is still there and still honest — it now counts
+    // one row fewer, because the marker it used to replace is drawn.
+    assert!(
+        rows.iter().any(|r| r.contains("earlier rows")),
+        "the card still names how much is hidden: {rows:#?}"
+    );
+}
+
+/// **C2: `… N earlier lines` was counting wrapped rows.**
+///
+/// The affordance's number comes from the cap, and the cap counts **rows** —
+/// that is what [`crate::ui::card::BODY_ROWS`] budgets, because a long line
+/// costs its wrapped rows. A body of twenty 70-column lines at a 60-column frame
+/// is forty rows, so the row read `… 28 earlier lines` beside a body whose
+/// twenty-eighth *line* was on screen: arithmetic a reader cannot reconcile with
+/// what they are looking at. The word now says what was counted.
+#[test]
+fn a_capped_body_says_rows_because_it_counts_wrapped_rows() {
+    let (mut app, _agent, _rx) = test_app();
+    pin_theme(&mut app, ThemeColorMode::Ansi16);
+    // 20 lines of 70 columns: two rows each at a 60-column frame, so the body is
+    // 40 rows against a 12-row cap — and 20 logical lines, a number the row must
+    // not print.
+    let body = (0..20)
+        .map(|i| format!("log line {i:02} {}", "x".repeat(58)))
+        .collect::<Vec<_>>()
+        .join("\n");
+    push_tool_result(&mut app, "tc-wrap", "bash", &body, false);
+
+    for (width, height) in [(60u16, 20u16), (80, 24)] {
+        let rows = render_rows(&mut app, width, height);
+        let row = rows
+            .iter()
+            .find(|r| r.contains("earlier"))
+            .unwrap_or_else(|| panic!("width {width}: no affordance on screen: {rows:#?}"));
+        assert!(
+            row.contains("earlier rows"),
+            "width {width} must count rows, because rows are what the cap counts: {row:?}"
+        );
+        assert!(
+            !row.contains("earlier lines"),
+            "width {width} must not call a wrapped row a line: {row:?}"
+        );
+    }
+}
+
+/// **C3: `TranscriptLine::hidden` was written and never read.**
+///
+/// Four sites folded the strip count into the field and its doc promised "the
+/// reader is told"; no render path consulted it, so a line with a bidi override
+/// in it was silently rewritten on screen. The count now rides the line's own
+/// first row, in the faintest style on it — which is the disposition chosen over
+/// deleting the field, because a silent strip is the failure the counter exists
+/// to prevent (`epsilon-runtime`'s `text_safety` header says so in as many
+/// words).
+#[test]
+fn a_line_that_had_characters_stripped_says_so_on_the_frame() {
+    let mut app = bench_app(UiState::new());
+    pin_theme(&mut app, ThemeColorMode::Ansi16);
+    // `push_external_text` is the public door for text the harness did not
+    // write — the seam `Card::sanitize`'s own doc names as the one a hostile
+    // character has to arrive through.
+    app.ui.push_external_text("ls\u{202E} -R /tmp");
+    assert_eq!(
+        app.ui.lines()[0].hidden.bidi,
+        1,
+        "precondition: the line recorded what the strip removed"
+    );
+
+    let rows = render_rows(&mut app, 80, 24);
+    let row = rows
+        .iter()
+        .find(|r| r.contains("-R /tmp"))
+        .unwrap_or_else(|| panic!("the stripped line is not on screen: {rows:#?}"));
+    assert!(
+        row.contains("1 hidden character"),
+        "the reader must be told what left the row: {row:?}"
+    );
+    // The override itself is gone: what is drawn is what the command does.
+    assert!(
+        !row.contains('\u{202e}'),
+        "the override reached the screen: {row:?}"
+    );
+}
+
+/// **C4: a hostile tool name reached the card title.**
+///
+/// `Card::sanitize` stripped the body, the headline and the arguments and never
+/// looked at `name` — the one field drawn from the model's own spelling of the
+/// tool. A name carrying a whole CSI sequence or a bidi override was therefore
+/// drawn verbatim in the title while the line's `text`, which carries the same
+/// name, was stripped beside it.
+#[test]
+fn a_hostile_tool_name_never_reaches_the_card_title() {
+    use epsilon_contracts::message::{AssistantMessage, Message, StopReason, Usage};
+    let hostile = "ba\u{1b}[0msh\u{202e}";
+    let (mut app, _agent, _rx) = test_app();
+    pin_theme(&mut app, ThemeColorMode::Ansi16);
+    super::apply_with_scroll(
+        &mut app,
+        &AgentEvent::MessageEnd {
+            message: Box::new(Message::Assistant(AssistantMessage {
+                id: "m-hostile".into(),
+                timestamp_ms: 0,
+                provider: "faux".into(),
+                model_id: "faux-1".into(),
+                content: vec![epsilon_contracts::content::ContentBlock::ToolCall {
+                    id: "tc-hostile".into(),
+                    name: hostile.into(),
+                    arguments: serde_json::json!({ "command": "cargo build" }),
+                }],
+                stop_reason: StopReason::ToolUse,
+                error_message: None,
+                usage: Usage::default(),
+            })),
+        },
+    );
+
+    let rows = render_rows(&mut app, 80, 24);
+    let title = rows
+        .iter()
+        .find(|r| r.contains("cargo build"))
+        .unwrap_or_else(|| panic!("the card is not on screen: {rows:#?}"));
+    for c in title.chars() {
+        assert!(
+            !('\u{0}'..='\u{1f}').contains(&c) && c != '\u{202e}',
+            "a display-steering character survived into the card title: {title:?}"
+        );
+    }
+    assert!(
+        title.contains("bash"),
+        "the readable part of the name survives: {title:?}"
+    );
+    // And the data the renderer reads is clean, not only the pixels: a second
+    // renderer (or a resumed session) reads `Card::name`.
+    let card = app.ui.lines()[0].card.as_ref().expect("the card");
+    assert_eq!(card.name, "bash", "the stored name is stripped too");
+}
+
+/// **C4's other half: the orphaned result card.** The name test above drives a
+/// settled card (call committed, then result), which sanitizes at construction.
+/// The orphaned path — a result whose call card never arrived (a replay that
+/// lost it, a result carried from another branch) — used to build its card
+/// inline without `Card::sanitize`, so its name, body and headline were the one
+/// card in the transcript drawn verbatim while its siblings were stripped. The
+/// control that proves this test sees that path: replacing `card.sanitize()`
+/// at the orphan construction with `Stripped::default()` fails it.
+#[test]
+fn an_orphaned_tool_result_card_is_sanitized_like_every_other_card() {
+    let hostile = "ba\u{1b}[0msh\u{202e}";
+    let (mut app, _agent, _rx) = test_app();
+    pin_theme(&mut app, ThemeColorMode::Ansi16);
+    // No ToolCall for this id: the reducer takes the orphan branch.
+    push_tool_result(&mut app, "tc-never-called", hostile, "the body", false);
+
+    let rows = render_rows(&mut app, 80, 24);
+    let title = rows
+        .iter()
+        .find(|r| r.contains("the body"))
+        .unwrap_or_else(|| panic!("the orphaned card is not on screen: {rows:#?}"));
+    for c in title.chars() {
+        assert!(
+            !('\u{0}'..='\u{1f}').contains(&c) && c != '\u{202e}',
+            "a display-steering character survived into the orphaned card's title: {title:?}"
+        );
+    }
+    assert!(
+        title.contains("bash"),
+        "the readable part of the name survives on the orphan path too: {title:?}"
+    );
+}
+
+/// **C8: does the CSI fix (f9fa4b7) reach a card? It does — and this is the
+/// frame that proves it.**
+///
+/// `display_safe` now removes a whole CSI sequence, so `--color=always` output
+/// no longer arrives as `[0;32m` printable ASCII on a card. The card path
+/// reaches it through `Card::sanitize` on the settled body, which is what this
+/// drives: a coloured compiler line, committed as a real tool result, drawn at
+/// 80 and 100 columns. The assertion is on the **absence** of the residue,
+/// because the failure mode is extra text rather than missing text.
+#[test]
+fn a_coloured_tool_result_reaches_the_card_without_its_escape_residue() {
+    let (mut app, _agent, _rx) = test_app();
+    pin_theme(&mut app, ThemeColorMode::Ansi16);
+    let body = "\u{1b}[0;32m   Compiling epsilon-tui v0.1.0\u{1b}[0m\n\
+                \u{1b}[1;31mmatch\u{1b}[0m:12\u{1b}[K\n\
+                error[E0308]: mismatched types at src/first.rs:12";
+    push_tool_result(&mut app, "tc-colour", "bash", body, false);
+
+    for (width, height) in [(80u16, 24u16), (100, 30)] {
+        let screen = render_rows(&mut app, width, height).join("\n");
+        assert!(
+            screen.contains("Compiling epsilon-tui"),
+            "width {width}: the line itself must survive: {screen}"
+        );
+        for residue in ["[0;32m", "[0m", "[1;31m", "[K"] {
+            assert!(
+                !screen.contains(residue),
+                "width {width}: escape residue {residue:?} reached the card: {screen}"
+            );
+        }
+    }
+}
+
+/// **C7: a cancelled command said `failed`.**
+///
+/// The shell tool reports a cancellation as an ordinary failure
+/// (`epsilon-tools/src/shell.rs:451`, `:570`) and epsilon-core turns a tool
+/// failure into an error result carrying that text verbatim, so the card read
+/// `✗ bash $ cargo build · failed` for a command the reader stopped themselves.
+/// `CardStatus::Cancelled` now names it, and pi spells the same distinction
+/// `(cancelled)` — never beside an exit number
+/// (`references/pi-1.0.0/packages/coding-agent/src/modes/interactive/components/bash-execution.ts:189`,
+/// `:192`).
+#[test]
+fn a_cancelled_shell_card_says_cancelled_and_not_failed() {
+    use epsilon_contracts::message::{AssistantMessage, Message, StopReason, Usage};
+    let (mut app, _agent, _rx) = test_app();
+    pin_theme(&mut app, ThemeColorMode::Ansi16);
+    super::apply_with_scroll(
+        &mut app,
+        &AgentEvent::MessageEnd {
+            message: Box::new(Message::Assistant(AssistantMessage {
+                id: "m-cancel".into(),
+                timestamp_ms: 0,
+                provider: "faux".into(),
+                model_id: "faux-1".into(),
+                content: vec![epsilon_contracts::content::ContentBlock::ToolCall {
+                    id: "tc-cancel".into(),
+                    name: "bash".into(),
+                    arguments: serde_json::json!({ "command": "cargo build" }),
+                }],
+                stop_reason: StopReason::ToolUse,
+                error_message: None,
+                usage: Usage::default(),
+            })),
+        },
+    );
+    push_tool_result(
+        &mut app,
+        "tc-cancel",
+        "bash",
+        "[aborted] command cancelled by user before completion: cargo build",
+        true,
+    );
+
+    for (width, height) in [(80u16, 24u16), (100, 30)] {
+        let screen = render_rows(&mut app, width, height).join("\n");
+        assert!(
+            screen.contains("cancelled"),
+            "width {width}: the card must say the user cancelled it: {screen}"
+        );
+        assert!(
+            !screen.contains("failed"),
+            "width {width}: a decision must not be reported as a defect: {screen}"
+        );
+    }
+    // The control on the whole feature: the same command failing on its own
+    // merit must still say `failed`. One test that only ever saw the cancelled
+    // case would pass against a renderer that printed the same word for both.
+    let (mut app, _agent, _rx) = test_app();
+    push_tool_result(
+        &mut app,
+        "tc-other",
+        "bash",
+        "cargo build\nerror: could not compile `epsilon-tui`",
+        true,
+    );
+    let screen = render_rows(&mut app, 80, 24).join("\n");
+    assert!(
+        screen.contains("failed") && !screen.contains("cancelled"),
+        "an ordinary failure keeps its own word: {screen}"
+    );
+}
+
+/// **C9: the footer names the session beside the location (P-200).**
+///
+/// The `~` half was already implemented — `App::new` shortens the workspace root
+/// with `format_path` — but neither half was pinned by a test, and the session
+/// name was drawn nowhere. This asserts both on one real row: the location, and
+/// the `•`-separated session name beside it.
+#[test]
+fn the_footer_names_the_session_beside_the_location() {
+    let (mut app, _agent, _rx) = test_app();
+    app.session_name = Some("work".into());
+    let rows = render_rows(&mut app, 80, 24);
+    let footer = rows.last().expect("the footer row");
+    assert!(
+        footer.contains("• work"),
+        "the session name must ride the footer: {footer:?}"
+    );
+    // The location is on the same row, and it is the shortened one the app
+    // prepared once at construction rather than a per-frame recompute: the row
+    // shows what `location_span` makes of that label at this width, so the test
+    // asserts the same transformation the draw applies.
+    let label = app.location_labels[0].clone();
+    let shown = crate::ui::footer::location_span(&label, 80, &app.theme);
+    assert!(
+        footer.contains(&shown),
+        "the workspace stays on the row beside it ({shown:?}): {footer:?}"
+    );
+    // And an unnamed session draws no bullet.
+    let (mut app, _agent, _rx) = test_app();
+    app.session_name = None;
+    let footer = render_rows(&mut app, 80, 24).pop().expect("the footer row");
+    assert!(
+        !footer.contains('•'),
+        "an unnamed session must not draw a separator: {footer:?}"
+    );
+}
+
+/// **C10: the retry notice carries a counter and a countdown (P-189).**
+///
+/// The notice used to reach the status line as one sentence —
+/// `HTTP 503: overloaded — retrying gpt-x in 2.0s (attempt 2) (server error)` —
+/// with no counter a reader can follow across attempts and no countdown. Pi
+/// draws `Retrying (attempt/max) in Ns... (KEY to cancel)` and re-renders it each
+/// whole second
+/// (`references/pi-1.0.0/packages/coding-agent/src/modes/interactive/components/status-indicator.ts:56,64`,
+/// `components/countdown-timer.ts:20-32`); the `esc` ours names is the
+/// `app.interrupt` the footer already advertises while a run is live.
+#[test]
+fn the_header_counts_a_retry_down_in_whole_seconds() {
+    let (mut app, _agent, _rx) = test_app();
+    pin_theme(&mut app, ThemeColorMode::Ansi16);
+    super::apply_with_scroll(
+        &mut app,
+        &AgentEvent::Notice {
+            text: "HTTP 503: overloaded — retrying faux-1 in 30.0s (attempt 3) (server error)"
+                .into(),
+        },
+    );
+    app.ui.set_running_for_test(true);
+
+    // 140, not 80 or 100: the countdown is emitted whole or not at all, and the
+    // width that decides it is the row's pinned model tail. Measured here: an
+    // offline session's `Faux (offline scripted) • thinking off · offline` takes
+    // ~46 columns of pinned tail, so the ~37-column countdown fits at 140 and is
+    // dropped whole below that — the rule the header's own unit test pins with
+    // controlled measurements (`a_retry_countdown_is_drawn_whole_or_not_at_all`).
+    // A real (non-offline) model label is a third of that size and fits from 100.
+    let screen_rows = render_rows(&mut app, 140, 30);
+    assert!(
+        screen_rows[0].contains("Retrying (3/5) in 30s... (esc to cancel)"),
+        "the header must state the counter, the countdown and the way out: {:?}",
+        screen_rows[0]
+    );
+    // The transcript keeps the notice's own sentence, so a pause is still
+    // explainable afterwards — the counter does not replace the record.
+    let rows = render_rows(&mut app, 80, 24);
+    assert!(
+        rows.iter().any(|r| r.contains("retrying faux-1")),
+        "the notice itself stays in the transcript: {rows:#?}"
+    );
+    // And a notice that is not a retry leaves the header alone: a stall
+    // watchdog's "still streaming" is not a countdown.
+    let (mut app, _agent, _rx) = test_app();
+    super::apply_with_scroll(
+        &mut app,
+        &AgentEvent::Notice {
+            text: "no output for 60s — still streaming".into(),
+        },
+    );
+    app.ui.set_running_for_test(true);
+    let rows = render_rows(&mut app, 80, 24);
+    assert!(
+        !rows[0].contains("Retrying ("),
+        "a non-retry notice must not be counted down: {:?}",
+        rows[0]
+    );
+    // At 140 the phase fits whole, and the watchdog's own words are on screen.
+    // At 80 the phase budget legitimately cuts it (`no output for 6…`) — the
+    // budget exists to protect the model name, and a notice is the thing it
+    // spends — so the assertion names the width that answers the question.
+    let wide = render_rows(&mut app, 140, 24);
+    assert!(
+        wide[0].contains("still streaming"),
+        "and it is the phase, as it was: {:?}",
+        wide[0]
+    );
+}

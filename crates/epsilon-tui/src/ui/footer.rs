@@ -129,6 +129,19 @@ pub struct Hints {
     pub location: Option<String>,
     /// The git branch, when the workspace is a repository.
     pub branch: Option<String>,
+    /// The session's name, when it has one: ` • work` after the branch (P-200).
+    ///
+    /// Pi's footer ends with exactly this — `pwd (branch) • session-name`
+    /// (`references/pi-1.0.0/packages/coding-agent/src/modes/interactive/components/footer.ts:170`,
+    /// `:176`) — and ours borrows the `•` rather than the row's own ` · ` separator so the
+    /// name reads as a different *kind* of fact from the branch beside it: the branch is
+    /// what the workspace is, the name is what this conversation is.
+    ///
+    /// The value comes from [`crate::app::App::session_name`], which the terminal title
+    /// already reads (`app/session.rs:545-553`); it is not recomputed here. It is stripped
+    /// of display-steering characters before it is stored, for the same reason the title
+    /// strips it — a session name is user-typed text and this row draws it.
+    pub session: Option<String>,
     /// Set while a run is in flight, so the footer can say how to stop it, and
     /// how many messages are waiting behind it.
     pub queued: usize,
@@ -377,6 +390,10 @@ pub fn draw(f: &mut Frame<'_>, area: Rect, theme: &Theme, hints: &Hints) {
     if let Some(branch) = &hints.branch {
         right.push(Span::styled(" · ", theme.faint()));
         right.push(Span::styled(branch.clone(), theme.faint()));
+    }
+    if let Some(session) = &hints.session {
+        right.push(Span::styled(" • ", theme.faint()));
+        right.push(Span::styled(session.clone(), theme.faint()));
     }
     let budget = if right.is_empty() {
         // No location: nothing to be separated from, and the whole row is the
@@ -634,6 +651,59 @@ mod tests {
         // Narrower than the location: show the location, drop the hints.
         let narrow = render(12, &hints);
         assert!(narrow.contains("api"), "{narrow}");
+    }
+
+    /// P-200, both halves: the `~`-shortened location **and** the session name.
+    ///
+    /// The `~` is produced by [`crate::ui::format::format_path`], which
+    /// `App::new` already applies to the workspace root
+    /// (`app/session.rs:36-54`) — the parity row says neither half was
+    /// established by a test, and the half that was already *implemented* is the
+    /// one most in need of being pinned, because nothing else would notice its
+    /// removal. The name half is [`Hints::session`], and it is drawn with pi's
+    /// `•` rather than the row's own ` · ` separator so it reads as a different
+    /// kind of fact from the branch beside it
+    /// (`references/pi-1.0.0/packages/coding-agent/src/modes/interactive/components/footer.ts:170`,
+    /// `:176`).
+    #[test]
+    fn the_footer_names_the_session_beside_the_shortened_location() {
+        let hints = Hints {
+            location: Some("~/work/api".into()),
+            branch: Some("main".into()),
+            session: Some("work".into()),
+            ..Hints::idle(&defaults())
+        };
+        for width in [30u16, 50, 80, 120] {
+            let line = render(width, &hints);
+            assert_eq!(
+                crate::ui::layout::display_width(&line),
+                width as usize,
+                "width {width}"
+            );
+            // The shortened path, not the absolute one it was made from.
+            assert!(
+                line.contains("~/work/api"),
+                "width {width} lost the ~-shortened location: {line}"
+            );
+            assert!(line.contains("• work"), "width {width}: {line}");
+            assert!(line.contains("main"), "width {width}: {line}");
+        }
+        // The control on the separator: with no name there is no `•` — a bullet
+        // with nothing after it names a session that does not exist.
+        let unnamed = Hints {
+            session: None,
+            ..hints.clone()
+        };
+        let line = render(80, &unnamed);
+        assert!(
+            !line.contains('•'),
+            "an unnamed session drew a bullet: {line}"
+        );
+        // And the location and branch are untouched by its absence.
+        assert!(
+            line.contains("~/work/api") && line.contains("main"),
+            "{line}"
+        );
     }
 
     #[test]

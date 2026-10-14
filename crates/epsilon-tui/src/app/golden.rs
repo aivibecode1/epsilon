@@ -2132,11 +2132,10 @@ fn a_capped_text_body_keeps_its_tail_and_says_so() {
         // are below.
         let affordance = rows
             .iter()
-            .find(|r| r.contains("lines"))
-            .filter(|r| r.contains("earlier") || r.contains("more lines"))
+            .find(|r| r.contains("earlier") || r.contains("more rows"))
             .unwrap_or_else(|| panic!("the card was not capped at {width}:\n{screen}"));
         assert!(
-            affordance.contains("earlier lines"),
+            affordance.contains("earlier rows"),
             "the affordance must name which end is hidden: {affordance:?}"
         );
     }
@@ -2169,7 +2168,7 @@ fn a_capped_diff_still_keeps_its_head() {
     );
     let affordance = rows
         .iter()
-        .find(|r| r.contains("more lines"))
+        .find(|r| r.contains("more rows"))
         .expect("the diff is capped");
     assert!(
         !affordance.contains("earlier"),
@@ -2707,7 +2706,7 @@ fn the_diff_is_not_run_through_the_markdown_parser() {
         .iter()
         .take_while(|r| {
             (r.starts_with('✓') || r.starts_with('│') || r.starts_with('|'))
-                && !r.contains("more lines")
+                && !r.contains("more rows")
         })
         .cloned()
         .collect::<Vec<_>>()
@@ -3143,7 +3142,7 @@ fn a_long_diff_is_capped_and_says_which_key_opens_it() {
     let rows = render_rows(&mut app, 80, 24);
     let affordance = rows
         .iter()
-        .find(|r| r.contains("more lines"))
+        .find(|r| r.contains("more rows"))
         .unwrap_or_else(|| panic!("the card was not capped: {rows:#?}"));
     assert!(
         affordance.contains(&format!("({key} to open)")),
@@ -3156,7 +3155,7 @@ fn a_long_diff_is_capped_and_says_which_key_opens_it() {
     let body_rows = 41;
     let hidden = body_rows - crate::ui::card::BODY_ROWS;
     assert!(
-        affordance.contains(&format!("… {hidden} more lines")),
+        affordance.contains(&format!("… {hidden} more rows")),
         "the affordance must print the true number of hidden rows ({hidden}): {affordance:?}"
     );
     // The cap really caps: no `+new line 19` on screen.
@@ -3225,7 +3224,7 @@ fn ctrl_x_opens_the_newest_card_and_leaves_the_others_alone() {
 
     let rows = render_rows(&mut app, 80, 44);
     assert!(
-        rows.iter().any(|r| r.contains("more lines")),
+        rows.iter().any(|r| r.contains("more rows")),
         "the long card must be capped before the key is pressed: {rows:#?}"
     );
     assert!(

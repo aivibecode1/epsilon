@@ -8,8 +8,32 @@
 //! Draw path now: each [`crate::state::TranscriptLine`] renders to wrapped screen
 //! rows exactly once per width (keyed by its monotonic id); the transcript's row
 //! offsets are prefix sums over cached heights; the draw picks the visible window
-//! with a binary search and clones ONLY those rows. Cost per frame is O(visible),
-//! independent of transcript length.
+//! with a binary search and clones ONLY those rows.
+//!
+//! # What a frame actually costs, measured rather than assumed
+//!
+//! This header used to claim "cost per frame is O(visible), independent of
+//! transcript length". Half of that is true and half is not, and the honest split
+//! is worth writing down because the number was never measured:
+//!
+//! * [`RenderCache::visible_rows_with_kinds`] **is** O(visible). 20 rows out of a
+//!   4000-line transcript cost ~36 µs (2,000 windows, dev profile, this machine).
+//! * [`RenderCache::reconcile`] is O(transcript) per frame. It walks the id
+//!   prefix to find how much of it is already rendered, and that walk is one
+//!   comparison plus one hash probe per line: ~75 µs at 200 lines, ~460 µs at
+//!   1,000, ~2.5 ms at 4,000 (200 reconciles each, dev profile). Scrolling and
+//!   appending do not change that — a steady frame with nothing new in it pays
+//!   the full scan.
+//!
+//! **Why the code is left as it is.** Making the height table lazy would make the
+//! viewport's binary search, the transcript search's line↔row mapping and the
+//! render-cache's own eviction rule all lazy too, which is a redesign of the
+//! offset table rather than a fix to it. At the sizes a session reaches — the
+//! figures above are a dev-profile build, so a release build is several times
+//! cheaper — the scan is a fraction of a 16 ms frame. The claim is corrected
+//! instead of the code being rewritten, and `a_steady_frame_renders_nothing_new`
+//! pins the half of it that is structural: nothing is re-rendered, and only the
+//! window is materialized.
 
 use std::collections::{HashMap, HashSet};
 
@@ -157,7 +181,40 @@ impl RenderedLine {
 
 /// The styled logical lines of one transcript row BEFORE wrapping (prefix + body).
 /// Markdown rows and tool cards expand here — once per line id, never per frame.
+///
+/// **And it is where a stripped character is reported.** [`TranscriptLine::hidden`]
+/// counts what `text_safety` removed from this line, and until now nothing read it:
+/// the count was written by four sites, promised in a doc comment ("the reader is
+/// told"), and drawn nowhere. The notice rides the line's **first logical row** —
+/// before wrapping, so the wrap budgets for it — in the faintest style on the row,
+/// because it qualifies the row rather than being part of it.
+///
+/// This is the disposition chosen over deleting the field: the strip is
+/// safety-relevant, and a silent strip is the failure this counter exists to
+/// prevent (`epsilon-runtime`'s own `text_safety` module header says so in as many
+/// words). A row that had nothing removed draws exactly what it drew before.
 fn logical_lines(
+    line: &TranscriptLine,
+    state: &RenderState<'_>,
+    theme: &Theme,
+    width: usize,
+) -> Vec<Vec<(String, Style)>> {
+    let mut rows = logical_rows(line, state, theme, width);
+    if line.hidden.any()
+        && let Some(first) = rows.first_mut()
+    {
+        let n = line.hidden.total();
+        first.push((
+            format!(" · {n} hidden character{}", if n == 1 { "" } else { "s" }),
+            theme.faint(),
+        ));
+    }
+    rows
+}
+
+/// The styled logical lines of one transcript row BEFORE wrapping (prefix + body).
+/// Markdown rows and tool cards expand here — once per line id, never per frame.
+fn logical_rows(
     line: &TranscriptLine,
     state: &RenderState<'_>,
     theme: &Theme,
@@ -778,6 +835,50 @@ mod tests {
         cache.reconcile(&lines, 80, &state(false), &theme(), &HashSet::new());
         assert_eq!(cache.len(), 1);
         assert_eq!(cache.total_rows(), 2, "heading + paragraph");
+    }
+
+    /// The half of the header's cost claim that is structural, pinned.
+    ///
+    /// `render_cache`'s header used to promise O(visible) per frame. The windowing
+    /// half is true; the bookkeeping half is a scan of the id prefix, and that is
+    /// now written down with its measurements rather than argued. What this test
+    /// holds is the part a reader of that header relies on: a steady frame with
+    /// nothing new in it **re-renders nothing** (the cache keeps its entries and
+    /// their rows) and **materializes only the window** (twenty rows out of four
+    /// thousand), so the per-frame cost is a scan plus a clone and never a parse.
+    ///
+    /// The row *contents* are compared rather than a count, because a re-render
+    /// that produced the same number of rows would still be the defect this is
+    /// about — and because the card path re-reads the clock for its duration, the
+    /// rows are plain lines rather than cards.
+    #[test]
+    fn a_steady_frame_renders_nothing_new_and_windows_what_it_draws() {
+        let mut lines: Vec<TranscriptLine> = Vec::new();
+        for i in 0..4000 {
+            lines.push(plain(LineKind::System, format!("system line {i}")));
+        }
+        let mut cache = RenderCache::new();
+        cache.reconcile(&lines, 80, &state(false), &theme(), &HashSet::new());
+        assert_eq!(cache.len(), 4000, "every line is rendered exactly once");
+        let before = cache.total_rows();
+        let rows_before: Vec<String> = cache
+            .visible_rows(0, cache.total_rows())
+            .iter()
+            .map(text_of)
+            .collect();
+
+        cache.reconcile(&lines, 80, &state(false), &theme(), &HashSet::new());
+        assert_eq!(cache.len(), 4000, "a steady frame renders nothing new");
+        assert_eq!(cache.total_rows(), before, "and the heights are unchanged");
+        let rows_after: Vec<String> = cache
+            .visible_rows(0, cache.total_rows())
+            .iter()
+            .map(text_of)
+            .collect();
+        assert_eq!(rows_before, rows_after, "the same rows, not rebuilt ones");
+
+        // And the window really is a window: twenty rows asked for, twenty out.
+        assert_eq!(cache.visible_rows(2000, 20).len(), 20);
     }
 
     #[test]

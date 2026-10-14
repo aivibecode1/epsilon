@@ -30,6 +30,17 @@ pub enum RunState {
         phase: String,
         /// Seconds since the run started.
         elapsed_secs: u64,
+        /// The retry the run is waiting out, when it is waiting one (P-189):
+        /// `Retrying (2/5) in 12s... (esc to cancel)`.
+        ///
+        /// Not folded into `phase`, because the two yield differently. The phase
+        /// is the tool's own status line — the fragment on this row with no
+        /// length of its own, so it is the one that gets a budget and is cut.
+        /// A retry countdown is *harness state*, like `running 12s`: cut in half
+        /// it reads `Retrying (3/5) …`, which is a counter that is wrong rather
+        /// than shorter. So it is emitted whole or not at all, like a
+        /// measurement, and it takes its room from the phase.
+        retry: Option<String>,
     },
 }
 
@@ -79,8 +90,27 @@ pub fn draw(f: &mut Frame<'_>, area: Rect, theme: &Theme, state: &RunState, metr
     // "is it still working" outranks "how many tokens". The phase is therefore
     // budgeted against the **least** the measurements can be — their pinned tail
     // — rather than against what they happen to want today.
-    let floor = state_spans_without_phase(theme, state);
-    let left = state_spans(theme, state, &floor, phase_budget(width, &floor, metrics));
+    let mut left = state_spans_without_phase(theme, state);
+    // **A retry countdown is emitted whole or not at all** (P-189). It is state,
+    // not the tool's status line, so the rule the measurements follow is the one
+    // that belongs to it: `Retrying (3/5) …` is a counter that has been made
+    // wrong rather than shorter. It is measured against the room the phase would
+    // have taken, so the two compete on equal terms and the tool's own status
+    // line is what yields — which is the order the reader wants anyway, because
+    // "why is nothing happening" outranks "what the tool was doing".
+    if let RunState::Running {
+        retry: Some(retry), ..
+    } = state
+    {
+        // The separator is spent even when the text behind it does not fit.
+        let cost = 3 + display_width(retry);
+        if phase_budget(width, &left, metrics) >= cost {
+            left.push(Span::styled(" · ", theme.faint()));
+            left.push(Span::styled(retry.clone(), theme.warn()));
+        }
+    }
+    let budget = phase_budget(width, &left, metrics);
+    left.extend(phase_spans(theme, state, budget));
     let right = metric_spans(theme, metrics, room_beside(&left, width));
     let line = side_by_side(left, right, width, Priority::Left);
     let line = clamp_line(line, width);
@@ -143,29 +173,27 @@ fn phase_budget(width: usize, floor: &[Span<'static>], metrics: &Metrics) -> usi
         .saturating_sub(3)
 }
 
-/// The run state as drawn, with the phase cut to what the row can spare.
+/// The phase as drawn, with the phase cut to what the row can spare.
 ///
-/// `floor` is [`state_spans_without_phase`] for the same state, so the budget is
-/// measured against the text that is about to be emitted rather than a plan.
-fn state_spans(
-    theme: &Theme,
-    state: &RunState,
-    floor: &[Span<'static>],
-    budget: usize,
-) -> Vec<Span<'static>> {
+/// `budget` is [`phase_budget`]'s answer for the spans already emitted — the
+/// spinner and the run state, plus a retry countdown when there is one — so the
+/// room a retry takes is room the phase does not get, and the two cannot both be
+/// drawn out of the same columns.
+fn phase_spans(theme: &Theme, state: &RunState, budget: usize) -> Vec<Span<'static>> {
     let RunState::Running { phase, .. } = state else {
-        return floor.to_vec();
+        return Vec::new();
     };
     if phase.is_empty() || budget == 0 {
-        return floor.to_vec();
+        return Vec::new();
     }
     let shown = crate::wrap::fit_width_with(phase, budget, theme.glyphs.ellipsis);
     if shown.is_empty() {
-        return floor.to_vec();
+        return Vec::new();
     }
-    let mut spans = floor.to_vec();
-    spans.push(Span::styled(format!(" · {shown}"), theme.dim_strong()));
-    spans
+    vec![
+        Span::styled(" · ", theme.faint()),
+        Span::styled(shown, theme.dim_strong()),
+    ]
 }
 
 /// The measurements, dropped whole until the rest fit in `room`.
@@ -294,6 +322,7 @@ mod tests {
                 frame: 0,
                 phase: "streaming".into(),
                 elapsed_secs: 12,
+                retry: None,
             },
             &metrics,
         );
@@ -387,6 +416,68 @@ mod tests {
         );
     }
 
+    /// **A retry countdown is emitted whole or not at all (P-189).**
+    ///
+    /// The phase is the fragment on this row with no length of its own, so it is
+    /// the one that gets a budget and is cut. A retry countdown is *state*: cut in
+    /// half it reads `Retrying (3/5) …`, which is a counter that has been made
+    /// wrong rather than shorter — the M196 rule applied to a countdown. So it is
+    /// measured against the room the phase would have taken, and what yields is
+    /// the tool's own status line.
+    ///
+    /// The control is the width where the room runs out: there the countdown
+    /// disappears entirely and the row still reads as a running one. A test that
+    /// only asserted the wide case would pass against a build that cut the
+    /// counter in half, which is the defect this pins.
+    #[test]
+    fn a_retry_countdown_is_drawn_whole_or_not_at_all() {
+        let retry = "Retrying (3/5) in 30s... (esc to cancel)".to_string();
+        let state = |phase: &str| RunState::Running {
+            frame: 0,
+            phase: phase.to_string(),
+            elapsed_secs: 4,
+            retry: Some(retry.clone()),
+        };
+        let metrics = Metrics {
+            model_label: "DeepSeek V3.1".into(),
+            context_used: Some(48_000),
+            context_window: Some(200_000),
+            ..Metrics::default()
+        };
+        let wide = render(140, &state("reading"), &metrics);
+        assert!(
+            wide.contains(&retry),
+            "the countdown must be drawn whole where there is room: {wide}"
+        );
+
+        // Narrow: the countdown goes rather than being cut. What is left still
+        // says the run is alive.
+        let narrow = render(60, &state("reading"), &metrics);
+        assert!(
+            !narrow.contains("Retrying ("),
+            "a countdown with no room must be dropped whole, not cut: {narrow}"
+        );
+        assert!(narrow.contains("running"), "{narrow}");
+        assert!(
+            crate::ui::layout::display_width(&narrow) <= 60,
+            "{} cells: {narrow:?}",
+            crate::ui::layout::display_width(&narrow)
+        );
+
+        // No retry, no change: the phase keeps the room it always had.
+        let plain = render(
+            140,
+            &RunState::Running {
+                frame: 0,
+                phase: "reading".into(),
+                elapsed_secs: 4,
+                retry: None,
+            },
+            &metrics,
+        );
+        assert!(plain.contains("reading"), "{plain}");
+    }
+
     #[test]
     fn measurements_sit_on_the_right_and_never_wrap() {
         let metrics = Metrics {
@@ -407,6 +498,7 @@ mod tests {
                     frame: 3,
                     phase: "reading".into(),
                     elapsed_secs: 4,
+                    retry: None,
                 },
                 &metrics,
             );
@@ -540,6 +632,7 @@ mod tests {
                 frame: 0,
                 phase: "reading".into(),
                 elapsed_secs: 4,
+                retry: None,
             },
             &metrics,
         );
@@ -581,6 +674,7 @@ mod tests {
                     frame: 1,
                     phase: "streaming".into(),
                     elapsed_secs: 2,
+                    retry: None,
                 },
                 &metrics,
             );

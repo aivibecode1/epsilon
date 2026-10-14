@@ -387,3 +387,45 @@ fn a_successful_shell_card_grows_no_exit_code() {
     // The incomplete-output marker this headline already carried is unaffected.
     assert!(absent.contains("output incomplete"), "{absent}");
 }
+
+/// **C7: a cancelled command prints no exit number (P-158).**
+///
+/// Pi's rule is an if/else — `(cancelled)` **or** `(exit N)`, never both
+/// (`references/pi-1.0.0/packages/coding-agent/src/modes/interactive/components/bash-execution.ts:189`,
+/// `:192`) — because a killed child's status is not the command's verdict.
+/// `exit 1` beside `cancelled` reads as "this failed on its own merit", which is
+/// the C-110 lie in a new place.
+///
+/// The control is the same payload *without* the cancellation text: it must
+/// still print the code. Without that half this test would pass against a
+/// headline that never printed an exit number at all.
+#[test]
+fn a_cancelled_shell_card_grows_no_exit_number() {
+    let cancelled = super::result_head(
+        "bash",
+        &json!({ "command": "cargo test" }),
+        &json!({ "exit_code": 101 }),
+        "[aborted] command cancelled by user before completion: cargo test",
+        "…",
+    );
+    assert!(
+        cancelled.starts_with("$ cargo test"),
+        "the command line survives: {cancelled}"
+    );
+    assert!(
+        !cancelled.contains("exit"),
+        "a cancelled command must not carry an exit number: {cancelled}"
+    );
+    // And the ordinary failure beside it still does.
+    let failed = super::result_head(
+        "bash",
+        &json!({ "command": "cargo test" }),
+        &json!({ "exit_code": 101 }),
+        "error[E0425]: boom",
+        "…",
+    );
+    assert!(
+        failed.contains("exit 101"),
+        "the same payload without the cancellation still names the code: {failed}"
+    );
+}

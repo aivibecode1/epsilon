@@ -181,17 +181,36 @@ impl App {
     ///
     /// The phase word is derived here rather than stored, so it cannot disagree
     /// with the flags it is derived from.
+    ///
+    /// **A retry in flight is the phase (P-189).** The countdown is recomputed per
+    /// frame from the deadline the notice carried, which is the only way the row
+    /// can show seconds falling rather than the number the first frame happened
+    /// to read. It displaces the tool's own status line for as long as it lasts,
+    /// because "waiting 4s before try 2" is what the run is *doing*, and it ends
+    /// by itself when the wait expires ([`crate::state::UiState::retry_notice`]).
+    /// The `esc` it names is the same `app.interrupt` the footer already
+    /// advertises while a run is live, so the hint is not a key that does
+    /// nothing.
     pub(super) fn run_state(&self) -> crate::ui::header::RunState {
+        let now = crate::state::now_ms();
+        let retrying = self.ui.retry_notice(now);
+        let phase = if retrying.is_none() {
+            self.ui.status().to_string()
+        } else {
+            String::new()
+        };
         match self.run_started_at {
             Some(started) => crate::ui::header::RunState::Running {
                 frame: self.spinner_phase,
-                phase: self.ui.status().to_string(),
+                phase,
                 elapsed_secs: started.elapsed().as_secs(),
+                retry: retrying,
             },
             None if self.ui.running() => crate::ui::header::RunState::Running {
                 frame: self.spinner_phase,
-                phase: self.ui.status().to_string(),
+                phase,
                 elapsed_secs: 0,
+                retry: retrying,
             },
             None => crate::ui::header::RunState::Idle,
         }
@@ -526,6 +545,16 @@ impl App {
         if let Some(branch) = self.cached_branch() {
             hints.branch = Some(branch);
         }
+        // P-200: the session name, read from the field the terminal title already
+        // reads (`app/session.rs:545-553`) rather than recomputed — and stripped
+        // here because a session name is user-typed text reaching a screen. The
+        // title strips it for the OSC sequence's sake; this row strips it because
+        // it is the same untrusted string on the same screen.
+        hints.session = self
+            .session_name
+            .as_deref()
+            .map(|n| epsilon_runtime::text_safety::display_safe(n).0.into_owned())
+            .filter(|n| !n.trim().is_empty());
         // The goal badge rides the same reasoning as the location: it changes when someone
         // changes the goal, not when a frame is drawn, and reading it here would fold the whole
         // session log thirty times a second. `refresh_goal` is the one writer of this field.

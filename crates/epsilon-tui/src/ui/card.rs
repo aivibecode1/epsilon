@@ -149,6 +149,13 @@ fn status_word(status: CardStatus, glyphs: &Glyphs) -> (&'static str, &'static s
         // The warn glyph rather than the cross, for the same reason — a cross
         // reads as a defect where there was a decision (C-110's wording).
         CardStatus::Stopped => (glyphs.warn, "stopped"),
+        // P-158: the same distinction one level down — the **call** was cancelled
+        // by the user, rather than the turn it was in. Pi spells it `(cancelled)`
+        // and never prints it beside an exit number
+        // (`references/pi-1.0.0/packages/coding-agent/src/modes/interactive/components/bash-execution.ts:189`,
+        // against `(exit N)` at `:192`); ours is the status word, which is where
+        // every other verdict on this title lives.
+        CardStatus::Cancelled => (glyphs.warn, "cancelled"),
     }
 }
 
@@ -177,11 +184,27 @@ pub fn ms_text(ms: u64) -> String {
 /// for the body kind that keeps its head. A tail-kept card passes `false` so the
 /// sentence reads `N earlier lines` — see ``body_keeps_tail`` for why a card
 /// would keep its tail at all.
+///
+/// **The unit is the caller's, because what was counted is the caller's too.**
+/// [`more_lines`] and [`more_rows`] are the two spellings, and the difference is
+/// not pedantry: a body of 41 *lines* that wraps into 60 rows reads
+/// `… 48 earlier rows`, and a reader who cannot reconcile that number with the
+/// lines they can see has been given arithmetic instead of information.
 pub fn more_lines(remaining: usize, key: Option<&str>, hidden_below: bool) -> String {
     // The singular is not pedantry: an expandable **event** row hides its whole
     // digest, and a one-line digest is the common case — "… 1 more lines" was
     // the row's own text every time a compaction summary fit one line.
     let unit = if remaining == 1 { "line" } else { "lines" };
+    affordance(remaining, unit, hidden_below, key)
+}
+
+/// [`more_lines`] for a count of **wrapped rows**, which is what [`cap`] counts.
+pub fn more_rows(remaining: usize, key: Option<&str>, hidden_below: bool) -> String {
+    let unit = if remaining == 1 { "row" } else { "rows" };
+    affordance(remaining, unit, hidden_below, key)
+}
+
+fn affordance(remaining: usize, unit: &str, hidden_below: bool, key: Option<&str>) -> String {
     let direction = if hidden_below { "more" } else { "earlier" };
     match key {
         Some(key) => format!("… {remaining} {direction} {unit} ({key} to open)"),
@@ -380,6 +403,21 @@ pub(crate) fn event_body(
 /// `keep_tail` decides which end is kept — see [`body_keeps_tail`]. The
 /// affordance names the end too: a reader told only `N more lines` assumes the
 /// missing ones are *below*, which is the opposite of what a tail-kept card did.
+///
+/// **And the tool's own omission marker is never the thing the cap drops.**
+/// `epsilon-tools`' `truncate_output` already cut this body once, head and tail,
+/// and left a marker between the halves carrying the exact counts and the spill
+/// locator (`util.rs:953-963`, plus the one-block degenerate form at
+/// `util.rs:902-906`). A tail-kept cap then hid it, and the card's own plainer
+/// `… N earlier rows` was all that survived — so a stack trace lost the line that
+/// says *how much* of it was dropped and *where the rest lives*. The marker is
+/// therefore carried out of the dropped half and drawn immediately above the
+/// affordance, and the count is decremented by one so it keeps naming only
+/// **content** rows the reader cannot see.
+///
+/// The card is one row taller when this fires (`budget + 2`). That is deliberate
+/// and it is the cheaper error: the alternative spends a content line to make
+/// room, and the row it spends is the one the tool thought was worth keeping.
 fn cap(
     rows: Vec<CardRow>,
     budget: usize,
@@ -392,20 +430,52 @@ fn cap(
         return rows;
     }
     let remaining = rows.len() - budget;
+    // Read the dropped half before it is consumed. Only a tail-kept body can
+    // drop the marker at all: a head-kept one draws it, because it sits after
+    // the kept head.
+    let carried = if keep_tail {
+        rows[..remaining]
+            .iter()
+            .rev()
+            .find(|row| is_tool_omission_marker(row))
+            .cloned()
+    } else {
+        None
+    };
     let mut out: Vec<CardRow> = if keep_tail {
         rows.into_iter().skip(remaining).collect()
     } else {
         rows.into_iter().take(budget).collect()
     };
+    let mut hidden = remaining;
+    if let Some(marker) = carried {
+        out.push(marker);
+        hidden -= 1;
+    }
     out.push(vec![(
         format!(
             "{}{}",
             " ".repeat(indent),
-            more_lines(remaining, more_key, !keep_tail)
+            more_rows(hidden, more_key, !keep_tail)
         ),
         theme.faint(),
     )]);
     out
+}
+
+/// Whether a body row is the marker a **tool** wrote for its own truncation.
+///
+/// Textual on purpose: the card is handed a tool result as a string, and the only
+/// thing distinguishing the tool's marker from an ordinary line of output is the
+/// shape the tool wrote. Both shapes are matched — the ordinary omission report
+/// and the degenerate one-block one — and the match is narrow enough that a
+/// command which merely prints `[... 3 lines ...]` in its own output is not
+/// mistaken for a gap in the card's own body. The cost of being wrong is the
+/// pre-fix behaviour: the row is dropped like any other.
+fn is_tool_omission_marker(row: &CardRow) -> bool {
+    let text: String = row.iter().map(|(t, _)| t.as_str()).collect();
+    let t = text.trim();
+    t.starts_with("[...") && (t.contains("omitted") || t.contains("one oversized block"))
 }
 
 // ---- the diff ----------------------------------------------------------------
@@ -936,7 +1006,7 @@ fn cols(text: &str) -> usize {
 }
 #[cfg(test)]
 mod tests {
-    use super::{CardStatus, intra_pair, status_word};
+    use super::{CardStatus, intra_pair, more_lines, more_rows, status_word};
     use crate::state::{DiffKind, DiffLine};
     use crate::ui::theme::{ASCII, UNICODE};
 
@@ -1173,5 +1243,134 @@ mod tests {
             changed.contains('2'),
             "the changed token survives the strip: {changed:?}"
         );
+    }
+    /// **C1: the tool's own omission marker survives the cap.**
+    ///
+    /// The card is handed a body the tool already cut once, head and tail, with
+    /// its own marker between the halves carrying the exact counts. A tail-kept
+    /// cap drops that marker and prints its own plainer row instead, so the
+    /// reader learns how many *rows* are hidden and nothing about how much
+    /// *output* was dropped.
+    ///
+    /// The control is the shape without a marker: the same 30-row body, capped the
+    /// same way, must not grow a `[...` row out of nowhere — which is what a
+    /// matcher that fired on any line would do.
+    #[test]
+    fn a_cap_carries_the_tools_own_omission_marker_out_of_the_dropped_half() {
+        use crate::ui::theme::Theme;
+        let theme = Theme::new(crate::ui::theme::ColorMode::Ansi16, UNICODE);
+        let card = |body: String| super::Card {
+            tool_call_id: "c1".into(),
+            name: "bash".into(),
+            status: CardStatus::Ok,
+            body: super::CardBody::Text(body),
+            started_at_ms: 0,
+            ended_at_ms: Some(1),
+            args: serde_json::json!({}),
+            head: String::new(),
+        };
+        // 32 rows against the 12-row cap, tail-kept: the marker is row 17 of 32,
+        // so it is in the dropped half.
+        let mut body = String::new();
+        for i in 0..15 {
+            body.push_str(&format!("head line {i}\n"));
+        }
+        body.push_str("\n[... 12 lines / 480 bytes omitted — full output saved to spill.out]\n");
+        for i in 0..15 {
+            body.push_str(&format!("tail line {i}\n"));
+        }
+        let rows = super::rows(
+            &card(body),
+            false,
+            100,
+            super::BODY_ROWS,
+            &theme,
+            Some("ctrl+x"),
+        );
+        let text: Vec<String> = rows
+            .iter()
+            .map(|r| r.iter().map(|(s, _)| s.as_str()).collect::<String>())
+            .collect();
+        let joined = text.join("\n");
+        assert!(
+            joined.contains("[... 12 lines / 480 bytes omitted"),
+            "the tool's marker must survive the cap: {joined}"
+        );
+        assert!(
+            joined.contains("full output saved to spill.out"),
+            "and its locator with it: {joined}"
+        );
+        // The card's own affordance is still there, and it now names one row
+        // fewer than it dropped — because the marker it replaced is drawn.
+        assert!(
+            joined.contains("… 19 earlier rows (ctrl+x to open)"),
+            "the count names the content rows the reader cannot see: {joined}"
+        );
+
+        // Control: the same body with no marker in it grows none.
+        let plain = (0..30)
+            .map(|i| format!("plain line {i}"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        let rows = super::rows(
+            &card(plain),
+            false,
+            100,
+            super::BODY_ROWS,
+            &theme,
+            Some("ctrl+x"),
+        );
+        let joined: String = rows
+            .iter()
+            .map(|r| r.iter().map(|(s, _)| s.as_str()).collect::<String>())
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert!(
+            !joined.contains("[..."),
+            "a body with no marker of its own must not gain one: {joined}"
+        );
+        assert!(
+            joined.contains("… 18 earlier rows (ctrl+x to open)"),
+            "and the count is the whole gap: {joined}"
+        );
+    }
+
+    /// **C2: the affordance counts rows and says so.**
+    ///
+    /// A body of 40 rows against the 12-row cap reads `… 28 earlier rows`. The
+    /// old wording said "lines", which a reader reconciles against the lines they
+    /// can see — and a wrapped line is one line and two rows.
+    #[test]
+    fn a_capped_body_calls_its_count_rows_because_rows_are_what_it_counts() {
+        assert_eq!(
+            more_rows(1, Some("ctrl+x"), false),
+            "… 1 earlier row (ctrl+x to open)"
+        );
+        assert_eq!(
+            more_rows(28, Some("ctrl+x"), false),
+            "… 28 earlier rows (ctrl+x to open)"
+        );
+        // The direction and the singular/plural follow the count, as before.
+        assert_eq!(more_rows(3, None, true), "… 3 more rows");
+        // And the event row's own count is still lines, because it counts lines.
+        assert_eq!(more_lines(1, None, true), "… 1 more line");
+        assert_eq!(more_lines(3, None, true), "… 3 more lines");
+    }
+
+    /// **C7: a cancelled call reads `cancelled`, not `failed`, in both themes.**
+    ///
+    /// The word is what survives `NO_COLOR` and a font that cannot draw the
+    /// glyph, which is the reason `status_word` returns both. The glyph stays the
+    /// warning triangle: a cross would claim the command failed on its own merit.
+    #[test]
+    fn a_cancelled_call_says_cancelled_and_keeps_the_warning_glyph() {
+        for glyphs in [&UNICODE, &ASCII] {
+            let (glyph, word) = status_word(CardStatus::Cancelled, glyphs);
+            assert_eq!(word, "cancelled");
+            assert_eq!(
+                glyph, glyphs.warn,
+                "a cross would report a decision as a defect"
+            );
+        }
     }
 }

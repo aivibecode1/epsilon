@@ -215,6 +215,13 @@ pub struct TranscriptLine {
     /// "2 hidden characters" can decide that the text was not what it claimed — which is
     /// the entire point of a harness that shows you commands before you approve them.
     /// Zero for almost every line.
+    ///
+    /// **The reader is told at the row.** The field was written by four sites and read
+    /// by none, so the promise above was a comment rather than a fact:
+    /// `render_cache::logical_lines` now appends the count to the line's first row, which
+    /// is where a reader looking at that row can see it. (The alternative — deleting the
+    /// field and the claim — would have made the strip silent, which is the failure this
+    /// counter exists to prevent; the count is cheap and the row is where it belongs.)
     pub hidden: crate::text_safety::Stripped,
     /// Untruncated original for expandable rows (tool outputs; M13 card polish).
     pub full: Option<String>,
@@ -268,6 +275,61 @@ pub enum CardStatus {
     /// reply. Without this a card keeps its spinner forever and reads as a hung
     /// agent rather than a cancelled one (P-051).
     Stopped,
+    /// The call itself was cancelled by the user (P-158).
+    ///
+    /// Its own status rather than `Failed`: the tool did not fail, the *user*
+    /// stopped it, and a card reading `✗ bash $ cargo build · failed` for a
+    /// command the reader cancelled is the C-110 lie in a new place — a defect
+    /// reported where there was a decision. Pi spells the same distinction
+    /// `(cancelled)` and puts it where Epsilon puts the status word
+    /// (`references/pi-1.0.0/packages/coding-agent/src/modes/interactive/components/bash-execution.ts:189`,
+    /// against `(exit N)` at `:192`).
+    ///
+    /// `Stopped` stays the *turn-level* statement (a card the abort found in
+    /// flight); `Cancelled` is the tool's own verdict about its own call. Two
+    /// facts, two words, one glyph family.
+    Cancelled,
+}
+
+/// Whether a tool result's text is the harness's own marker for a call the user
+/// cancelled.
+///
+/// The one structured signal available: `epsilon-core`'s executor turns a tool's
+/// failure into a result whose text is the failure message verbatim
+/// (`exec.rs:939`, `error_result`), and the shell tool writes
+/// `[aborted] command cancelled by user before completion: …` on both of its
+/// cancellation branches (`crates/epsilon-tools/src/shell.rs:451`, `:570`). There
+/// is no `details` flag to read — `error_result` hardcodes
+/// `{"blocked": true}` — so the wording is the channel, and the matching is
+/// deliberately narrow (the `[aborted]` marker *and* the word) so that a command
+/// which merely prints "cancelled" in its own output is not relabelled.
+///
+/// Degradation is safe in the direction that matters: if the tool's wording ever
+/// changes, the match stops firing and the card falls back to `failed` — the
+/// behaviour before this existed — rather than to a false success.
+pub fn cancelled_command(text: &str) -> bool {
+    let t = text.trim_start();
+    t.starts_with("[aborted]") && t.contains("cancel")
+}
+
+/// One scheduled retry, as the header needs to state it (P-189).
+///
+/// The whole point of the struct is the **deadline**: the counter and the
+/// countdown are computed per frame from it, so a reader watching the row sees
+/// the seconds fall rather than the number the frame that happened to be drawn
+/// first saw. Pi draws exactly this — `Retrying (attempt/max) in Ns... (KEY to
+/// cancel)` with a `CountdownTimer` re-rendering each whole second
+/// (`references/pi-1.0.0/packages/coding-agent/src/modes/interactive/components/status-indicator.ts:56,64`
+/// and `components/countdown-timer.ts:20-32`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct RetryWait {
+    /// The try about to happen: epsilon-core's notice numbers it `attempt + 2`,
+    /// so the first retry is 2 and the number a reader sees is 1-based.
+    pub attempt: u32,
+    /// How many tries the policy allows in total ([`epsilon_llm::RETRY_MAX_ATTEMPTS`]).
+    pub max: u32,
+    /// When the wait ends, in Unix milliseconds.
+    pub deadline_ms: u64,
 }
 
 /// A tool call or result as a card: a title line, then a body.
@@ -333,6 +395,16 @@ impl Card {
     /// half-forgotten. The returned count is folded into the line's `hidden`, so the reader is
     /// **told** rather than left to assume the text was whole — M260's rule, and the reason a
     /// silent strip is the same failure wearing a security hat.
+    ///
+    /// # `name` is stripped here too, and that is the fix for a real hole
+    ///
+    /// The name is the one field that never reached this method: `push_tool_call` built a card
+    /// with the model's own spelling of the tool name and sanitised everything except it, so a
+    /// name carrying `U+202E` or a whole CSI sequence was drawn verbatim in the card's title
+    /// while the line's own `text` — which carries the same name — was stripped beside it.
+    /// `display_safe` (f9fa4b7) already covers every other field this draws; the name was the
+    /// residue, and stripping it *here* rather than at each of the construction sites is what
+    /// keeps the next site from forgetting it.
     pub fn sanitize(&mut self) -> crate::text_safety::Stripped {
         use crate::text_safety::display_safe;
         let mut removed = crate::text_safety::Stripped::default();
@@ -341,6 +413,9 @@ impl Card {
             removed.control += hit.control;
         };
 
+        let (safe_name, hit) = display_safe(&self.name);
+        take(hit);
+        self.name = safe_name.into_owned();
         match &mut self.body {
             CardBody::Prompt(t) => {
                 let (safe, hit) = display_safe(t);
@@ -478,6 +553,29 @@ impl Diff {
     }
 }
 
+/// Is this line the header that opens a **new document** in a multi-file diff?
+///
+/// A `diff --git`/`index`/`---`/`+++` block between two files. Without this the
+/// parser stayed "inside" the first file's hunk for the whole concatenated diff:
+/// `in_hunk` was only ever set to `true` and never cleared, so the second file's
+/// `--- b/second.rs` — which begins with the removal marker `-` — was consumed as
+/// a **removed line of code** (`text: "-- b/second.rs"`, numbered as though it were
+/// source), and the context that followed it was numbered against the first file's
+/// counters. The second file's change was therefore drawn as part of the first
+/// file's. Git itself only reads these four forms in the header position, which is
+/// exactly where this asks the question.
+///
+/// The cost of asking is one ambiguity, and it is git's too: a *removed* line whose
+/// own text begins `--- ` is spelled `---- ` here and is read as a document header.
+/// No real diff does that on purpose, and the alternative — leaving the second file
+/// misread — costs a whole file of the change.
+fn is_file_header(raw: &str) -> bool {
+    raw.starts_with("diff ")
+        || raw.starts_with("index ")
+        || raw.starts_with("--- ")
+        || raw.starts_with("+++ ")
+}
+
 /// Parse a unified diff into lines with their kinds and numbers.
 ///
 /// Deliberately tolerant: a line the format does not define becomes
@@ -522,6 +620,20 @@ pub fn parse_diff(text: &str) -> Diff {
             in_hunk = true;
             lines.push(DiffLine {
                 kind: DiffKind::Hunk,
+                text: raw.to_string(),
+                number: None,
+            });
+            continue;
+        }
+        // **A new document closes the hunk.** Set above, never cleared, before
+        // this: the second file of a concatenated diff was read as more of the
+        // first one's — its `--- b/second.rs` as a removed line of code, its
+        // context numbered against the first file's counters. See
+        // [`is_file_header`].
+        if is_file_header(raw) {
+            in_hunk = false;
+            lines.push(DiffLine {
+                kind: DiffKind::Meta,
                 text: raw.to_string(),
                 number: None,
             });
@@ -798,6 +910,15 @@ pub struct UiState {
     /// `UiState::new` leaves it off so tests stay hermetic regardless of the
     /// machine's config file.
     pub(crate) hide_thinking: bool,
+    /// The scheduled retry the run is waiting out, if it is (P-189).
+    ///
+    /// Written by [`crate::state::UiState::retry_wait_from_notice`] when an
+    /// [`AgentEvent::Notice`] carries a retry, and read by
+    /// [`crate::state::UiState::retry_notice`] at draw time — which is what makes
+    /// the countdown *live* rather than frozen at the frame that read it. The
+    /// transcript row keeps the notice's own text; this is the header's copy, and
+    /// the two cannot disagree because both come from the same event.
+    retry: Option<RetryWait>,
     /// `true` once the session has been compacted and no fresh count has arrived,
     /// cleared by the first reply that reports one.
     ///
@@ -888,6 +1009,59 @@ impl UiState {
     /// Footer status text.
     pub fn status(&self) -> &str {
         &self.status
+    }
+
+    /// The scheduled retry a notice describes, or `None` for any other notice.
+    ///
+    /// **Why the notice's own text is parsed.** `epsilon-core` writes the wording
+    /// (`util.rs:206-213`) and sends it as an [`AgentEvent::Notice`] with a single
+    /// `text` field — the counter and the delay are inside that string and there
+    /// is no structured event carrying them. This front end may not edit
+    /// `epsilon-core`, so the notice is the only channel, and the parse is the
+    /// smallest thing that recovers the two numbers from it.
+    ///
+    /// The failure mode if the wording ever moves is a **degraded** row, not a
+    /// wrong one: the parse returns `None`, the header falls back to the notice's
+    /// own text (today's behaviour), and nothing claims a count that is not
+    /// there. A test below pins the pairing against the sentence epsilon-core
+    /// actually writes.
+    pub(crate) fn retry_wait_from_notice(text: &str) -> Option<RetryWait> {
+        // `{detail} — retrying {model} in {delay}s (attempt {n}){kind}`.
+        // `rfind`, because the model name is the only part that can itself
+        // contain " in " and the delay always follows the LAST one.
+        let after_model = text.rfind(" in ")? + 4;
+        let rest = &text[after_model..];
+        // The delay, up to its unit: `2.0s …` — digits and at most one point.
+        let secs_len = rest
+            .find(|c: char| !(c.is_ascii_digit() || c == '.'))
+            .unwrap_or(rest.len());
+        let secs: f64 = rest[..secs_len].parse().ok()?;
+        let attempt_at = rest.find("(attempt ")? + "(attempt ".len();
+        let attempt: u32 = rest[attempt_at..].split(')').next()?.trim().parse().ok()?;
+        Some(RetryWait {
+            attempt,
+            max: epsilon_llm::RETRY_MAX_ATTEMPTS,
+            deadline_ms: now_ms().saturating_add((secs * 1000.0).ceil() as u64),
+        })
+    }
+
+    /// The retry as the header states it, counted down to the whole second.
+    ///
+    /// `now_ms` is an argument rather than a clock read so a test can name the
+    /// moment, and so the draw path — which holds no clock of its own — supplies
+    /// one. `None` once the wait has expired, which is what stops a finished
+    /// countdown from sitting at `in 0s` until the next notice replaces it.
+    pub(crate) fn retry_notice(&self, now_ms: u64) -> Option<String> {
+        let wait = self.retry?;
+        let remaining = wait.deadline_ms.saturating_sub(now_ms);
+        if remaining == 0 {
+            return None;
+        }
+        let secs = remaining.div_ceil(1000);
+        Some(format!(
+            "Retrying ({}/{}) in {secs}s... (esc to cancel)",
+            wait.attempt, wait.max
+        ))
     }
 
     /// True while a run is active (typed input becomes steering).
@@ -1083,7 +1257,12 @@ impl UiState {
             .get("output_complete")
             .and_then(serde_json::Value::as_bool)
             == Some(false);
-        let status = if t.is_error {
+        let status = if cancelled_command(&body) {
+            // P-158: the user cancelled the call. `Failed` would name a defect
+            // where there was a decision (C-110's rule), and the card is the row
+            // that says which of the two this was.
+            CardStatus::Cancelled
+        } else if t.is_error {
             CardStatus::Failed
         } else if truncated_output {
             CardStatus::Partial
@@ -1201,17 +1380,27 @@ impl UiState {
             self.status = "tool done".into();
             return;
         }
+        let mut card = Card {
+            name: t.tool_name.clone(),
+            status,
+            tool_call_id: t.tool_call_id.clone(),
+            started_at_ms,
+            ended_at_ms: Some(now),
+            body: card_body,
+            args: args.clone(),
+            head: head.clone(),
+        };
+        // **The orphaned result card goes through the same funnel as every other
+        // one.** A result with no call card to settle — a replay that lost the
+        // call, a result carried over from another branch — used to be pushed
+        // without `sanitize` ever being called on it, so its name, body, headline
+        // and arguments were the one card in the transcript drawn verbatim while
+        // its siblings were stripped. `push_line`'s own strip covers `text`,
+        // `full` and `md` and deliberately does not reach into a card.
+        let hidden = card.sanitize();
         self.push_line(TranscriptLine {
-            card: Some(Card {
-                name: t.tool_name.clone(),
-                status,
-                tool_call_id: t.tool_call_id.clone(),
-                started_at_ms,
-                ended_at_ms: Some(now),
-                body: card_body,
-                args: args.clone(),
-                head: head.clone(),
-            }),
+            card: Some(card),
+            hidden,
             ..TranscriptLine::expandable(
                 if t.is_error {
                     LineKind::ToolResultErr
@@ -1867,6 +2056,10 @@ impl UiState {
                 // status line carries it live; the transcript keeps a dim system
                 // line so a pause after the fact is still explainable.
                 self.status = text.clone();
+                // P-189: a retry notice also carries the counter and the wait,
+                // which the header draws live. Every other notice replaces the
+                // wait — a stall watchdog's "still streaming" is not a countdown.
+                self.retry = Self::retry_wait_from_notice(text);
                 // M219: the marker is a glyph, not a literal. `⟳` is U+27F3, which no legacy
                 // code page carries, so a hard-coded one renders as a box on the consoles this
                 // harness otherwise supports.
@@ -1878,6 +2071,9 @@ impl UiState {
                 self.streaming_thinking.clear();
                 self.running = false;
                 self.status = "idle · type a task and press Enter".into();
+                // A countdown for a wait that is over is a stale claim: the run
+                // it belonged to has ended, so the header must not keep one.
+                self.retry = None;
                 // The matching marker for `AgentStart`: the header returns to
                 // `idle`, which is the visible signal that the run finished.
                 // A row saying so would be the third place the same fact lives.
@@ -3888,5 +4084,104 @@ mod tests {
             ],
             "blank exactly at the kind change: {kinds:?}"
         );
+    }
+
+    /// **C6: a two-file diff was read as one file's.**
+    ///
+    /// `in_hunk` was set by the first hunk header and never cleared, so the
+    /// second file of a concatenated diff was parsed as more of the first one's:
+    /// its `--- b/second.rs` — which begins with the removal marker `-` — became
+    /// a **removed line of code**, and the context under it was numbered against
+    /// the first file's counters. The second file's change was drawn as part of
+    /// the first file's, with a made-up line number on it.
+    #[test]
+    fn a_two_file_diff_reads_the_second_files_context_as_context() {
+        let diff = parse_diff(
+            "--- a/first.rs\n+++ b/first.rs\n@@ -1,3 +1,3 @@\n one\n-two\n+2\n--- a/second.rs\n+++ b/second.rs\n@@ -1,3 +1,3 @@\n alpha\n-beta\n+gamma\n",
+        );
+        let kinds: Vec<(DiffKind, Option<usize>, &str)> = diff
+            .lines
+            .iter()
+            .map(|l| (l.kind, l.number, l.text.as_str()))
+            .collect();
+        // Found by its own text rather than by a hardcoded index: the point of
+        // the test is where the second file begins, so naming it by position
+        // would make the assertion agree with whatever the parser did.
+        let at = kinds
+            .iter()
+            .position(|(_, _, text)| *text == "--- a/second.rs")
+            .expect("the second file's header is in the diff");
+        assert_eq!(
+            kinds[at],
+            (DiffKind::Meta, None, "--- a/second.rs"),
+            "the second file's `---` is a document header, not a removed line: {kinds:#?}"
+        );
+        assert_eq!(
+            kinds[at + 1],
+            (DiffKind::Meta, None, "+++ b/second.rs"),
+            "and so is its `+++`: {kinds:#?}"
+        );
+        // Its hunk restarts the numbering at the lines the header declares, and
+        // its context is context — not a removal, and not numbered against the
+        // first file's counters (which are at 1 and 2 by then).
+        assert_eq!(
+            &kinds[at + 2..],
+            &[
+                (DiffKind::Hunk, None, "@@ -1,3 +1,3 @@"),
+                (DiffKind::Context, Some(1), "alpha"),
+                (DiffKind::Remove, Some(2), "beta"),
+                (DiffKind::Add, Some(2), "gamma"),
+            ],
+            "the second file is parsed on its own terms: {kinds:#?}"
+        );
+    }
+
+    /// **C10: the retry notice's own sentence is what the counter is parsed from.**
+    ///
+    /// `epsilon-core` writes the wording (`util.rs:206-213`) and this front end
+    /// may not edit it, so the parse is pinned against the sentence it actually
+    /// sends — including the attempt numbering, which is `attempt + 2` and
+    /// therefore makes the first retry `2`.
+    #[test]
+    fn a_retry_notice_parses_its_counter_and_its_delay() {
+        let wait = UiState::retry_wait_from_notice(
+            "HTTP 503: overloaded — retrying faux-1 in 30.0s (attempt 3) (server error)",
+        )
+        .expect("the retry notice parses");
+        assert_eq!(
+            wait.attempt, 3,
+            "epsilon-core numbers the try about to happen"
+        );
+        assert_eq!(wait.max, epsilon_llm::RETRY_MAX_ATTEMPTS);
+
+        // The countdown is whole seconds, and it ends by itself.
+        let mut st = UiState::new();
+        st.apply(&AgentEvent::Notice {
+            text: "HTTP 503: overloaded — retrying faux-1 in 2.0s (attempt 2) (server error)"
+                .into(),
+        });
+        let now = crate::state::now_ms();
+        assert_eq!(
+            st.retry_notice(now).as_deref(),
+            Some("Retrying (2/5) in 2s... (esc to cancel)")
+        );
+        assert_eq!(
+            st.retry_notice(now + 500).as_deref(),
+            Some("Retrying (2/5) in 2s... (esc to cancel)"),
+            "the whole second it is still inside"
+        );
+        assert_eq!(
+            st.retry_notice(now + 1000).as_deref(),
+            Some("Retrying (2/5) in 1s... (esc to cancel)"),
+            "one second later, one second left"
+        );
+        assert_eq!(st.retry_notice(now + 2000), None, "and then it is over");
+        assert_eq!(st.retry_notice(now + 9000), None, "and stays over");
+
+        // A notice that is not a retry is not a countdown.
+        st.apply(&AgentEvent::Notice {
+            text: "no output for 60s — still streaming".into(),
+        });
+        assert_eq!(st.retry_notice(now), None);
     }
 }

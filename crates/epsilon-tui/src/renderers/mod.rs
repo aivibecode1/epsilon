@@ -147,36 +147,54 @@ pub fn result_head(
             _ => String::new(),
         },
         "shell" | "bash" | "run" => {
-            let mut extra = match details.get("output_complete").and_then(Value::as_bool) {
-                // M148: the command exited successfully but a descendant held the pipe, so what
-                // is on the card is not everything the command produced. The card must say so.
-                Some(false) => " · output incomplete".to_string(),
-                _ => String::new(),
-            };
-            // P-158: the exit number on the card, not only in its body. A failed command is
-            // the commonest long card, and `cargo test`'s verdict is exactly the fact a reader
-            // needs first — the shell tool already reports it (`epsilon-tools/src/shell.rs:466`,
-            // `:612`), and it was reaching the screen only as the last line of a body the
-            // twelve-row cap hides (`ui/card.rs:70`). Pi prints `(exit 101)` in its status
-            // parts (`bash-execution.ts:192`); the headline is this crate's place for what a
-            // settled card knows that the call did not, which is what the exit code is.
+            // A cancelled command prints no exit number (P-158). Pi's own rule is
+            // an if/else — `(cancelled)` **or** `(exit N)`, never both
+            // (`references/pi-1.0.0/packages/coding-agent/src/modes/interactive/components/bash-execution.ts:189`,
+            // `:192`) — and the reason is that a killed child's status is not the
+            // command's verdict. `exit 1` beside `cancelled` on one title reads as
+            // "this failed on its own merit", which is the C-110 lie: a defect where
+            // there was a decision.
             //
-            // Zero grows nothing: a successful command's exit code carries no information the
-            // status word does not, and printing `exit 0` beside `ok` is noise. Absent grows
-            // nothing either — a process killed by a signal has no code, and the body already
-            // says `[terminated by signal]` (`shell.rs:383`).
-            if let Some(code) = details.get("exit_code").and_then(Value::as_i64)
-                && code != 0
-            {
-                extra.push_str(&format!(" · exit {code}"));
+            // The exit-code key is absent on the cancellation path today
+            // (`epsilon-core`'s `error_result` builds `details` with no exit code),
+            // so this arm is a guard rather than a repair — it is what keeps a
+            // future tool that *does* report a status for a killed child from
+            // printing both halves at once. `a_cancelled_shell_card_grows_no_exit_number`
+            // is the test that proves it fires.
+            if crate::state::cancelled_command(body) {
+                String::new()
+            } else {
+                let mut extra = match details.get("output_complete").and_then(Value::as_bool) {
+                    // M148: the command exited successfully but a descendant held the pipe, so what
+                    // is on the card is not everything the command produced. The card must say so.
+                    Some(false) => " · output incomplete".to_string(),
+                    _ => String::new(),
+                };
+                // P-158: the exit number on the card, not only in its body. A failed command is
+                // the commonest long card, and `cargo test`'s verdict is exactly the fact a reader
+                // needs first — the shell tool already reports it (`epsilon-tools/src/shell.rs:466`,
+                // `:612`), and it was reaching the screen only as the last line of a body the
+                // twelve-row cap hides (`ui/card.rs:70`). Pi prints `(exit 101)` in its status
+                // parts (`bash-execution.ts:192`); the headline is this crate's place for what a
+                // settled card knows that the call did not, which is what the exit code is.
+                //
+                // Zero grows nothing: a successful command's exit code carries no information the
+                // status word does not, and printing `exit 0` beside `ok` is noise. Absent grows
+                // nothing either — a process killed by a signal has no code, and the body already
+                // says `[terminated by signal]` (`shell.rs:383`).
+                if let Some(code) = details.get("exit_code").and_then(Value::as_i64)
+                    && code != 0
+                {
+                    extra.push_str(&format!(" · exit {code}"));
+                }
+                // P-159: truncated output was spilled whole; the card names the
+                // file so the rest is retrievable. Only present when truncation
+                // actually spilled (small outputs carry no key).
+                if let Some(path) = details.get("full_output_path").and_then(Value::as_str) {
+                    extra.push_str(&format!(" · full output: {path}"));
+                }
+                extra
             }
-            // P-159: truncated output was spilled whole; the card names the
-            // file so the rest is retrievable. Only present when truncation
-            // actually spilled (small outputs carry no key).
-            if let Some(path) = details.get("full_output_path").and_then(Value::as_str) {
-                extra.push_str(&format!(" · full output: {path}"));
-            }
-            extra
         }
         _ => String::new(),
     };
