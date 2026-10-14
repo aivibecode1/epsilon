@@ -28,6 +28,12 @@ next.
 | [`04-session3-env-and-structure.md`](04-session3-env-and-structure.md) | **Session 3: the MSVC-env build blocker, the link-debt repair, G7 markdown** | live |
 | [`build-blockers-resolved.md`](build-blockers-resolved.md) | **Five stacked environment faults that made this repo unbuildable — now fixed** | live |
 | [`05-machine.md`](05-machine.md) | This machine: build/disk/verification procedure and its traps. **Sets `CARGO_TARGET_DIR` and the debug-info knobs.** | reference |
+| [`skills-crossharness.md`](skills-crossharness.md) | **Skills are read from every harness convention, not just Epsilon's own** — the root table, why it lives in `epsilon-core`, and three defects it exposed | landed — battery `skills-crossharness-final-20261013` |
+| [`grapheme-cuts.md`](grapheme-cuts.md) | **Cuts are grapheme-safe now, and the loop that hung is gone** — the two `unicode-width` rules, the `.max(1)` reachability, and the detector traps | landed — battery `gate-grapheme-cuts-b-20261013` |
+| [`criterion-5-catalog-refresh.md`](criterion-5-catalog-refresh.md) | **The catalog is a generated file, not a live feed** — the refresh gap, why the design is already fail-safe, and the smallest win that surfaces the date | open — audited, nothing built |
+| [`criterion-3-terminal-ide.md`](criterion-3-terminal-ide.md) | **The layout is one column, and criterion 3 asks for separation** — what exists, the 80x24 constraint, and the recommendation to ask before restructuring | open — audited, design question unresolved |
+| [`criterion-4-code-quality.md`](criterion-4-code-quality.md) | **49 broken intra-doc links, now 0** — `cargo doc` finds a defect class no gate looks at, and the script trap that made it report success while doing nothing | landed — battery `doc-links-clean-20261014` |
+| [`criterion-7-model-persistence.md`](criterion-7-model-persistence.md) | **Why the model choice does not survive a restart** — two write sites, two destinations, one read; root cause is a code read, the test is written out | open — not yet reproduced or fixed |
 | [`06-m197-baseline-and-ext-hang.md`](06-m197-baseline-and-ext-hang.md) | **M197: the tree was left RED, and a dead extension waited the full invoke budget** | live |
 | [`07-m198-frame-path.md`](07-m198-frame-path.md) | **M198: render a frame and look at it — the transcript printed every marker twice** | live |
 | [`frame-reading-pass.md`](frame-reading-pass.md) | **CLOSED by M201 — the findings, and the method that found them** | closed — the recipe still applies |

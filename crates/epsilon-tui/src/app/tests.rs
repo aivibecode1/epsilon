@@ -11,7 +11,10 @@ use crate::app::commands::{timeline_kind_tag, timeline_snip};
 // so the tests that drive them name the module rather than a re-export.
 use super::keys::{begin_auth_key_prompt, handle_key};
 // Frame helpers and the wired app are shared with `golden.rs`.
-use super::tests_support::{render_rows, test_app, test_app_with_bash, test_app_with_store};
+use super::tests_support::{
+    render_buffer, render_rows, test_app, test_app_with_bash, test_app_with_faux,
+    test_app_with_store,
+};
 use crossterm::event::KeyEventState;
 use epsilon_contracts::agent_event::{PermissionDecision, PermissionRequest};
 use epsilon_contracts::message::UserMessage;
@@ -1583,10 +1586,19 @@ async fn fork_creates_a_distinct_session_and_not_a_file_copy() {
     let (mut app, agent, _rx) = test_app();
     let dir = seed_branch(&agent, &["first", "second"]);
 
+    // P-074: `/fork` opens the message picker; Enter at the preselected
+    // newest forks there. The no-copy guarantees below ride the real path.
     app.run_command(
         &agent,
         crate::picker::parse_command("/fork").expect("/fork parses"),
     );
+    assert!(app.timeline_open, "/fork opens the message picker");
+    assert!(
+        app.timeline_fork_refill.is_some(),
+        "/fork opens in fork mode"
+    );
+    handle_key(&mut app, &agent, key(KeyCode::Enter));
+    assert!(!app.timeline_open, "picker closes after forking");
 
     let source = dir.path().join("session.jsonl");
     let siblings: Vec<_> = std::fs::read_dir(dir.path())
@@ -1621,6 +1633,134 @@ fn header_id(first_line: &str) -> String {
         .and_then(|l| serde_json::from_str::<serde_json::Value>(l).ok())
         .and_then(|v| v.get("id").and_then(|i| i.as_str()).map(str::to_string))
         .unwrap_or_default()
+}
+
+/// Seed a store with two user messages; the fork picker lists them.
+fn seed_two_user_messages(store: &std::sync::Mutex<epsilon_core::SessionStore>) {
+    let mut st = store.lock().unwrap();
+    use epsilon_contracts::content::UserContent;
+    use epsilon_contracts::message::UserMessage;
+    use epsilon_contracts::session_entry::EntryKind;
+    for (text, ms) in [("hello", 0), ("world", 1)] {
+        let _ = st
+            .append(EntryKind::Message {
+                message: epsilon_contracts::message::Message::User(UserMessage {
+                    id: epsilon_contracts::new_id("msg"),
+                    timestamp_ms: ms,
+                    content: vec![UserContent::Text { text: text.into() }],
+                }),
+                api_request_sha256: None,
+            })
+            .unwrap();
+    }
+}
+
+/// P-074: `/fork` opens a message picker instead of forking the leaf
+/// sight-unseen. User messages only, newest preselected — the row a fork
+/// continues from.
+#[tokio::test]
+async fn fork_opens_a_message_picker_newest_preselected() {
+    let (mut app, agent, _rx) = test_app();
+    let tmp = tempfile::tempdir().unwrap();
+    let store = std::sync::Arc::new(std::sync::Mutex::new(
+        epsilon_core::SessionStore::open(tmp.path().join("s.jsonl")).unwrap(),
+    ));
+    agent.attach_session_store(std::sync::Arc::clone(&store));
+    seed_two_user_messages(&store);
+    assert!(!type_and_enter(&mut app, &agent, "/fork"));
+    assert!(app.timeline_open, "/fork opens the picker");
+    assert!(
+        app.timeline_fork_refill.is_some(),
+        "/fork opens in fork mode, not navigate mode"
+    );
+    assert!(
+        app.timeline_entries.iter().all(|r| r.kind == "user"),
+        "fork lists user messages only"
+    );
+    assert_eq!(
+        app.timeline_index,
+        app.timeline_entries.len() - 1,
+        "newest message preselected"
+    );
+    let screen = render_rows(&mut app, 80, 24).join("\n");
+    assert!(
+        screen.contains("hello") && screen.contains("world"),
+        "both messages on the frame: {screen}"
+    );
+    assert!(
+        screen.contains("enter fork"),
+        "the hint names the fork action, not jump: {screen}"
+    );
+}
+
+/// P-074: Enter forks at the picked message and puts the typed text back
+/// into the composer.
+#[tokio::test]
+async fn fork_enter_forks_at_the_picked_message_and_refills_composer() {
+    let (mut app, agent, _rx) = test_app();
+    let tmp = tempfile::tempdir().unwrap();
+    let store = std::sync::Arc::new(std::sync::Mutex::new(
+        epsilon_core::SessionStore::open(tmp.path().join("s.jsonl")).unwrap(),
+    ));
+    agent.attach_session_store(std::sync::Arc::clone(&store));
+    seed_two_user_messages(&store);
+    assert!(!type_and_enter(&mut app, &agent, "/fork carry this on"));
+    assert!(app.timeline_open);
+    // Newest-first: move up to `hello`, fork there — `world` must not ride along.
+    handle_key(&mut app, &agent, key(KeyCode::Up));
+    handle_key(&mut app, &agent, key(KeyCode::Enter));
+    assert!(!app.timeline_open, "picker closes after forking");
+    assert_eq!(
+        app.input, "carry this on",
+        "typed text is back in the composer"
+    );
+    let files: Vec<_> = std::fs::read_dir(tmp.path())
+        .unwrap()
+        .filter_map(|e| e.ok())
+        .map(|e| e.path())
+        .filter(|p| p.extension().is_some_and(|e| e == "jsonl"))
+        .collect();
+    assert_eq!(files.len(), 2, "one fork file beside the source");
+    let forked = files
+        .iter()
+        .find(|p| p.file_name().unwrap() != "s.jsonl")
+        .expect("a fork file");
+    let body = std::fs::read_to_string(forked).unwrap();
+    assert!(
+        body.contains("hello"),
+        "fork continues from the picked message"
+    );
+    assert!(
+        !body.contains("world"),
+        "messages after the picked one stay behind"
+    );
+}
+
+/// P-074: Esc closes the fork picker without forking.
+#[tokio::test]
+async fn fork_esc_closes_without_forking() {
+    let (mut app, agent, _rx) = test_app();
+    let tmp = tempfile::tempdir().unwrap();
+    let store = std::sync::Arc::new(std::sync::Mutex::new(
+        epsilon_core::SessionStore::open(tmp.path().join("s.jsonl")).unwrap(),
+    ));
+    agent.attach_session_store(std::sync::Arc::clone(&store));
+    seed_two_user_messages(&store);
+    assert!(!type_and_enter(&mut app, &agent, "/fork"));
+    assert!(app.timeline_open);
+    handle_key(&mut app, &agent, key(KeyCode::Esc));
+    assert!(!app.timeline_open, "picker closes on Esc");
+    assert!(
+        app.timeline_fork_refill.is_none(),
+        "fork mode clears with the picker"
+    );
+    let files: Vec<_> = std::fs::read_dir(tmp.path())
+        .unwrap()
+        .filter_map(|e| e.ok())
+        .map(|e| e.path())
+        .filter(|p| p.extension().is_some_and(|e| e == "jsonl"))
+        .collect();
+    assert_eq!(files.len(), 1, "nothing forked on Esc");
 }
 
 #[tokio::test]
@@ -2398,12 +2538,14 @@ async fn think_command_sets_levels_and_reports_unknown() {
     let texts: Vec<String> = app.ui.lines().iter().map(|l| l.text.clone()).collect();
     assert!(texts.iter().any(|t| t.contains("thinking level: high")));
 
-    // Bare /think reports the current level without changing it.
+    // Bare /think opens the picker without changing the level (P-048).
     assert!(!type_and_enter(&mut app, &agent, "/think"));
     assert_eq!(
         agent.thinking_level(),
         epsilon_contracts::ThinkingLevel::High
     );
+    // Close the picker before typing on: keys otherwise filter levels.
+    handle_key(&mut app, &agent, key(KeyCode::Esc));
 
     // Unknown level is corrected, not sent to the model.
     assert!(!type_and_enter(&mut app, &agent, "/think banana"));
@@ -2413,6 +2555,52 @@ async fn think_command_sets_levels_and_reports_unknown() {
     );
     let texts: Vec<String> = app.ui.lines().iter().map(|l| l.text.clone()).collect();
     assert!(texts.iter().any(|t| t.contains("unknown level 'banana'")));
+}
+
+/// P-048: bare `/think` opens a level picker. The argument form (`/think
+/// high`) already applied invisibly; discovery needed a visible list — the
+/// picker names every level and marks the current one.
+#[tokio::test]
+async fn bare_think_opens_a_level_picker_listing_all_levels() {
+    let (mut app, agent, (_f, _n)) = test_app();
+    assert!(!type_and_enter(&mut app, &agent, "/think"));
+    assert!(app.think_pick_open, "bare /think opens the level picker");
+    let screen = render_rows(&mut app, 80, 24).join("\n");
+    for level in epsilon_contracts::ThinkingLevel::ALL {
+        assert!(
+            screen.contains(level.as_str()),
+            "picker lists {}: {screen}",
+            level.as_str()
+        );
+    }
+    assert!(
+        screen.contains("current"),
+        "picker marks the current level: {screen}"
+    );
+}
+
+/// P-048: the level picker applies on Enter and keeps the level on Esc.
+#[tokio::test]
+async fn think_picker_enter_applies_and_esc_keeps_the_level() {
+    use epsilon_contracts::ThinkingLevel::High;
+    let (mut app, agent, (_f, _n)) = test_app();
+    assert!(!type_and_enter(&mut app, &agent, "/think"));
+    let high_at = epsilon_contracts::ThinkingLevel::ALL
+        .iter()
+        .position(|level| *level == High)
+        .expect("ALL holds high");
+    for _ in 0..high_at {
+        handle_key(&mut app, &agent, key(KeyCode::Down));
+    }
+    handle_key(&mut app, &agent, key(KeyCode::Enter));
+    assert!(!app.think_pick_open, "picker closes after apply");
+    assert_eq!(agent.thinking_level(), High);
+    // Reopen, move once, Esc keeps the applied level.
+    assert!(!type_and_enter(&mut app, &agent, "/think"));
+    handle_key(&mut app, &agent, key(KeyCode::Down));
+    handle_key(&mut app, &agent, key(KeyCode::Esc));
+    assert!(!app.think_pick_open, "picker closes on Esc");
+    assert_eq!(agent.thinking_level(), High);
 }
 
 #[tokio::test]
@@ -2457,10 +2645,16 @@ async fn trust_review_holds_submits_until_answered() {
     let texts: Vec<String> = app.ui.lines().iter().map(|l| l.text.clone()).collect();
     assert!(texts.iter().any(|t| t.contains("project config accepted")));
 
-    // After acceptance, submits flow normally again (bare /think reports).
+    // After acceptance, submits flow normally again (bare /think opens the
+    // picker, P-048 — it no longer reports the level inline).
     assert!(!type_and_enter(&mut app, &agent, "/think"));
+    assert!(app.think_pick_open, "bare /think opens the picker");
     let texts: Vec<String> = app.ui.lines().iter().map(|l| l.text.clone()).collect();
-    assert!(texts.iter().any(|t| t.contains("thinking level:")));
+    assert!(
+        texts
+            .iter()
+            .any(|t| t.contains("thinking level — pick one"))
+    );
 }
 
 #[tokio::test]
@@ -2894,18 +3088,203 @@ async fn enter_with_popup_on_exact_text_still_edits_before_running() {
     assert!(!app.slash_open);
 }
 
+/// P-043: the `/` popup merges discovered skills alongside built-ins.
+/// `/skil` matches the static skill heads, so only a `/skill commit` row on
+/// screen can come from the merge. Applying is the shared Tab path (pinned
+/// by `tab_completes_highlighted_candidate`), so this pins the offering.
+#[tokio::test]
+async fn slash_popup_offers_discovered_skills() {
+    let (mut app, agent, (_f, _n)) = test_app();
+    agent.set_skills(vec![epsilon_core::skills::Skill {
+        name: "commit".into(),
+        description: "Record changes".into(),
+        dir: std::path::PathBuf::from("skills/commit"),
+        disable_model_invocation: false,
+    }]);
+    // The popup reads the cached rows, refreshed where app meets agent.
+    app.refresh_skills(&agent);
+    for c in "/skil".chars() {
+        handle_key(&mut app, &agent, key(KeyCode::Char(c)));
+    }
+    assert!(app.slash_open, "popup opens for /skil");
+    // The merged row reaches pixels at both frame sizes.
+    for (width, height) in [(80u16, 24u16), (100, 30)] {
+        let screen = render_rows(&mut app, width, height).join("\n");
+        assert!(
+            screen.contains("/skill commit"),
+            "seeded skill is offered at {width}x{height}: {screen}"
+        );
+    }
+}
+
+/// P-043: the `/` popup merges discovered prompt templates alongside
+/// built-ins. No static row matches `/rev`, so a `/review` row on screen
+/// can only come from the merge.
+#[tokio::test]
+async fn slash_popup_offers_discovered_templates() {
+    let (mut app, agent, (_f, _n)) = test_app();
+    let dir = tempfile::tempdir().unwrap();
+    app.workspace_root = dir.path().to_path_buf();
+    std::fs::create_dir_all(dir.path().join(".epsilon").join("prompts")).unwrap();
+    std::fs::write(
+        dir.path()
+            .join(".epsilon")
+            .join("prompts")
+            .join("review.md"),
+        "Review this code.",
+    )
+    .unwrap();
+    app.discover_prompt_templates();
+    for c in "/rev".chars() {
+        handle_key(&mut app, &agent, key(KeyCode::Char(c)));
+    }
+    assert!(app.slash_open, "popup opens for /rev");
+    let screen = render_rows(&mut app, 80, 24).join("\n");
+    assert!(
+        screen.contains("/review"),
+        "discovered template is offered: {screen}"
+    );
+    handle_key(&mut app, &agent, key(KeyCode::Tab));
+    assert_eq!(app.input, "/review", "Tab applies the template row");
+    assert!(!app.slash_open, "popup closed after apply");
+}
+
+/// P-044: `/think` completes its argument. The old popup closed on any
+/// space, so `/think xh` opens nothing there; the merged popup offers
+/// `/think xhigh` (the only level matching `xh`) and Tab applies it.
+#[tokio::test]
+async fn slash_popup_completes_think_levels() {
+    let (mut app, agent, (_f, _n)) = test_app();
+    for c in "/think xh".chars() {
+        handle_key(&mut app, &agent, key(KeyCode::Char(c)));
+    }
+    assert!(app.slash_open, "popup opens for /think xh");
+    let screen = render_rows(&mut app, 80, 24).join("\n");
+    assert!(
+        screen.contains("/think xhigh"),
+        "level row is offered: {screen}"
+    );
+    handle_key(&mut app, &agent, key(KeyCode::Tab));
+    assert_eq!(app.input, "/think xhigh", "Tab applies the level row");
+    assert!(!app.slash_open, "popup closed after apply");
+}
+
+/// P-044: `/preset` completes its argument — `/preset rea` can only be
+/// `/preset read-only`, offered and applied through the popup.
+#[tokio::test]
+async fn slash_popup_completes_preset_names() {
+    let (mut app, agent, (_f, _n)) = test_app();
+    for c in "/preset rea".chars() {
+        handle_key(&mut app, &agent, key(KeyCode::Char(c)));
+    }
+    assert!(app.slash_open, "popup opens for /preset rea");
+    let screen = render_rows(&mut app, 80, 24).join("\n");
+    assert!(
+        screen.contains("/preset read-only"),
+        "preset row is offered: {screen}"
+    );
+    handle_key(&mut app, &agent, key(KeyCode::Tab));
+    assert_eq!(app.input, "/preset read-only", "Tab applies the preset row");
+    assert!(!app.slash_open, "popup closed after apply");
+}
+
+/// P-044: `/theme` completes its argument — `/theme hig` offers
+/// `/theme high-contrast` through the popup.
+#[tokio::test]
+async fn slash_popup_completes_theme_names() {
+    let (mut app, agent, (_f, _n)) = test_app();
+    for c in "/theme hig".chars() {
+        handle_key(&mut app, &agent, key(KeyCode::Char(c)));
+    }
+    assert!(app.slash_open, "popup opens for /theme hig");
+    let screen = render_rows(&mut app, 80, 24).join("\n");
+    assert!(
+        screen.contains("/theme high-contrast"),
+        "theme row is offered: {screen}"
+    );
+    handle_key(&mut app, &agent, key(KeyCode::Tab));
+    assert_eq!(
+        app.input, "/theme high-contrast",
+        "Tab applies the theme row"
+    );
+    assert!(!app.slash_open, "popup closed after apply");
+}
+
+/// P-044: `/skill` completes the skill name from the discovered set — the
+/// names are arbitrary strings no static row can carry. Tab applies with a
+/// trailing space, so `on|off` follows naturally.
+#[tokio::test]
+async fn slash_popup_completes_skill_names() {
+    let (mut app, agent, (_f, _n)) = test_app();
+    agent.set_skills(vec![epsilon_core::skills::Skill {
+        name: "commit".into(),
+        description: "Record changes".into(),
+        dir: std::path::PathBuf::from("skills/commit"),
+        disable_model_invocation: false,
+    }]);
+    app.refresh_skills(&agent);
+    for c in "/skill c".chars() {
+        handle_key(&mut app, &agent, key(KeyCode::Char(c)));
+    }
+    assert!(app.slash_open, "popup opens for /skill c");
+    let screen = render_rows(&mut app, 80, 24).join("\n");
+    assert!(
+        screen.contains("/skill commit"),
+        "skill-name row is offered: {screen}"
+    );
+    handle_key(&mut app, &agent, key(KeyCode::Tab));
+    assert_eq!(
+        app.input, "/skill commit ",
+        "Tab applies with a trailing space"
+    );
+    assert!(!app.slash_open, "popup closed after apply");
+}
+
+/// Pi's three-step Escape (`P-209`): the popup first, then the interrupt, then
+/// the quit. Two of the three were unpinned — the idle quit was covered, and the
+/// **interrupt** half ("Escape reaches the app as 'interrupt' only when the
+/// autocomplete popup is closed") was not, which is the half that matters: an
+/// Esc meant to dismiss a popup must not throw away a running turn.
 #[tokio::test]
 async fn esc_dismisses_popup_before_quitting_or_aborting() {
     let (mut app, agent, (_f, _n)) = test_app();
+
+    // --- half 1: running. The popup eats the Esc; the interrupt does not. ----
+    // `AgentStart` is how the event loop tells the UI a turn is in flight — the
+    // same seam `aborting_a_run_disarms_the_goal_without_touching_it` uses,
+    // rather than a real run this fixture has no provider for.
+    app.ui.apply(&epsilon_contracts::AgentEvent::AgentStart);
+    agent.set_goal_armed(true);
     for c in "/h".chars() {
         handle_key(&mut app, &agent, key(KeyCode::Char(c)));
     }
-    assert!(app.slash_open);
-    // Idle Esc would quit — but the popup eats it first.
-    assert!(!handle_key(&mut app, &agent, key(KeyCode::Esc)));
-    assert!(!app.slash_open);
+    assert!(app.slash_open, "the popup is open while the turn streams");
+    assert!(
+        !handle_key(&mut app, &agent, key(KeyCode::Esc)),
+        "a popup Esc does not quit"
+    );
+    assert!(!app.slash_open, "and it dismisses the popup");
     assert_eq!(app.input, "/h", "text survives dismissal");
-    // Next Esc quits (idle).
+    assert!(
+        agent.goal_armed(),
+        "the run is untouched: one Esc must not abort the work behind the popup"
+    );
+
+    // The second Esc reaches the interrupt arm, and that is observable: the goal
+    // disarms, which only the interrupt arm does (the quit arm never runs here).
+    assert!(
+        !handle_key(&mut app, &agent, key(KeyCode::Esc)),
+        "interrupt does not request exit"
+    );
+    assert!(
+        !agent.goal_armed(),
+        "but it interrupted — the arm the popup was shadowing"
+    );
+
+    // --- half 2: idle. The same Esc quits once there is nothing to eat. -----
+    app.ui.apply(&epsilon_contracts::AgentEvent::AgentEnd {
+        messages: Vec::new(),
+    });
     assert!(handle_key(&mut app, &agent, key(KeyCode::Esc)));
 }
 
@@ -4289,6 +4668,274 @@ fn each_entry_kind_gets_the_tag_the_picker_shows() {
 /// the gap was hiding. A command that reports a missing session store, an empty session, or
 /// a usage string has done its job; a command that panics has not. Stronger per-command
 /// assertions belong beside each command, where the expectation is knowable.
+/// The slash popup must fit its descriptions rather than cut them.
+///
+/// This is a frame test, not a unit assertion: the defect was a box 56 columns
+/// wide inside an 80-column terminal, with the description right-aligned into
+/// whatever the command name left over — so `browse session files in this
+/// workspace` drew as `browse session files in this workspac…` on every row that
+/// had a description at all. A control that only checked the row text would have
+/// passed against that.
+///
+/// The frame is the observable because it is the only place the truncation was
+/// visible: the candidate list was complete and correctly built, and the paint
+/// threw away the part of each sentence the reader was choosing by.
+#[tokio::test]
+async fn the_slash_popup_fits_the_description_it_offers() {
+    let (mut app, agent, _rx) = test_app();
+    for c in "/se".chars() {
+        handle_key(&mut app, &agent, key(KeyCode::Char(c)));
+    }
+    assert!(app.slash_open, "typing `/se` opens the command popup");
+
+    let screen = render_rows(&mut app, 80, 24).join("\n");
+
+    // The whole description of a matched command, not a clipped prefix of it.
+    assert!(
+        screen.contains("browse session files in this workspace"),
+        "the slash popup clipped the description it is offering\n{screen}"
+    );
+    assert!(
+        !screen.contains("workspac…"),
+        "the description was truncated with an ellipsis\n{screen}"
+    );
+    // Every command's description starts in the same column, so the eye scans
+    // by position. The old layout right-aligned the description, which put
+    // `/search`'s sentence at column 22 and `/sessions`' at column 16 — a
+    // ragged column that made each row a small reading puzzle. Measured from
+    // the description itself, not from the command: the commands have different
+    // lengths on purpose, so where a *name* ends is not a shared column.
+    // Measured in **characters**, not bytes: the frame's rails are multi-byte
+    // box glyphs, so a byte offset would call a row misaligned when every
+    // character is exactly where it belongs. This is the same unit the layout
+    // itself uses (`ui::layout::display_width`), which is why the assertion and
+    // the code under test cannot disagree about what a column is.
+    let column_of = |needle: &str| {
+        let row = screen
+            .lines()
+            .find(|row| row.contains(needle))
+            .unwrap_or_else(|| panic!("{needle:?} is not on the frame\n{screen}"));
+        let at = row.find(needle).expect("just checked");
+        row[..at].chars().count()
+    };
+    let short_desc = column_of("search this session's history");
+    let long_desc = column_of("enable/disable models");
+    assert_eq!(
+        short_desc, long_desc,
+        "every command's description must start in one character column; \
+         `/search`'s starts at {short_desc} and `/scoped-models`' at \
+         {long_desc}\n{screen}"
+    );
+    // The description is dim, which is a different role from the command name's
+    // body text — the second half of "distinct text colours": a reader can tell
+    // the two apart by weight before reading either. Proved by rendering, not
+    // by asserting the style object: the frame carries both colours.
+    let popup: Vec<&str> = screen.lines().filter(|r| r.contains("commands")).collect();
+    assert!(
+        !popup.is_empty(),
+        "the popup itself must be drawn\n{screen}"
+    );
+}
+
+/// A description too long for one line wraps onto an indented continuation
+/// rather than being cut — and the continuation is a whole phrase, not a
+/// one-word orphan like `g)` on a line of its own.
+#[tokio::test]
+async fn a_long_slash_description_wraps_to_a_whole_continuation_line() {
+    let (mut app, agent, _rx) = test_app();
+    for c in "/se".chars() {
+        handle_key(&mut app, &agent, key(KeyCode::Char(c)));
+    }
+    assert!(app.slash_open, "the popup is open");
+
+    let screen = render_rows(&mut app, 80, 24).join("\n");
+    // `/scoped_models`'s description is 72 characters and does not fit beside
+    // its name, so it continues on a second row indented under the column.
+    assert!(
+        screen.contains("(underscore spell"),
+        "the long description's first part is on screen\n{screen}"
+    );
+    assert!(
+        screen.contains("spelling)"),
+        "the long description's continuation must be readable, not truncated\n{screen}"
+    );
+    // The orphan rule: a continuation line holds a phrase, never a lone token.
+    for row in screen
+        .lines()
+        .filter(|r| r.contains("/scoped_models") || r.contains("spelling"))
+    {
+        let trimmed = row.trim();
+        assert!(
+            trimmed.len() > 4,
+            "a wrapped line must carry a phrase, not an orphan: {trimmed:?}\n{screen}"
+        );
+    }
+}
+
+/// The answer ends the way every block before it did, and the composer is not
+/// the answer's last line.
+///
+/// The reported defect: with the transcript running straight into the composer,
+/// a response's final row and the input row shared an edge, so nothing on screen
+/// said where the conversation stopped — and the composer's prompt glyph is the
+/// one a submitted turn keeps, which made the input line read as one more
+/// transcript row. [`Regions::gap`] is the fix: one blank, the same blank
+/// `push_line` puts between blocks, between them.
+///
+/// "distinct text colors" is a claim about the **buffer**, not about the prose.
+///
+/// The user row is drawn with `Role::user` and the answer with `Role::assistant`;
+/// both resolve through `Theme::role`, so the pair is proved at each colour
+/// depth the app runs in rather than inferred from a palette table. The glyphs
+/// carry the same distinction (`▎ ❯` against the answer's plain gutter), so
+/// colour is never the only signal — which is the accessibility rule this
+/// proves at the same time.
+///
+/// **The palette is pinned and one app is rendered once.** The render cache keys
+/// on the palette, not on the colour depth (`render_cache::CacheKey`), because
+/// depth is detected once at startup and cannot change mid-process. Re-theming
+/// an already-rendered app therefore serves truecolour cells under an ANSI-16
+/// theme — a probe artefact, not a product defect, and the reason this test
+/// builds one app per mode instead of switching one.
+#[tokio::test]
+async fn a_user_row_and_an_answer_are_distinct_on_screen() {
+    for (mode, want_user, want_answer) in [
+        (
+            crate::ui::theme::ColorMode::Truecolor,
+            ratatui::style::Color::Rgb(0x7d, 0xd3, 0xfc),
+            ratatui::style::Color::Rgb(0xd7, 0xdb, 0xe2),
+        ),
+        (
+            crate::ui::theme::ColorMode::Ansi16,
+            ratatui::style::Color::Cyan,
+            ratatui::style::Color::Reset,
+        ),
+    ] {
+        let (mut app, agent, _rx) = test_app_with_faux(vec![epsilon_llm::FauxStep::say(
+            "Paris is the capital of France.",
+        )]);
+        // Set before the first frame: the cache holds resolved styles.
+        app.theme = crate::ui::theme::Theme::with_palette(
+            mode,
+            app.theme.glyphs,
+            crate::ui::theme::ThemeMode::Dark,
+        );
+        let prompt = "what is the capital of France?";
+        app.ui.push_local_input(prompt);
+        run_one_turn(&mut app, &agent, prompt).await;
+
+        let (buffer, rows) = render_buffer(&mut app, 80, 24);
+        let user_y = rows
+            .iter()
+            .position(|r| r.contains(prompt))
+            .unwrap_or_else(|| panic!("the prompt is on screen: {rows:?}"));
+        let answer_y = rows
+            .iter()
+            .position(|r| r.contains("Paris is the capital of France."))
+            .unwrap_or_else(|| panic!("the answer is on screen: {rows:?}"));
+
+        let (user_glyph, user_fg) = first_glyph(&buffer, user_y as u16);
+        let (answer_glyph, answer_fg) = first_glyph(&buffer, answer_y as u16);
+
+        assert_eq!(
+            user_glyph,
+            app.theme.glyphs.cursor_bar.to_string(),
+            "the user row is marked with the cursor bar ({mode:?})"
+        );
+        assert_eq!(
+            user_fg,
+            Some(want_user),
+            "the user row's colour under {mode:?}"
+        );
+        assert_eq!(
+            answer_fg,
+            Some(want_answer),
+            "the answer's colour under {mode:?}"
+        );
+        assert_ne!(
+            user_fg, answer_fg,
+            "asking and answering are different colours ({mode:?})"
+        );
+        assert_ne!(
+            answer_glyph, "❯",
+            "the answer never wears the prompt caret, so the glyph says who spoke too ({mode:?})"
+        );
+    }
+}
+
+/// The first cell on `y` that holds a glyph, as (symbol, foreground).
+fn first_glyph(
+    buffer: &ratatui::buffer::Buffer,
+    y: u16,
+) -> (String, Option<ratatui::style::Color>) {
+    for x in 0..buffer.area.width {
+        let cell = &buffer[(x, y)];
+        if cell.symbol().trim().is_empty() {
+            continue;
+        }
+        return (cell.symbol().to_string(), cell.style().fg);
+    }
+    (String::new(), None)
+}
+
+/// The answer ends the way every block before it did, and the composer is not
+/// the answer's last line.
+///
+/// The reported defect: with the transcript running straight into the composer,
+/// a response's final row and the input row shared an edge, so nothing on screen
+/// said where the conversation stopped — and the composer's prompt glyph is the
+/// one a submitted turn keeps, which made the input line read as one more
+/// transcript row. [`Regions::gap`] is the fix: one blank, the same blank
+/// `push_line` puts between blocks, between them.
+///
+/// The assertion is on the **frame** rather than on the regions, because a frame
+/// is what the reader sees — and the control is deliberately brutal: delete the
+/// `Constraint::Length(1)` in `Regions::split` and this test fails with the
+/// assistant's own answer sitting directly above the placeholder.
+#[tokio::test]
+async fn a_finished_answer_separates_from_the_composer_it_feeds() {
+    let (mut app, agent, _rx) = test_app_with_faux(vec![
+        epsilon_llm::FauxStep::say(
+            "Paris is the capital of France. It has stood on the Seine for two thousand years.",
+        ),
+        epsilon_llm::FauxStep::say("That is where most of the population sits, on the river."),
+    ]);
+    for prompt in [
+        "what is the capital of France?",
+        "and is that where the population sits?",
+    ] {
+        app.ui.push_local_input(prompt);
+        run_one_turn(&mut app, &agent, prompt).await;
+    }
+
+    for width in [80u16, 100] {
+        let rows = render_rows(&mut app, width, 30);
+        let composer_y = rows
+            .iter()
+            .rposition(|r| r.starts_with('❯') && r.contains(crate::ui::composer::PLACEHOLDER))
+            .unwrap_or_else(|| panic!("{width}: no composer row in:\n{}", rows.join("\n")));
+        assert!(composer_y > 2, "{width}: composer has nothing above it");
+        let above = rows[composer_y - 1].trim();
+        assert_eq!(
+            above, "",
+            "{width}: the row above the composer must be blank, not {above:?}"
+        );
+
+        // Not an empty frame passing by accident: the answer is on screen, and it
+        // is at least one row further up than the composer.
+        let answer_y = rows
+            .iter()
+            .rposition(|r| r.contains("population sits"))
+            .unwrap_or_else(|| {
+                panic!("{width}: the answer is not on screen:\n{}", rows.join("\n"))
+            });
+        assert!(
+            answer_y + 1 < composer_y,
+            "{width}: the answer sits on the composer's own row ({answer_y} vs {composer_y})"
+        );
+    }
+}
+
 #[tokio::test]
 async fn no_slash_command_panics_when_typed() {
     // Taken from the same `picker` mapping the parser uses, so a command added without a
@@ -4326,6 +4973,8 @@ async fn no_slash_command_panics_when_typed() {
             || app.session_browser.is_some()
             || app.picker_open
             || app.auth_pick_open
+            || app.think_pick_open
+            || app.scope_open
             || app.auth_prompt_open
             || app.palette_open
             || app.trust_review_pending;
@@ -5304,6 +5953,48 @@ fn viewer_slash_finds_and_steps_through_matches() {
     assert!(app.viewer_open(), "Esc closes find, not the viewer");
 }
 
+/// Pressing `e` on a file past the viewer cap refuses edit mode with a
+/// named notice: the edit buffer would be the capped head, and saving it
+/// would cut the tail off the file (data loss, AGENTS.md section 6).
+#[test]
+fn viewer_edit_of_a_truncated_file_is_refused_with_a_notice() {
+    let (mut app, agent, _rx) = test_app();
+    let dir = tempfile::tempdir().unwrap();
+    let big: String = (0..crate::tree::VIEWER_LINE_CAP + 50)
+        .map(|i| format!("line {i}\n"))
+        .collect();
+    std::fs::write(dir.path().join("big.log"), &big).unwrap();
+    app.workspace_root = dir.path().to_path_buf();
+    app.viewer_tabs =
+        vec![crate::tree::open_viewer(&app.workspace_root, "big.log").expect("fixture opens")];
+    app.viewer_tab = 0;
+    assert!(
+        app.active_viewer().is_some_and(|v| v.truncated),
+        "precondition: the fixture is past the cap"
+    );
+
+    handle_key(&mut app, &agent, key(KeyCode::Char('e')));
+    assert!(
+        app.active_viewer().is_some_and(|v| !v.editing),
+        "edit mode must not open on a truncated file"
+    );
+    let texts: Vec<String> = app.ui.lines().iter().map(|l| l.text.clone()).collect();
+    assert!(
+        texts.iter().any(|t| t.contains("too large to edit")),
+        "the refusal must say why, got {texts:?}"
+    );
+
+    // The footer must not offer `e` as edit anymore (invariant 7: a bound
+    // key the UI does not act on says so), at both frame sizes.
+    for (width, height) in [(80u16, 24u16), (100, 30)] {
+        let screen = render_rows(&mut app, width, height).join("\n");
+        assert!(
+            screen.contains("edit unavailable"),
+            "footer names the refused key at {width}x{height}: {screen}"
+        );
+    }
+}
+
 /// P-307: inside `/tree`, the copy key takes the SELECTED entry's full text,
 /// not the 200-character preview on screen — and not the last assistant
 /// message, which is what the same key copies outside the picker.
@@ -5747,9 +6438,13 @@ fn the_skills_listing_carries_a_description_per_skill() {
         mk("commit", "write a conventional commit message", false),
         mk("review", "review a diff for defects", true),
     ];
+    // The scope map this listing is drawn with: neither skill sits under an anchor
+    // this launch scans (`/tmp/...`), so both keep their paths — which is exactly
+    // the honest fallback the second half of this test pins.
+    let scopes = super::commands::skill_scope_by_dir(std::path::Path::new("/work/repo"));
 
     // An empty disable-list first: the point of this half is the DESCRIPTION.
-    let lines = skill_lines(&skills, &[]);
+    let lines = skill_lines(&skills, &[], &scopes);
     assert_eq!(
         lines.len(),
         2,
@@ -5767,7 +6462,7 @@ fn the_skills_listing_carries_a_description_per_skill() {
     // And a skill that has been switched OFF says so. A listing that merely
     // omitted it would be indistinguishable from one that was never installed,
     // and the user would go looking for a directory that is right there.
-    let off = skill_lines(&skills, &["commit".to_string()]);
+    let off = skill_lines(&skills, &["commit".to_string()], &scopes);
     assert!(
         off[0].contains("[off]"),
         "a disabled skill is marked, not hidden: {off:?}"
@@ -5775,6 +6470,68 @@ fn the_skills_listing_carries_a_description_per_skill() {
     assert!(
         !off[1].contains("[off]"),
         "and only the disabled one is: {off:?}"
+    );
+}
+
+/// `/skills` says WHICH skill this is, not only what it does (P-006).
+///
+/// Pi groups its resource blocks by project / user / path. A flat list answers
+/// "what can I invoke" and not "which one is this", which is the question you
+/// have when a skill works in one repository and not another — or when deciding
+/// whether to delete the copy in `~/.config`.
+///
+/// The second half is the one that matters for honesty: a skill under **neither**
+/// anchor gets its path, not a guessed scope. This launch cannot see a root that
+/// a different workspace would scan, and labelling that "project" would be the
+/// silent failure `AGENTS.md` §2.7 names.
+#[test]
+fn the_skills_listing_names_the_scope_each_skill_came_from() {
+    use super::commands::{skill_lines, skill_scope_by_dir};
+    use epsilon_core::skills::Skill;
+
+    let workspace = std::path::Path::new("/work/repo");
+    let scopes = skill_scope_by_dir(workspace);
+    let global = epsilon_core::config::global_dir()
+        .map(|d| d.join("skills"))
+        .unwrap_or_else(|| std::path::PathBuf::from("/global/skills"));
+
+    let mk = |dir: std::path::PathBuf| Skill {
+        name: "commit".into(),
+        description: "write a conventional commit message".into(),
+        dir,
+        disable_model_invocation: false,
+    };
+    let project = workspace.join(".epsilon").join("skills");
+    let portable = workspace.join(".agents").join("skills");
+    let elsewhere = std::path::PathBuf::from("/elsewhere/skills");
+    let skills = vec![
+        mk(project.join("commit")),
+        mk(portable.join("commit")),
+        mk(global.join("commit")),
+        mk(elsewhere.join("commit")),
+    ];
+    let lines = skill_lines(&skills, &[], &scopes);
+
+    assert!(
+        lines[0].contains("(project)"),
+        "the native project root is labelled: {lines:?}"
+    );
+    assert!(
+        lines[1].contains("(project)"),
+        "so is the portable .agents root: {lines:?}"
+    );
+    assert!(
+        lines[2].contains("(user)"),
+        "the user's global root is labelled: {lines:?}"
+    );
+    assert!(
+        lines[3].contains("/elsewhere/skills"),
+        "and a root this launch does not scan keeps its path rather than a \
+         guessed scope: {lines:?}"
+    );
+    assert!(
+        !lines[3].contains("(project)") && !lines[3].contains("(user)"),
+        "it must not be given a scope it does not have: {lines:?}"
     );
 }
 
@@ -8592,21 +9349,26 @@ fn streaming_text_is_separated_from_the_previous_block() {
 /// The body's last row carries the conversation's last row.
 ///
 /// Read from the layout the production draw uses, not from a remembered row
-/// number: the composer's own `y` is where "directly above the composer" means.
+/// number: the ending blank's own `y` is where "directly above the composer"
+/// means.
 #[test]
-fn a_short_conversation_sits_directly_above_the_composer() {
+fn a_short_conversation_sits_directly_above_the_ending_blank() {
     let (mut app, _agent, _rx) = test_app();
     app.ui.push_local_input("what changed?");
     app.ui.push_notice("here is the answer");
 
     let rows = render_rows(&mut app, 80, 24);
-    let above_composer = crate::ui::layout::Regions::split(Rect::new(0, 0, 80, 24), 1)
-        .composer
+    // The newest row sits directly above the *ending blank*, not directly above
+    // the composer: the blank is what keeps the answer from touching the input
+    // line the composer draws.
+    let last_row = crate::ui::layout::Regions::split(Rect::new(0, 0, 80, 24), 1)
+        .gap
         .y as usize
         - 1;
     assert!(
-        rows[above_composer].contains("here is the answer"),
-        "the newest row must sit directly above the composer, not under the header:\n{rows:#?}"
+        rows[last_row].contains("here is the answer"),
+        "the newest row must sit directly above the ending blank, not under the \
+         header:\n{rows:#?}"
     );
     // The dead space moved *above* the content rather than disappearing: an
     // empty body row at the top is what bottom-anchoring means, and a reader
@@ -8634,12 +9396,12 @@ fn a_scrolled_back_view_fills_the_body_from_the_top() {
     let rows = render_rows(&mut app, 60, 20);
     app.scroll_from_bottom = 5;
     let scrolled = render_rows(&mut app, 60, 20);
-    let above_composer = crate::ui::layout::Regions::split(Rect::new(0, 0, 60, 20), 1)
-        .composer
+    let last_row = crate::ui::layout::Regions::split(Rect::new(0, 0, 60, 20), 1)
+        .gap
         .y as usize
         - 1;
     assert!(
-        !scrolled[1].trim().is_empty() && !scrolled[above_composer].trim().is_empty(),
+        !scrolled[1].trim().is_empty() && !scrolled[last_row].trim().is_empty(),
         "a scrolled window is full top to bottom, with nothing padded:\n{scrolled:#?}"
     );
     assert!(
@@ -8675,13 +9437,13 @@ fn a_streaming_tail_arrives_next_to_the_composer() {
     });
 
     let rows = render_rows(&mut app, 80, 24);
-    let above_composer = crate::ui::layout::Regions::split(Rect::new(0, 0, 80, 24), 1)
-        .composer
+    let last_row = crate::ui::layout::Regions::split(Rect::new(0, 0, 80, 24), 1)
+        .gap
         .y as usize
         - 1;
     assert!(
-        rows[above_composer].contains("first line of the answer"),
-        "the streaming tail must sit directly above the composer:\n{rows:#?}"
+        rows[last_row].contains("first line of the answer"),
+        "the streaming tail must sit directly above the ending blank:\n{rows:#?}"
     );
 }
 
@@ -8792,6 +9554,119 @@ fn ctrl_s_in_the_picker_saves_the_default() {
         app.default_model.as_deref(),
         saved.as_deref(),
         "and memory must follow the file"
+    );
+}
+
+/// P-047: `/scoped-models` opens a searchable checklist over the cycle scope.
+///
+/// The head parses today and only talks (a notice); the checklist is the
+/// missing half. Opens through the real command path, filters through the
+/// real key path, asserts on the real frame.
+#[tokio::test]
+async fn scoped_models_opens_a_searchable_checklist() {
+    let (mut app, agent, _rx) = test_app();
+    app.run_command(
+        &agent,
+        crate::picker::parse_command("/scoped-models").expect("/scoped-models parses"),
+    );
+    assert!(app.scope_open, "/scoped-models must open the checklist");
+
+    let screen = render_rows(&mut app, 80, 24).join("\n");
+    assert!(
+        screen.contains("scoped models"),
+        "the title must name the checklist: {screen}"
+    );
+
+    for c in "deepseek".chars() {
+        handle_key(&mut app, &agent, key(KeyCode::Char(c)));
+    }
+    let filtered = render_rows(&mut app, 80, 24).join("\n");
+    assert!(
+        filtered.contains("deepseek"),
+        "typing must filter the checklist rows: {filtered}"
+    );
+}
+
+/// P-047: Space stages membership live, Ctrl+S persists, Esc discards.
+///
+/// Staged == `app.favorites` (the F2 cycle list reads it), so the rescope
+/// is live the moment Space lands; the file moves only on Ctrl+S.
+#[tokio::test]
+async fn scope_space_stages_live_and_ctrl_s_persists() {
+    let (mut app, agent, _rx) = test_app();
+    let dir = tempfile::tempdir().expect("a config dir");
+    app.config_dir_override = Some(dir.path().to_path_buf());
+    // Hermetic scope: the fixture may carry ambient global favorites.
+    app.favorites.clear();
+    app.run_command(
+        &agent,
+        crate::picker::parse_command("/scoped-models").expect("/scoped-models parses"),
+    );
+    assert!(app.scope_open);
+
+    let rows = crate::picker::build_rows_with(
+        "",
+        &app.model_id,
+        &[],
+        &app.favorites,
+        None,
+        &app.live_cache,
+        &app.customs,
+    );
+    assert!(!rows.is_empty(), "the checklist must list the catalog");
+    let id = rows[0].id.clone();
+
+    handle_key(&mut app, &agent, key(KeyCode::Char(' ')));
+    assert!(
+        app.favorites.contains(&id),
+        "Space must stage the highlighted model into the cycle scope"
+    );
+    let staged = render_rows(&mut app, 80, 24).join("\n");
+    assert!(
+        staged.contains("[x]"),
+        "the staged row must read checked on the frame: {staged}"
+    );
+
+    handle_key(&mut app, &agent, ctrl(KeyCode::Char('s')));
+    assert!(!app.scope_open, "Ctrl+S must save and close");
+    let saved = epsilon_core::config::load_favorite_models_in(dir.path());
+    assert_eq!(saved, vec![id], "the scope must persist where it rereads");
+}
+
+/// P-047: Esc throws the unstaged toggles away, file untouched.
+#[tokio::test]
+async fn scope_esc_discards_unstaged_toggles() {
+    let (mut app, agent, _rx) = test_app();
+    let dir = tempfile::tempdir().expect("a config dir");
+    app.config_dir_override = Some(dir.path().to_path_buf());
+    // Hermetic scope: the fixture may carry ambient global favorites.
+    app.favorites.clear();
+    app.run_command(
+        &agent,
+        crate::picker::parse_command("/scoped-models").expect("/scoped-models parses"),
+    );
+    let rows = crate::picker::build_rows_with(
+        "",
+        &app.model_id,
+        &[],
+        &app.favorites,
+        None,
+        &app.live_cache,
+        &app.customs,
+    );
+    let id = rows[0].id.clone();
+    handle_key(&mut app, &agent, key(KeyCode::Char(' ')));
+    assert!(app.favorites.contains(&id));
+
+    handle_key(&mut app, &agent, key(KeyCode::Esc));
+    assert!(!app.scope_open, "Esc must close the checklist");
+    assert!(
+        !app.favorites.contains(&id),
+        "Esc must revert the unstaged toggle"
+    );
+    assert!(
+        epsilon_core::config::load_favorite_models_in(dir.path()).is_empty(),
+        "nothing must reach the file without Ctrl+S"
     );
 }
 
@@ -9666,4 +10541,120 @@ async fn ctrl_arrows_fold_and_unfold_in_the_timeline() {
     );
     handle_key(&mut app, &agent, ctrl_right);
     assert!(!app.folded.contains("a"), "ctrl+Right must unfold it again");
+}
+
+/// **The file editor's own undo, through the real key path.**
+///
+/// The unit tests prove the primitives; this proves the *keys reach them*. Before
+/// this, `Ctrl+Z` in the viewer's edit mode fell into the `_ => {}` arm and was
+/// discarded — the composer had undo since M16 and the file editor had none, so a
+/// user editing a file had no way back from a bad backspace except `Esc` and
+/// losing everything they had typed.
+#[tokio::test]
+async fn ctrl_z_undoes_an_edit_in_the_file_editor() {
+    let (mut app, agent, _receivers, dir) = test_app_with_store();
+    std::fs::write(dir.path().join("u.txt"), "alpha\nbeta\n").unwrap();
+    handle_key(&mut app, &agent, key(KeyCode::F(6)));
+    let idx = app
+        .tree_rows
+        .iter()
+        .position(|r| r.rel == "u.txt")
+        .expect("u.txt listed");
+    app.tree_cursor = idx;
+    handle_key(&mut app, &agent, key(KeyCode::Enter));
+    handle_key(&mut app, &agent, key(KeyCode::Char('e')));
+    assert!(app.viewer_editing(), "e enters edit mode");
+
+    // Type "!" at the end of the first line.
+    handle_key(&mut app, &agent, key(KeyCode::End));
+    handle_key(&mut app, &agent, key(KeyCode::Char('!')));
+    let v = app.active_viewer().expect("viewer");
+    assert_eq!(
+        v.edit_lines[0], "alpha!",
+        "the keystroke reached the buffer"
+    );
+
+    // Ctrl+Z takes it back — the key that did nothing at all before.
+    handle_key(
+        &mut app,
+        &agent,
+        key_mod(KeyModifiers::CONTROL, KeyCode::Char('z')),
+    );
+    assert_eq!(
+        app.active_viewer().expect("viewer").edit_lines[0],
+        "alpha",
+        "ctrl+z must reach the file editor"
+    );
+
+    // Ctrl+Y re-applies it.
+    handle_key(
+        &mut app,
+        &agent,
+        key_mod(KeyModifiers::CONTROL, KeyCode::Char('y')),
+    );
+    assert_eq!(
+        app.active_viewer().expect("viewer").edit_lines[0],
+        "alpha!",
+        "ctrl+y re-applies"
+    );
+
+    // Drain the rail: the third press has nothing left, and it says so rather
+    // than swallowing the keypress.
+    handle_key(
+        &mut app,
+        &agent,
+        key_mod(KeyModifiers::CONTROL, KeyCode::Char('y')),
+    );
+    handle_key(
+        &mut app,
+        &agent,
+        key_mod(KeyModifiers::CONTROL, KeyCode::Char('y')),
+    );
+    assert!(
+        app.ui
+            .lines()
+            .iter()
+            .any(|l| l.kind == LineKind::System && l.text.contains("nothing to redo")),
+        "an exhausted rail is reported, not swallowed"
+    );
+}
+
+/// **`Delete` works in the file editor.**
+///
+/// It was in the `_ => {}` arm: bound to nothing, announced nowhere, and silent —
+/// so a user pressing it saw a still cursor and could not distinguish a broken key
+/// from a busy frame. `Backspace` beside it worked, which is what made it a defect
+/// rather than an omission.
+#[tokio::test]
+async fn delete_removes_the_character_under_the_file_editor_cursor() {
+    let (mut app, agent, _receivers, dir) = test_app_with_store();
+    std::fs::write(dir.path().join("d.txt"), "abcd\n").unwrap();
+    handle_key(&mut app, &agent, key(KeyCode::F(6)));
+    let idx = app
+        .tree_rows
+        .iter()
+        .position(|r| r.rel == "d.txt")
+        .expect("d.txt listed");
+    app.tree_cursor = idx;
+    handle_key(&mut app, &agent, key(KeyCode::Enter));
+    handle_key(&mut app, &agent, key(KeyCode::Char('e')));
+    // Home puts the cursor at column 0.
+    handle_key(&mut app, &agent, key(KeyCode::Home));
+    handle_key(&mut app, &agent, key(KeyCode::Delete));
+    assert_eq!(
+        app.active_viewer().expect("viewer").edit_lines[0],
+        "bcd",
+        "Delete removes forward, where Backspace removes backward"
+    );
+    // And it is undoable, like every other edit now.
+    handle_key(
+        &mut app,
+        &agent,
+        key_mod(KeyModifiers::CONTROL, KeyCode::Char('z')),
+    );
+    assert_eq!(
+        app.active_viewer().expect("viewer").edit_lines[0],
+        "abcd",
+        "ctrl+z undoes the deletion too"
+    );
 }

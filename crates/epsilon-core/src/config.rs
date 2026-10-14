@@ -141,6 +141,17 @@ pub fn global_dir() -> Option<PathBuf> {
     epsilon_llm::auth::global_dir()
 }
 
+/// The user's home directory (`$HOME`, falling back to `$USERPROFILE`).
+///
+/// Same M223 shape as [`global_dir`]: the rule is computed in `epsilon-llm` and asked
+/// for here. It exists because the skill-root table in `epsilon_core::skills` reads
+/// several cross-harness conventions out of the home directory — `~/.claude/skills`,
+/// `~/.codex/skills`, `~/.gemini/skills`, `~/.agents/skills` — and a second reader of
+/// `HOME` is the duplication this delegate exists to prevent.
+pub fn home_dir() -> Option<PathBuf> {
+    epsilon_llm::auth::home_dir()
+}
+
 /// Path of the global config file (exists only when a home directory resolves).
 pub fn global_config_path() -> Option<PathBuf> {
     global_dir().map(|d| d.join("config.toml"))
@@ -317,6 +328,50 @@ pub fn toggle_favorite_model_in(config_dir: &Path, model_id: &str) -> Result<boo
         toml::to_string_pretty(&table).map_err(|e| format!("serialize config: {e}"))?;
     std::fs::write(&path, serialized).map_err(|e| format!("write {}: {e}", path.display()))?;
     Ok(existed)
+}
+
+/// Replace the whole favorites list at once (P-047 `/scoped-models`
+/// checklist: Space stages in memory, Ctrl+S lands the staged scope here).
+/// Same table key and cap as [`toggle_favorite_model_in`]; over the cap is
+/// refused with the file untouched, so a checklist that outgrew the cap
+/// cannot truncate the saved scope by saving.
+pub fn save_favorite_models_in(config_dir: &Path, models: &[String]) -> Result<(), String> {
+    let favs: Vec<String> = models
+        .iter()
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+        .collect();
+    if favs.len() > FAVORITE_MAX {
+        return Err(format!(
+            "favorites are full ({FAVORITE_MAX}); unfavorite one first"
+        ));
+    }
+    std::fs::create_dir_all(config_dir)
+        .map_err(|e| format!("create {}: {e}", config_dir.display()))?;
+    let path = config_dir.join("config.toml");
+    let mut table: toml::Table = std::fs::read_to_string(&path)
+        .ok()
+        .and_then(|raw| toml::from_str(&raw).ok())
+        .unwrap_or_default();
+
+    table
+        .entry("picker")
+        .or_insert(toml::Value::Table(toml::map::Map::new()))
+        .as_table_mut()
+        .ok_or_else(|| "[picker] exists but is not a table".to_string())?
+        .insert(
+            "favorite".into(),
+            toml::Value::Array(
+                favs.into_iter()
+                    .map(toml::Value::String)
+                    .collect::<Vec<_>>(),
+            ),
+        );
+
+    let serialized =
+        toml::to_string_pretty(&table).map_err(|e| format!("serialize config: {e}"))?;
+    std::fs::write(&path, serialized).map_err(|e| format!("write {}: {e}", path.display()))?;
+    Ok(())
 }
 
 /// Skills the user has switched off, from `config.toml`.
@@ -799,6 +854,50 @@ mod tests {
         );
     }
 
+    /// **Criterion 7: a project's own model choice survives a restart.**
+    ///
+    /// Written as a failing test first. The write site for a per-project default
+    /// resolves `project_dir.or_else(global_dir)` (`epsilon-tui/src/app.rs:824`)
+    /// and the only startup read is `default_model: load_model_id()`
+    /// (`epsilon-tui/src/app/session.rs:93`), which reads the **global** dir. So the
+    /// two disagree about *where* the value lives. This test says the read must
+    /// answer for the project's own directory — the rule the fix has to satisfy,
+    /// written before the fix exists.
+    #[test]
+    fn a_projects_model_choice_survives_a_restart() {
+        let workspace = tempfile::tempdir().unwrap();
+        let global = tempfile::tempdir().unwrap();
+        let project_dir = workspace.path().join(".epsilon");
+        std::fs::create_dir_all(&project_dir).unwrap();
+
+        // What the "set default" path writes for this project.
+        save_model_id_in(&project_dir, "anthropic/claude-opus-4-6").unwrap();
+
+        // The startup rule under test: no flag, no explicit request — the project's
+        // own setting is what must be resolved.
+        let restored = load_model_id_in(&project_dir);
+        assert_eq!(
+            restored.as_deref(),
+            Some("anthropic/claude-opus-4-6"),
+            "the project's choice must be readable back from its own directory"
+        );
+
+        // **The control.** A second workspace with no own setting must not inherit
+        // the first one's — the `.or_else(load_model_id)` chain makes the global dir
+        // a shared fallback, and this assertion is what stops the fix becoming
+        // cross-project contamination.
+        let other = tempfile::tempdir().unwrap();
+        assert_eq!(
+            load_model_id_in(other.path()),
+            None,
+            "one project's model choice must not leak into another's"
+        );
+
+        // And isolation runs both ways: the global dir holding a value must not
+        // override a project that set its own.
+        assert_eq!(load_model_id_in(global.path()), None);
+    }
+
     #[test]
     fn recents_dedup_cap_and_roundtrip() {
         let tmp = tempfile::tempdir().unwrap();
@@ -867,6 +966,28 @@ mod tests {
         assert!(toggle_favorite_model_in(dir, "  ").is_err());
         let empty = tempfile::tempdir().unwrap();
         assert!(load_favorite_models_in(empty.path()).is_empty());
+    }
+
+    #[test]
+    fn favorites_bulk_save_round_trips_and_enforces_the_cap() {
+        let tmp = tempfile::tempdir().expect("tmp");
+        let dir = tmp.path();
+
+        // Whole-list save replaces, order preserved, rereadable.
+        save_favorite_models_in(dir, &["b-model".to_string(), "a-model".to_string()])
+            .expect("bulk save");
+        assert_eq!(
+            load_favorite_models_in(dir),
+            vec!["b-model".to_string(), "a-model".to_string()]
+        );
+
+        // Over the cap refused, file untouched.
+        let too_many: Vec<String> = (0..=FAVORITE_MAX).map(|i| format!("m-{i}")).collect();
+        assert!(save_favorite_models_in(dir, &too_many).is_err());
+        assert_eq!(
+            load_favorite_models_in(dir),
+            vec!["b-model".to_string(), "a-model".to_string()]
+        );
     }
 
     #[test]
@@ -1168,7 +1289,7 @@ fn an_empty_skill_name_is_refused() {
     );
 }
 
-/// M223: the global directory has exactly one implementation in the workspace.
+/// M223: the home directory has exactly one implementation in the workspace.
 ///
 /// **The assertion is over the source, not over a value.** Two functions that agree right now is not
 /// the property: the defect this replaces was two byte-identical bodies that could drift at any
@@ -1178,8 +1299,15 @@ fn an_empty_skill_name_is_refused() {
 /// makes the duplication unrepeatable rather than merely absent today.
 ///
 /// Source-scanning, not a unit assertion, because the thing at risk spans two crates.
+///
+/// The scanned names widened when the skill-root table grew: `global_dir` used to be the only
+/// consumer of the home directory, so it was the only name worth counting. Reading
+/// `~/.claude/skills` and its siblings made `home_dir` a second entry point to the same
+/// environment variables, and a gate that counted one of the two would have let the other
+/// grow its own reader. The invariant is unchanged and is now stated at the level it actually
+/// holds: **`$HOME` is read in exactly one place.**
 #[test]
-fn the_global_directory_is_computed_in_exactly_one_place() {
+fn the_home_directory_is_computed_in_exactly_one_place() {
     let crates = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
     let mut computed: Vec<String> = Vec::new();
     let mut delegating = 0usize;
@@ -1190,10 +1318,14 @@ fn the_global_directory_is_computed_in_exactly_one_place() {
         let lines: Vec<&str> = text.lines().collect();
         for (n, line) in lines.iter().enumerate() {
             let t = line.trim_start();
-            if !(t.starts_with("pub fn global_dir(") || t.starts_with("fn global_dir(")) {
+            if !(t.starts_with("pub fn home_dir(")
+                || t.starts_with("fn home_dir(")
+                || t.starts_with("pub fn global_dir(")
+                || t.starts_with("fn global_dir("))
+            {
                 continue;
             }
-            // The body is what decides: a definition that *asks* another crate's function is a
+            // The body is what decides: a definition that *asks* another function is a
             // delegate, and a delegate is the fix working. One that reads the environment is a
             // second implementation of the rule, which is the defect.
             let body: String = lines[n..(n + 8).min(lines.len())].join("\n");
@@ -1212,7 +1344,7 @@ fn the_global_directory_is_computed_in_exactly_one_place() {
     assert_eq!(
         computed.len(),
         1,
-        "`~/.config/epsilon` must be *computed* in one place; computed at {computed:?} \
+        "`$HOME` must be *computed* in one place; computed at {computed:?} \
          ({delegating} delegating definition(s) are fine)"
     );
 }

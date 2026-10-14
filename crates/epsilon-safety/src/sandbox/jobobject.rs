@@ -5,7 +5,7 @@
 //! together. Contained discipline (see Cargo.toml lints):
 //! - every `unsafe` block carries a SAFETY comment (clippy::undocumented_unsafe_blocks);
 //! - no new unsafe may appear outside this module;
-//! - the job handle is owned by [`JobGuard`], which terminates the whole tree on drop
+//! - the job handle is owned by ``JobGuard``, which terminates the whole tree on drop
 //!   (`JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE` backs this up at the kernel level).
 //!
 //! Semantics (DSH armor, ADR-005): the shell child AND every descendant stay inside the

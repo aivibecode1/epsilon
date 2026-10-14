@@ -398,18 +398,18 @@ fn read_overlay(dir: &Path, name: &str, label: &str) -> Option<(String, String)>
 ///
 /// The rules, and why each one exists:
 ///
-/// - **Ancestors only, at most [`HINT_MAX_DEPTH`]** — a hint governs the subtree it sits in, and
+/// - **Ancestors only, at most ``HINT_MAX_DEPTH``** — a hint governs the subtree it sits in, and
 ///   walking further up would pull in unrelated projects on a shared drive.
 /// - **The workspace root is excluded** — [`load_project_instructions`] already carries it, and a
 ///   file must not appear twice in the same prompt.
 /// - **Deduplicated by content digest** — a vendored copy of the same `AGENTS.md` in three
 ///   directories is one block in the prompt, which is both cheaper and less confusing.
-/// - **Nearest first, at most [`HINT_MAX_FILES`]** — when a deep tree has more hints than the
+/// - **Nearest first, at most ``HINT_MAX_FILES``** — when a deep tree has more hints than the
 ///   budget, the closest directory is the one that governs what the model is editing.
 /// - **One file per directory, by the same candidate order as the root loader** — an
 ///   `AGENTS.override.md` in a subdirectory overrides its sibling exactly as it does at
 ///   the workspace root; a second name in the same directory would only add to it.
-/// - **Each file capped at [`HINT_MAX_BYTES`]** — an unbounded include is how a prompt becomes
+/// - **Each file capped at ``HINT_MAX_BYTES``** — an unbounded include is how a prompt becomes
 ///   unaffordable; the cut is announced in the block rather than silent.
 ///
 /// The result is deterministic for a given set of touched directories (sorted), because a prompt

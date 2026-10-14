@@ -1,0 +1,28 @@
+
+=== search-marks @ 80x24 ===
++--------------------------------------------------------------------------------+
+|idle           ?/1.0M · ↑0 ↓0 · Faux (offline scripted) • thinking off · offline|
+|                                                                                |
+|                                                                                |
+|                                                                                |
+|                                                                                |
+|                                                                                |
+|                                                                                |
+|                                                                                |
+|                                                                                |
+|                ╭ search ──────────────────────────────────────╮                |
+|                │ n next · p previous · esc close              │                |
+|                │       1 of 2                                 │                |
+|                │                                              │                |
+|                ╰──────────────────────────────────────────────╯                |
+|                                                                                |
+|                                                                                |
+|                                                                                |
+|• the Needle sits in the first row                                              |
+|• a row with nothing to find in it                                              |
+|• and a second NEEDLE down here                                                 |
+|                                                                                |
+|❯ ask anything                                                                  |
+|────────────────────────────────────────────────────────────────────────────────|
+|insert · enter send · pageup scroll back · pagedown …\Epsilon\crates\epsilon-tui|
++--------------------------------------------------------------------------------+

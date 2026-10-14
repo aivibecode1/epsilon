@@ -136,6 +136,10 @@ fn status_word(status: CardStatus, glyphs: &Glyphs) -> (&'static str, &'static s
         CardStatus::Partial => (glyphs.warn, "partial"),
         CardStatus::Failed => (glyphs.cross, "failed"),
         CardStatus::Denied => (glyphs.cross, "denied"),
+        // "stopped", not "failed": the tool did not fail, the turn was stopped.
+        // The warn glyph rather than the cross, for the same reason — a cross
+        // reads as a defect where there was a decision (C-110's wording).
+        CardStatus::Stopped => (glyphs.warn, "stopped"),
     }
 }
 
@@ -162,7 +166,7 @@ pub fn ms_text(ms: u64) -> String {
 ///
 /// `hidden_below` says which end is hidden, and the default is the honest one
 /// for the body kind that keeps its head. A tail-kept card passes `false` so the
-/// sentence reads `N earlier lines` — see [`body_keeps_tail`] for why a card
+/// sentence reads `N earlier lines` — see ``body_keeps_tail`` for why a card
 /// would keep its tail at all.
 pub fn more_lines(remaining: usize, key: Option<&str>, hidden_below: bool) -> String {
     // The singular is not pedantry: an expandable **event** row hides its whole
@@ -914,8 +918,12 @@ pub fn cut(text: &str, width: usize) -> String {
 /// production caller sanitizes first (so this changes no drawn row); the
 /// function is correct on its own now, not only in context.
 fn cols(text: &str) -> usize {
-    use unicode_width::UnicodeWidthStr;
-    sanitize(text).width()
+    // The renderer's rule, not `unicode-width`'s (see [`crate::ui::layout::display_width`]).
+    // This was the fourth site still measuring with the uncorrected rule, and it is the
+    // one that *gates* wrapping: `render_cache` asks `row_width` whether a row needs
+    // wrapping, so a row measured one column short per sound mark was accepted as
+    // fitting — and then drawn twice that width and clipped by ratatui.
+    crate::ui::layout::display_width(&sanitize(text))
 }
 #[cfg(test)]
 mod tests {

@@ -17,10 +17,96 @@
 use super::*;
 
 impl App {
+    /// Merged slash-popup rows (P-043): the static registry plus discovered
+    /// skills (`/skill <name>`) and prompt templates (`/<name>`), templates
+    /// listed last so a template shadowing a head carries its own
+    /// description. Head-mode half of [`Self::popup_candidates`].
+    pub(super) fn slash_candidates(&self) -> Vec<crate::picker::SlashCandidate> {
+        let mut extra: Vec<(String, String)> = Vec::new();
+        for skill in &self.skills_cache {
+            extra.push((format!("/skill {}", skill.name), skill.description.clone()));
+        }
+        for template in &self.prompt_templates {
+            extra.push((format!("/{}", template.name), template.description.clone()));
+        }
+        crate::picker::slash_candidates(&self.input, &extra)
+    }
+
+    /// Second-word rows for heads that complete their own argument (P-044).
+    ///
+    /// `None` when the input is not `"/head fragment"` with one trailing
+    /// word: `/model` and `/login` keep their dedicated pickers (the model
+    /// picker and the login flow already complete those arguments), and
+    /// deeper words are out of scope. A `/skill` value carries
+    /// a trailing space, so `on|off` follows naturally.
+    fn slash_arg_rows(&self) -> Option<Vec<crate::picker::SlashCandidate>> {
+        let rest = self.input.strip_prefix('/')?;
+        let (head, frag) = rest.split_once(' ')?;
+        if frag.contains(' ') {
+            return None;
+        }
+        let rows: Vec<crate::picker::SlashCandidate> = match head {
+            "think" => epsilon_contracts::ThinkingLevel::ALL
+                .iter()
+                .map(|level| crate::picker::SlashCandidate {
+                    value: format!("/think {}", level.as_str()),
+                    description: "thinking level".to_string(),
+                })
+                .collect(),
+            "skill" => self
+                .skills_cache
+                .iter()
+                .map(|skill| crate::picker::SlashCandidate {
+                    value: format!("/skill {} ", skill.name),
+                    description: skill.description.clone(),
+                })
+                .collect(),
+            "preset" => [
+                epsilon_safety::Preset::Auto,
+                epsilon_safety::Preset::WorkspaceWrite,
+                epsilon_safety::Preset::ReadOnly,
+                epsilon_safety::Preset::FullAccess,
+            ]
+            .iter()
+            .map(|preset| crate::picker::SlashCandidate {
+                value: format!("/preset {}", preset.name()),
+                description: "permission preset".to_string(),
+            })
+            .collect(),
+            "theme" => ["dark", "light", "high-contrast"]
+                .iter()
+                .map(|name| crate::picker::SlashCandidate {
+                    value: format!("/theme {name}"),
+                    description: "palette".to_string(),
+                })
+                .collect(),
+            _ => return None,
+        };
+        // Rank the fragment against the argument alone: every value shares
+        // the head, so the full value would tie on the head's own letters.
+        Some(crate::picker::rank_candidates_by(frag, rows, |row| {
+            row.value
+                .split_once(' ')
+                .map(|(_, arg)| arg.trim())
+                .unwrap_or("")
+        }))
+    }
+
+    /// Every popup path reads this one function: head-mode rows, or
+    /// second-word rows once the head is followed by a space — so open,
+    /// navigate, apply and draw cannot disagree about the list.
+    pub(super) fn popup_candidates(&self) -> Vec<crate::picker::SlashCandidate> {
+        if self.input.contains(' ') {
+            self.slash_arg_rows().unwrap_or_default()
+        } else {
+            self.slash_candidates()
+        }
+    }
+
     /// Re-derive slash popup open/index from the current editor buffer
     /// (pi: autocomplete state follows the text, never lingers).
     pub(super) fn sync_slash_state(&mut self) {
-        let candidates = crate::picker::slash_items(&self.input);
+        let candidates = self.popup_candidates();
         if candidates.is_empty() {
             if self.slash_open {
                 self.slash_open = false;
@@ -156,9 +242,9 @@ impl App {
     /// Apply the currently highlighted slash candidate (pi `applyCompletion`):
     /// replace the whole editor with the item's value, cursor at end.
     pub(super) fn apply_slash_selection(&mut self) {
-        let candidates = crate::picker::slash_items(&self.input);
+        let candidates = self.popup_candidates();
         if let Some(item) = candidates.get(self.slash_index) {
-            self.input = item.value.to_string();
+            self.input = item.value.clone();
             self.cursor_chars = self.input.chars().count();
             self.end_yank();
         }

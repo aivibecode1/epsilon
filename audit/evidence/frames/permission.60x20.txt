@@ -1,0 +1,24 @@
+
+=== permission @ 60x20 ===
++------------------------------------------------------------+
+|idle        Faux (offline scripted) • thinking off · offline|
+|                                                            |
+|                                                            |
+|                                                            |
+|                                                            |
+|                                                            |
+|                                                            |
+|       ╭ permission required ───────────────────────╮       |
+|       │ cap  bash                                  │       |
+|       │ what rm -rf target                         │       |
+|       │ y allow once   a always (session)          │       |
+|       │ n deny         e deny + guidance           │       |
+|       ╰────────────────────────────────────────────╯       |
+|                                                            |
+|                                                            |
+|▎ ❯ delete the build directory                              |
+|                                                            |
+|❯ ask anything                                              |
+|────────────────────────────────────────────────────────────|
+|approval · y allow once · a · n …\Epsilon\crates\epsilon-tui|
++------------------------------------------------------------+

@@ -1,6 +1,6 @@
 //! Append-only JSONL tree session store.
 //!
-//! One `.jsonl` file per session; each line is a [`SessionEntry`] assigned a monotonic `seq`,
+//! One `.jsonl` file per session; each line is a ``SessionEntry`` assigned a monotonic `seq`,
 //! a parent link (branch tree), and an append timestamp. The human transcript is the file;
 //! the model-visible history is a derived view where compaction entries shadow the ranges they
 //! summarize (DSH's surface-shadowing principle over pi's entry format).

@@ -222,10 +222,17 @@ pub fn build_rows_with(
     };
 
     // Active model floats to top so it is always reachable/visible.
+    // It carries the same flags as every other row: without them a staged
+    // current model shows unchecked in the `/scoped-models` checklist — the
+    // favorites section dedupes it away (`push_unique`), so no row is left
+    // to carry the mark (read on a real frame, not reasoned).
     if let Some(info) = catalog::lookup_model(current)
         && total_score(&hay(info)).is_some()
     {
-        push_unique(row_from_info(info), &mut rows, &mut seen);
+        let mut row = row_from_info(info);
+        row.is_favorite = favorites.iter().any(|f| f.eq_ignore_ascii_case(&row.id));
+        row.is_default = default.is_some_and(|d| d.eq_ignore_ascii_case(&row.id));
+        push_unique(row, &mut rows, &mut seen);
     }
 
     // Favorites (M23, opencode "Favorites" section): starred ids first — sorted by score.
@@ -368,6 +375,96 @@ pub fn slash_items(input: &str) -> Vec<&'static SlashItem> {
         .collect();
     scored.sort_by_key(|(score, _)| *score);
     scored.into_iter().map(|(_, it)| it).collect()
+}
+
+/// One merged slash-popup row: a built-in head, a `/skill <name>` entry, or
+/// a `/template-name` entry. Owned because skills and templates are
+/// discovered per workspace — a `&'static` row for each would need a leak
+/// per discovery, which this repository reverted on sight (round 11).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SlashCandidate {
+    /// Text inserted when the row is chosen.
+    pub value: String,
+    /// Description rendered dim beside the label.
+    pub description: String,
+}
+
+/// Candidates that fuzzy-match the typed `/prefix` (input has no space yet),
+/// merging the static registry with per-workspace `extra` rows. A later row
+/// replaces an earlier row with the same value, so a caller that lists
+/// templates after built-ins lets a shadowing template carry its own
+/// description — the same precedence the expander gives it.
+pub fn slash_candidates(input: &str, extra: &[(String, String)]) -> Vec<SlashCandidate> {
+    if !input.starts_with('/') || input.contains(' ') {
+        return Vec::new();
+    }
+    let needle = input.trim_start_matches('/').trim();
+    let mut rows: Vec<SlashCandidate> = SLASH_ITEMS
+        .iter()
+        .map(|item| SlashCandidate {
+            value: item.value.to_string(),
+            description: item.description.to_string(),
+        })
+        .collect();
+    for (value, description) in extra {
+        if let Some(pos) = rows.iter().position(|row| row.value == *value) {
+            rows[pos].description = description.clone();
+        } else {
+            rows.push(SlashCandidate {
+                value: value.clone(),
+                description: description.clone(),
+            });
+        }
+    }
+    if needle.is_empty() {
+        return rows;
+    }
+    rank_candidates(needle, rows)
+}
+
+/// Levels matching a picker filter query, in ladder order (P-048).
+/// The think picker (keys) and its draw read this one function, the way
+/// the provider picker shares `build_provider_rows` — an empty query lists
+/// all seven; otherwise a level matches when its name holds the query.
+pub fn match_think_levels(query: &str) -> Vec<epsilon_contracts::ThinkingLevel> {
+    let query = query.trim().to_ascii_lowercase();
+    epsilon_contracts::ThinkingLevel::ALL
+        .into_iter()
+        .filter(|level| query.is_empty() || level.as_str().contains(query.as_str()))
+        .collect()
+}
+
+/// Fuzzy-rank owned popup rows against a needle, best first; an empty
+/// needle keeps insertion order. Shared by the head-mode and argument-mode
+/// popups so both rank the same way.
+pub fn rank_candidates(needle: &str, rows: Vec<SlashCandidate>) -> Vec<SlashCandidate> {
+    rank_candidates_by(needle, rows, |row| row.value.trim_start_matches('/').trim())
+}
+
+/// [`rank_candidates`] with the haystack spelled out: the argument popup
+/// ranks the fragment against the argument alone, not the whole
+/// `"/head arg"` value — every row shares the head, so ranking the full
+/// value ties on the head's own letters and the order degrades to
+/// insertion order (Tab then applies whichever the caller listed first).
+pub fn rank_candidates_by(
+    needle: &str,
+    rows: Vec<SlashCandidate>,
+    hay: impl for<'a> Fn(&'a SlashCandidate) -> &'a str,
+) -> Vec<SlashCandidate> {
+    let needle = needle.trim();
+    if needle.is_empty() {
+        return rows;
+    }
+    let mut scored: Vec<(i64, SlashCandidate)> = rows
+        .into_iter()
+        .filter_map(|row| {
+            let hay = hay(&row);
+            let m = crate::fuzzy::fuzzy_match(needle, hay);
+            m.matches.then_some((m.score, row))
+        })
+        .collect();
+    scored.sort_by_key(|(score, _)| *score);
+    scored.into_iter().map(|(_, row)| row).collect()
 }
 
 /// Best fuzzy guess for an unknown slash word (e.g. `/modl` → `/model`).
@@ -726,7 +823,7 @@ pub struct PaletteEntry {
     pub title: String,
     /// Command executed when selected (slash-style parse input).
     pub command: String,
-    /// Keybinding this action runs, resolved through [`KeybindingsManager::key_text`].
+    /// Keybinding this action runs, resolved through `KeybindingsManager::key_text`.
     ///
     /// Held as data rather than used directly so a hint can only ever be a chord the
     /// key handler will actually accept. This column used to be `Option<&'static str>`
@@ -744,7 +841,7 @@ pub struct PaletteEntry {
 ///
 /// `kb` is read for every hint, so a user who rebinds a key sees the new chord here and
 /// an entry whose action has no binding shows none — which is the only honest thing to
-/// print, and what [`KeybindingsManager::key_text`] already promises when it returns
+/// print, and what ``KeybindingsManager::key_text`` already promises when it returns
 /// `None`.
 pub fn palette_entries(kb: &crate::keybindings::KeybindingsManager) -> Vec<PaletteEntry> {
     vec![
@@ -1758,6 +1855,95 @@ mod tests {
         );
         assert!(suggest_slash("").is_none());
         assert!(suggest_slash("zzzzz-nope-zzz").is_none());
+    }
+
+    /// P-043 guards (added with the merge; the key-path RED is
+    /// `slash_popup_offers_discovered_skills/templates`): extra rows join
+    /// the registry, fuzzy applies to them, and a later same-value row
+    /// replaces the earlier one so a shadowing template carries its own
+    /// description.
+    #[test]
+    fn slash_candidates_merges_extra_and_shadows_by_value() {
+        let extra = vec![
+            ("/skill commit".to_string(), "Record changes".to_string()),
+            ("/review".to_string(), "Project code review".to_string()),
+        ];
+        let rows = slash_candidates("/skil", &extra);
+        assert!(
+            rows.iter()
+                .any(|r| r.value == "/skill commit" && r.description == "Record changes"),
+            "skill row merged: {rows:?}"
+        );
+        let rows = slash_candidates("/rev", &extra);
+        assert!(
+            rows.iter().any(|r| r.value == "/review"),
+            "template row merged: {rows:?}"
+        );
+        // Shadowing: a template named like a head replaces the description.
+        let shadow = vec![("/help".to_string(), "Custom help".to_string())];
+        let rows = slash_candidates("/help", &shadow);
+        let help: Vec<&SlashCandidate> = rows.iter().filter(|r| r.value == "/help").collect();
+        assert_eq!(help.len(), 1, "one /help row, not two: {rows:?}");
+        assert_eq!(help[0].description, "Custom help");
+        // Gates: no slash, or a space, means no popup.
+        assert!(slash_candidates("review", &extra).is_empty());
+        assert!(slash_candidates("/skill commit", &extra).is_empty());
+        // Empty needle lists everything, statics first.
+        let all = slash_candidates("/", &extra);
+        assert!(all.len() > SLASH_ITEMS.len());
+        assert_eq!(all[0].value, SLASH_ITEMS[0].value);
+    }
+
+    /// P-044 guard (added with the argument popup; key-path RED is
+    /// `slash_popup_completes_*`): ranking is shared, so the second word
+    /// ranks like the first — best fuzzy first, empty needle in order.
+    #[test]
+    fn rank_candidates_orders_second_words_like_firsts() {
+        let rows = vec![
+            SlashCandidate {
+                value: "/think high".into(),
+                description: "thinking level".into(),
+            },
+            SlashCandidate {
+                value: "/think xhigh".into(),
+                description: "thinking level".into(),
+            },
+        ];
+        let ranked = rank_candidates("xh", rows.clone());
+        assert_eq!(ranked.len(), 1, "only /think xhigh holds an x: {ranked:?}");
+        assert_eq!(ranked[0].value, "/think xhigh");
+        let ranked = rank_candidates("high", rows.clone());
+        assert_eq!(ranked.len(), 2, "both levels hold high: {ranked:?}");
+        // Argument-mode ranks the fragment against the argument alone: with
+        // the shared head scored, "rea" ties on the head's own letters and
+        // insertion order would apply the wrong row.
+        let preset_rows = ["auto", "read-only"].iter().map(|name| SlashCandidate {
+            value: format!("/preset {name}"),
+            description: "permission preset".into(),
+        });
+        let ranked = rank_candidates_by("rea", preset_rows.collect(), |row| {
+            row.value
+                .split_once(' ')
+                .map(|(_, arg)| arg.trim())
+                .unwrap_or("")
+        });
+        assert_eq!(ranked.len(), 1, "only read-only holds rea: {ranked:?}");
+        assert_eq!(ranked[0].value, "/preset read-only");
+        let ranked = rank_candidates("", rows.clone());
+        assert_eq!(ranked, rows, "empty needle keeps insertion order");
+        assert!(rank_candidates("zzz", rows).is_empty());
+    }
+
+    /// P-048 guard (key-path RED is `bare_think_opens_...`): the level
+    /// filter lists all seven on an empty query and narrows by name.
+    #[test]
+    fn match_think_levels_lists_all_then_narrows() {
+        assert_eq!(match_think_levels("").len(), 7);
+        let names: Vec<&str> = match_think_levels("h")
+            .iter()
+            .map(|level| level.as_str())
+            .collect();
+        assert_eq!(names, vec!["high", "xhigh"]);
     }
 
     /// Filtered sessions rank by fuzzy score, not recency — and ties keep

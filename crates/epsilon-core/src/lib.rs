@@ -2263,7 +2263,7 @@ impl Agent {
         Arc::clone(self) as Arc<dyn epsilon_contracts::tool::TaskHost>
     }
 
-    /// The [`GoalHost`] view of this agent, for a `ToolContext`.
+    /// The ``GoalHost`` view of this agent, for a `ToolContext`.
     ///
     /// **Public because composition needs it, not because a test wanted it.** The execution path
     /// builds this itself (`exec.rs`), and a frontend that wants to invoke a goal tool outside a

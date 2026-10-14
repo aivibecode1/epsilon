@@ -1,0 +1,24 @@
+
+=== search-marks @ 60x20 ===
++------------------------------------------------------------+
+|idle        Faux (offline scripted) • thinking off · offline|
+|                                                            |
+|                                                            |
+|                                                            |
+|                                                            |
+|                                                            |
+|                                                            |
+|       ╭ search ────────────────────────────────────╮       |
+|       │ n next · p previous · esc close            │       |
+|       │       1 of 2                               │       |
+|       │                                            │       |
+|       ╰────────────────────────────────────────────╯       |
+|                                                            |
+|• the Needle sits in the first row                          |
+|• a row with nothing to find in it                          |
+|• and a second NEEDLE down here                             |
+|                                                            |
+|❯ ask anything                                              |
+|────────────────────────────────────────────────────────────|
+|insert · enter send · pageup    …\Epsilon\crates\epsilon-tui|
++------------------------------------------------------------+

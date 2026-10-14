@@ -1,0 +1,28 @@
+
+=== permission @ 80x24 ===
++--------------------------------------------------------------------------------+
+|idle           ?/1.0M · ↑0 ↓0 · Faux (offline scripted) • thinking off · offline|
+|                                                                                |
+|                                                                                |
+|                                                                                |
+|                                                                                |
+|                                                                                |
+|                                                                                |
+|                                                                                |
+|                                                                                |
+|                ╭ permission required ─────────────────────────╮                |
+|                │ cap  bash                                    │                |
+|                │ what rm -rf target                           │                |
+|                │ y allow once   a always (session)            │                |
+|                │ n deny         e deny + guidance             │                |
+|                ╰──────────────────────────────────────────────╯                |
+|                                                                                |
+|                                                                                |
+|                                                                                |
+|                                                                                |
+|▎ ❯ delete the build directory                                                  |
+|                                                                                |
+|❯ ask anything                                                                  |
+|────────────────────────────────────────────────────────────────────────────────|
+|approval · y allow once · a always · n deny · e     …\Epsilon\crates\epsilon-tui|
++--------------------------------------------------------------------------------+

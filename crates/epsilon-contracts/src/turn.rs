@@ -53,7 +53,7 @@ use crate::message::{Message, ThinkingLevel};
 /// Model for the remaining provider requests of a run (catalog id).
 ///
 /// Same shape as `epsilon_llm::ModelRef` but deliberately differently named: the provider
-/// layer's [`epsilon_llm::ModelRef`] cannot be reused here (contracts depends on no other
+/// layer's ``epsilon_llm::ModelRef`` cannot be reused here (contracts depends on no other
 /// Epsilon crate by design), and two identically named types for one concept would invite
 /// confusion. `epsilon-core` builds the provider-layer reference from `id` at request time.
 /// Unifying the two into this crate — with `epsilon_llm` re-exporting — is a recorded

@@ -11,7 +11,7 @@
 //! expand a `--prompt` argument — and the substitution rules are the part that must agree
 //! between them. A second copy of `substitute_args` in the TUI would be a second set of
 //! semantics to keep in step, which is exactly how a "faithful port" quietly stops being
-//! one. The crate has no filesystem dependency: loading is [`crate::prompt_template::load`]
+//! one. The crate has no filesystem dependency: loading is ``crate::prompt_template::load``
 //! taking a directory, and everything else is pure.
 //!
 //! ## The substitution grammar, in full

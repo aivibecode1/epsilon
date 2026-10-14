@@ -9,7 +9,7 @@ claims are not proof that a capability works today.
 | File | What lives there | Read it when |
 |---|---|---|
 | [`../README.md`](../README.md) | the entry point: what Epsilon is, install, quick start | first |
-| [`START-HERE.md`](START-HERE.md) | **the reading guide for a newcomer**: a ten-minute tour, a reading order, a folder map, a glossary, one diagram of how the pieces connect. Arabic: [`START-HERE.ar.md`](START-HERE.ar.md) | you are new and want the shortest path in |
+| [`START-HERE.md`](START-HERE.md) | **the reading guide for a newcomer**: a ten-minute tour, a reading order, a folder map, a glossary, one diagram of how the pieces connect. | you are new and want the shortest path in |
 | [`STATUS.md`](STATUS.md) | **what is true right now**: progress, decisions in flight, what was cut, what is broken | you want the current state, not the history |
 | [`HANDOFF.md`](HANDOFF.md) | **the working guide for the next agent**: what is verified versus claimed, how to run the battery, the machine rules, and the traps that have cost real time. Points at [`plans/024-finishing-the-objective.md`](plans/024-finishing-the-objective.md) for what is left | you are picking this up from someone else |
 | [`user/`](user) | product guides: install, configuration, auth, permissions, sessions, [goals](user/goals.md), [extensions](user/extensions.md), [prompt templates](user/prompt-templates.md), troubleshooting | you are using or configuring Epsilon |
@@ -26,6 +26,17 @@ curated open-work notes, evidence pointers and safe resumption steps, not produc
 | [`AGENTS-PROPOSALS.md`](AGENTS-PROPOSALS.md) | proposed changes to `AGENTS.md`, which no agent may make directly | you think a rule is wrong |
 | [`AGENTS-v4-DRAFT.md`](AGENTS-v4-DRAFT.md) | the complete v4 rewrite draft for owner application (desktop retired) — apply verbatim, then re-issue the lock | you are the maintainer relocking the rules |
 | [`design/`](design) | **how and why**: the architecture tour, the ADR log, the skills design | you are changing behaviour |
+
+Three files sit there. [`epsilon-architecture.md`](design/epsilon-architecture.md) is the live tour,
+[`epsilon-decisions.md`](design/epsilon-decisions.md) is the ADR log, and
+[`epsilon-skills.md`](design/epsilon-skills.md) is the skills design and the catalog budget rule.
+A fourth, [`epsilon-architecture.draft.md`](design/epsilon-architecture.draft.md), is **not a
+reference** — it is a re-derivation of the same material, written from the tree on 2026-09-25, and
+its own header says a human decides whether it replaces the live tour or the draft is deleted.
+That decision has not been made, and it is recorded here rather than resolved silently: the draft is
+now nineteen days stale against a tree that has changed a great deal (grapheme-safe cutting, the
+halfwidth katakana measurement, cross-harness skills). Do not cite it as current. **The owner picks
+its fate; neither file has been deleted.**
 | [`../scripts/README.md`](../scripts/README.md) | the verification battery and every repository check: what each one fails on, and why it exists | you want to know what CI actually enforces |
 | [`references/`](references/README.md) | **the six reference harnesses**: one page each — what it is, who made it, its licence, what we took and what we skipped — plus [the TUI stack decision](references/TUI-DECISION.md) and a one-table summary | you want to know where an idea came from, or are proposing a terminal toolkit |
 | [`parity/`](parity/README.md) | **the live parity matrix** — [`pi-tui.md`](parity/pi-tui.md) against Pi's interactive terminal mode — one row per behaviour, with where the reference defines it, our status, where we implement it and how it was verified ([`dsh-desktop.md`](parity/dsh-desktop.md) is retired, ADR-039). Start at [the guide that explains how to read them](parity/README.md) | you want to know how close the terminal IDE is to the thing it is a port of |

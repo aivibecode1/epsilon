@@ -16,7 +16,7 @@
 //! set, must still be able to follow the conversation.
 
 use crate::ui::theme::Theme;
-use ratatui::style::Style;
+use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
 
 use crate::state::LineKind;
@@ -34,8 +34,8 @@ pub const GUTTER: usize = 2;
 /// `Theme::has_surfaces` promises that a widget relying on a band for legibility
 /// falls back to a gutter glyph when the band is unavailable. This is where that
 /// promise is kept: off truecolor the two text roles — the answer and the
-/// reasoning trace behind it — take [`Glyphs::assistant`] and
-/// [`Glyphs::thinking`] instead of the blank gutter they use when a band already
+/// reasoning trace behind it — take ``Glyphs::assistant`` and
+/// ``Glyphs::thinking`` instead of the blank gutter they use when a band already
 /// says what the row is.
 ///
 /// Without it the pair collapsed on exactly the terminals the promise names. A
@@ -199,6 +199,118 @@ pub fn decorate(
     Line::from(spans)
 }
 
+/// Mark every occurrence of `query` in a transcript row's body spans.
+///
+/// The search panel has always named the query and counted the matches ("3 of 7")
+/// while the transcript showed none of them: a reader had to take the count on
+/// trust and scroll for themselves, and the row they were standing on looked
+/// exactly like the six others. Pi marks them (`tui-renderer.ts:26-29`), so this
+/// does too.
+///
+/// `current` is the hit the search is on — bold **and** reversed, so it survives
+/// a terminal that honours neither colour nor underline, and still points at one
+/// hit rather than at all of them.
+///
+/// The matching is case-insensitive and runs over the spans *as drawn*, after
+/// wrapping and markdown expansion. That ordering is deliberate: a query the
+/// reader typed matches what they can see, not what the source file said, and it
+/// cannot split a word across two spans because a match never spans a span
+/// boundary — a miss in that one case is priced at nothing next to highlighting
+/// across a styled fragment boundary.
+pub fn highlight_matches(
+    body: Vec<Span<'static>>,
+    query: &str,
+    hit: Style,
+    current: bool,
+) -> Vec<Span<'static>> {
+    if query.is_empty() {
+        return body;
+    }
+    // The attributes are the point, and they differ by design: a hit is
+    // underlined, the hit you are on is reversed (the bold already comes from
+    // `search_strong`'s emphasis, which is bold when there is no colour at all).
+    // Two statements, two marks — or "where am I" and "where are they" are the
+    // same pixels and the reader has to count.
+    let hit = if current {
+        hit.add_modifier(Modifier::REVERSED)
+    } else {
+        hit.add_modifier(Modifier::UNDERLINED)
+    };
+    let needle: Vec<char> = query.to_lowercase().chars().collect();
+    let mut out = Vec::with_capacity(body.len());
+    for span in body {
+        let (haystack, starts) = fold_case(&span.content);
+        if haystack.is_empty() {
+            out.push(span);
+            continue;
+        }
+        // `at` is a **char** index into the folded copy, which is how `find_run`
+        // counts. A folded copy indexed by bytes would make the two disagree for
+        // a character whose lowercase is longer than itself (U+0130 folds to
+        // two), and a byte offset read as a char index is an off-by-one that
+        // marks the wrong letters.
+        let mut at = 0usize;
+        let mut pushed = false;
+        while let Some(found) = find_run(&haystack[at..], &needle) {
+            let start_c = at + found;
+            let end_c = start_c + needle.len();
+            // Back to byte offsets in the ORIGINAL string: `fold_case` records
+            // where every folded character came from, so a match is cut on the
+            // original's char boundaries rather than on the folded copy's.
+            let start_b = starts[start_c];
+            let end_b = starts[end_c - 1]
+                + span.content[start_b..]
+                    .chars()
+                    .next()
+                    .map(char::len_utf8)
+                    .unwrap_or(0);
+            if start_b > at {
+                out.push(Span::styled(
+                    span.content[at..start_b].to_string(),
+                    span.style,
+                ));
+            }
+            out.push(Span::styled(
+                span.content[start_b..end_b].to_string(),
+                span.style.patch(hit),
+            ));
+            at = end_c;
+            pushed = true;
+        }
+        if !pushed {
+            out.push(span);
+        } else if at < span.content.len() {
+            out.push(Span::styled(span.content[at..].to_string(), span.style));
+        }
+    }
+    out
+}
+
+/// The char index of `needle` inside `haystack`, if it is there.
+fn find_run(haystack: &[char], needle: &[char]) -> Option<usize> {
+    if needle.is_empty() || needle.len() > haystack.len() {
+        return None;
+    }
+    haystack
+        .windows(needle.len())
+        .position(|window| window == needle)
+}
+
+/// The string lowercased char by char, plus the byte offset each folded
+/// character came from — so a match found in the folded copy can be cut out of
+/// the original without ever landing inside a character.
+fn fold_case(text: &str) -> (Vec<char>, Vec<usize>) {
+    let mut folded = Vec::with_capacity(text.len());
+    let mut starts = Vec::with_capacity(text.len());
+    for (offset, ch) in text.char_indices() {
+        for lower in ch.to_lowercase() {
+            folded.push(lower);
+            starts.push(offset);
+        }
+    }
+    (folded, starts)
+}
+
 /// The first-run screen.
 ///
 /// A blank transcript on launch is the single worst first impression a TUI can
@@ -277,6 +389,133 @@ mod tests {
     use crate::ui::theme::{ASCII, ColorMode, UNICODE};
     use ratatui::Terminal;
     use ratatui::backend::TestBackend;
+
+    /// What the highlight did, as the reader would see it: the spans' text and
+    /// whether each carries the mark. The style itself is the caller's to choose,
+    /// so the tests assert the *shape* — which runs are hit runs — and the frame
+    /// test in `app/golden.rs` asserts the style.
+    fn runs(body: Vec<Span<'static>>, query: &str) -> Vec<(String, bool)> {
+        let theme = Theme::new(ColorMode::Truecolor, UNICODE);
+        let hit = theme.search();
+        highlight_matches(body, query, hit, false)
+            .into_iter()
+            .map(|s| {
+                let marked = s
+                    .style
+                    .add_modifier
+                    .contains(ratatui::style::Modifier::UNDERLINED);
+                (s.content.to_string(), marked)
+            })
+            .collect()
+    }
+
+    #[test]
+    fn a_hit_is_marked_and_the_rest_of_the_row_is_not() {
+        let spans = vec![Span::styled("plain needle tail", Style::default())];
+        assert_eq!(
+            runs(spans, "needle"),
+            vec![
+                ("plain ".to_string(), false),
+                ("needle".to_string(), true),
+                (" tail".to_string(), false),
+            ]
+        );
+    }
+
+    #[test]
+    fn matching_ignores_case_and_repeats_without_overlap() {
+        let spans = vec![Span::styled(
+            "Needle then needle then NEEDLE",
+            Style::default(),
+        )];
+        let out = runs(spans, "needle");
+        assert_eq!(
+            out.iter().filter(|(_, m)| *m).count(),
+            3,
+            "all three, whatever their case: {out:?}"
+        );
+        assert_eq!(
+            out.iter().map(|(t, _)| t.as_str()).collect::<String>(),
+            "Needle then needle then NEEDLE",
+            "and the text is unchanged: {out:?}"
+        );
+    }
+
+    #[test]
+    fn a_match_split_across_two_styled_spans_is_priced_not_marked() {
+        // The row is styled per fragment, and a run that starts in one span and
+        // ends in the next is not found: matching inside a span keeps the
+        // fragment's own style on the marked run, and matching across one would
+        // mean re-styling a neighbour's text to draw a hit. The price is a miss
+        // on a word the styling happened to cut in half — which the reader still
+        // sees, unmarked, and can find by searching for a shorter fragment.
+        let spans = vec![
+            Span::styled("nee", Style::default()),
+            Span::styled("dle here", Style::default()),
+        ];
+        assert_eq!(
+            runs(spans, "needle"),
+            vec![("nee".to_string(), false), ("dle here".to_string(), false)],
+            "nothing marked, and nothing corrupted"
+        );
+    }
+
+    #[test]
+    fn characters_whose_lowercase_is_not_one_char_survive_the_fold() {
+        // U+0130 lowercases to two characters, so the folded copy is longer than
+        // the original and a byte offset taken from it would land inside a
+        // character. The row must come back whole, not panic.
+        let spans = vec![Span::styled("İ needle İ", Style::default())];
+        let out = runs(spans, "needle");
+        assert_eq!(
+            out.iter().map(|(t, _)| t.as_str()).collect::<String>(),
+            "İ needle İ",
+            "the text round-trips: {out:?}"
+        );
+        assert!(out.iter().any(|(t, m)| t == "needle" && *m), "{out:?}");
+    }
+
+    #[test]
+    fn no_match_and_no_query_leave_the_row_exactly_as_it_was() {
+        let spans = vec![Span::styled("nothing to find", Style::default())];
+        assert_eq!(
+            runs(spans.clone(), "elsewhere"),
+            vec![("nothing to find".to_string(), false)]
+        );
+        assert_eq!(
+            runs(spans, ""),
+            vec![("nothing to find".to_string(), false)],
+            "a blank query is not a query that matches everywhere"
+        );
+    }
+
+    #[test]
+    fn a_hit_span_keeps_the_style_it_was_drawn_with() {
+        // The mark is *added to* the row's own style, not substituted for it: a
+        // hit inside a thinking trace stays dim as well as underlined.
+        let dim = Style::default().add_modifier(ratatui::style::Modifier::DIM);
+        let spans = vec![Span::styled("reasoning needle here", dim)];
+        let theme = Theme::new(ColorMode::Truecolor, UNICODE);
+        let out = highlight_matches(spans, "needle", theme.search(), false);
+        let marked = out.iter().find(|s| s.content.contains("needle")).unwrap();
+        assert!(
+            marked
+                .style
+                .add_modifier
+                .contains(ratatui::style::Modifier::DIM),
+            "the row's own emphasis survives the mark: {:?}",
+            marked.style
+        );
+        assert!(
+            marked
+                .style
+                .add_modifier
+                .contains(ratatui::style::Modifier::UNDERLINED),
+            "and the mark is there: {:?}",
+            marked.style
+        );
+        assert_eq!(marked.style.fg, Some(theme.search().fg.unwrap()));
+    }
 
     fn screen(lines: Vec<Line<'static>>, width: u16, height: u16) -> String {
         let mut terminal = Terminal::new(TestBackend::new(width, height)).expect("test terminal");

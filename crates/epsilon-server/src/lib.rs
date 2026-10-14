@@ -1,7 +1,7 @@
 //! Local HTTP/SSE frontend (M9b, ADR-011).
 //!
 //! One session runtime beneath all frontends: this crate exposes that runtime over
-//! HTTP — SSE for live [`AgentEvent`]s, small REST endpoints for prompts, steering,
+//! HTTP — SSE for live ``AgentEvent``s, small REST endpoints for prompts, steering,
 //! and permission decisions. Composition (which provider/tools/ruleset) stays in the
 //! CLI; everything here is agnostic to those choices.
 //!
@@ -181,7 +181,7 @@ fn route_table() -> Vec<(&'static str, MethodRouter<ServeState>)> {
     ]
 }
 
-/// Build the application router from [`route_table`] — the only place routes are
+/// Build the application router from ``route_table`` — the only place routes are
 /// registered.
 pub fn router(state: ServeState) -> Router {
     route_table()

@@ -1,17 +1,17 @@
 # AGENTS.md — Working in the Epsilon repository
 
-**Version 3.0 · 2026-10-11**
+**Version 4.0 · 2026-10-12**
 
 > **LOCKED: maintainer-owned; agents never edit this file.**
 > Its SHA-256 is in `AGENTS.md.sha256` and `scripts/check-agents-lock.py` fails CI when they
 > differ. If you believe this file is wrong, append a proposal to
 > [`docs/AGENTS-PROPOSALS.md`](docs/AGENTS-PROPOSALS.md) and say so in your final report.
 >
-> v3 was rewritten from the tree (not from memory) under explicit owner authorisation to
-> unlock, rewrite and relock, then relocked. v2 → v3 corrects the gate-leg list (§4),
-> names the shared keybinding tables (§2.4), records the authorised desktop-stack
-> experiment rule (§2.3), the shell/build-env correction (§4), and the one locked rule the
-> tree currently violates (§6). Evidence: `audit/evidence/goal-audit-2026-10-11.md`.
+> v4 was rewritten from the tree under explicit owner authorisation to unlock, rewrite and
+> relock, then relocked. v3 → v4 retires the desktop: the crate is deleted (`8992fec`,
+> ADR-039), so the two-front-ends language, the native-desktop rule, the `SUPPORTED`
+> subset, the 14-crate map, the 1.95 split and the desktop commands are gone. Evidence:
+> the v4 application draft (`docs/AGENTS-v4-DRAFT.md`).
 
 This file is the permanent reference for anyone — human or agent — changing this repository.
 It holds only what stays true. Anything that moves (progress, open work, decisions in flight)
@@ -22,41 +22,42 @@ belongs in [`docs/STATUS.md`](docs/STATUS.md). For a guided tour of the project 
 
 ## 1. What this project is
 
-Epsilon is an agent harness with **one core and two front ends**:
+Epsilon is an agent harness with **one core and one terminal IDE**:
 
-- **`epsilon-cli` / `epsilon-tui`** — a terminal agent with a full TUI, plus headless,
-  HTTP/SSE and stdio-RPC modes.
-- **`epsilon-desktop`** — a native desktop IDE.
+- **`epsilon-cli` / `epsilon-tui`** — a full-screen terminal IDE (file tree, file viewer
+  and editor, agent conversation, command palette), plus headless, HTTP/SSE and
+  stdio-RPC modes.
 
 It began as a port of [pi](https://github.com/earendil-works/pi) and has since taken ideas
 from DeepSeek Harness, Hermes Agent, opencode and codewhale-ratatui. See
 [`CREDITS.md`](CREDITS.md) and [`docs/references/`](docs/references/README.md).
 
-**The desktop must stay a real desktop application.** No webview, no embedded browser, no
-"render the web frontend in a window". See [§8](#8-ui-and-accessibility-standard).
+(The native desktop IDE was removed in ADR-039; its parity matrix is frozen history under
+`docs/parity/dsh-desktop.md`. A return comes back as a new ADR, never as a quiet re-add.)
 
 ## 2. Architecture invariants
 
 These do not change without an ADR in
 [`docs/design/epsilon-decisions.md`](docs/design/epsilon-decisions.md).
 
-1. **One core.** The agent loop is `epsilon-core`'s `Agent`. The terminal and the desktop are
-   *front ends on it*, not reimplementations. A capability the desktop has, the terminal has,
-   because it is the same machinery behind a different draw call.
+1. **One core.** The agent loop is `epsilon-core`'s `Agent`. The terminal IDE and the
+   headless/HTTP/RPC modes are *modes on it*, not reimplementations. A capability one mode
+   has, every mode has, because it is the same machinery behind a different draw call.
 2. **One composition point.** `epsilon-runtime` is the only place a workspace plus a
    configuration becomes a running agent (`build_runtime`, `resolve_launch`). A second copy of
    composition is a defect, not an optimisation (ADR-021).
-3. **The desktop is native.** egui/eframe over winit + wgpu, rendered natively (ADR-020).
-   No Electron, no Tauri-with-HTML, no wry. A different desktop stack may only be explored
-   behind a feature flag plus an ADR, must keep the native feel (no webview, no embedded
-   browser), and must never destabilise the core or the terminal.
-4. **One command registry.** Slash commands (`COMMAND_HEADS`), palette entries (derived from
-   each front end's `SUPPORTED` subset) and keybindings (`TERMINAL` / `WINDOW` tables) are
-   declared once in `epsilon-contracts` and read by every front end, with per-front-end
+3. **No desktop frontend.** ADR-039 removed `epsilon-desktop` (egui/eframe) with its crate,
+   its pins and its matrix. The `WINDOW` keybinding table is retained deliberately for the
+   TUI IDE, not as a second frontend. A new window comes back only through a new ADR with
+   its own battery shape — never as a quiet re-add, which the `check-verb-counts` removal
+   guard fails on purpose.
+4. **One command registry.** Slash commands (`COMMAND_HEADS`) and palette entries (derived
+   from `COMMAND_HEADS`) and keybindings (the `TERMINAL` table, plus the retained `WINDOW`
+   table) are declared once in `epsilon-contracts` and read by every mode, with per-mode
    capability declared as data rather than as a second hand-maintained list.
 5. **No library depends on `epsilon-cli`.** Cargo rejects cycles; it does not stop you adding an
    edge nobody meant. `epsilon-cli` may depend on the others; the reverse is a review item.
-6. **A refusal path never exits the process.** Functions shared with a window return an error;
+6. **A refusal path never exits the process.** Functions shared across modes return an error;
    they do not `die()`. This is why `resolve_launch` returns `Err(String)` where the CLI once
    called `die()`.
 7. **Nothing a UI advertises may be a no-op.** A bound key the UI does not act on says so; a
@@ -79,9 +80,8 @@ crates/
   epsilon-ext         process-extension protocol and host
   epsilon-mcp         MCP client and tool adapter
   epsilon-runtime     COMPOSITION: the one place a config becomes a running agent
-  epsilon-tui         terminal frontend (ratatui + crossterm)
+  epsilon-tui         terminal IDE: tree, viewer/editor, transcript, palette (ratatui + crossterm)
   epsilon-server      HTTP/SSE frontend
-  epsilon-desktop     native desktop IDE (egui/eframe)
   epsilon-cli         the binary: argument parsing and mode dispatch
 docs/                 START-HERE.md, STATUS.md, design/, references/, parity/, plans/, milestones/, user/
 scripts/              gate.ps1 / gate.sh, check-*.py, console-probe.py
@@ -92,8 +92,8 @@ references/           read-only reference harnesses. Never modify, move or delet
 
 ## 4. Build, test, lint, run
 
-Toolchain: **Rust 1.88+** for everything except `epsilon-desktop`, which needs **1.95**
-because egui declares it. That is deliberate and CI splits the MSRV job for it.
+Toolchain: **Rust 1.88+**, uniformly — every crate inherits the workspace `rust-version`
+and no manifest overrides it.
 
 ```sh
 cargo check --workspace --all-targets
@@ -102,7 +102,6 @@ cargo clippy --workspace --all-targets -- -D warnings     # zero warnings, no ex
 cargo test --workspace
 cargo run -q -p epsilon-cli -- --demo                      # offline, scripted, no provider needed
 cargo check -p epsilon-cli --features real
-cargo run -q -p epsilon-desktop                           # the native IDE
 cargo run -q -p epsilon-cli                               # the terminal UI
 ```
 
@@ -155,7 +154,7 @@ a tree that no longer exists.
   Never let it block a justified architectural improvement, validation at a trust boundary,
   accessibility, or protection against data loss.
 - **Reuse before you add.** A helper, type or pattern already three files over is the most
-  common slop. If two front ends need the same decision, it belongs in the core, not in both.
+  common slop. If two modes need the same decision, it belongs in the core, not in both.
 - **Smallest correct change.** Deletion beats addition. A refactor that also changes behaviour
   cannot be reviewed as a refactor.
 - **Rust:** `unsafe_code = "forbid"` workspace-wide; `missing_docs` is on — write docs you would
@@ -215,7 +214,7 @@ reports success while the thing you wanted did not happen.*
 
 ## 8. UI and accessibility standard
 
-Applies to the desktop IDE first and to the terminal as far as a terminal can.
+Applies to the terminal IDE first and to every other mode as far as each can.
 
 - **WCAG 2.2 AA is the floor**, not a stretch goal.
 - **Full keyboard operation**, logical focus order, visible focus, and **no keyboard traps**.
@@ -227,7 +226,7 @@ Applies to the desktop IDE first and to the terminal as far as a terminal can.
   Never rely on colour alone to carry meaning.
 - Honour **reduced motion**, **OS dark/light**, **high contrast**, **text scaling** and **DPI**.
 - **Design system**: colour, type and spacing tokens in one place; one type scale; consistent
-  components. Share tokens with the terminal where it is honest to do so.
+  components.
 - **Every async view has states**: loading, empty, error, cancelled, long-running. No silent
   failures. No data loss — recovery, and confirmation before discarding.
 - **Performance**: fast startup, virtualised long transcripts and large files, no blocking of

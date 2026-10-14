@@ -242,7 +242,7 @@ impl Hints {
     /// `y`/`a`/`n`/`e` by character and there is no binding id for them, so a
     /// resolved chord here would be a claim about the table that the table
     /// cannot make. Naming the letter that is actually handled is the honest
-    /// version — and if these ever move into [`crate::keybindings::DEFAULTS`],
+    /// version — and if these ever move into ``crate::keybindings::DEFAULTS``,
     /// this is the function that changes with them.
     pub fn approval() -> Self {
         Self {

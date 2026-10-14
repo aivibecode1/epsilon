@@ -8,13 +8,13 @@
 //! missed it, and the reason is mechanical rather than accidental.
 //!
 //! `FauxProvider` emits an entire turn's events with no delay at all — see
-//! [`FauxEventStream::next`], which is a bare `self.pending.pop_front()`. A turn is
+//! ``FauxEventStream::next``, which is a bare `self.pending.pop_front()`. A turn is
 //! therefore over in microseconds, and every harness that has ever driven the TUI has
 //! photographed a run that was already finished. The one state the report describes —
 //! a turn **in flight**, streaming over seconds while the user types — has never been
 //! executed by anything.
 //!
-//! [`SlowProvider`](crate::testing::SlowProvider) does not close the gap either, and
+//! ``SlowProvider``(crate::testing::SlowProvider) does not close the gap either, and
 //! the distinction matters. It sleeps *before* `stream` opens, so it can delay the
 //! **start** of a turn. It cannot delay the **duration** of one, because a turn's
 //! length is decided by how many events the stream yields and how fast the consumer

@@ -1354,7 +1354,7 @@ fn list_models(provider_filter: Option<&str>) {
 ///
 /// An unrecognised value falls back to the default rather than failing, the same
 /// rule `epsilon_core::config` follows for every other key: a config typo must
-/// not stop the TUI from starting. The fallback is [`ThemeMode::Dark`] — *not*
+/// not stop the TUI from starting. The fallback is `ThemeMode::Dark` — *not*
 /// "try the next source" — and that distinction is the whole point of the
 /// environment being checked here rather than by the TUI's own detector. A user
 /// who typed `EPSILON_THEME=solarized` meant to say something about the palette,

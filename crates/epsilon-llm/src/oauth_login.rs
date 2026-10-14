@@ -892,7 +892,7 @@ pub enum ExchangeOutcome {
     Key(String),
     /// A device token that still needs minting into the spendable credential
     /// (M55: GitHub's device token → Copilot bearer). Never persisted as-is —
-    /// the flow mints it before [`persist`] sees anything.
+    /// the flow mints it before ``persist`` sees anything.
     Device(String),
 }
 

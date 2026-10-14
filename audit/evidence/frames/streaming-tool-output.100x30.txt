@@ -1,0 +1,34 @@
+
+=== streaming-tool-output @ 100x30 ===
++----------------------------------------------------------------------------------------------------+
+|⠋ running 0s · bash: Compiling epsilon-tools v0.1.0 Faux (offline scripted) • thinking off · offline|
+|                                                                                                    |
+|                                                                                                    |
+|                                                                                                    |
+|                                                                                                    |
+|                                                                                                    |
+|                                                                                                    |
+|                                                                                                    |
+|                                                                                                    |
+|                                                                                                    |
+|                                                                                                    |
+|                                                                                                    |
+|                                                                                                    |
+|                                                                                                    |
+|                                                                                                    |
+|                                                                                                    |
+|                                                                                                    |
+|                                                                                                    |
+|                                                                                                    |
+|                                                                                                    |
+|                                                                                                    |
+|▎ ❯ cargo build                                                                                     |
+|                                                                                                    |
+|▸ bash $ cargo build · pending                                                                      |
+|│ Compiling epsilon-core v0.1.0                                                                     |
+|│ Compiling epsilon-tools v0.1.0                                                                    |
+|                                                                                                    |
+|❯ ask anything                                                                                      |
+|────────────────────────────────────────────────────────────────────────────────────────────────────|
+|run · enter queue · pageup scroll back · pagedown scroll forward · esc  …\Epsilon\crates\epsilon-tui|
++----------------------------------------------------------------------------------------------------+

@@ -132,6 +132,7 @@ impl App {
             at_fragment: String::new(),
             timeline_open: false,
             timeline_index: 0,
+            timeline_fork_refill: None,
             timeline_capacity: 1,
             timeline_entries: Vec::new(),
             tree_open: false,
@@ -173,6 +174,8 @@ impl App {
             goal_badge: None,
             // Populated immediately below; see `discover_prompt_templates`.
             prompt_templates: Vec::new(),
+            // Populated at startup and on `/reload`; see `refresh_skills`.
+            skills_cache: Vec::new(),
             keybindings: crate::keybindings::KeybindingsManager::create(),
             thinking: epsilon_contracts::ThinkingLevel::default(),
             session_name: None,
@@ -183,6 +186,11 @@ impl App {
             auth_key_cursor: 0,
             auth_pick_open: false,
             auth_pick_index: 0,
+            think_pick_open: false,
+            think_pick_index: 0,
+            scope_open: false,
+            scope_index: 0,
+            scope_snapshot: Vec::new(),
             anthropic_billing_warned: false,
         };
         // A keybindings file that could not be used names itself at startup

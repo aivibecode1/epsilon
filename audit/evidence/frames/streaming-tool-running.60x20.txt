@@ -1,0 +1,24 @@
+
+=== streaming-tool-running @ 60x20 ===
++------------------------------------------------------------+
+|⠋ running 0s · running bash… ipted) • thinking off · offline|
+|                                                            |
+|                                                            |
+|                                                            |
+|                                                            |
+|                                                            |
+|                                                            |
+|                                                            |
+|                                                            |
+|                                                            |
+|                                                            |
+|                                                            |
+|▎ ❯ cargo build                                             |
+|                                                            |
+|▸ bash $ cargo build · pending                              |
+|│ cargo build                                               |
+|                                                            |
+|❯ ask anything                                              |
+|────────────────────────────────────────────────────────────|
+|run · enter queue · pageup      …\Epsilon\crates\epsilon-tui|
++------------------------------------------------------------+

@@ -1,7 +1,7 @@
 //! Unified multi-provider LLM layer behind the never-failing [`StreamFn`] contract.
 //!
 //! The rest of Epsilon never sees provider SDKs: providers implement [`StreamFn`], which
-//! returns an [`EventStream`] of [`StreamEvent`]s whose terminal event carries success OR
+//! returns an [`EventStream`] of ``StreamEvent``s whose terminal event carries success OR
 //! failure (encoded as `stop_reason`). This mirrors pi's StreamFn contract one-to-one.
 //!
 //! Real providers (M17, `real` feature) speak their own HTTP APIs directly

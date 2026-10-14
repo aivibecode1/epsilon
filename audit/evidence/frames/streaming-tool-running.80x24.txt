@@ -1,0 +1,28 @@
+
+=== streaming-tool-running @ 80x24 ===
++--------------------------------------------------------------------------------+
+|⠋ running 0s · running bash…    Faux (offline scripted) • thinking off · offline|
+|                                                                                |
+|                                                                                |
+|                                                                                |
+|                                                                                |
+|                                                                                |
+|                                                                                |
+|                                                                                |
+|                                                                                |
+|                                                                                |
+|                                                                                |
+|                                                                                |
+|                                                                                |
+|                                                                                |
+|                                                                                |
+|                                                                                |
+|▎ ❯ cargo build                                                                 |
+|                                                                                |
+|▸ bash $ cargo build · pending                                                  |
+|│ cargo build                                                                   |
+|                                                                                |
+|❯ ask anything                                                                  |
+|────────────────────────────────────────────────────────────────────────────────|
+|run · enter queue · pageup scroll back · pagedown   …\Epsilon\crates\epsilon-tui|
++--------------------------------------------------------------------------------+

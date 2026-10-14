@@ -82,7 +82,7 @@ impl BashTool {
     }
 
     /// Set the mode the session runs at. Every call may *narrow* below this freely; a call
-    /// that asks to widen is refused here (see [`Self::resolve_mode`]).
+    /// that asks to widen is refused here (see ``Self::resolve_mode``).
     pub fn with_session_mode(mut self, mode: SandboxMode) -> Self {
         self.session_mode = mode;
         self

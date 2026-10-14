@@ -1,0 +1,28 @@
+
+=== file-editor-undone-edit @ 80x24 ===
++--------------------------------------------------------------------------------+
+|idle           ?/1.0M · ↑0 ↓0 · Faux (offline scripted) • thinking off · offline|
+|                                                                                |
+|        ╭ edit undo-demo.txt — alt+s saves, esc cancels (modified) ────╮        |
+|        │ the quick brown fox!                                         │        |
+|        │                                                              │        |
+|        │                                                              │        |
+|        │                                                              │        |
+|        │                                                              │        |
+|        │                                                              │        |
+|        │                                                              │        |
+|        │                                                              │        |
+|        │                                                              │        |
+|        │                                                              │        |
+|        │                                                              │        |
+|        │                                                              │        |
+|        │                                                              │        |
+|        │                                                              │        |
+|        │                                                              │        |
+|        │                                                              │        |
+|▎ ❯ undo│                                                              │        |
+|        │ type/enter edit · alt+s save · esc cancel                    │        |
+|❯ ask an╰──────────────────────────────────────────────────────────────╯        |
+|────────────────────────────────────────────────────────────────────────────────|
+|edit · type edit · enter newline · alt+s save · esc …\Epsilon\crates\epsilon-tui|
++--------------------------------------------------------------------------------+

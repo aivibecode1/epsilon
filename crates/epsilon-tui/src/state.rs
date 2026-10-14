@@ -259,6 +259,15 @@ pub enum CardStatus {
     Failed,
     /// Refused by the permission gate.
     Denied,
+    /// The turn it was running in was aborted before the tool answered.
+    ///
+    /// Its own status rather than `Failed`: the tool did not fail, the *turn* was
+    /// stopped, and a reader who sees a red X on a command that was never allowed
+    /// to finish reads a defect where there was a decision. C-110's wording
+    /// convention — "stopped", not "failed" — applied to the card, not just the
+    /// reply. Without this a card keeps its spinner forever and reads as a hung
+    /// agent rather than a cancelled one (P-051).
+    Stopped,
 }
 
 /// A tool call or result as a card: a title line, then a body.
@@ -802,6 +811,47 @@ pub struct UiState {
 }
 
 impl UiState {
+    /// Settle every tool card an aborted turn left in flight (P-051).
+    ///
+    /// Before this, aborting a turn pushed the "Response was stopped" line and
+    /// left the card exactly as it was — `Running`, spinner intact — so the
+    /// transcript showed a tool still working on a turn that had ended. Session
+    /// repair at the *next launch* synthesised results for those calls, which
+    /// fixed the stored session but never the screen the user was looking at.
+    ///
+    /// `Pending` and `Running` are the two states that mean "not finished"; a
+    /// card already `Ok`/`Failed`/`Denied`/`Partial` answered before the abort and
+    /// must keep its own verdict. The status becomes `Stopped` rather than
+    /// `Failed` — the tool did not fail, the turn was stopped — and the body gets
+    /// one line saying so, joining whatever it already held.
+    fn settle_cards_for_abort(&mut self) {
+        let note = "This call was never finished — the turn was stopped.";
+        // **`ended_at_ms` is the part that makes this reach the screen.**
+        // The render cache rebuilds a row only when its line is *named* — by
+        // `restale_cards`, which names a card whose `ended_at_ms` is set. Changing
+        // the status and the body without it leaves the row cached exactly as it
+        // was drawn, so a live abort (which has already drawn a frame) keeps the
+        // ghost spinner on screen forever. Reproduced: settle without this and the
+        // note is absent from the frame while the data carries it.
+        let ended = now_ms();
+        for line in self.lines.iter_mut() {
+            let Some(card) = line.card.as_mut() else {
+                continue;
+            };
+            if card.status != CardStatus::Pending && card.status != CardStatus::Running {
+                continue;
+            }
+            card.status = CardStatus::Stopped;
+            let merged = match &card.body {
+                CardBody::Text(text) | CardBody::Prompt(text) => format!("{text}\n{note}"),
+                // A diff has already answered — its own text is the answer.
+                CardBody::Diff(_) => note.to_string(),
+            };
+            card.body = CardBody::Text(merged);
+            card.ended_at_ms = Some(ended);
+        }
+    }
+
     /// Empty state with an idle status line.
     pub fn new() -> Self {
         Self::with_glyphs(crate::ui::theme::Glyphs::detect())
@@ -859,7 +909,7 @@ impl UiState {
     /// Whether the context size is unknown because a compaction has not been
     /// re-measured yet.
     ///
-    /// The single reader of [`UiState::compacted`]. The context gauge prints
+    /// The single reader of ``UiState::compacted``. The context gauge prints
     /// `· compacted` beside its `?` when this is true, so a reader can tell
     /// "nothing has run yet" from "a compaction replaced the count and no reply
     /// has put a fresh one back".
@@ -1405,6 +1455,7 @@ impl UiState {
                             LineKind::System,
                             "Response was stopped before completion.",
                         ));
+                        self.settle_cards_for_abort();
                     }
                     self.tokens_in += a.usage.input;
                     self.tokens_out += a.usage.output;
@@ -1571,6 +1622,7 @@ impl UiState {
                             LineKind::System,
                             "Response was stopped before completion.",
                         ));
+                        self.settle_cards_for_abort();
                     }
                     self.tokens_in += a.usage.input;
                     self.tokens_out += a.usage.output;
@@ -2105,7 +2157,7 @@ fn summarize_args(args: &serde_json::Value) -> String {
     truncate(&args.to_string(), 80, crate::ui::theme::UNICODE.ellipsis)
 }
 
-/// [`truncate`] for the renderers module, which formats card headlines and cannot
+/// ``truncate`` for the renderers module, which formats card headlines and cannot
 /// reach a private helper. One implementation: two different truncation policies would be
 /// one more place for a card to disagree with its own header.
 pub fn truncate_public(s: &str, max: usize, ellipsis: &str) -> String {

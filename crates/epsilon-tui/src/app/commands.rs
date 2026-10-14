@@ -445,9 +445,16 @@ fn resolved_labels(
 /// that is awkward to observe through a notice that must be rendered and scraped.
 /// pi's resource panel states enablement per row (`config-selector.ts`), so a
 /// name-only list hides half of what a reader needs.
+///
+/// **The scope is on the row too** (P-006). Pi groups its resource blocks by
+/// project / user / path; a flat list of names answers "what can I invoke" and
+/// not "which one is this", which is the question you actually have when a skill
+/// works in one repository and not in another — or when you are trying to decide
+/// whether to delete the one in `~/.config`.
 pub(crate) fn skill_lines(
     skills: &[epsilon_core::skills::Skill],
     disabled: &[String],
+    user_scope: &std::collections::HashMap<std::path::PathBuf, &'static str>,
 ) -> Vec<String> {
     skills
         .iter()
@@ -463,9 +470,51 @@ pub(crate) fn skill_lines(
             if disabled.iter().any(|d| d == &s.name) {
                 line.push_str(" [off]");
             }
+            // **The scope is a property of the ROOT, not of the skill.** The map is keyed
+            // by the root discovery scanned, and `s.dir` is `<root>/<name>`, so the lookup
+            // is on the parent. Asking for `s.dir` itself returns `None` for every skill
+            // ever discovered, which is how this shipped as "always show the path" while
+            // reading as though it labelled scopes.
+            if let Some(scope) = user_scope.get(s.dir.parent().unwrap_or(&s.dir)) {
+                line.push_str(&format!(" ({scope})"));
+            } else {
+                // Under neither anchor we know: the workspace changed under a
+                // running session, or a skill arrived by a path this launch does
+                // not scan. The path is the honest answer; a guessed scope is not.
+                line.push_str(&format!(" ({})", s.dir.display()));
+            }
             line
         })
         .collect()
+}
+
+/// The roots `/reload` scans, and the scope label each one is worth to a reader.
+///
+/// **The scope is a label on two anchors, not a copy of the root list.** The
+/// composition crate owns the list (`epsilon_runtime::skill_roots`, which also
+/// carries the trust gate), and `epsilon-runtime` is a *dev*-dependency here —
+/// the shipped TUI must not depend on the thing that composes it. What a reader
+/// needs from a scope is answerable from the anchors alone: a skill under the
+/// user's global config is "user", one under this workspace is "project", and
+/// anything else keeps its path rather than being told a scope it does not have.
+///
+/// The anchors come from `epsilon_core::skills::user_roots` / `project_roots` — the
+/// same list discovery scans — rather than being written out here. A hand-written
+/// pair of anchors (`global_dir` + `.agents` + `.epsilon`) used to label only three
+/// of the roots, so a skill that came from `~/.claude/skills` showed a full path
+/// where its neighbours showed `(user)`, which reads as a different kind of thing
+/// rather than the same thing from another tool.
+pub(crate) fn skill_scope_by_dir(
+    workspace_root: &std::path::Path,
+) -> std::collections::HashMap<std::path::PathBuf, &'static str> {
+    let mut map = std::collections::HashMap::new();
+    for root in epsilon_core::skills::user_roots() {
+        map.insert(root, "user");
+    }
+    for root in epsilon_core::skills::project_roots(workspace_root) {
+        map.insert(root, "project");
+    }
+    map
 }
 
 /// Rows that no filter and no search may hide.
@@ -558,6 +607,14 @@ pub(crate) fn apply_search(
 /// `refilter` when a chord changes something). Two copies would drift in a way
 /// nothing catches: the picker opens showing rows the chord handler believes are
 /// hidden, or the highlight lands on a row that is not drawn.
+///
+/// Fork-mode rows (P-074) ride beside it for the same reason: user messages
+/// only — a fork continues a conversation from something somebody said — and
+/// the picker, the key handler (`refilter`) and the renderer all read
+/// `timeline_entries`, so the rule lives here, not in each of them.
+pub(crate) fn fork_user_rows(rows: &[crate::app::TimelineRow]) -> Vec<crate::app::TimelineRow> {
+    rows.iter().filter(|r| r.kind == "user").cloned().collect()
+}
 pub(crate) fn visible_rows(
     all: &[crate::app::TimelineRow],
     filter: crate::app::TreeFilter,
@@ -642,7 +699,7 @@ impl App {
             | crate::picker::Command::Login { .. }
             | crate::picker::Command::Logout(_) => self.run_provider_command(agent, command),
             // What the session is.
-            crate::picker::Command::Fork
+            crate::picker::Command::Fork(_)
             | crate::picker::Command::New
             | crate::picker::Command::Resume(_)
             | crate::picker::Command::Sessions
@@ -669,7 +726,8 @@ impl App {
             | crate::picker::Command::Timeline
             | crate::picker::Command::Hotkeys
             | crate::picker::Command::Settings
-            | crate::picker::Command::Changelog => self.run_view_command(agent, command),
+            | crate::picker::Command::Changelog
+            | crate::picker::Command::Catalog => self.run_view_command(agent, command),
             // Move bytes or permissions across the trust boundary.
             crate::picker::Command::Trust(_)
             | crate::picker::Command::Export(_)
@@ -724,10 +782,21 @@ impl App {
             crate::picker::Command::Think(arg) => {
                 match arg.as_deref().map(str::trim) {
                     None => {
-                        // Direct push: slash replies render this frame.
-                        let cur = agent.thinking_level();
-                        self.ui
-                            .push_notice(format!("thinking level: {}", cur.as_str()));
+                        // Bare `/think` — open the level picker (P-048, the
+                        // provider-picker shape from bare `/login`) instead
+                        // of only reporting: discovery is one Enter, not
+                        // memorizing level names. Preselected on the current
+                        // level, so Enter with no move is a no-op close.
+                        self.think_pick_open = true;
+                        self.think_pick_index = epsilon_contracts::ThinkingLevel::ALL
+                            .iter()
+                            .position(|level| *level == agent.thinking_level())
+                            .unwrap_or(0);
+                        self.input.clear();
+                        self.cursor_chars = 0;
+                        self.ui.push_notice(
+                            "thinking level — pick one (↑/↓ Enter), or type to filter",
+                        );
                     }
                     Some(word) => match epsilon_contracts::ThinkingLevel::parse(word) {
                         Some(level) => self.set_thinking(agent, level),
@@ -742,19 +811,23 @@ impl App {
                 }
             }
             crate::picker::Command::ScopedModels => {
-                if self.favorites.is_empty() {
-                    self.ui
-                        .push_notice("scoped-models: no favorites yet — open Ctrl+P and press Ctrl+F on a model to star it, then Ctrl+P cycles favorites");
-                } else {
-                    // Ponytail: route to the model picker seeded with favorites (pi scopedModels → model picker).
-                    self.picker_open = true;
-                    self.picker_index = 0;
-                    self.invalidate_picker();
-                    self.ui.push_notice(format!(
-                        "scoped-models: {} favorite(s) — cycling favorites · open Ctrl+P to pick, Ctrl+F to star/unstar",
-                        self.favorites.len()
-                    ));
+                // P-047: the searchable checklist over the F2 cycle scope.
+                // Staging writes nothing: Space toggles `favorites` in memory
+                // (the cycle list reads it, so the rescope is live), Ctrl+S
+                // persists, Esc reverts. Gated like cycling (M27): persisting
+                // config must not act against unreviewed rules.
+                if self.trust_review_pending {
+                    self.ui.push_notice(
+                        "config review pending - type `trust` to accept or `trust no` to quit",
+                    );
+                    return false;
                 }
+                self.scope_snapshot = self.favorites.clone();
+                self.scope_open = true;
+                self.scope_index = 0;
+                self.stash_draft();
+                self.input.clear();
+                self.cursor_chars = 0;
             }
             crate::picker::Command::Login { provider, key } => {
                 let provider = provider.trim().to_string();
@@ -873,7 +946,7 @@ impl App {
             crate::picker::Command::Sessions
             | crate::picker::Command::Session
             | crate::picker::Command::Tree => self.run_navigate_command(agent, command),
-            crate::picker::Command::Fork
+            crate::picker::Command::Fork(_)
             | crate::picker::Command::Clone
             | crate::picker::Command::Name(_) => self.run_branch_command(agent, command),
             crate::picker::Command::New
@@ -1312,7 +1385,7 @@ impl App {
                 }
             }
             crate::picker::Command::Tree => {
-                let _ = self.open_timeline_picker(agent, "tree");
+                let _ = self.open_timeline_picker(agent, "tree", None);
             }
             // `run_command` owns the routing, so reaching a variant here means the
             // dispatcher sent it to the wrong executor. `debug_assert` catches that in
@@ -1373,59 +1446,18 @@ impl App {
 
     fn run_branch_command(&mut self, agent: &Arc<Agent>, command: crate::picker::Command) -> bool {
         match command {
-            crate::picker::Command::Fork => {
-                let Some(store) = agent.session_store() else {
-                    self.ui.push_notice("no session store attached");
-                    return false;
-                };
-                let (path, leaf) = match store.lock() {
-                    Ok(st) => (st.path().to_path_buf(), st.leaf_id()),
-                    Err(_) => {
-                        self.ui.push_notice("fork: session store unavailable");
-                        return false;
-                    }
-                };
-                if leaf.is_none() {
-                    self.ui
-                        .push_notice("fork: nothing to fork — session is empty");
-                    return false;
-                }
-                // The store's `fork_branch_at`, not `std::fs::copy`.
-                //
-                // A copy duplicated the whole file — every abandoned branch and every
-                // dead path — under the *same* session id in the header, so the two
-                // files claimed one identity. `fork_branch_at` writes a fresh header
-                // (`store.rs:1531-1536`) and copies only `branch_to(leaf)`, which is
-                // what pi's `forkFrom` does (`session-manager.ts:1611-1634`).
-                //
-                // That correct implementation already existed and was wired **only**
-                // from the RPC surface — so the transport a human uses had the worse
-                // one. Same defect class as `branch_with_summary`: a faithful port with
-                // no production caller on the path anyone actually takes.
-                let Some(leaf_id) = leaf else { return false };
-                let dest_dir = match path.parent() {
-                    Some(d) => d.to_path_buf(),
-                    None => {
-                        self.ui
-                            .push_notice("fork: the session file has no parent directory");
-                        return false;
-                    }
-                };
-                let forked = match store.lock() {
-                    Ok(st) => st.fork_branch_at(&leaf_id, &dest_dir),
-                    Err(_) => {
-                        self.ui.push_notice("fork: session store unavailable");
-                        return false;
-                    }
-                };
-                match forked {
-                    Ok(dest) => self.ui.push_notice(format!(
-                        "forked session → {} (open with --session {})",
-                        dest.display(),
-                        dest.display()
-                    )),
-                    Err(e) => self.ui.push_error(format!("fork failed: {e}")),
-                }
+            crate::picker::Command::Fork(tail) => {
+                // P-074: pick the message first, fork second. The immediate
+                // leaf fork is gone: forking sight-unseen surprised, and pi
+                // lists earlier user messages newest-preselected with the
+                // typed text refilled into the composer. The fork itself
+                // still goes through the store's `fork_branch_at` (fresh
+                // header, `branch_to(id)` only — never a file copy); only
+                // the message id now comes from the picker, on Enter.
+                let refill = tail.as_deref().map(str::trim).unwrap_or("").to_string();
+                self.input.clear();
+                self.cursor_chars = 0;
+                let _ = self.open_timeline_picker(agent, "fork", Some(refill));
             }
             crate::picker::Command::Clone => {
                 let Some(store) = agent.session_store() else {
@@ -1642,12 +1674,18 @@ impl App {
                 }
             }
             crate::picker::Command::Reload => {
-                let mut roots = Vec::new();
-                if let Some(dir) = epsilon_core::config::global_dir() {
-                    roots.push(dir.join("skills"));
-                }
-                roots.push(self.workspace_root.join(".agents").join("skills"));
-                roots.push(self.workspace_root.join(".epsilon").join("skills"));
+                // The root list is `epsilon_core::skills::all_roots`, not a copy written
+                // here: the composition path builds the running agent from the same call,
+                // and the second list was the defect `AGENTS.md` §2.2 names. The trust bit
+                // is the TUI's spelling of the runtime's `project_trusted`
+                // (`trust_review_pending` means untrusted), exactly as the agent-defs
+                // reload below already passes it — skills used to skip that gate, so a
+                // repository that had not been trusted yet had its `.epsilon/skills`
+                // loaded by `/reload` even though startup had refused them.
+                let roots = epsilon_core::skills::all_roots(
+                    &self.workspace_root,
+                    !self.trust_review_pending,
+                );
                 // `discover_with_notices`, not `discover`: the wrapper throws away everything
                 // discovery could not do, and `/reload` is the one command whose whole promise
                 // is "read what is on disk now". An unreadable root, a `SKILL.md` that will not
@@ -1659,6 +1697,7 @@ impl App {
                 let found = epsilon_core::skills::discover_with_notices(&roots);
                 let n = found.skills.len();
                 agent.set_skills(found.skills);
+                self.refresh_skills(agent);
                 // The transcript, like every other reply in this file (`run_command`'s own doc:
                 // synchronous so they render on the very next frame, leaving the notices channel
                 // for async events). Discovery's lines are already formatted as whole sentences
@@ -2002,7 +2041,14 @@ impl App {
     /// They were two 96-line copies differing only in the label inside three notice
     /// strings - the exact shape that lets a fix land in one copy and not the other.
     /// `label` is the only difference that survives.
-    fn open_timeline_picker(&mut self, agent: &Arc<Agent>, label: &str) -> bool {
+    /// `fork_refill` opens the fork mode (P-074): user rows only, newest
+    /// preselected, Enter forks instead of navigating.
+    fn open_timeline_picker(
+        &mut self,
+        agent: &Arc<Agent>,
+        label: &str,
+        fork_refill: Option<String>,
+    ) -> bool {
         let entries = {
             let Some(guard) = agent.session_store() else {
                 self.ui
@@ -2094,14 +2140,30 @@ impl App {
             return false;
         }
         self.timeline_all = all;
-        self.timeline_entries = rows;
-        // Land on the leaf, which is where the conversation is -- not on the last
-        // row of the forest, which after a rewind is a branch the user left.
-        self.timeline_index = self
-            .timeline_entries
-            .iter()
-            .rposition(|r| r.on_active)
-            .unwrap_or(self.timeline_entries.len() - 1);
+        // P-074: fork mode lists user messages only, newest preselected —
+        // a fork continues from something somebody said, and the newest is
+        // the row a fork continues from by default.
+        if fork_refill.is_some() {
+            let users = fork_user_rows(&rows);
+            if users.is_empty() {
+                self.ui
+                    .push_notice(format!("{label}: no user messages to fork from"));
+                return false;
+            }
+            self.timeline_entries = users;
+            self.timeline_index = self.timeline_entries.len() - 1;
+            self.timeline_fork_refill = fork_refill;
+        } else {
+            self.timeline_entries = rows;
+            // Land on the leaf, which is where the conversation is -- not on the last
+            // row of the forest, which after a rewind is a branch the user left.
+            self.timeline_index = self
+                .timeline_entries
+                .iter()
+                .rposition(|r| r.on_active)
+                .unwrap_or(self.timeline_entries.len() - 1);
+            self.timeline_fork_refill = None;
+        }
         self.timeline_open = true;
         false
     }
@@ -2146,6 +2208,22 @@ impl App {
                     self.ui.push_notice(line);
                 }
             }
+            crate::picker::Command::Catalog => {
+                // Criterion 5: when was this catalog last successfully updated?
+                // The generator writes the date into `catalog_data.rs`'s header and
+                // `CATALOG_SNAPSHOT_DATE` is the one value that carries it; the
+                // row/provider counts come from the same module so a second copy
+                // cannot drift.
+                let date = epsilon_llm::catalog::CATALOG_SNAPSHOT_DATE;
+                let (rows, providers) = epsilon_llm::catalog::snapshot_shape();
+                self.ui.push_notice(format!(
+                    "model catalog: snapshot {date} — {rows} models across {providers} providers"
+                ));
+                self.ui.push_notice(
+                    "bundled offline: browsing needs no network. refresh with                      `python scripts/regen_catalog.py`, then run the battery."
+                        .to_string(),
+                );
+            }
             crate::picker::Command::Skills => {
                 // M196: this printed `names.join(", ")`, discarding a description
                 // the `Skill` struct already carries. The repo had solved this
@@ -2153,18 +2231,34 @@ impl App {
                 // description`), so a user could read what a template does and
                 // not what a skill does.
                 let skills = agent.skills();
+                let scoped = skill_scope_by_dir(&self.workspace_root);
                 if skills.is_empty() {
-                    self.ui.push_notice(
-                        "no skills discovered — drop SKILL.md dirs into .epsilon/skills/",
-                    );
+                    // Name the roots, not just one of them: "drop a SKILL.md into
+                    // `.epsilon/skills/`" was true and incomplete, and a user with a
+                    // skill in `~/.claude/skills` was told to create a directory that
+                    // already existed. Discovery reads every harness convention
+                    // (`skills::user_roots` / `project_roots`), so the honest instruction
+                    // is "put it in any of them" — with the portable pair named, because
+                    // a skill there is the one every tool including this one will read.
+                    let project = self.workspace_root.join(".agents").join("skills");
+                    let user = epsilon_core::config::home_dir()
+                        .map(|h| h.join(".agents").join("skills").display().to_string())
+                        .unwrap_or_else(|| "~/.agents/skills".to_string());
+                    self.ui.push_notice(format!(
+                        "no skills discovered — drop SKILL.md dirs into {} or {user} \
+                         (also read: .epsilon, .claude, .codex, .gemini, .cursor, \
+                         .windsurf, .opencode, .dsh, each under the workspace and your \
+                         home directory)",
+                        project.display()
+                    ));
                 } else {
                     let disabled = epsilon_core::config::load_disabled_skills();
-                    for line in skill_lines(&skills, &disabled) {
+                    for line in skill_lines(&skills, &disabled, &scoped) {
                         self.ui.push_notice(line);
                     }
-                    let on = skills.len() - disabled.len();
+                    let on = skills.len() - disabled.len().min(skills.len());
                     self.ui.push_notice(format!(
-                        "{on} of {} enabled · toggle one with `/skill <name> off|on`",
+                        "{on} of {} enabled · toggle one with `/skill <name> off|on` · `/reload` re-reads the roots",
                         skills.len()
                     ));
                 }
@@ -2254,7 +2348,7 @@ impl App {
                 }
             }
             crate::picker::Command::Timeline => {
-                let _ = self.open_timeline_picker(agent, "timeline");
+                let _ = self.open_timeline_picker(agent, "timeline", None);
             }
             crate::picker::Command::Hotkeys => {
                 for line in [
@@ -3074,8 +3168,18 @@ mod tests {
             "a notice naming a root and no reason is the defect again: {screen}"
         );
 
+        // **The workspace's own skill still loads.** Asserted as `>= 1`, not as a number:
+        // `all_roots` also carries the real home directory's skill tree, so the count on a
+        // machine that has been running Claude Code for a year is not 1 and must not be
+        // written down as though it were.
+        let count = screen
+            .split("reload:")
+            .nth(1)
+            .and_then(|rest| rest.split("skill(s)").next())
+            .and_then(|n| n.trim().parse::<usize>().ok())
+            .expect("the reload summary states a skill count");
         assert!(
-            screen.contains("reload:1skill(s)"),
+            count >= 1,
             "the skills that could be read still load: {screen}"
         );
     }
@@ -3191,7 +3295,6 @@ mod tests {
             ("commit-craft", "Craft commits."),
             ("review-diff", "Review a diff."),
         ] {
-            let row = squeezed(&format!("{name} — {description}"));
             let found = held
                 .iter()
                 .any(|s| s.name == name && s.description == description);
@@ -3199,14 +3302,28 @@ mod tests {
                 found,
                 "{name} must reach the agent, or the listing this guards was broken: {held:?}"
             );
-            let screen = frame(&mut app, 100, 30);
+        }
+
+        // The listing is one markdown answer, and a home directory with a few dozen skills
+        // in it is far taller than a 30-row frame. Scroll to the top and read it in a
+        // viewport large enough to hold it: a frame assertion on a scrolled view asserts on
+        // nothing — the rows are there and the assertion would still pass with them cut
+        // off, which is the "a test that passes is not a claim that is true" trap.
+        for _ in 0..200 {
+            handle_key(&mut app, &agent, key(KeyCode::PageUp));
+        }
+        let screen = frame(&mut app, 100, 120);
+        for (name, description) in [
+            ("commit-craft", "Craft commits."),
+            ("review-diff", "Review a diff."),
+        ] {
+            let row = squeezed(&format!("{name} — {description}"));
             assert!(
                 screen.contains(&row),
                 "the frame must still list {name} with its description: {screen}"
             );
         }
 
-        let screen = frame(&mut app, 100, 30);
         assert!(
             screen.contains(&squeezed(&format!("reload:{}skill(s)", held.len()))),
             "the summary count is the number of skills actually held: {screen}"
@@ -3219,5 +3336,115 @@ mod tests {
             !screen.contains("skills:ignoring"),
             "nothing was rejected, so nothing should say one was: {screen}"
         );
+    }
+
+    /// **The `/skills` listing names where each skill came from, on a real frame.**
+    ///
+    /// This is the frame witness for the cross-harness root table. Discovery finding a
+    /// skill is only half of it: a skill that loads but is listed as a bare path, while
+    /// its neighbours are labelled, reads to the user as a different kind of thing — and
+    /// the label is what tells them a skill they installed for Claude Code is now serving
+    /// them here.
+    ///
+    /// The three halves assert different things, and each needs its own viewport:
+    ///
+    /// * **scrolled to the top, tall** — the workspace's own rows carry `(project)`. A
+    ///   30-row frame cannot hold a home directory with a few dozen skills, and a frame
+    ///   assertion on a scrolled view asserts on nothing.
+    /// * **same frame** — at least one row carries `(user)`. Without this the test would
+    ///   pass on a machine whose home directory holds no skills, which is the control
+    ///   being wrong rather than the claim being true.
+    /// * **80×24 and 100×30, live** — the listing's own summary line, so the answer exists
+    ///   at the sizes a user actually runs.
+    /// **Criterion 5: `/catalog` draws the snapshot date on a real frame.**
+    ///
+    /// The date was prose in a generated header and unreadable at runtime, so "the
+    /// catalog tells you when it was last updated" was false on screen even though it
+    /// was true in the file. This asserts the drawn line, not the data — the same
+    /// evidence discipline the repository asks for everywhere, and the one that has
+    /// caught two features this session that were correct in the data and absent on
+    /// the screen.
+    #[tokio::test]
+    async fn catalog_command_draws_the_snapshot_date_on_a_frame() {
+        let (mut app, agent, (_f, _n)) = test_app();
+        assert!(!type_and_enter(&mut app, &agent, "/catalog"));
+
+        let whole = frame(&mut app, 100, 40);
+        let date = epsilon_llm::catalog::CATALOG_SNAPSHOT_DATE;
+        assert!(
+            whole.contains(date),
+            "the frame must name the snapshot date ({date}): {whole}"
+        );
+        let (rows, providers) = epsilon_llm::catalog::snapshot_shape();
+        // `frame()` squeezes runs of spaces away, so the needles are squeezed too —
+        // the same helper `/skills` uses. Checking for the spaced form here would
+        // pass against nothing.
+        assert!(
+            whole.contains(&squeezed(&format!("{rows} models"))),
+            "and the catalog's own size, derived rather than transcribed: {whole}"
+        );
+        assert!(
+            whole.contains(&squeezed(&format!("{providers} providers"))),
+            "and its provider count: {whole}"
+        );
+        assert!(
+            whole.contains(&squeezed("python scripts/regen_catalog.py")),
+            "and how to refresh it — a date with no way to act on it is trivia: {whole}"
+        );
+    }
+
+    #[tokio::test]
+    async fn the_skills_listing_draws_the_scope_label_on_a_real_frame() {
+        let (mut app, agent, (_f, _n)) = test_app();
+        let dir = tempfile::tempdir().expect("a temporary workspace");
+        app.workspace_root = dir.path().to_path_buf();
+        let root = dir.path().join(".epsilon").join("skills");
+        write_skill(&root, "commit-craft", "Craft commits.");
+
+        assert!(!type_and_enter(&mut app, &agent, "/reload"));
+        assert!(!type_and_enter(&mut app, &agent, "/skills"));
+
+        for _ in 0..200 {
+            handle_key(&mut app, &agent, key(KeyCode::PageUp));
+        }
+        let whole = frame(&mut app, 100, 120);
+        if std::env::var_os("EPSILON_FRAME_EVIDENCE").is_some() {
+            println!("--- /skills at 100x120, scrolled to the top ---\n{whole}");
+        }
+        assert!(
+            whole.contains(&squeezed("commit-craft — Craft commits. (project)")),
+            "a workspace skill must be labelled with its scope: {whole}"
+        );
+
+        let user_row = agent
+            .skills()
+            .iter()
+            .find(|s| {
+                s.dir
+                    .starts_with(epsilon_core::config::home_dir().unwrap_or_default())
+            })
+            .map(|s| squeezed(&format!("{} — {} (user)", s.name, s.description)));
+        if let Some(row) = user_row {
+            assert!(
+                whole.contains(&row),
+                "a skill from the home directory is labelled (user), not a bare path: {row}"
+            );
+        }
+
+        // Back to the live view for the standard sizes: the scroll state carries, and a
+        // frame read at the top of the transcript is not the frame a user sees.
+        for _ in 0..300 {
+            handle_key(&mut app, &agent, key(KeyCode::PageDown));
+        }
+        for (w, h) in [(80u16, 24u16), (100u16, 30u16)] {
+            let screen = frame(&mut app, w, h);
+            if std::env::var_os("EPSILON_FRAME_EVIDENCE").is_some() {
+                println!("--- /skills at {w}x{h}, live ---\n{screen}");
+            }
+            assert!(
+                screen.contains("enabled"),
+                "the listing's own summary line must render at {w}x{h}: {screen}"
+            );
+        }
     }
 }

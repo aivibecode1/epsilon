@@ -77,11 +77,15 @@ pub const SLASH_ITEMS: &[SlashItem] = &[
     },
     SlashItem {
         value: "/fork",
-        description: "copy current session JSONL to a new branch file",
+        description: "fork the session at a picked message — `/fork <text to keep typing>`",
     },
     SlashItem {
         value: "/skills",
         description: "list discovered skills",
+    },
+    SlashItem {
+        value: "/catalog",
+        description: "model catalog snapshot: date, size, providers",
     },
     SlashItem {
         // M196: the toggle, and the description says the exact shape because
@@ -281,8 +285,9 @@ pub enum Command {
     Theme(Option<String>),
     /// List the active branch entries (timeline / branch inspection).
     Timeline,
-    /// Fork the session at the current leaf into a new session file.
-    Fork,
+    /// Fork the session at a picked message into a new session file; the
+    /// optional tail is put back into the composer so the user keeps typing.
+    Fork(Option<String>),
     /// Show the command reference.
     Help,
     /// Clear the transcript pane.
@@ -297,6 +302,13 @@ pub enum Command {
     Expand,
     /// List discovered skills.
     Skills,
+    /// Show the model catalog's snapshot date, size and provider count.
+    ///
+    /// Criterion 5 asks for a clear indication of when the catalog was last
+    /// successfully updated. The catalog is a generated, committed file, so that date
+    /// already existed — in `catalog_data.rs`'s header comment, unreadable at runtime.
+    /// `CATALOG_SNAPSHOT_DATE` makes it one value; this command surfaces it.
+    Catalog,
     /// `/skill <name> off` / `/skill <name> on` — switch one skill off or on.
     ///
     /// A slash command rather than a chord, for the reason `/settings` and
@@ -454,6 +466,7 @@ pub const COMMAND_HEADS: &[&str] = &[
     // reverse-drift check compares against the parser.
     "expand",
     "skills",
+    "catalog",
     // M196: the toggle half. Listed because the reverse-drift check compares
     // SLASH_ITEMS against the parser, and a command the palette does not offer
     // is a command a user has to guess the name of.
@@ -536,7 +549,11 @@ pub fn parse_command(input: &str) -> Option<Command> {
         } else {
             Some(tail.to_string())
         })),
-        "fork" => Some(Command::Fork),
+        "fork" => Some(Command::Fork(if tail.is_empty() {
+            None
+        } else {
+            Some(tail.to_string())
+        })),
         "clone" => Some(Command::Clone),
         "new" => Some(Command::New),
         "resume" => Some(Command::Resume(tail.to_string())),
@@ -578,6 +595,7 @@ pub fn parse_command(input: &str) -> Option<Command> {
         "clear" => Some(Command::Clear),
         "expand" => Some(Command::Expand),
         "skills" => Some(Command::Skills),
+        "catalog" => Some(Command::Catalog),
         "skill" => Some(Command::Skill(tail.to_string())),
         "templates" => Some(Command::Templates),
         "search" => Some(Command::Search(tail.to_string())),
@@ -785,6 +803,11 @@ mod tests {
         assert_eq!(parse_command("/session"), Some(Command::Session));
         assert_eq!(parse_command("/tree"), Some(Command::Tree));
         assert_eq!(parse_command("/clone"), Some(Command::Clone));
+        assert_eq!(parse_command("/fork"), Some(Command::Fork(None)));
+        assert_eq!(
+            parse_command("/fork carry this on"),
+            Some(Command::Fork(Some("carry this on".into())))
+        );
         assert_eq!(
             parse_command("/trust yes"),
             Some(Command::Trust(Some("yes".into())))

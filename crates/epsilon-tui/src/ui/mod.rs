@@ -18,7 +18,7 @@
 //! | [`theme`] | Colours, glyphs, `NO_COLOR` and 16-colour fallbacks |
 //! | [`layout`] | The spatial model: which region sits where, and how it degrades |
 //! | [`metrics`] | What the harness knows about itself, and the rules for showing it |
-//! | [`format`] | Number, cost, duration and path formatting |
+//! | ``format`` | Number, cost, duration and path formatting |
 //! | [`header`] | Run state + live measurements |
 //! | [`transcript`] | Gutter, role separation, first-run screen |
 //! | [`card`] | Tool cards and the diff renderer |

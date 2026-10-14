@@ -133,8 +133,8 @@ Each of these caught something real; the evidence is in `STATUS.md`.
 - **Run the negative control.** Restore the defect and confirm the test fails. Then restore the fix.
   Half the milestones here carry the control's output verbatim in a commit message.
 - **Assert on the frame, not on state, for anything a user sees.** Two features once shipped that
-  were asserted on state and never rendered. `Audit/evidence/` holds rendered frames for both front
-  ends; `EPSILON_FRAME_DIR` puts new ones beside them.
+  were asserted on state and never rendered. `Audit/evidence/` holds rendered terminal frames
+  (the desktop frames beside them are retired history); `EPSILON_FRAME_DIR` puts new ones beside them.
 - **Grep for callers, then check at least one is production code.** A definition plus a test is not
   a feature.
 - **A check that cannot see a thing is indistinguishable from a check that found nothing.** This
@@ -149,17 +149,18 @@ Each of these caught something real; the evidence is in `STATUS.md`.
 
 ## 4. Things that will mislead you if nobody tells you
 
-- **The desktop window renders blank when launched normally.** No wgpu backend *presents* here:
+- **The desktop window (removed in ADR-039) rendered blank when launched normally.** No wgpu backend *presented* here:
   Vulkan finds the adapter and then takes the process down, DX12 stack-overruns, GL works only
   through a **swapchain-free offscreen path**. That is why `crates/epsilon-desktop/src/frame_raster.rs`
-  exists and why `audit/evidence/desktop-frames-2026-10-04/` has an image at all. **If you need to
-  see the window, render it offscreen; do not try to fix presentation.**
+  existed and why `audit/evidence/desktop-frames-2026-10-04/` has an image at all. Retired history —
+  the terminal frames are the live evidence; do not build new desktop guidance on this.
 - **The TUI frame dumps are character-only** (`crates/epsilon-tui/src/app/frame_dump.rs`,
   `#[ignore]`d tests, `EPSILON_FRAME_DIR`). They cannot show colour or contrast. The ConPTY suite in
   `crates/epsilon-cli/tests/terminal.rs` drives the **real binary in a real pseudo-console** and is
   the stronger evidence.
-- **`accesskit_node_builder` is get-or-create.** Calling it for a node egui did not build *creates*
-  one. This is why one unnamed `ScrollBar` is still unnamed, and why the fix is not a one-liner.
+- **`accesskit_node_builder` was get-or-create (retired with the desktop, ADR-039).** Calling it for a node egui did not build *created*
+  one. This is why one unnamed `ScrollBar` stayed unnamed, and why the fix was not a one-liner.
+  Kept as a caution for any future native surface, not as live guidance.
 - **The desktop's accessibility dump in `audit/evidence/desktop-accesskit-tree-2026-10-04.md`
   predates M301–M303 and has no producer.** It records a `Role::Unknown` and a `Role::Pane` that no
   longer exist. Treat it as history; `audit/evidence/desktop-uia-tree-2026-10-04.txt` is the
@@ -192,7 +193,7 @@ Each of these caught something real; the evidence is in `STATUS.md`.
 | The rules | [`../AGENTS.md`](../AGENTS.md) |
 | What is true now, and what is broken | [`STATUS.md`](STATUS.md) |
 | What is left to do, prioritised | [`plans/026-convergence.md`](plans/026-convergence.md) (024 and 025 are history, dispositioned inside 026) |
-| A human's tour of the project | [`START-HERE.md`](START-HERE.md) · [Arabic](START-HERE.ar.md) |
+| A human's tour of the project | [`START-HERE.md`](START-HERE.md) |
 | Architecture and dependency graph | [`design/epsilon-architecture.md`](design/epsilon-architecture.md) |
 | Why a decision was made | [`design/epsilon-decisions.md`](design/epsilon-decisions.md) |
 | Battery logs and measurements | [`../audit/evidence/`](../audit/evidence/) |

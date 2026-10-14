@@ -224,20 +224,31 @@ pub(crate) fn auth_path_in(config_dir: &Path) -> PathBuf {
     config_dir.join("auth.json")
 }
 
-/// `~/.config/epsilon` — resolved from `$HOME`, falling back to `$USERPROFILE`.
+/// The user's home directory — `$HOME`, falling back to `$USERPROFILE`.
 ///
-/// **This is the one copy of that rule, and it lives here because of the dependency direction**
-/// (M223): `epsilon-core` depends on `epsilon-llm` and not the other way round, so a rule this
-/// crate needs is one it must own — and `core::config::global_dir` delegates here rather than
-/// repeating the body. The two functions were byte-for-byte identical for a long time, and the plan
-/// to delete one of them assumed the two crates could not see each other, which is true of
-/// `llm → core` and false of `core → llm`.
-pub fn global_dir() -> Option<PathBuf> {
+/// **This is the one copy of that rule** (M223), the same way [`global_dir`] is: the
+/// harness reads *several* cross-tool conventions out of the home directory (Claude
+/// Code's `~/.claude/skills`, Codex's `~/.codex/skills`, and the rest of the skill-root
+/// table in `epsilon_core::skills`), and each of those would otherwise have grown its
+/// own `var_os("HOME")` or, worse, assumed `/home/<user>` and been wrong on Windows.
+///
+/// `None` means no home directory resolves at all, which is the case every caller
+/// already handles for [`global_dir`]: skip the user-tier roots rather than invent a
+/// path. It is *not* an error — a process with no `HOME` still has a workspace.
+pub fn home_dir() -> Option<PathBuf> {
     let home = std::env::var_os("HOME").or_else(|| std::env::var_os("USERPROFILE"))?;
     if home.is_empty() {
         return None;
     }
-    Some(PathBuf::from(home).join(".config").join("epsilon"))
+    Some(PathBuf::from(home))
+}
+
+/// `~/.config/epsilon` — the home directory, then Epsilon's own directory under it.
+///
+/// Delegates to [`home_dir`] rather than reading the environment itself; see M223 and
+/// the source-scanning test in `epsilon_core::config` that counts the implementations.
+pub fn global_dir() -> Option<PathBuf> {
+    Some(home_dir()?.join(".config").join("epsilon"))
 }
 
 fn parse_auth_map(raw: &str) -> std::collections::BTreeMap<String, StoredCredential> {

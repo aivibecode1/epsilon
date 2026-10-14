@@ -1,11 +1,25 @@
 //! Editor undo/redo — pi's `undo-stack.ts` semantics (M16) plus an explicit redo
 //! rail (M17b, opencode `input_redo`): snapshots taken BEFORE each mutation;
 //! Ctrl+Z pops undo, Ctrl+. re-applies from the redo rail.
+//!
+//! # The stack is generic over the snapshot
+//!
+//! It started typed to [`EditorSnapshot`], the composer's `(String, char
+//! cursor)`. The file viewer's edit buffer needs the same LIFO semantics over a
+//! different shape — `Vec<String>` lines plus a `(row, col)` cursor — and
+//! duplicating a *bounded stack with duplicate suppression and a redo rail* to
+//! get it would have been the second copy of one idea in the same crate. So the
+//! payload is a type parameter and [`EditorSnapshot`] is the default, which
+//! keeps every existing composer call site reading `UndoStack` unchanged.
+//!
+//! The only requirement is `Clone + PartialEq`: clone to snapshot, and
+//! `PartialEq` for the duplicate suppression that stops a per-keystroke push
+//! from flooding a 200-deep stack.
 
 /// Maximum undo depth (oldest dropped).
 const UNDO_MAX: usize = 200;
 
-/// One point-in-time editor state.
+/// One point-in-time editor state — the composer's shape.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct EditorSnapshot {
     /// Buffer content at snapshot time.
@@ -14,14 +28,26 @@ pub struct EditorSnapshot {
     pub cursor_chars: usize,
 }
 
-/// Bounded LIFO of [`EditorSnapshot`]s with duplicate-suppression and a redo rail.
-#[derive(Debug, Default)]
-pub struct UndoStack {
-    stack: Vec<EditorSnapshot>,
-    redo: Vec<EditorSnapshot>,
+/// Bounded LIFO of snapshots with duplicate-suppression and a redo rail.
+///
+/// Generic over the snapshot shape; [`EditorSnapshot`] is the default so the
+/// composer's existing type annotation keeps working.
+#[derive(Debug, Clone)]
+pub struct UndoStack<S = EditorSnapshot> {
+    stack: Vec<S>,
+    redo: Vec<S>,
 }
 
-impl UndoStack {
+impl<S> Default for UndoStack<S> {
+    fn default() -> Self {
+        Self {
+            stack: Vec::new(),
+            redo: Vec::new(),
+        }
+    }
+}
+
+impl<S: Clone + PartialEq> UndoStack<S> {
     /// Empty stack.
     pub fn new() -> Self {
         Self::default()
@@ -30,7 +56,7 @@ impl UndoStack {
     /// Push a snapshot; skipped when identical to the current top (keeps
     /// per-keystroke calls cheap without flooding the stack). Any NEW push
     /// invalidates the redo rail (standard editor semantics: branch diverges).
-    pub fn push(&mut self, snap: EditorSnapshot) {
+    pub fn push(&mut self, snap: S) {
         if self.stack.last() == Some(&snap) {
             return;
         }
@@ -43,16 +69,16 @@ impl UndoStack {
     }
 
     /// Undo: pop the most recent pre-mutation snapshot, recording `current`
-    /// (the live state being LEFT) on the redo rail so Ctrl+. can restore it.
-    pub fn undo(&mut self, current: EditorSnapshot) -> Option<EditorSnapshot> {
+    /// (the live state being LEFT) on the redo rail so it can be re-applied.
+    pub fn undo(&mut self, current: S) -> Option<S> {
         let snap = self.stack.pop()?;
         self.redo.push(current);
         Some(snap)
     }
 
     /// Redo: re-apply the most recently undone state; `current` (the live state
-    /// being left) returns to the undo path so Ctrl+Z can toggle back.
-    pub fn redo(&mut self, current: EditorSnapshot) -> Option<EditorSnapshot> {
+    /// being left) returns to the undo path so undo can toggle back.
+    pub fn redo(&mut self, current: S) -> Option<S> {
         let snap = self.redo.pop()?;
         self.stack.push(current);
         Some(snap)

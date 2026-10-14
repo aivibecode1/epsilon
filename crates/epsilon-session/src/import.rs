@@ -17,7 +17,7 @@
 //! still the file you imported from.
 //!
 //! Why import-as-copy rather than heal-in-place: both formats call themselves version 3
-//! (`session-manager.ts:30` and [`CURRENT_SESSION_VERSION`]), so the version field cannot tell
+//! (`session-manager.ts:30` and [`CURRENT_SESSION_VERSION`](epsilon_contracts::session_entry::CURRENT_SESSION_VERSION)), so the version field cannot tell
 //! them apart, and pi cannot read what a conversion would leave behind. The plan that settled
 //! this is `audit/evidence/session-format-gap-plan.md` §4B; the evidence for why a second
 //! converter is not an option is `audit/evidence/pi-import-empties-messages-2026-09-22.md`.

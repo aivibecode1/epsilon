@@ -530,7 +530,7 @@ impl HttpEventStream {
         }
     }
 
-    /// Any tool activity recorded (drives ToolUse stop mapping on [DONE]).
+    /// Any tool activity recorded (drives ToolUse stop mapping on `DONE`).
     /// Accumulated assistant text so far (M60: the stall salvage path must know
     /// whether anything user-visible was produced before the provider vanished).
     pub fn text(&self) -> &str {
@@ -1318,8 +1318,41 @@ impl Default for DirectProvider {
 /// re-check: a concurrent rotation wins). Every failure is swallowed — the
 /// caller's key resolution falls back to the stored/env key path, and a
 /// telling error surfaces there, never a stale token on the wire.
+/// Does the stored OAuth credential for `provider` need a refresh exchange?
+///
+/// Split out from [`refresh_oauth_before_use`] so the decision is testable without a
+/// network: the caller's behaviour is "refresh when this says so", and this function
+/// is the whole of that behaviour. It defers to [`crate::auth::oauth_access_token_in`],
+/// which applies pi's 60s clock-skew margin, so the expiry rule lives in one place
+/// rather than being restated here.
+///
+/// **`Expired` only, deliberately.** A provider with no stored credential is `Missing`,
+/// and refreshing it would be pointless — there is no token to exchange — so the
+/// answer there is `false` and the caller's key resolution reports the missing
+/// credential. My first version answered `!Live`, which reported `true` for `Missing`
+/// and spent a doomed refresh attempt on every stream from a provider that has never
+/// logged in. The test's third assertion is what caught it.
+#[cfg(feature = "real")]
+fn needs_oauth_refresh(dir: &std::path::Path, provider: &str) -> bool {
+    matches!(
+        crate::auth::oauth_access_token_in(dir, provider),
+        crate::auth::OauthToken::Expired
+    )
+}
+
 #[cfg(feature = "real")]
 async fn refresh_oauth_before_use(dir: &std::path::Path, provider: &str) {
+    // **Only refresh when the stored access token is actually spent.**
+    //
+    // This used to exchange the refresh token on every stream attempt: the pattern
+    // match below took `refresh` and discarded `expires` with `..`, so the decision
+    // ignored whether the access token was still live. The cost was one network
+    // round-trip per call on a token that may be valid for hours — and
+    // `auth.rs` already stores `expires` with pi's skew precisely so this call can
+    // make that decision, so the field was being carried for nothing.
+    if !needs_oauth_refresh(dir, provider) {
+        return;
+    }
     let endpoint = match crate::oauth::refresh_endpoint(provider) {
         Some(e) => e,
         None => return,
@@ -1619,7 +1652,7 @@ pub mod test_support {
     }
 
     /// Run a raw provider `usage` block through the shared compat decoder and return the
-    /// [`Usage`] it produced.
+    /// ``Usage`` it produced.
     ///
     /// Exposed because the usage arithmetic is the one part of a provider adapter that no
     /// end-to-end test can reach: it happens mid-stream, on a JSON object, long before
@@ -1628,7 +1661,7 @@ pub mod test_support {
     /// Groq, xAI, OpenRouter, Gemini and the Responses API at once.
     ///
     /// M140: the `input` bucket must exclude the cached prefix. See
-    /// [`crate::providers::HttpEventStream::seed_usage_compat`] for why.
+    /// ``crate::providers::HttpEventStream::seed_usage_compat`` for why.
     pub fn compat_usage_from_json(usage: &serde_json::Value) -> epsilon_contracts::message::Usage {
         let mut st = super::HttpEventStream::new("test-model", "test", false);
         st.seed_usage_compat(usage);
@@ -1637,7 +1670,7 @@ pub mod test_support {
     }
 
     /// Run a raw OpenAI Responses `usage` object through the Responses-specific
-    /// reshaping and the compat decoder, returning the resulting [`Usage`].
+    /// reshaping and the compat decoder, returning the resulting ``Usage``.
     ///
     /// M140: the Responses wire carries its cache counts inside `input_tokens_details`,
     /// one level deeper than the compat shape. The reshaping step must forward that
@@ -1692,6 +1725,51 @@ mod http_stream_tests {
     /// because the call it wraps never returned — which is the entire point of
     /// the retry policy that exists for exactly this case.
     ///
+    /// **Criterion 7/8: a live token is not refreshed.**
+    ///
+    /// Before this guard existed, `refresh_oauth_before_use` exchanged the refresh
+    /// token on *every* stream attempt — the pattern match took `refresh` and threw
+    /// `expires` away with `..`, so the decision never asked whether the access token
+    /// was still live. `auth.rs` stores `expires` (with pi's skew) precisely so this
+    /// call can ask, and it was being carried for nothing.
+    ///
+    /// The assertion is on the predicate the caller obeys, not on the caller: the
+    /// network exchange is not something a unit test can observe, and "no round-trip
+    /// when the token is live" IS this function's whole behaviour.
+    #[test]
+    #[cfg(feature = "real")]
+    fn a_live_oauth_token_is_not_refreshed_but_an_expired_one_is() {
+        let tmp = tempfile::tempdir().expect("tmp");
+        let dir = tmp.path();
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_millis() as u64)
+            .unwrap_or(0);
+
+        // Live: an hour of validity left, so no exchange is warranted.
+        crate::auth::save_oauth_in(dir, "anthropic", "rt-1", "at-live", now + 3_600_000).unwrap();
+        assert!(
+            !needs_oauth_refresh(dir, "anthropic"),
+            "a live access token must not cost a refresh round-trip"
+        );
+
+        // Expired: the access token is spent, so the exchange is warranted.
+        crate::auth::save_oauth_in(dir, "anthropic", "rt-2", "at-old", now.saturating_sub(1))
+            .unwrap();
+        assert!(
+            needs_oauth_refresh(dir, "anthropic"),
+            "an expired access token must be refreshed"
+        );
+
+        // No credential at all: nothing to refresh, and the caller's key resolution
+        // is what reports it. `true` here would send the exchange down a path with
+        // no token to exchange.
+        assert!(
+            !needs_oauth_refresh(dir, "never-stored"),
+            "no stored credential means nothing to refresh"
+        );
+    }
+
     /// This drives the real send path against a real socket, so it exercises
     /// `reqwest` rather than a stand-in for it.
     #[tokio::test]

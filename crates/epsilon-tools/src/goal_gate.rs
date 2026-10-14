@@ -3,7 +3,7 @@
 //! # Why the gate runs through the sandbox and not around it
 //!
 //! A gate is a shell command, and it is run by the **same** [`Sandbox`] the `bash` tool
-//! uses, resolved from the same [`Confinement`] in the same
+//! uses, resolved from the same ``Confinement`` in the same
 //! [`register_builtins_with`](crate::register_builtins_with) call. That is the whole design,
 //! and it is a security decision rather than a tidiness one:
 //!

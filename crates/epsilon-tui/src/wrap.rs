@@ -7,7 +7,7 @@
 //! match what ratatui will actually render.
 
 use unicode_segmentation::UnicodeSegmentation;
-use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
+use unicode_width::UnicodeWidthStr;
 
 /// Shorten `text` to at most `budget` **screen columns**, marking a cut with an ellipsis.
 ///
@@ -55,7 +55,7 @@ pub fn fit_width_with(text: &str, budget: usize, mark: &str) -> String {
     let mut out = String::new();
     let mut used = 0usize;
     for grapheme in UnicodeSegmentation::graphemes(text, true) {
-        let w = UnicodeWidthStr::width(grapheme);
+        let w = crate::ui::layout::display_width(grapheme);
         if used + w > text_budget {
             break;
         }
@@ -64,6 +64,86 @@ pub fn fit_width_with(text: &str, budget: usize, mark: &str) -> String {
     }
     out.push_str(mark);
     out
+}
+
+/// The longest prefix of `s` occupying at most `width` screen columns, cut on
+/// **grapheme** boundaries.
+///
+/// # Why this exists rather than a `char` walk
+///
+/// Four functions in this crate used to cut text by walking `char`s and summing
+/// ``UnicodeWidthChar::width``, and every one of them was wrong in the same way.
+/// `unicode-width` implements *string-level* rules that disagree with the sum of its
+/// per-character ones for exactly the characters a coding agent's output is full of:
+///
+/// | sequence | `UnicodeWidthStr::width` | sum of `UnicodeWidthChar::width` |
+/// |---|---|---|
+/// | `👨‍👩‍👧‍👦` (family, ZWJ) | 2 | 8 |
+/// | `👍🏽` (skin tone) | 2 | 4 |
+/// | `❤️` (VS16) | 2 | 1 |
+/// | `1️⃣` (keycap) | 2 | 1 |
+///
+/// Those numbers are measured, not recalled. The consequence is that a cut decided with
+/// one rule and measured with the other lands mid-cluster: a row came back ending in an
+/// orphaned ZWJ with the next row starting at `👩`, which on most terminals renders as a
+/// *different emoji* — one person instead of four — and on some joins across the row
+/// boundary. It is width-dependent, so the same content was correct at 8 columns and
+/// corrupt at 6.
+///
+/// A grapheme is the unit a terminal advances by, so it is the only unit a cut may fall
+/// on. `unicode-width`'s per-grapheme answer is what [`UnicodeWidthStr::width]` gives for
+/// that grapheme, which is the string rule applied at the right granularity.
+///
+/// The prefix may be **empty** — a 2-column grapheme does not fit a 1-column row, and
+/// there is no honest non-empty answer. Callers that loop must not treat an empty return
+/// as progress; see [`wrap_line`]'s hard-split arm for the one that had to learn that.
+pub fn prefix_at_width(s: &str, width: usize) -> &str {
+    let mut acc = 0usize;
+    for (idx, grapheme) in s.grapheme_indices(true) {
+        let w = crate::ui::layout::display_width(grapheme);
+        if w == 0 {
+            // A bare combining mark carries no column and belongs to whatever follows,
+            // so it never triggers the cut.
+            continue;
+        }
+        if acc + w > width {
+            return &s[..idx];
+        }
+        acc += w;
+    }
+    s
+}
+
+/// The longest **suffix** of `s` occupying at most `width` screen columns, cut on
+/// grapheme boundaries.
+///
+/// The mirror of [`prefix_at_width`], for the half of a status row that is written
+/// least-important-first: trimming there removes the leading fragments, so what survives
+/// is a suffix. Same rule — a grapheme is kept whole or not at all, and the result is
+/// never over budget. It may be empty, for the same reason.
+///
+/// The walk drops whole graphemes from the front until the remainder fits, and stops at
+/// the first point where it does: that is the *longest* suffix within budget. An earlier
+/// version walked forward accumulating and returned whatever offset it happened to be
+/// holding when the sum passed the budget, which produced a suffix wider than asked for
+/// — measured `"ix👨‍👩‍👧‍👦👨‍👩‍👧‍👦"` for a budget of 4.
+pub fn suffix_at_width(s: &str, width: usize) -> &str {
+    let total = crate::ui::layout::display_width(s);
+    if total <= width {
+        return s;
+    }
+    let mut dropped = 0usize;
+    let mut start = s.len();
+    for (idx, grapheme) in s.grapheme_indices(true) {
+        dropped += crate::ui::layout::display_width(grapheme);
+        if total - dropped <= width {
+            // The remainder now fits, so the suffix starts after this grapheme. This is
+            // the longest one that does, because dropping any less would leave it over.
+            start = idx + grapheme.len();
+            break;
+        }
+    }
+    &s[start..]
 }
 
 #[cfg(test)]
@@ -163,7 +243,7 @@ mod fit_width_tests {
 /// `&[(String, Style)]` meant each of them had to manufacture an owned copy of
 /// every line first, which is the allocation this signature exists to remove.
 /// `Cow` is unnecessary: the only span a caller has to own is the `" "` that
-/// stands in for collapsed whitespace, and that is built in [`flush_pending`].
+/// stands in for collapsed whitespace, and that is built in ``flush_pending``.
 pub fn wrap_line(
     spans: &[(&str, ratatui::style::Style)],
     width: usize,
@@ -193,7 +273,7 @@ pub fn wrap_line(
                 }
                 continue;
             }
-            let w = token.width();
+            let w = crate::ui::layout::display_width(token);
             if w > width {
                 // A word wider than the whole row cannot share a row with
                 // anything. It used to be appended to whatever the row already
@@ -211,8 +291,28 @@ pub fn wrap_line(
                 }
                 pending_ws = None;
                 let mut rest = token;
-                while rest.width() > width {
+                while crate::ui::layout::display_width(rest) > width {
+                    // **The cut must always advance, and this is the arm where it did
+                    // not.** `split_at_width` returns the empty string when the row is
+                    // narrower than the first grapheme — every wide glyph at width 1 —
+                    // and an empty cut with the condition still true never terminates.
+                    // That is not hypothetical: `app/panels.rs:1057` floors the slash
+                    // popup's description budget at one column with `.max(1)`, so a
+                    // description whose first token starts with a CJK character or an
+                    // emoji hung the draw thread. Measured, not reasoned: a probe run on
+                    // the old code hung past 60 seconds and had to be killed.
+                    //
+                    // The recovery emits the grapheme that does not fit on a row of its
+                    // own rather than dropping it (a lost character is silent data loss)
+                    // or halving it (half a glyph is a box). It overhangs by one column,
+                    // which the renderer clips at the edge — the same trade a single wide
+                    // glyph in a too-narrow row already makes everywhere else.
                     let cut = split_at_width(rest, width);
+                    let cut = if cut.is_empty() {
+                        rest.graphemes(true).next().unwrap_or(rest)
+                    } else {
+                        cut
+                    };
                     push_text(&mut current, &mut col, cut, *style);
                     rest = &rest[cut.len()..];
                     if !rest.is_empty() {
@@ -288,23 +388,18 @@ fn push_text(
     *col += UnicodeWidthStr::width(token);
 }
 
-/// Split `s` into an initial segment of exactly display-width `width`.
+/// Split `s` into an initial segment of at most `width` display columns, **on grapheme
+/// boundaries**.
 ///
-/// The width of one character comes from [`UnicodeWidthChar::width`] rather than
-/// from `ch.to_string().width()`. Those agree, and the second one allocated a
-/// `String` **per character** — on the hard-split path, which is the one a long
-/// path, a URL, a long identifier or a base64 blob takes, and therefore the one
-/// a coding agent's tool output takes most often.
+/// The width of one grapheme comes from [`UnicodeWidthStr::width] applied to that grapheme,
+/// which is the string rule at the right granularity — `UnicodeWidthChar::width` sums to 8
+/// for a family emoji whose real width is 2, so a cut decided with it lands mid-cluster.
+/// See [`prefix_at_width`] for the measured table.
+///
+/// The result may be empty when the row is narrower than the first grapheme. That is the
+/// case [`wrap_line`]'s hard-split arm must not read as progress.
 fn split_at_width(s: &str, width: usize) -> &str {
-    let mut acc = 0usize;
-    for (idx, ch) in s.char_indices() {
-        let cw = UnicodeWidthChar::width(ch).unwrap_or(0);
-        if acc + cw > width {
-            return &s[..idx];
-        }
-        acc += cw;
-    }
-    s
+    prefix_at_width(s, width)
 }
 
 /// Split `text` into runs of whitespace and runs of non-whitespace, **borrowed**.
@@ -558,6 +653,252 @@ mod tests {
                     .sum();
                 assert!(w <= width, "row of {w} columns at width {width}: {row:?}");
             }
+        }
+    }
+
+    // ---------------------------------------------------------------------------------------------
+    // Grapheme-cluster integrity, and the loop that never terminated
+    //
+    // Every fixture below is a character a coding agent's output actually contains: a ZWJ
+    // family emoji, a skin-tone modifier, a variation selector, a keycap. The measured
+    // disagreement that makes them dangerous is on `prefix_at_width` -- the per-character
+    // width sum and the per-string width differ by six columns for a family emoji.
+    // ---------------------------------------------------------------------------------------------
+
+    /// A ZWJ family emoji: one grapheme, two columns, four characters summing to eight.
+    const FAMILY: &str = "\u{1F468}\u{200D}\u{1F469}\u{200D}\u{1F467}\u{200D}\u{1F466}";
+    /// A raised hand with a skin-tone modifier: one grapheme, two columns.
+    const THUMB: &str = "\u{1F44D}\u{1F3FD}";
+    /// A heart with a variation selector: one grapheme, two columns.
+    const HEART: &str = "\u{2764}\u{FE0F}";
+    /// Keycap 1: one grapheme, two columns.
+    const KEYCAP: &str = "\u{0031}\u{FE0F}\u{20E3}";
+
+    fn emoji_tokens() -> Vec<&'static str> {
+        vec![FAMILY, THUMB, HEART, KEYCAP]
+    }
+
+    /// Do `rows` segment `text` into **whole** graphemes, in order?
+    ///
+    /// This is the property that matters, and it has to be stated this way round. The
+    /// obvious-looking check — "does a row end in a zero-width character" — is wrong in the
+    /// other direction: `❤️` is a *complete* grapheme whose last character is the
+    /// zero-width variation selector, so that check reports every heart as broken. And
+    /// measuring the concatenated rows is wrong too, because concatenating re-joins a
+    /// cluster that was cut at a row boundary and reports nothing at all — which is what the
+    /// first version of this helper did.
+    ///
+    /// So: walk the input's graphemes once, and consume exactly as many as each row holds.
+    /// A row that ends inside one grapheme desynchronises the walk and is caught.
+    fn rows_are_whole_graphemes(rows: &[Vec<(String, Style)>], text: &str) -> Option<usize> {
+        use unicode_segmentation::UnicodeSegmentation;
+        let mut want = text.graphemes(true);
+        for (i, row) in rows.iter().enumerate() {
+            let row_text: String = row.iter().map(|(t, _)| t.as_str()).collect();
+            for held in row_text.graphemes(true) {
+                match want.next() {
+                    Some(g) if g == held => {}
+                    // Either the row holds a grapheme the input does not have (a
+                    // re-ordered or duplicated one), or it holds half of one and the walk
+                    // has already moved past its base.
+                    _ => return Some(i),
+                }
+            }
+        }
+        // And nothing may be left over: a dropped grapheme is silent data loss.
+        if want.next().is_some() {
+            return rows.len().checked_sub(1);
+        }
+        None
+    }
+
+    /// **The defect: a hard split cut an emoji ZWJ sequence at a row boundary.**
+    ///
+    /// Measured on the old code, at widths 2 through 7 and 10 out of 1 through 10:
+    /// `row0='👨‍'`, `row0='👨‍👩‍👧‍'`. Widths 8 and 9 happened to be clean, which is what
+    /// makes this class so easy to miss -- the same content was correct at one terminal
+    /// width and corrupt at another.
+    ///
+    /// The rendering consequence is not cosmetic. A row ending in an orphaned ZWJ draws as
+    /// a *different emoji* (one person where the text said a family of four), and on some
+    /// terminals the joiner combines with the next row's first cell.
+    #[test]
+    fn a_hard_split_never_cuts_an_emoji_cluster_at_a_row_boundary() {
+        for emoji in emoji_tokens() {
+            let text = format!("{emoji}{emoji}{emoji}{emoji}{emoji}tail");
+            for width in 1..=12 {
+                let rows = wrap_line(&plain(&text), width);
+                if let Some(broken_row) = rows_are_whole_graphemes(&rows, &text) {
+                    let shown: Vec<String> = rows
+                        .iter()
+                        .map(|r| r.iter().map(|(t, _)| t.as_str()).collect())
+                        .collect();
+                    panic!(
+                        "{emoji:?} at width {width} did not segment into whole graphemes \
+                         (row {broken_row} is the first to desynchronise): {shown:?}"
+                    );
+                }
+                for row in &rows {
+                    let w: usize = row
+                        .iter()
+                        .map(|(t, _)| crate::ui::layout::display_width(t))
+                        .sum();
+                    if width == 1 {
+                        // **The one deliberate overhang.** A 2-column cluster cannot fit a
+                        // 1-column row, and the alternatives are dropping it (silent data
+                        // loss) or halving it (a box). It is emitted whole on its own row
+                        // and the renderer clips it at the edge, exactly as it already does
+                        // for a wide glyph in a too-narrow row anywhere else. The bound is
+                        // the grapheme's own width, so the overhang is one column and never
+                        // accumulates.
+                        assert!(
+                            w <= 2,
+                            "{emoji:?} at width 1: a row of {w} columns is more than one \
+                             grapheme wide, so this is not the documented overhang"
+                        );
+                    } else {
+                        assert!(
+                            w <= width,
+                            "{emoji:?} at width {width}: a row of {w} columns over a \
+                             {width} budget"
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    /// **The same property for a wide script**, which is the case that was already half
+    /// right: CJK graphemes are two columns each and one `char` each, so the old arithmetic
+    /// only failed when the first glyph was wider than the row.
+    #[test]
+    fn a_hard_split_never_leaves_half_a_wide_glyph() {
+        let text =
+            "\u{65E5}\u{672C}\u{8A9E}\u{306E}\u{30C6}\u{30AD}\u{30B9}\u{30C8}\u{3067}\u{3059}";
+        for width in 1..=9 {
+            let rows = wrap_line(&plain(text), width);
+            let all: String = rows
+                .iter()
+                .flat_map(|r| r.iter())
+                .map(|(t, _)| t.as_str())
+                .collect();
+            assert_eq!(
+                all, text,
+                "width {width} dropped or halved a glyph: {all:?}"
+            );
+        }
+    }
+
+    /// **The hang: the hard split did not terminate when the row was narrower than the
+    /// first grapheme.**
+    ///
+    /// `split_at_width` returned the empty string -- a 2-column grapheme does not fit a
+    /// 1-column row -- and the loop advanced by `cut.len()`. Zero advance with the condition
+    /// still true is not a slow path, it is no path: a probe run on the old code hung past
+    /// 60 seconds and had to be killed.
+    ///
+    /// **This was reachable, not theoretical.** `app/panels.rs:1057` computes the slash
+    /// popup's description budget as `inner_width.saturating_sub(1 + 1 + label_col).max(1)`
+    /// -- floored at one column on purpose -- and line 1096 passes it straight to
+    /// `wrap_line`. A narrow terminal with a long command head, and a description whose
+    /// first token starts with a CJK character or an emoji, froze the draw thread.
+    #[test]
+    fn a_row_narrower_than_its_first_grapheme_still_makes_progress() {
+        for emoji in emoji_tokens() {
+            // One token, wider than the row, so this is the hard-split arm.
+            let text = format!("{emoji}{emoji}{emoji}tail");
+            let rows = wrap_line(&plain(&text), 1);
+            assert!(!rows.is_empty(), "{emoji:?} at width 1 produced no rows");
+            let all: String = rows
+                .iter()
+                .flat_map(|r| r.iter())
+                .map(|(t, _)| t.as_str())
+                .collect();
+            assert_eq!(
+                all, text,
+                "{emoji:?} at width 1 lost content while escaping the loop"
+            );
+        }
+        // And the CJK case that was the original trigger.
+        let rows = wrap_line(&plain("\u{65E5}\u{672C}"), 1);
+        let all: String = rows
+            .iter()
+            .flat_map(|r| r.iter())
+            .map(|(t, _)| t.as_str())
+            .collect();
+        assert_eq!(all, "\u{65E5}\u{672C}", "width 1 lost a CJK glyph");
+    }
+
+    /// **The two width rules, measured where the cut decisions are made.**
+    ///
+    /// Not a documentation test: `prefix_at_width` is the one function all four cut paths
+    /// now share, so a regression here is a regression in every one of them.
+    #[test]
+    fn a_cut_uses_the_string_width_rule_not_the_sum_of_characters() {
+        use unicode_width::UnicodeWidthChar;
+        // The family emoji is one grapheme and two columns; its characters sum to eight.
+        assert_eq!(FAMILY.width(), 2, "the string rule");
+        assert_eq!(
+            FAMILY
+                .chars()
+                .map(|c| UnicodeWidthChar::width(c).unwrap_or(0))
+                .sum::<usize>(),
+            8,
+            "the character rule -- the one that was in use"
+        );
+        // A budget of two therefore keeps the whole cluster, and a budget of one keeps
+        // none of it rather than half of it.
+        assert_eq!(prefix_at_width(FAMILY, 2), FAMILY);
+        assert_eq!(
+            prefix_at_width(FAMILY, 1),
+            "",
+            "no honest non-empty cut exists"
+        );
+        // Three clusters: the prefix keeps whole clusters and stops at the boundary.
+        let three = format!("{FAMILY}{FAMILY}{FAMILY}");
+        assert_eq!(prefix_at_width(&three, 4), format!("{FAMILY}{FAMILY}"));
+        assert_eq!(
+            prefix_at_width(&three, 3),
+            FAMILY,
+            "2 fits in 3, the next 2 does not"
+        );
+    }
+
+    /// The suffix half, which is what a status row's least-important-first half uses.
+    #[test]
+    fn a_tail_cut_keeps_whole_clusters_from_the_end() {
+        let text = format!("prefix{FAMILY}{FAMILY}");
+        // Four columns of tail is exactly the two clusters.
+        assert_eq!(suffix_at_width(&text, 4), format!("{FAMILY}{FAMILY}"));
+        assert_eq!(suffix_at_width(&text, 3), FAMILY);
+        assert_eq!(
+            suffix_at_width(&text, 1),
+            "",
+            "a cluster is kept whole or not at all"
+        );
+        assert_eq!(suffix_at_width(&text, 100), text);
+    }
+
+    /// A combining sequence and a skin-tone modifier are each one grapheme, so a cut may
+    /// not separate the mark from the base it modifies.
+    #[test]
+    fn a_cut_never_separates_a_modifier_from_its_base() {
+        let combining = "cafe\u{301} au lait";
+        for width in 1..=combining.len() {
+            let kept = prefix_at_width(combining, width);
+            assert!(
+                !kept.ends_with('e'),
+                "width {width} cut after the base letter and dropped its accent: {kept:?}"
+            );
+        }
+        let thumbs = format!("{THUMB}{THUMB}{THUMB}");
+        for width in 1..=6 {
+            let kept = prefix_at_width(&thumbs, width);
+            assert_eq!(
+                kept.graphemes(true).count() * 2,
+                crate::ui::layout::display_width(kept),
+                "width {width} left part of a skin-tone sequence: {kept:?}"
+            );
         }
     }
 }

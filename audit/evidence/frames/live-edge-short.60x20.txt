@@ -1,0 +1,24 @@
+
+=== live-edge-short @ 60x20 ===
++------------------------------------------------------------+
+|idle        Faux (offline scripted) • thinking off · offline|
+|                                                            |
+|                                                            |
+|                                                            |
+|                                                            |
+|                                                            |
+|                                                            |
+|                                                            |
+|                                                            |
+|                                                            |
+|                                                            |
+|                                                            |
+|                                                            |
+|▎ ❯ what changed?                                           |
+|                                                            |
+|• here is the answer                                        |
+|                                                            |
+|❯ and the next thing?                                       |
+|────────────────────────────────────────────────────────────|
+|insert · enter send · pageup    …\Epsilon\crates\epsilon-tui|
++------------------------------------------------------------+

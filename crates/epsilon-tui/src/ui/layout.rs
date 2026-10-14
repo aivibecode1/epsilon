@@ -11,8 +11,8 @@
 //! │ status ···················· metrics (model, tokens, cache…)  │  header
 //! │                                                              │
 //! │ transcript — conversation, tool cards, notices               │  body (fills)
-//! │                                                              │
-//! ├──────────────────────────────────────────────────────────────┤  rule
+//! │                                                              │  ┐
+//! ├──────────────────────────────────────────────────────────────┤  ┘ one blank row
 //! │ ❯ composer                                                   │  1..=8
 //! │ keys that work right now                     location · model│  footer
 //! └──────────────────────────────────────────────────────────────┘
@@ -20,10 +20,18 @@
 //!
 //! **One rule, not two.** It sits above the composer and means "everything below
 //! this line takes keystrokes". There used to be a second one between the header
-//! and the transcript, drawn by the same function in the same style, dividing
+//! and the transcript, drawn by the same function in this same style, dividing
 //! nothing the reader could name while costing a row of conversation at every
 //! size — two of twenty-four rows at 80×24. One fold says where the transcript
 //! stops; two say it twice.
+//!
+//! **The blank above the composer is not that rule brought back.** The rule
+//! divided with a line; the blank *is* the row `push_line` already puts between
+//! every block, so the last answer ends the way each block before it did. It
+//! exists because with the transcript running straight into the composer, the
+//! composer read as one more transcript row — its prompt glyph is shared with a
+//! submitted turn on purpose, so nothing on screen said where the conversation
+//! stopped and the input line looked like the answer's last line.
 //!
 //! Two invariants keep this honest as the window narrows:
 //!
@@ -45,22 +53,34 @@ pub const MIN_HEIGHT: u16 = 10;
 pub const COMPOSER_MAX_ROWS: u16 = 8;
 /// The composer never takes more than this fraction of the screen.
 pub const COMPOSER_MAX_SHARE: u16 = 3;
-/// Rows the chrome always owns: the header, the composer's rule, and the footer.
-/// The footer is counted with them because it is never optional either.
+/// Rows the chrome always owns: the header, the blank that ends the
+/// conversation, the composer's rule, and the footer. The footer is counted
+/// with them because it is never optional either.
 ///
-/// This was 4 while the transcript had a rule of its own. Cutting that rule is
-/// where the recovered row went; the constant moved with it so the arithmetic
-/// here and in the tests cannot drift apart.
-pub const CHROME_ROWS: u16 = 3;
+/// This was 3 while the transcript ran straight into the composer, and 4 while
+/// the transcript had a rule of its own; the second rule is gone and the blank
+/// is not it. A row came back because a bare join made the composer read as one
+/// more transcript row — the prompt glyph is shared with a submitted turn on
+/// purpose (`composer.rs`), so nothing on screen said where the conversation
+/// stopped. The constant sits here so the arithmetic and the tests cannot drift
+/// apart.
+pub const CHROME_ROWS: u16 = 4;
 
 /// The regions of one frame.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Regions {
     /// Status on the left, live metrics on the right.
     pub header: Rect,
-    /// The conversation. Runs straight down to [`Regions::composer_rule`]: there
-    /// is deliberately no second divider above it.
+    /// The conversation. Ends one row above [`Regions::composer`]: the row
+    /// between them is [`Regions::gap`].
     pub transcript: Rect,
+    /// The blank row that ends the conversation.
+    ///
+    /// Drawn blank rather than as a rule because the transcript's own block
+    /// language is a blank row (`push_line`), so the last answer ends the way
+    /// every block before it did instead of touching the input. A rule here is
+    /// the second divider the layout still declines to draw.
+    pub gap: Rect,
     /// Where the user types.
     pub composer: Rect,
     /// The divider between the composer and the key hints — and, read from the
@@ -77,13 +97,22 @@ impl Regions {
     /// wrapped by the caller: the layout decides how much of that it can afford,
     /// because only the layout knows the screen height.
     pub fn split(area: Rect, composer_rows: u16) -> Self {
-        // Chrome first: two one-row bands, plus the composer's own rows.
+        // Chrome first: the header, the blank that ends the conversation, the
+        // composer's rule and the footer, plus the composer's own rows.
         let composer = composer_rows.clamp(1, Self::composer_cap(area.height));
         // `Min(1)` rather than `Fill`: with `Fill` a very short screen hands the
         // transcript a zero-height rectangle and the body silently disappears.
-        let [header, transcript, composer_area, composer_rule, footer] = Layout::vertical([
+        let [
+            header,
+            transcript,
+            gap,
+            composer_area,
+            composer_rule,
+            footer,
+        ] = Layout::vertical([
             Constraint::Length(1),
             Constraint::Min(1),
+            Constraint::Length(1),
             Constraint::Length(composer),
             Constraint::Length(1),
             Constraint::Length(1),
@@ -92,6 +121,7 @@ impl Regions {
         Self {
             header,
             transcript,
+            gap,
             composer: composer_area,
             composer_rule,
             footer,
@@ -131,17 +161,23 @@ mod tests {
     fn regions_tile_the_frame_without_gaps_or_overlap() {
         for (w, h) in [(44, 10), (80, 24), (100, 30), (160, 48)] {
             let r = Regions::split(area(w, h), 1);
-            // header + transcript + composer + ONE rule + footer. The transcript
-            // rule was removed deliberately: this is the arithmetic that proves
-            // its row went to the transcript rather than going missing.
-            let expected = 1 + r.transcript.height + r.composer.height + 1 + 1;
+            // header + transcript + the ending blank + composer + ONE rule +
+            // footer. The transcript *rule* was removed deliberately; the blank
+            // is a different thing and this is the arithmetic that proves its
+            // row is accounted for rather than going missing.
+            let expected = 1 + r.transcript.height + r.gap.height + r.composer.height + 1 + 1;
             assert_eq!(expected, h, "{w}x{h} left {expected} rows unaccounted");
             assert_eq!(r.header.y, 0);
             assert_eq!(r.transcript.y, r.header.bottom());
             assert_eq!(
+                r.gap.y,
                 r.transcript.bottom(),
+                "{w}x{h}: the blank ends the conversation where the transcript stops"
+            );
+            assert_eq!(
+                r.gap.bottom(),
                 r.composer.y,
-                "{w}x{h}: the transcript must run into the composer with no rule between"
+                "{w}x{h}: the composer must start below the ending blank"
             );
             assert_eq!(
                 r.composer_rule.y,
@@ -149,16 +185,38 @@ mod tests {
                 "{w}x{h}: the one rule sits below the composer, not above it"
             );
             assert_eq!(r.footer.y + 1, h, "footer must sit on the last row");
+            assert_eq!(r.gap.height, 1, "the ending blank is exactly one row");
             assert_eq!(r.header.width, w);
+            assert_eq!(r.gap.width, w);
         }
     }
 
     #[test]
-    fn cutting_the_transcript_rule_gave_its_row_to_the_transcript() {
-        // The reviewable evidence that the removed rule was intentional rather
-        // than lost: at every supported size the transcript is exactly one row
-        // taller than a layout with two rules would have allowed, and the frame
-        // still tiles completely.
+    fn the_blank_that_ends_the_conversation_is_one_row() {
+        // Two rows would be the same trade the removed rule made — a taller
+        // chrome budget paid out of the conversation — and zero rows is the join
+        // this band exists to end. One row is the middle the frames rely on.
+        for (w, h) in [(44, 10), (80, 24), (100, 30), (160, 48)] {
+            for composer_rows in [1u16, 3, 8] {
+                let r = Regions::split(area(w, h), composer_rows);
+                assert_eq!(
+                    r.gap.height, 1,
+                    "{w}x{h} with {composer_rows} composer rows"
+                );
+                assert!(
+                    r.transcript.height >= 1,
+                    "{w}x{h} with {composer_rows} composer rows gave the transcript {}",
+                    r.transcript.height
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn the_chrome_budget_is_spent_on_header_blank_rule_and_footer() {
+        // The reviewable evidence that the arithmetic here and the frame agree:
+        // the transcript gets exactly the rows the chrome budget leaves it, at
+        // every supported size, whatever the composer asked for.
         for (w, h) in [(44, 10), (80, 24), (100, 30), (160, 48)] {
             let r = Regions::split(area(w, h), 1);
             assert_eq!(
@@ -167,7 +225,7 @@ mod tests {
                 "{w}x{h}: transcript height no longer matches the chrome budget"
             );
         }
-        assert_eq!(CHROME_ROWS, 3, "one header, one rule, one footer");
+        assert_eq!(CHROME_ROWS, 4, "header, ending blank, rule, footer");
     }
 
     #[test]
@@ -260,6 +318,157 @@ mod tests {
             }
         }
     }
+
+    /// **The status rows cut on grapheme boundaries now, and they did not.**
+    ///
+    /// `cut` and `cut_keeping_tail` walked `char`s summing `UnicodeWidthChar::width`, which
+    /// is the arithmetic that splits an emoji ZWJ sequence — the per-character sum for a
+    /// family emoji is eight against its real two. A header or footer carrying a CJK file
+    /// name, or a model name with an emoji in it, could therefore come apart mid-cluster.
+    ///
+    /// The property asserted here is the one that makes the row *correct* rather than merely
+    /// present: every grapheme in the survivor is a whole grapheme from the input, in order,
+    /// and the survivor is never wider than the budget it was given.
+    #[test]
+    fn a_status_row_cut_keeps_whole_grapheme_clusters_and_stays_in_budget() {
+        use super::{cut, cut_keeping_tail};
+        use unicode_segmentation::UnicodeSegmentation;
+        use unicode_width::UnicodeWidthStr;
+
+        let family = "\u{1F468}\u{200D}\u{1F469}\u{200D}\u{1F467}\u{200D}\u{1F466}";
+        let content = format!("{family}{family}\u{65E5}\u{672C}\u{8A9E} tail");
+        let span = Span::raw(content.clone());
+        let graphemes: Vec<&str> = content.graphemes(true).collect();
+        let widest = UnicodeWidthStr::width(content.as_str());
+
+        for width in 1..=widest {
+            let head: String = cut(vec![span.clone()], width)
+                .iter()
+                .map(|s| s.content.to_string())
+                .collect();
+            // The head must be a **prefix** of the input's grapheme sequence: whole
+            // graphemes, in order, and nothing invented. Comparing against the whole
+            // sequence instead of a prefix of it reports every non-empty cut as a defect.
+            let head_graphemes: Vec<&str> = head.graphemes(true).collect();
+            assert!(
+                head_graphemes.is_empty() || graphemes.starts_with(&head_graphemes),
+                "width {width}: the head cut through a cluster: {head:?}"
+            );
+            assert!(
+                display_width(&head) <= width,
+                "width {width}: the head is {} columns over a {width} budget",
+                display_width(&head)
+            );
+
+            let tail: String = cut_keeping_tail(vec![span.clone()], width)
+                .iter()
+                .map(|s| s.content.to_string())
+                .collect();
+            // The tail keeps the *last* whole clusters, so it must be a suffix of the
+            // grapheme sequence rather than an arbitrary subset of it.
+            let kept_tail: Vec<&str> = tail.graphemes(true).collect();
+            let is_suffix = kept_tail.is_empty()
+                || (kept_tail.len() <= graphemes.len() && graphemes.ends_with(&kept_tail[..]));
+            assert!(
+                is_suffix,
+                "width {width}: the tail cut through a cluster: {tail:?}"
+            );
+            assert!(
+                display_width(&tail) <= width,
+                "width {width}: the tail is {} columns over a {width} budget",
+                display_width(&tail)
+            );
+        }
+    }
+
+    /// **`display_width` is ratatui's measurement, not `unicode-width`'s.**
+    ///
+    /// `unicode-width` reports the halfwidth katakana sound marks `ﾞ` (U+FF9E) and
+    /// `ﾟ` (U+FF9F) as zero-width because they carry `Grapheme_Extend`; terminals
+    /// draw them as independent halfwidth cells, so `ratatui-core`'s `CellWidth
+    /// for str` adds one column per occurrence (it cites microsoft/terminal#18087).
+    ///
+    /// This test asserts the two **agree** rather than asserting a number, because
+    /// the claim is "we measure what the renderer will place" and that claim is
+    /// checkable directly. A hard-coded `2` would pass while the two rules drifted
+    /// apart the next time ratatui is bumped.
+    ///
+    /// The consequence of the old disagreement was not cosmetic: we measured a row
+    /// one column narrower than ratatui made it, so the wrap budget overspent and
+    /// the renderer clipped the last character — on every line of a Japanese log.
+    #[test]
+    fn display_width_agrees_with_the_rule_ratatui_places_cells_by() {
+        use ratatui::buffer::CellWidth;
+        use unicode_width::UnicodeWidthStr;
+        // The case that differed: `unicode-width` says 1, ratatui says 2.
+        let pair = "\u{FF76}\u{FF9E}";
+        assert_eq!(UnicodeWidthStr::width(pair), 1, "the uncorrected rule");
+        assert_eq!(
+            display_width(pair),
+            2,
+            "and the rule that matches placement"
+        );
+        assert_eq!(
+            pair.cell_width() as usize,
+            display_width(pair),
+            "our measurement must be the renderer's"
+        );
+        // Both marks, and an orphaned one on its own.
+        for sample in [
+            "\u{FF76}\u{FF9E}",
+            "\u{FF9E}",
+            "\u{FF76}\u{FF9E}\u{FF9F}",
+            "\u{30AB}\u{FF9E}\u{30AD}\u{FF9E}",
+            "\u{65E5}\u{672C}\u{8A9E}",
+            "plain ascii",
+            "\u{1F468}\u{200D}\u{1F469}\u{200D}\u{1F467}\u{200D}\u{1F466}",
+        ] {
+            assert_eq!(
+                sample.cell_width() as usize,
+                display_width(sample),
+                "{sample:?} measures differently here than it is placed"
+            );
+        }
+    }
+
+    /// **The wrap budget now spends what the renderer has.**
+    ///
+    /// The observable half of the change above: a transcript row of halfwidth
+    /// katakana wraps to a width the buffer can actually fill. With the uncorrected
+    /// rule the wrapper believed it had a column to spare that did not exist, and
+    /// the last character was clipped at the frame's edge — silently, because a
+    /// one-column clip mid-character is exactly what the renderer is trusted to do.
+    #[test]
+    fn a_row_of_halfwidth_katakana_wraps_to_a_width_the_buffer_can_fill() {
+        use crate::wrap::wrap_line;
+        use ratatui::buffer::CellWidth;
+        use ratatui::style::Style;
+        // ｶﾞﾞﾞﾞ... — one column per mark under the old rule, two under ratatui's.
+        let text = "\u{FF76}\u{FF9E}".repeat(20);
+        for width in 1..=12 {
+            let rows = wrap_line(&[(text.as_str(), Style::default())], width);
+            for row in &rows {
+                let joined: String = row.iter().map(|(t, _)| t.as_str()).collect();
+                // Width 1 is the one deliberate exception, and it is the same exception
+                // every 2-column cluster has: a cluster wider than the row is emitted
+                // whole rather than cut in half, so the row overhangs by one column.
+                // See `split_at_width`'s progress guarantee.
+                let ceiling = width.max(2);
+                // **Measured with ratatui's rule, not ours.** An earlier version of this
+                // test asserted `display_width(&joined) <= width`, which passes under
+                // *both* rules when the wrapper and the assertion share a unit — so it
+                // proved nothing. The claim under test is "the buffer can fill what the
+                // wrapper produced", and `cell_width` is the only function that knows
+                // that. Verified by control: reverting `display_width` to the uncorrected
+                // rule fails this assertion at width 2 (four columns) rather than passing.
+                assert!(
+                    joined.cell_width() as usize <= ceiling,
+                    "width {width}: a row of {} columns, which the buffer cannot place",
+                    joined.cell_width()
+                );
+            }
+        }
+    }
 }
 
 /// How many terminal columns a string occupies.
@@ -269,9 +478,46 @@ mod tests {
 /// respectively. Measuring characters makes every derived width wrong by the
 /// difference, which shows up as a row that overflows by a cell and wraps —
 /// the exact class of bug this module exists to prevent.
+///
+/// # Why this is not plain `unicode-width`
+///
+/// Because the number has to be the one the renderer will act on, and the
+/// renderer is ratatui. `ratatui-core`'s `CellWidth for str` (`buffer/cell_width.rs`)
+/// is `unicode-width` **plus one column per halfwidth katakana sound mark**:
+/// `unicode-width` reports `ﾞ` (U+FF9E) and `ﾟ` (U+FF9F) as zero-width because
+/// they carry `Grapheme_Extend`, but terminals draw them as independent
+/// halfwidth cells, so ratatui corrects for it — citing microsoft/terminal#18087
+/// and a Ruby reline fix for the same class.
+///
+/// Measuring with the uncorrected rule therefore disagreed with placement by one
+/// column per mark, in the direction that matters: we thought a row was one
+/// column narrower than ratatui made it, so a wrap budget spent one column too
+/// much and the renderer clipped the last character. A Japanese log line
+/// carrying these marks hit it on every line.
+///
+/// So this function applies the same correction, and the test asserts the two
+/// agree rather than asserting a number that would drift when ratatui is bumped.
+/// `clamp_line`'s backstop still exists for the status rows; this is what makes
+/// the *wrap budget* correct too.
 pub fn display_width(text: &str) -> usize {
     use unicode_width::UnicodeWidthStr;
-    text.width()
+    // Ratatui's rule is `unicode-width` plus a column per halfwidth sound mark.
+    // The single-byte special case in its implementation returns 1 for ASCII,
+    // which `UnicodeWidthStr::width` already gives, so only the correction is
+    // reproduced here.
+    text.width() + count_halfwidth_sound_marks(text)
+}
+
+/// How many halfwidth katakana sound marks a string carries.
+///
+/// The same set, for the same reason, as `ratatui_core::buffer::cell_width`'s
+/// private helper — kept local because that one is private, and because a
+/// dependency on ratatui's *internal* correction would be a dependency on a
+/// non-public API. The test pins the agreement instead.
+fn count_halfwidth_sound_marks(text: &str) -> usize {
+    text.chars()
+        .filter(|c| matches!(*c, '\u{FF9E}' | '\u{FF9F}'))
+        .count()
 }
 
 /// The gap [`side_by_side`] keeps between a row's two halves.
@@ -279,6 +525,18 @@ pub fn display_width(text: &str) -> usize {
 /// A module constant rather than a local one so a caller that needs to reason
 /// about the same row — the header, which has to decide what fits before it
 /// builds anything — reads the number instead of restating it.
+///
+/// **One, and the reason it is not two is worth recording.** Two columns would
+/// read as a clearer separation, and at 80 the header does gain from it — but
+/// measured against the same row one column narrower, it costs the footer a
+/// whole hint, and the footer's hints are the ones a reader depends on: at 80
+/// columns a truncated-file viewer lost `e edit unavailable`, the statement
+/// that a bound key does not act (invariant 7). A hint is dropped whole or not
+/// at all, so one column of gap is exactly one hint. `side_by_side` cannot
+/// know which of those is worth more — which is why this is a module constant
+/// a caller reads, and why the trade was made here rather than inside the
+/// layout. Two is the right answer the day the footer's own set gets shorter;
+/// until then the footer keeps the column.
 pub const HALF_GAP: usize = 1;
 
 /// How many columns one half of a row may occupy, given what the other half
@@ -395,11 +653,23 @@ pub enum Priority {
 /// one-line bar becomes two. This is the backstop that makes that structural,
 /// rather than a property of arithmetic that has to stay correct in every branch.
 ///
-/// It exists because two width tables can disagree. Our measurements use the
-/// workspace's `unicode-width`; ratatui places cells using the version it
-/// depends on, and for a handful of code points the two differ by one column.
-/// Rather than pin a table and hope, the row is measured once more on the way
-/// out and trimmed to fit.
+/// It exists because two width rules can disagree. Ours is `unicode-width`; ratatui
+/// places cells with its own `CellWidth for str`, which is `unicode-width` **plus one
+/// column per halfwidth katakana sound mark** (`ﾞ` U+FF9E, `ﾟ` U+FF9F) — characters
+/// `unicode-width` calls zero-width because they carry `Grapheme_Extend`, but which
+/// terminals render as an independent halfwidth cell. ratatui cites
+/// microsoft/terminal#18087 for that correction. So our measurement of `ｶﾞ` is one
+/// column while the buffer advances two, and the row is trimmed once more on the way out.
+///
+/// **An earlier version of this comment gave a different and false reason**: that the two
+/// crates depended on different *versions* of `unicode-width`. Measured against
+/// `Cargo.lock`, `ratatui-core 0.1.2` and `ratatui-widgets 0.3.2` both resolve to
+/// `unicode-width 0.2.2`, the same crate the workspace pins; the second copy in the lock
+/// (`0.1.14`) is pulled by `uuid` and `vt100`, neither of which is in the render graph.
+/// The disagreement is real, it is not a version skew, and it is worth knowing where it
+/// actually lives — because the transcript's wrap budget in `wrap::wrap_line` measures
+/// with our rule and ratatui then places with its own, so the same one-column error is
+/// live there and this backstop does not cover it.
 pub fn clamp_line(
     line: ratatui::text::Line<'static>,
     width: usize,
@@ -411,16 +681,21 @@ pub fn clamp_line(
     ratatui::text::Line::from(cut_keeping_tail(line.spans, width))
 }
 
-/// Cut styled spans to `width` columns, keeping the **last** characters.
+/// Cut styled spans to `width` columns, keeping the **last** whole **grapheme** clusters.
 ///
-/// For the half that is written least-important-first: trimming must remove the
-/// leading fragments rather than the trailing ones.
+/// For the half that is written least-important-first: trimming must remove the leading
+/// fragments rather than the trailing ones.
+///
+/// The arithmetic drops whole graphemes until at least the excess is gone, so the survivor
+/// is under budget rather than over it. The version this replaced walked `char`s and could
+/// drop *fewer* columns than it had to -- a zero-width character in the run consumed the
+/// skip budget without freeing a column, and the row came out wider than asked for.
+/// [`crate::wrap::suffix_at_width`] carries the measured table that makes a grapheme the
+/// unit a cut may fall on.
 pub fn cut_keeping_tail(
     spans: Vec<ratatui::text::Span<'static>>,
     width: usize,
 ) -> Vec<ratatui::text::Span<'static>> {
-    use unicode_width::UnicodeWidthChar;
-
     let total: usize = spans
         .iter()
         .map(|s| crate::ui::layout::display_width(&s.content))
@@ -428,67 +703,63 @@ pub fn cut_keeping_tail(
     if total <= width {
         return spans;
     }
-    let mut skip = total - width;
+    // Columns that must go. Dropping whole graphemes may remove more than this, which is
+    // what keeps the result under budget rather than over it.
+    let mut excess = total - width;
     let mut out = Vec::new();
     for span in spans {
-        if skip == 0 {
+        if excess == 0 {
             out.push(span);
             continue;
         }
         let span_width = crate::ui::layout::display_width(&span.content);
-        if skip >= span_width {
-            skip -= span_width;
-            continue;
-        }
-        let mut kept = String::new();
-        let mut dropped = 0;
-        for ch in span.content.chars() {
-            if dropped < skip {
-                dropped += ch.width().unwrap_or(0);
-                continue;
-            }
-            kept.push(ch);
-        }
-        skip = 0;
+        let keep = span_width.saturating_sub(excess);
+        let kept = crate::wrap::suffix_at_width(&span.content, keep);
+        let kept_width = crate::ui::layout::display_width(kept);
+        excess = excess.saturating_sub(span_width - kept_width);
         if !kept.is_empty() {
-            out.push(ratatui::text::Span::styled(kept, span.style));
+            out.push(ratatui::text::Span::styled(kept.to_string(), span.style));
         }
     }
     out
 }
 
-/// Cut styled spans to at most `width` columns, keeping whole characters.
+/// Cut styled spans to at most `width` columns, keeping whole **grapheme** clusters.
 ///
-/// A wide glyph that does not fit is dropped rather than halved: half a CJK
-/// character renders as a replacement box.
+/// A grapheme that does not fit is dropped rather than halved: half of a CJK character or
+/// half of an emoji ZWJ sequence renders as a replacement box, and a row ending in an
+/// orphaned zero-width joiner renders as a *different emoji* from the one in the text.
+/// The measured reason lives on [`crate::wrap::prefix_at_width`] -- the per-character width
+/// sum and the per-string width disagree by six columns for a family emoji, so a cut
+/// decided with one and measured with the other landed mid-cluster at most row widths.
+///
+/// Under budget is the normal outcome at odd widths: a 2-column grapheme leaves one column
+/// unused when three were available.
 pub fn cut(
     spans: Vec<ratatui::text::Span<'static>>,
     width: usize,
 ) -> Vec<ratatui::text::Span<'static>> {
-    use unicode_width::UnicodeWidthChar;
-
     let mut out = Vec::new();
     let mut left = width;
     for span in spans {
         if left == 0 {
             break;
         }
-        let mut taken = String::new();
-        let mut used = 0;
-        for ch in span.content.chars() {
-            let w = ch.width().unwrap_or(0);
-            if used + w > left {
-                break;
-            }
-            taken.push(ch);
-            used += w;
+        // The span is kept whole when nothing was cut, so an untouched styled value does
+        // not pay for a re-allocation.
+        let kept = crate::wrap::prefix_at_width(&span.content, left);
+        if kept.is_empty() {
+            // This span's first grapheme is wider than what is left of the row. A later
+            // span may still carry narrow glyphs, so this is not the end of the row.
+            continue;
+        }
+        let used = crate::ui::layout::display_width(kept);
+        if kept.len() == span.content.len() {
+            out.push(span);
+        } else {
+            out.push(ratatui::text::Span::styled(kept.to_string(), span.style));
         }
         left -= used;
-        if !taken.is_empty() && used == crate::ui::layout::display_width(&span.content) {
-            out.push(span);
-        } else if !taken.is_empty() {
-            out.push(ratatui::text::Span::styled(taken, span.style));
-        }
     }
     out
 }

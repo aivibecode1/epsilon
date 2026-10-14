@@ -4,7 +4,7 @@
 //! `args.text` uppercased, counting `event` frames as `{"type":"log"}` receipts.
 //! Integration tests depend on that default, so modes are opt-in.
 //!
-//! Modes are argv[1], with argv[2..] used by the modes that need a number:
+//! Modes are `argv[1]`, with `argv[2..]` used by the modes that need a number:
 //!
 //! | mode | misbehaviour |
 //! |---|---|

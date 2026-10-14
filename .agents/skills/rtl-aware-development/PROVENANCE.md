@@ -10,8 +10,7 @@ this repository can reach it.
 - **Licence:** **MIT**. opencode's `LICENSE` reads "Copyright (c) 2025 opencode"; the skill is
   part of that repository, so the skill carries that licence.
 - **Why it was chosen:** our `AGENTS.md` §8 holds this product to WCAG 2.2 AA and names keyboard
-  operation, contrast and focus — but says **nothing about text direction**. This project already
-  ships an Arabic reading guide (`docs/START-HERE.ar.md`), and any future RTL work in the desktop
+  operation, contrast and focus — but says **nothing about text direction**. Any future RTL work
   would hit exactly the traps listed here: mirroring layout instead of direction, physical CSS
   where logical CSS is correct, mixed-direction paths, and RTL scroll offsets.
 

@@ -92,6 +92,18 @@ where
         draw_transcript(f, regions.transcript);
     }
 
+    // The blank that ends the conversation.
+    //
+    // Rendered explicitly rather than left to the terminal: the transcript used
+    // to own this row, so a diff-based redraw would otherwise leave the last
+    // line of the old conversation sitting exactly where the gap should be, with
+    // the composer drawn one row lower. Drawing an empty Paragraph clears it the
+    // same way drawing any other widget clears its region.
+    f.render_widget(
+        ratatui::widgets::Paragraph::new(ratatui::text::Text::default()),
+        regions.gap,
+    );
+
     // One rule, and it is the composer's. It was two — the second sat between the
     // header and the transcript, drawn by this same function in this same style,
     // so neither line said what it divided while the pair cost a row of

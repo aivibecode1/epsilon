@@ -440,7 +440,6 @@ All notable changes to Epsilon, grouped by milestone. Most milestones have a dev
   [`docs/START-HERE.md`](docs/START-HERE.md) gives a ten-minute tour, a suggested reading order,
   a folder map with "who cares about this", a glossary of every term used, and one diagram of how
   the pieces connect — with a "if you read only three files, read these" for the impatient. An
-  Arabic version is at [`docs/START-HERE.ar.md`](docs/START-HERE.ar.md). A newcomer can now tell
   what the product is, how to read it, and where to start without reading the source.
 - **`AGENTS.md` is rewritten and locked.** The previous file was 670 lines and had drifted: it
   dated itself 2026-09-28 and stopped at M208 while the project is at M276, it described a

@@ -1,0 +1,28 @@
+
+=== file-editor-find @ 80x24 ===
++--------------------------------------------------------------------------------+
+|idle           ?/1.0M · ↑0 ↓0 · Faux (offline scripted) • thinking off · offline|
+|                                                                                |
+|E P S I ╭ edit find.txt — alt+s saves, esc cancels ────────────────────╮        |
+|a coding│ a needle here                                                │        |
+|        │ nothing                                                      │        |
+|Describe│ and a needle again                                           │        |
+|@ files │                                                              │        |
+|        │                                                              │        |
+|        │                                                              │        |
+|        │                                                              │        |
+|        │                                                              │        |
+|        │                                                              │        |
+|        │                                                              │        |
+|        │                                                              │        |
+|        │                                                              │        |
+|        │                                                              │        |
+|        │                                                              │        |
+|        │                                                              │        |
+|        │                                                              │        |
+|        │                                                              │        |
+|        │ /needle█  2 of 2 · enter next · esc close                    │        |
+|❯ ask an╰──────────────────────────────────────────────────────────────╯        |
+|────────────────────────────────────────────────────────────────────────────────|
+|edit · type edit · enter newline · alt+s save · esc …\Epsilon\crates\epsilon-tui|
++--------------------------------------------------------------------------------+

@@ -11,7 +11,7 @@ human or agent, and it is short on purpose. It covers:
 - what the project is, and the eight architecture invariants that do not change quietly;
 - the build, test, lint and run commands, and the machine-specific traps on Windows;
 - the security and data-loss rules;
-- the accessibility standard the desktop IDE is held to;
+- the accessibility standard the terminal IDE is held to;
 - how to be a good subagent, if you are one.
 
 **`AGENTS.md` is locked.** It is maintainer-owned, its SHA-256 is in `AGENTS.md.sha256`, and
@@ -21,7 +21,6 @@ write a proposal in [`docs/AGENTS-PROPOSALS.md`](docs/AGENTS-PROPOSALS.md) — d
 ## Get oriented
 
 - New to the project? Start at **[`docs/START-HERE.md`](docs/START-HERE.md)**. There is an
-  Arabic version at [`docs/START-HERE.ar.md`](docs/START-HERE.ar.md).
 - Want to know what is true right now? **[`docs/STATUS.md`](docs/STATUS.md)**.
 - Curious where an idea came from? **[`CREDITS.md`](CREDITS.md)** and
   [`docs/references/`](docs/references/README.md).

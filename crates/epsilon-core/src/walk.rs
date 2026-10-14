@@ -15,7 +15,7 @@
 //!
 //! # What is the same and what is deliberately different
 //!
-//! The *rules* about what to skip are [`IgnoreSet`]'s, and there is exactly one answer to
+//! The *rules* about what to skip are [`IgnoreSet`](crate::ignore::IgnoreSet)'s, and there is exactly one answer to
 //! "is this file part of the workspace". The *traversal* differs by caller, and that is a
 //! deliberate difference rather than an oversight: a completion list is budgeted for
 //! typing latency, while a tool walk must see everything it was asked about.
@@ -25,7 +25,7 @@
 //! * **A hidden file stays visible.** `.env` is content, and the read tools must be able
 //!   to see it.
 //! * **A hidden directory is skipped unconditionally.** The `.gitignore` negation that is
-//!   supposed to be the escape hatch cannot work through [`IgnoreSet::is_ignored`], in this
+//!   supposed to be the escape hatch cannot work through [`IgnoreSet::is_ignored`](crate::ignore::IgnoreSet::is_ignored), in this
 //!   walk or the tools' own: it resolves ancestors and returns **false** for a directory
 //!   that was ignored and then re-included — the same answer it gives for a directory no
 //!   rule mentions. Making the escape hatch real needs a matcher query that can tell "no

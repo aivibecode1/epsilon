@@ -5,7 +5,7 @@
 //! each row carrying its wire API (`ModelInfo::wire`) the way pi's models carry
 //! `model.api`.
 //!
-//! The rows themselves live in [`catalog_data`] — **generated** by
+//! The rows themselves live in ``catalog_data`` — **generated** by
 //! `scripts/regen_catalog.py` from a live fetch of <https://models.dev/api.json>
 //! (DIRECTION-05 closure). Never edit that file by hand: refresh it with
 //! `python scripts/regen_catalog.py`, run the gates, fix any moved pins in
@@ -16,6 +16,36 @@
 //! `wire`; nothing string-matches model families.
 
 mod catalog_data;
+
+/// The date of the models.dev snapshot this catalog was generated from, as
+/// `YYYY-MM-DD`.
+///
+/// **One value, not two.** The same date also appears in the header comment of
+/// `catalog_data.rs`, which the generator writes, and in the doc comment of
+/// `catalog_is_current_generation`. It had drifted to 2026-08-24 while the data
+/// carried 2026-09-21 — a small disagreement that made a reader distrust both files.
+/// This constant is the one to read, and ``catalog_snapshot_date_matches_the_data``
+/// is the control that fails when the header disagrees with it.
+///
+/// Surfacing the date is criterion 5's "clearly indicate when the catalog was last
+/// successfully updated"; the catalog is a committed file, so this date *is* the last
+/// successful update, and it was previously unreadable at runtime.
+pub const CATALOG_SNAPSHOT_DATE: &str = "2026-09-21";
+
+/// The catalog's size as `(model rows, distinct providers)`.
+///
+/// Derived, not stored. The generator already knows both numbers and they appear in a
+/// test's doc comment as prose; deriving them here means the `/catalog` output cannot
+/// disagree with the data it describes — the same reason [`CATALOG_SNAPSHOT_DATE`] is a
+/// value and not a comment.
+pub fn snapshot_shape() -> (usize, usize) {
+    let providers = MODELS
+        .iter()
+        .map(|m| m.provider)
+        .collect::<std::collections::BTreeSet<_>>()
+        .len();
+    (MODELS.len(), providers)
+}
 
 /// Which wire format + endpoint family a model speaks (catalog-driven routing,
 /// pi's `model.api` field). Catalog data by design: present in every build, but only
@@ -522,7 +552,7 @@ pub fn resolve_api_key(provider: &str) -> Option<String> {
 /// The env var name to display when `provider` is authenticated purely from
 /// the environment — `Some("ANTHROPIC_API_KEY")`, never the value.
 ///
-/// Stored entries win over env (the [`resolve_api_key_in`] precedence): a
+/// Stored entries win over env (the ``resolve_api_key_in`` precedence): a
 /// provider with a stored credential reads "key", one authenticated purely by
 /// its environment variable reads "key (env: NAME)", and one with neither
 /// reads "—" via the existing `auth_ready` gate. A blank stored key counts as
@@ -1214,9 +1244,52 @@ mod tests {
 
     /// Current-generation sanity pins: regeneration must not regress to older eras.
     /// Updated whenever `scripts/regen_catalog.py` pulls a newer snapshot
-    /// (2026-08-24 snapshot: 383 rows across 9 direct-API providers, plus 7
+    /// (2026-09-21 snapshot: 383 rows across 9 direct-API providers, plus 7
     /// hand-curated native mistral rows — M47, until the next refresh absorbs
     /// the `mistral` registry).
+    ///
+    /// The date here must agree with the header of `catalog/catalog_data.rs`,
+    /// which the generator writes on every run. It had drifted to 2026-08-24
+    /// while the data carried 2026-09-21, which is the kind of small
+    /// disagreement that makes a reader distrust both files — the same evidence
+    /// discipline the repository asks for everywhere else.
+    /// **The date is one value, and this is the control that keeps it one.**
+    ///
+    /// The generator writes the snapshot date into `catalog_data.rs`'s header comment
+    /// and into the doc comment of `catalog_is_current_generation`. Those are prose
+    /// and nothing checked them against each other, so they drifted — 2026-08-24 in
+    /// one file while the data carried 2026-09-21. Reading the header here turns that
+    /// into a test failure instead of a reader's distrust.
+    #[test]
+    fn catalog_snapshot_date_matches_the_data() {
+        let data = std::fs::read_to_string(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/src/catalog/catalog_data.rs"
+        ))
+        .expect("the generated data file is in the tree");
+        assert!(
+            data.contains(CATALOG_SNAPSHOT_DATE),
+            "catalog_data.rs's header must carry the same snapshot date as              CATALOG_SNAPSHOT_DATE ({CATALOG_SNAPSHOT_DATE}) — regenerate, or fix              the constant"
+        );
+    }
+
+    /// **Criterion 5: the shape the `/catalog` command prints is the data's shape.**
+    ///
+    /// These numbers were prose in a doc comment ("383 rows across 9 direct-API
+    /// providers") and nothing checked the printout against the table. Deriving them
+    /// is the same discipline as `CATALOG_SNAPSHOT_DATE`: one source, no second copy.
+    #[test]
+    fn snapshot_shape_is_derived_not_transcribed() {
+        let (rows, providers) = super::snapshot_shape();
+        assert_eq!(rows, super::MODELS.len(), "rows come from the table itself");
+        assert!(
+            providers > 0 && providers < rows,
+            "providers partition the rows"
+        );
+        // A real snapshot, not the empty case the offline build would produce.
+        assert!(rows > 100, "the bundled catalog is large: {rows}");
+    }
+
     #[test]
     fn catalog_is_current_generation() {
         // Newest flagship of each direct-API family at regen time:

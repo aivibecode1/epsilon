@@ -180,8 +180,7 @@ points at it.
 ## Documentation
 
 - **[Start here](docs/START-HERE.md)** — the reading guide: a ten-minute tour, a reading order,
-  a folder map, a glossary and one diagram of how the pieces connect. Arabic:
-  [النسخة العربية](docs/START-HERE.ar.md).
+  a folder map, a glossary and one diagram of how the pieces connect.
 - **[Status](docs/STATUS.md)** — what is true right now: progress, decisions in flight, what was
   cut, what is broken.
 - [Documentation map](docs/README.md) — everything below, in one index.

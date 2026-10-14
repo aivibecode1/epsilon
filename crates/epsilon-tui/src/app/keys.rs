@@ -79,10 +79,78 @@ fn refilter(app: &mut App) {
         &app.tree_query,
         &app.folded,
     );
+    // P-074: fork mode lists user messages only, whatever the query does —
+    // the mode is "pick a message to branch at", and a filter that resurfaced
+    // assistant rows would fork from a row the picker never showed.
+    if app.timeline_fork_refill.is_some() {
+        app.timeline_entries = super::commands::fork_user_rows(&app.timeline_entries);
+    }
     app.timeline_index = keep
         .and_then(|id| app.timeline_entries.iter().position(|r| r.id == id))
         .unwrap_or(0)
         .min(app.timeline_entries.len().saturating_sub(1));
+}
+
+/// Fork at the picked timeline row (P-074): the one fork path both the
+/// `k` chord and fork-mode Enter take, so the two cannot disagree on the
+/// guard, the destination rule, or the notice. `refill` is `Some` from
+/// `/fork <text>` — the typed text goes back into the composer — and `None`
+/// from `k`, which leaves the composer alone.
+fn fork_at_picked_row(
+    app: &mut App,
+    agent: &Arc<Agent>,
+    row: &crate::app::TimelineRow,
+    refill: Option<String>,
+) {
+    if row.kind != "user" {
+        app.ui.push_notice(format!(
+            "fork at a USER message — #{} [{}] is {}",
+            row.seq, row.kind, row.kind
+        ));
+        return;
+    }
+    let Some(store) = agent.session_store() else {
+        return;
+    };
+    // **The session file's own parent directory**, which is what `/fork` uses -- so both fork paths write their session where the
+    // user's existing ones already live, rather than into a directory
+    // only the session browser knows to look in. Guessing a
+    // `sessions_dir()` here would have put the fork somewhere the
+    // browser would not list it.
+    let forked = {
+        let Ok(st) = store.lock() else {
+            return;
+        };
+        let dest = st.path().parent().map(|d| d.to_path_buf());
+        let Some(dest) = dest else {
+            app.ui
+                .push_notice("fork: the session file has no parent directory");
+            return;
+        };
+        st.fork_branch_at(&row.id, dest)
+    };
+    match forked {
+        Ok(path) => {
+            app.ui.push_notice(format!(
+                "forked at #{} → {} (open with --session {})",
+                row.seq,
+                path.display(),
+                path.display()
+            ));
+            if let Some(text) = refill {
+                app.input = text;
+                app.cursor_chars = app.input.chars().count();
+            }
+            app.timeline_open = false;
+            app.timeline_index = 0;
+            app.timeline_entries.clear();
+            app.timeline_all.clear();
+            app.timeline_fork_refill = None;
+        }
+        Err(e) => app
+            .ui
+            .push_notice(format!("fork at #{} failed: {e}", row.seq)),
+    }
 }
 
 pub(crate) fn begin_auth_key_prompt(app: &mut App, provider: String) {
@@ -611,6 +679,45 @@ pub(crate) fn handle_key(app: &mut App, agent: &Arc<Agent>, key: KeyEvent) -> bo
                     }
                     return false;
                 }
+                // Delete: forward, the mirror of Backspace. It was silently
+                // discarded by the `_ => {}` arm below, so the key a user has
+                // pressed in every other editor did nothing here — and an
+                // editor missing one of the two delete directions is not an
+                // editor, whatever it calls itself.
+                KeyCode::Delete => {
+                    if let Some(v) = app.active_viewer_mut() {
+                        v.delete_forward();
+                        v.clamp_cursor();
+                    }
+                    return false;
+                }
+                // Ctrl+Z / Ctrl+Y: the composer's undo chords, on the buffer the
+                // user is actually editing. These are raw rather than table
+                // entries for the same reason Enter, Backspace and the arrows
+                // are raw in this match: it is a text-editing surface that owns
+                // the keyboard outright, and it runs before the table dispatch,
+                // so there is no second binding to collide with `tui.editor.undo`.
+                KeyCode::Char('z') if key.modifiers == KeyModifiers::CONTROL => {
+                    // Say so rather than swallowing it. A key that does nothing
+                    // with no feedback is the defect this match is being cleaned of.
+                    if !app.active_viewer_mut().is_some_and(|v| v.undo()) {
+                        app.ui.push_notice("nothing to undo".to_string());
+                    }
+                    return false;
+                }
+                KeyCode::Char('y') if key.modifiers == KeyModifiers::CONTROL => {
+                    if !app.active_viewer_mut().is_some_and(|v| v.redo()) {
+                        app.ui.push_notice("nothing to redo".to_string());
+                    }
+                    return false;
+                }
+                // Ctrl+Shift+Z is the other habit for redo.
+                KeyCode::Char('Z') if key.modifiers == KeyModifiers::CONTROL => {
+                    if !app.active_viewer_mut().is_some_and(|v| v.redo()) {
+                        app.ui.push_notice("nothing to redo".to_string());
+                    }
+                    return false;
+                }
                 KeyCode::Up => {
                     if let Some(v) = app.active_viewer_mut() {
                         v.edit_row = v.edit_row.saturating_sub(1);
@@ -679,6 +786,8 @@ pub(crate) fn handle_key(app: &mut App, agent: &Arc<Agent>, key: KeyEvent) -> bo
         // The `n`/`p` aliases mirror the transcript search's step keys.
         if app.active_viewer().is_some_and(|v| v.find_open) {
             let capacity = app.viewer_capacity.max(1);
+            // The replacement line owns the keyboard while it is open, so a
+            // keystroke never lands in the wrong one of the two lines.
             match key.code {
                 KeyCode::Esc => {
                     if let Some(v) = app.active_viewer_mut() {
@@ -759,9 +868,23 @@ pub(crate) fn handle_key(app: &mut App, agent: &Arc<Agent>, key: KeyEvent) -> bo
             }
             KeyCode::Char('e' | 'E') if key.modifiers == KeyModifiers::NONE => {
                 // Read-only until asked: `e` starts the edit buffer from the
-                // file on screen, so viewing never risks a keystroke.
-                if let Some(v) = app.active_viewer_mut() {
-                    v.start_edit();
+                // file on screen, so viewing never risks a keystroke. A file
+                // past the viewer cap refuses: the buffer would be the capped
+                // head and saving it would cut the tail off the file.
+                let entered = if let Some(v) = app.active_viewer_mut() {
+                    v.start_edit()
+                } else {
+                    true
+                };
+                if !entered {
+                    let rel = app
+                        .active_viewer()
+                        .map(|v| v.rel.clone())
+                        .unwrap_or_default();
+                    app.ui.push_notice(format!(
+                        "{rel} is too large to edit here (showing the first {} lines) — saving would cut the rest; open it in an editor",
+                        crate::tree::VIEWER_LINE_CAP
+                    ));
                 }
             }
             KeyCode::Up => {
@@ -998,6 +1121,135 @@ pub(crate) fn handle_key(app: &mut App, agent: &Arc<Agent>, key: KeyEvent) -> bo
         }
         return false;
     }
+    // P-048: level picker for bare `/think` — the provider-picker shape:
+    // filtered by `input`, Enter applies the highlighted level, Esc keeps
+    // the current one. No paste arms: seven short names need no clipboard.
+    if app.think_pick_open {
+        let levels = crate::picker::match_think_levels(&app.input);
+        match key.code {
+            KeyCode::Esc => {
+                app.think_pick_open = false;
+                app.think_pick_index = 0;
+                app.input.clear();
+                app.cursor_chars = 0;
+            }
+            KeyCode::Enter => {
+                if let Some(level) = levels.get(app.think_pick_index) {
+                    let level = *level;
+                    app.think_pick_open = false;
+                    app.think_pick_index = 0;
+                    app.input.clear();
+                    app.cursor_chars = 0;
+                    app.set_thinking(agent, level);
+                }
+            }
+            KeyCode::Up => {
+                app.think_pick_index = app
+                    .think_pick_index
+                    .saturating_sub(1)
+                    .min(levels.len().saturating_sub(1));
+            }
+            KeyCode::Down => {
+                if !levels.is_empty() {
+                    app.think_pick_index = (app.think_pick_index + 1).min(levels.len() - 1);
+                }
+            }
+            KeyCode::Backspace => {
+                app.backspace();
+                app.think_pick_index = 0;
+            }
+            KeyCode::Char(c) => {
+                app.insert_char(c);
+                app.think_pick_index = 0;
+            }
+            _ => {}
+        }
+        return false;
+    }
+    // P-047: `/scoped-models` checklist over the F2 cycle scope — the
+    // think-picker shape with Space staging and Ctrl+S persisting. Rows are
+    // the flat catalog (`build_rows_with` with the staged scope as the
+    // favorites, so ★ follows staging); staged == `favorites`, so the cycle
+    // rescopes live and the file moves only on save.
+    if app.scope_open {
+        let rows = crate::picker::build_rows_with(
+            &app.input,
+            &app.model_id,
+            &[],
+            &app.favorites,
+            None,
+            &app.live_cache,
+            &app.customs,
+        );
+        match key.code {
+            KeyCode::Esc => {
+                app.favorites = std::mem::take(&mut app.scope_snapshot);
+                app.scope_open = false;
+                app.scope_index = 0;
+                app.input.clear();
+                app.cursor_chars = 0;
+                app.unstash_draft();
+                app.invalidate_picker();
+            }
+            // The save chord is the table's, not a second literal: one
+            // binding for "persist the picker" in every picker, with the
+            // target decided by the branch. Here it lands the staged scope;
+            // in the model picker it lands the default model.
+            _ if app.keybindings.matches("app.model.saveDefault", &key) => {
+                app.save_scope(agent);
+            }
+            KeyCode::Up => {
+                app.scope_index = app
+                    .scope_index
+                    .saturating_sub(1)
+                    .min(rows.len().saturating_sub(1));
+            }
+            KeyCode::Down => {
+                if !rows.is_empty() {
+                    app.scope_index = (app.scope_index + 1).min(rows.len() - 1);
+                }
+            }
+            KeyCode::PageUp => {
+                let page = app.picker_capacity.max(1);
+                app.scope_index = app
+                    .scope_index
+                    .saturating_sub(page)
+                    .min(rows.len().saturating_sub(1));
+            }
+            KeyCode::PageDown => {
+                if !rows.is_empty() {
+                    let page = app.picker_capacity.max(1);
+                    app.scope_index = (app.scope_index + page).min(rows.len() - 1);
+                }
+            }
+            KeyCode::Enter | KeyCode::Char(' ') => {
+                if let Some(row) = rows.get(app.scope_index) {
+                    let id = row.id.clone();
+                    if let Some(i) = app.favorites.iter().position(|f| f == &id) {
+                        app.favorites.remove(i);
+                    } else if app.favorites.len() >= epsilon_core::config::FAVORITE_MAX {
+                        app.ui.push_notice(format!(
+                            "favorites are full ({}); unfavorite one first",
+                            epsilon_core::config::FAVORITE_MAX
+                        ));
+                    } else {
+                        app.favorites.push(id);
+                    }
+                    app.invalidate_picker();
+                }
+            }
+            KeyCode::Backspace => {
+                app.backspace();
+                app.scope_index = 0;
+            }
+            KeyCode::Char(c) => {
+                app.insert_char(c);
+                app.scope_index = 0;
+            }
+            _ => {}
+        }
+        return false;
+    }
     // `app.clear` is checked FIRST, and that ordering is the whole fix. Both
     // `app.clear` and `app.exit` were bound to ctrl+c; `app.exit` was matched here,
     // so Ctrl+C quit the process and discarded the draft while `/hotkeys` advertised
@@ -1152,9 +1404,26 @@ pub(crate) fn handle_key(app: &mut App, agent: &Arc<Agent>, key: KeyEvent) -> bo
                     app.timeline_open = false;
                     app.timeline_index = 0;
                     app.timeline_entries.clear();
+                    app.timeline_fork_refill = None;
                 }
             }
             KeyCode::Enter => {
+                // P-074: fork mode forks at the picked message instead of
+                // navigating — through the one fork path, with the carried
+                // text refilled into the composer.
+                if app.timeline_fork_refill.is_some() {
+                    if let Some(row) = app.timeline_entries.get(app.timeline_index).cloned() {
+                        let refill = app.timeline_fork_refill.clone().unwrap_or_default();
+                        fork_at_picked_row(app, agent, &row, Some(refill));
+                    } else {
+                        app.timeline_open = false;
+                        app.timeline_index = 0;
+                        app.timeline_entries.clear();
+                        app.timeline_all.clear();
+                        app.timeline_fork_refill = None;
+                    }
+                    return false;
+                }
                 if let Some(row) = app.timeline_entries.get(app.timeline_index).cloned() {
                     let Some(store) = agent.session_store() else {
                         return false;
@@ -1243,49 +1512,10 @@ pub(crate) fn handle_key(app: &mut App, agent: &Arc<Agent>, key: KeyEvent) -> bo
                 let Some(row) = app.timeline_entries.get(app.timeline_index).cloned() else {
                     return false;
                 };
-                if row.kind != "user" {
-                    app.ui.push_notice(format!(
-                        "fork at a USER message — #{} [{}] is {}",
-                        row.seq, row.kind, row.kind
-                    ));
-                    return false;
-                }
-                let Some(store) = agent.session_store() else {
-                    return false;
-                };
-                // **The session file's own parent directory**, which is what
-                // `/fork` uses -- so both fork paths write their session where the
-                // user's existing ones already live, rather than into a directory
-                // only the session browser knows to look in. Guessing a
-                // `sessions_dir()` here would have put the fork somewhere the
-                // browser would not list it.
-                let forked = {
-                    let Ok(st) = store.lock() else {
-                        return false;
-                    };
-                    let dest = st.path().parent().map(|d| d.to_path_buf());
-                    let Some(dest) = dest else {
-                        app.ui
-                            .push_notice("fork: the session file has no parent directory");
-                        return false;
-                    };
-                    st.fork_branch_at(&row.id, dest)
-                };
-                match forked {
-                    Ok(path) => {
-                        app.ui.push_notice(format!(
-                            "forked at #{} — the new session is {}",
-                            row.seq,
-                            path.display()
-                        ));
-                        app.timeline_open = false;
-                        app.timeline_entries.clear();
-                        app.timeline_all.clear();
-                    }
-                    Err(e) => app
-                        .ui
-                        .push_notice(format!("fork at #{} failed: {e}", row.seq)),
-                }
+                // One fork path (P-074): `k` forks without touching the
+                // composer; fork-mode Enter refills it. Same guard, same
+                // destination rule, same notice.
+                fork_at_picked_row(app, agent, &row, None);
             }
             // M196: label the selected row. pi binds this in its tree selector
             // (`updateNodeLabel`); the store half (`SessionStore::set_label`)
@@ -2288,7 +2518,7 @@ pub(crate) fn handle_key(app: &mut App, agent: &Arc<Agent>, key: KeyEvent) -> bo
             // M17b: when the slash popup is open, arrows navigate IT (pi
             // prompt.autocomplete.prev) instead of history recall.
             if app.slash_open {
-                let total = crate::picker::slash_items(&app.input).len();
+                let total = app.popup_candidates().len();
                 app.slash_index = app
                     .slash_index
                     .saturating_sub(1)
@@ -2308,7 +2538,7 @@ pub(crate) fn handle_key(app: &mut App, agent: &Arc<Agent>, key: KeyEvent) -> bo
                 return false;
             }
             if app.slash_open {
-                let total = crate::picker::slash_items(&app.input).len();
+                let total = app.popup_candidates().len();
                 if total > 0 {
                     app.slash_index = (app.slash_index + 1).min(total - 1);
                 }
@@ -2664,6 +2894,12 @@ pub(crate) fn handle_term_event(app: &mut App, agent: &Arc<Agent>, ev: TermEvent
                 for c in text.trim().chars() {
                     app.insert_char(c);
                 }
+            } else if app.think_pick_open {
+                // Pastes into the level filter, like the provider picker.
+                for c in text.trim().chars() {
+                    app.insert_char(c);
+                }
+                app.think_pick_index = 0;
             } else {
                 let marker = crate::kill_ring::make_paste_marker(app.next_paste_id, &text);
                 if marker.starts_with(crate::kill_ring::MARKER_PREFIX) {

@@ -91,6 +91,9 @@ pub(crate) async fn drive(cfg: TuiConfig, terminal: &mut ratatui::DefaultTermina
     // match on banner copy (rewording text must never disable a gate).
     app.trust_review_pending = trust_review_pending;
     app.discover_prompt_templates();
+    // The slash popup's skill rows refresh from the same agent (P-043),
+    // beside the templates: `/reload` is the later refresh, same as for them.
+    app.refresh_skills(&agent);
     for line in startup_notices {
         app.ui.push_notice(line);
     }

@@ -119,7 +119,7 @@ pub fn should_retry(kind: FailureKind, attempt: u32, max_attempts: u32) -> bool 
 
 /// Delay before the next attempt (None = do not retry).
 ///
-/// - Honors provider `Retry-After` when present (capped at [`MAX_DELAY`]).
+/// - Honors provider `Retry-After` when present (capped at ``MAX_DELAY``).
 /// - Otherwise exponential base-500ms growth with decorrelated jitter in [0.5x, 1.5x],
 ///   seeded from wall-clock nanos (bounds-tested, not exactness-tested — exactness would
 ///   require injecting a clock, deferred until flakiness is ever observed).

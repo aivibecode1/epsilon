@@ -1494,9 +1494,15 @@ fn the_one_rule_sits_between_the_transcript_and_the_composer() {
         rows[composer_row]
     );
     assert!(
-        rows[composer_row - 1].contains("ROW-"),
-        "the transcript must reach the composer with no rule between them: {:?}",
-        rows[composer_row - 1]
+        rows[composer_row - 1].trim().is_empty(),
+        "the row between the composer and the conversation must be the ending \
+         blank, not {row:?}: {rows:#?}",
+        row = rows[composer_row - 1]
+    );
+    assert!(
+        rows[composer_row - 2].contains("ROW-"),
+        "the transcript must reach the ending blank with no rule between them: {:?}",
+        rows[composer_row - 2]
     );
 }
 
@@ -1644,6 +1650,76 @@ fn an_open_search_reports_itself_and_the_matches_it_found() {
     assert!(
         screen.contains("1 of 2"),
         "the reader must know which match they are on: {screen}"
+    );
+}
+
+/// The search panel counted matches for as long as it existed while the
+/// transcript showed none of them: "3 of 7" and six indistinguishable rows. Pi
+/// marks the hits and marks the one you are on differently
+/// (`tui-renderer.ts:26-29`), and this asserts both halves **on the buffer** —
+/// underline is a cell modifier, so a test that read the text back could not tell
+/// a marked row from an unmarked one, which is the whole reason the old suite
+/// never missed this.
+///
+/// Case-insensitivity is asserted too, because a search that matches only the
+/// case the reader typed is a search that looks broken on every capitalised word.
+#[test]
+fn search_matches_are_marked_on_the_transcript_and_the_current_one_more_so() {
+    let mut app = bench_app(UiState::new());
+    pin_theme(&mut app, ThemeColorMode::Truecolor);
+    app.ui.push_notice("the Needle is in this row");
+    app.ui.push_notice("nothing here");
+    app.ui.push_notice("and another NEEDLE here");
+    app.search_own_transcript("needle");
+
+    let (buffer, rows) = render_buffer(&mut app, 80, 24);
+    let hit_y = rows
+        .iter()
+        .position(|r| r.contains("the Needle is in this row"))
+        .expect("the first hit is on screen");
+    let other_y = rows
+        .iter()
+        .position(|r| r.contains("and another NEEDLE here"))
+        .expect("the second hit is on screen");
+    let plain_y = rows
+        .iter()
+        .position(|r| r.contains("nothing here"))
+        .expect("the row with no hit is on screen");
+
+    let hit_fg = ratatui::style::Color::Rgb(0xff, 0xd9, 0x6b);
+    let marked = |y: usize| -> Vec<(Option<ratatui::style::Color>, ratatui::style::Modifier)> {
+        (0..80u16)
+            .filter_map(|x| {
+                let c = cell(&buffer, x, y as u16);
+                (c.symbol() != " ").then(|| (c.style().fg, c.style().add_modifier))
+            })
+            .collect()
+    };
+
+    // The **current** match: reversed, and the word — not the whole row.
+    let current = marked(hit_y);
+    assert!(
+        current
+            .iter()
+            .any(|(fg, m)| *fg == Some(hit_fg) && m.contains(ratatui::style::Modifier::REVERSED)),
+        "the match you are on is reversed: {current:?}"
+    );
+    // The other match: underlined, not reversed. Two different marks for two
+    // different statements, or the reader cannot tell where they stand.
+    let other = marked(other_y);
+    assert!(
+        other.iter().any(|(fg, m)| *fg == Some(hit_fg)
+            && m.contains(ratatui::style::Modifier::UNDERLINED)
+            && !m.contains(ratatui::style::Modifier::REVERSED)),
+        "the other hit is underlined and not reversed: {other:?}"
+    );
+    // And the row with no match is marked not at all — the assertion that keeps
+    // "everything is underlined" from passing for "the match is underlined".
+    assert!(
+        !marked(plain_y)
+            .iter()
+            .any(|(fg, m)| *fg == Some(hit_fg) || m.contains(ratatui::style::Modifier::UNDERLINED)),
+        "a row with no match is unmarked"
     );
 }
 
@@ -3728,6 +3804,188 @@ fn a_stopped_reply_says_so() {
         hits.len(),
         1,
         "exactly one stopped notice for one stopped reply: {rows:#?}"
+    );
+}
+
+/// **An aborted turn settles the tool cards it left in flight, through the real
+/// `apply` path (P-051).**
+///
+/// The unit test calls `settle_cards_for_abort` directly, which proves the helper
+/// and *not the wiring* — removing the two call sites leaves it passing. That is
+/// the failure mode the repository's evidence discipline names: a definition plus
+/// a test is not a feature. This goes through `apply`, the way a live abort does.
+#[test]
+fn a_aborted_turn_settles_its_in_flight_cards_through_the_apply_path() {
+    let mut app = bench_app(UiState::new());
+    // The card is committed when the assistant message ends carrying the call —
+    // `ToolExecutionStart` only promotes it from `pending` to `running`.
+    app.ui
+        .apply(&epsilon_contracts::agent_event::AgentEvent::MessageEnd {
+            message: Box::new(Message::Assistant(
+                epsilon_contracts::message::AssistantMessage {
+                    id: "msg-call".into(),
+                    timestamp_ms: 0,
+                    provider: "faux".into(),
+                    model_id: "faux-1".into(),
+                    content: vec![epsilon_contracts::content::ContentBlock::ToolCall {
+                        id: "c-abort".into(),
+                        name: "bash".into(),
+                        arguments: serde_json::json!({ "command": "sleep 30" }),
+                    }],
+                    stop_reason: epsilon_contracts::message::StopReason::ToolUse,
+                    error_message: None,
+                    usage: Default::default(),
+                },
+            )),
+        });
+    // A tool call the model asked for, announced as running, and never answered.
+    app.ui.apply(
+        &epsilon_contracts::agent_event::AgentEvent::ToolExecutionStart {
+            tool_call_id: "c-abort".into(),
+            tool_name: "bash".into(),
+            args: serde_json::json!({ "command": "sleep 30" }),
+        },
+    );
+    // Either in-flight state settles; the transcript, not the renderer, decides
+    // which word a not-yet-announced call gets.
+    assert!(
+        app.ui
+            .lines()
+            .iter()
+            .filter_map(|l| l.card.as_ref())
+            .any(|c| c.tool_call_id == "c-abort"
+                && (c.status == crate::state::CardStatus::Running
+                    || c.status == crate::state::CardStatus::Pending)),
+        "the card is in flight before the abort"
+    );
+
+    app.ui
+        .apply(&epsilon_contracts::agent_event::AgentEvent::MessageEnd {
+            message: Box::new(Message::Assistant(
+                epsilon_contracts::message::AssistantMessage {
+                    id: "msg-abort".into(),
+                    timestamp_ms: 0,
+                    provider: "faux".into(),
+                    model_id: "faux-1".into(),
+                    content: vec![],
+                    stop_reason: epsilon_contracts::message::StopReason::Aborted,
+                    error_message: None,
+                    usage: Default::default(),
+                },
+            )),
+        });
+
+    let cards: Vec<_> = app
+        .ui
+        .lines()
+        .iter()
+        .filter_map(|l| l.card.as_ref())
+        .collect();
+    let card = cards.first().expect("the card survives the abort");
+    assert_eq!(
+        card.status,
+        crate::state::CardStatus::Stopped,
+        "the card settled, so it cannot read as a hung agent: {cards:#?}"
+    );
+    // The note is on the card's body. Drawing it is a separate question from
+    // settling it — the panel only paints a body the reader opened — so it is
+    // asserted here on the data the renderer reads, and the frame half is the
+    // next step rather than something this test pretends to have shown.
+    let body_text = match &card.body {
+        crate::state::CardBody::Text(t) => t.clone(),
+        other => panic!("the note must land in the text body: {other:?}"),
+    };
+    assert!(
+        body_text.contains("never finished"),
+        "the note records that the call never finished: {body_text:?}"
+    );
+}
+
+/// **The settled card is drawn, on a frame (P-051).**
+///
+/// The golden test above settles the card and asserts the text the renderer reads;
+/// this one draws it. They are separate because a card's body is only painted when
+/// the card is open, and "the data changed" and "the screen changed" are different
+/// claims — the repository's own evidence discipline says to check the second.
+#[test]
+fn a_settled_card_is_drawn_stopped_on_a_frame() {
+    let mut app = bench_app(UiState::new());
+    // Opened, so the body the note lands in is painted at all.
+    app.prefs.expand_outputs = true;
+    apply_with_scroll(
+        &mut app,
+        &epsilon_contracts::agent_event::AgentEvent::MessageEnd {
+            message: Box::new(Message::Assistant(
+                epsilon_contracts::message::AssistantMessage {
+                    id: "msg-call".into(),
+                    timestamp_ms: 0,
+                    provider: "faux".into(),
+                    model_id: "faux-1".into(),
+                    content: vec![epsilon_contracts::content::ContentBlock::ToolCall {
+                        id: "c-draw".into(),
+                        name: "bash".into(),
+                        arguments: serde_json::json!({ "command": "sleep 30" }),
+                    }],
+                    stop_reason: epsilon_contracts::message::StopReason::ToolUse,
+                    error_message: None,
+                    usage: Default::default(),
+                },
+            )),
+        },
+    );
+    app.ui.apply(
+        &epsilon_contracts::agent_event::AgentEvent::ToolExecutionStart {
+            tool_call_id: "c-draw".into(),
+            tool_name: "bash".into(),
+            args: serde_json::json!({ "command": "sleep 30" }),
+        },
+    );
+    // The frame before the abort: the card is in flight, and no note yet. This
+    // is the case that found the bug — a frame drawn *before* the abort leaves a
+    // cached row, and without `ended_at_ms` nothing named it for a rebuild, so the
+    // ghost spinner survived the abort on screen.
+    let running = render_rows(&mut app, 100, 30);
+    assert!(
+        !running.iter().any(|r| r.contains("never finished")),
+        "no note before the abort: {running:#?}"
+    );
+    assert!(
+        running
+            .iter()
+            .any(|r| r.contains("pending") || r.contains("running")),
+        "the card is in flight: {running:#?}"
+    );
+
+    apply_with_scroll(
+        &mut app,
+        &epsilon_contracts::agent_event::AgentEvent::MessageEnd {
+            message: Box::new(Message::Assistant(
+                epsilon_contracts::message::AssistantMessage {
+                    id: "msg-draw".into(),
+                    timestamp_ms: 0,
+                    provider: "faux".into(),
+                    model_id: "faux-1".into(),
+                    content: vec![],
+                    stop_reason: epsilon_contracts::message::StopReason::Aborted,
+                    error_message: None,
+                    usage: Default::default(),
+                },
+            )),
+        },
+    );
+
+    let stopped = render_rows(&mut app, 100, 30);
+    assert!(
+        stopped.iter().any(|r| r.contains("never finished")),
+        "the settled note is drawn after the abort: {stopped:#?}"
+    );
+    assert!(
+        stopped.iter().any(|r| r.contains("stopped")),
+        "and the card says stopped rather than riding a spinner: {stopped:#?}"
+    );
+    assert!(
+        stopped.iter().any(|r| r.contains("sleep 30")),
+        "the command it was running is still named: {stopped:#?}"
     );
 }
 

@@ -91,7 +91,7 @@ pub struct Entry {
     ///
     /// `record` runs *before* the write, because a checkpoint that is taken afterwards
     /// captures the damage. So `digest` is the pre-image by construction, and once the write
-    /// lands the file no longer hashes to it — which meant the guard in [`Self::restore`]
+    /// lands the file no longer hashes to it — which meant the guard in ``Self::restore``
     /// could never pass for any mutation that actually changed a file. Reverting an **edit**
     /// refused one hundred percent of the time, and the reason nobody noticed is recorded in
     /// M104's own commit: *"No UI reaches this yet, which is why it is a fix rather than an
@@ -102,7 +102,7 @@ pub struct Entry {
     /// that: unchanged means the user has not edited since, so restoring destroys nothing;
     /// changed means they have, so it refuses and leaves their work in place.
     ///
-    /// Written by [`Self::amend_with_post_image`] as an **append**, never by rewriting the
+    /// Written by ``Self::amend_with_post_image`` as an **append**, never by rewriting the
     /// entry, because the ledger is append-only and a mutation of it would be the one thing
     /// that could lose a revert record.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -356,7 +356,7 @@ impl CheckpointStore {
     ///
     /// The refusal is a sentence and not `None`: every caller has to print
     /// something, and "outside the workspace" and "nothing recorded for this file"
-    /// are different facts with different advice. [`Self::no_checkpoint_for`] names
+    /// are different facts with different advice. ``Self::no_checkpoint_for`` names
     /// what *is* recoverable, because a reader who typed one wrong path usually has
     /// the right one in mind.
     pub fn resolve(&self, workspace: &Path, argument: &str) -> Result<Entry, String> {
@@ -451,7 +451,7 @@ impl CheckpointStore {
     /// # The deletion path is guarded too
     ///
     /// An `existed: false` entry also has `blob: None`, and its revert **removes** the file —
-    /// the most destructive thing this store does. It runs the same [`check_unchanged`] the
+    /// the most destructive thing this store does. It runs the same ``check_unchanged`` the
     /// write path runs, against the post-image that `amend_with_post_image` writes for
     /// creations (a creation has no pre-image, but it does have a post-image). Without it, a
     /// user who edited an agent-created file and then asked to undo the creation lost their

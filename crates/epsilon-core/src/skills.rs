@@ -11,6 +11,181 @@ const MAX_NAME: usize = 64;
 /// Description limit per the spec.
 const MAX_DESC: usize = 1024;
 
+// ---------------------------------------------------------------------------------------------
+// Where skills are looked for
+//
+// The `SKILL.md` directory is an open convention, not an Epsilon one: Claude Code shipped it,
+// and Codex, Gemini CLI, Cursor, Windsurf, opencode and DeepSeek Harness all read the same
+// shape. A person who has been using any of those already has skills on disk, and a harness
+// that reads only its own directory requires them to copy each skill into a second tree and
+// then keep the two in sync by hand.
+//
+// So discovery scans every root below, and a skill's worth does not depend on which tool
+// created its directory. Order matters — [`discover_with_notices`] lets the **later** root win
+// a name collision — and the order follows the convention each tool documents for itself:
+// **workspace beats user**, and within a tier the portable `.agents/skills` alias beats the
+// tool-specific directory.
+//
+// **What is deliberately NOT scanned, and why.** Each of these is a real feature of a tool
+// named above, and each is out of scope here rather than overlooked:
+//
+// * **nested project directories** — Claude Code reads `<subdir>/.claude/skills` for a
+//   monorepo. Doing that means walking the workspace tree, which is a different cost and a
+//   different semantic from reading a fixed list of roots.
+// * **extra directories passed on the command line** — Claude Code's `--add-dir`, and
+//   Codex's `/etc/codex/skills` admin tier. Epsilon has no flag that adds a root today, so
+//   there is no surface to hang this on; when one exists, [`all_roots`] is where it goes.
+// * **plugin skills** — `<plugin>/skills/<name>/SKILL.md`, namespaced by plugin. A plugin
+//   root is installed software, not a directory the user typed into, and would need its own
+//   trust story rather than borrowing the workspace's.
+// * **rules files that are not skills** — `.clinerules/`, `.cursor/rules/`, `.roo/rules/`,
+//   `.continue/rules/`, `CONVENTIONS.md`. These are always-on instructions in a different
+//   format, closer to what Epsilon already reads from `AGENTS.md` / `MEMORY.md`; treating
+//   them as skills would load a rules file into a tool that expects a SKILL.md.
+// ---------------------------------------------------------------------------------------------
+
+/// User-tier (global) skill roots, in ascending precedence.
+///
+/// These load whether or not the project is trusted: they are the user's own files, in the
+/// user's own home directory, and a repository has no say in them.
+///
+/// The home directory is read through [`crate::config::home_dir`] so that `$HOME` stays
+/// resolved in exactly one place (M223). When no home directory resolves, this list is just
+/// Epsilon's own root — which is empty too, because that root lives under the home directory.
+pub fn user_roots() -> Vec<PathBuf> {
+    let mut roots = Vec::new();
+    if let Some(home) = crate::config::home_dir() {
+        // Epsilon's own location, then the conventions other harnesses read. Epsilon's is
+        // first so a user who deliberately configures this tool is not silently outranked by
+        // a directory they filled for something else.
+        roots.push(home.join(".config").join("epsilon").join("skills"));
+        // Claude Code: `~/.claude/skills/<name>/SKILL.md` (code.claude.com/docs/en/skills).
+        roots.push(home.join(".claude").join("skills"));
+        // OpenAI Codex: `~/.codex/skills` (learn.chatgpt.com/docs/build-skills).
+        roots.push(home.join(".codex").join("skills"));
+        // Gemini CLI: `~/.gemini/skills` (geminicli.com/docs/cli/skills).
+        roots.push(home.join(".gemini").join("skills"));
+        // The portable alias. Gemini CLI documents it explicitly and gives it precedence over
+        // the tool's own directory within a tier, which is the rule this ordering follows.
+        roots.push(home.join(".agents").join("skills"));
+    }
+    roots
+}
+
+/// Project-tier (workspace) skill roots, in ascending precedence.
+///
+/// **Every one of these is repository-controlled**, which is why the caller — not this
+/// function — decides whether to ask for them: [`crate::skills::all_roots`] takes the trust
+/// bit. A repository that ships `.claude/skills/` is writing instructions for whoever opens
+/// it, exactly as one that ships `.epsilon/skills/` is, and an untrusted checkout must not
+/// have its instructions loaded before the user has agreed to read them.
+pub fn project_roots(workspace: &Path) -> Vec<PathBuf> {
+    vec![
+        // Epsilon's native location (M11).
+        workspace.join(".epsilon").join("skills"),
+        // Claude Code project skills, including the nested `<subdir>/.claude/skills` form.
+        workspace.join(".claude").join("skills"),
+        // OpenAI Codex project skills.
+        workspace.join(".codex").join("skills"),
+        // Gemini CLI workspace skills.
+        workspace.join(".gemini").join("skills"),
+        // Cursor (community-documented convention).
+        workspace.join(".cursor").join("skills"),
+        // Windsurf.
+        workspace.join(".windsurf").join("skills"),
+        // opencode.
+        workspace.join(".opencode").join("skills"),
+        // DeepSeek Harness — the same convention the reference tree in `references/` uses
+        // (`packages/skill/skill-filesystem/src/index.ts:250`).
+        workspace.join(".dsh").join("skills"),
+        // The portable alias, last so it wins the tier, per Gemini CLI's documented rule.
+        workspace.join(".agents").join("skills"),
+    ]
+}
+
+/// A key under which two spellings of one directory collide.
+///
+/// **Why this exists.** Running Epsilon in your home directory puts the same directory in both
+/// tiers: `~/.claude/skills` from [`user_roots`] and `<home>/.claude/skills` from
+/// [`project_roots`]. Scanning it twice would find every skill in it a second time, and
+/// [`discover_with_notices`] would announce each one as shadowing itself — a notice that names
+/// two identical paths and says one won, on every launch, for every skill the user has.
+///
+/// The same collision happens through a symlinked or differently-spelled workspace
+/// (`/c/Users/hp` versus `C:\Users\Hp`), which is why the key canonicalizes rather than
+/// compares strings. Most of these roots do not exist, so `canonicalize` on the root itself
+/// usually fails; the key then canonicalizes the nearest existing ancestor and re-attaches the
+/// remainder, which is enough to make the two spellings agree.
+fn root_key(root: &Path) -> PathBuf {
+    if let Ok(canonical) = root.canonicalize() {
+        return canonical;
+    }
+    let mut suffix: Vec<std::ffi::OsString> = Vec::new();
+    let mut cursor = root.to_path_buf();
+    while let Some(name) = cursor.file_name() {
+        suffix.push(name.to_os_string());
+        match cursor.parent() {
+            Some(parent) if !parent.as_os_str().is_empty() => cursor = parent.to_path_buf(),
+            _ => break,
+        }
+    }
+    suffix.reverse();
+    let base = if cursor.as_os_str().is_empty() {
+        PathBuf::from(".")
+    } else {
+        cursor
+    };
+    match base.canonicalize() {
+        Ok(canonical) => {
+            let mut key = canonical;
+            for part in suffix {
+                key.push(part);
+            }
+            key
+        }
+        // Nothing in the path resolves: keep the root as written. Two roots that both fail to
+        // canonicalize are compared as they were spelled, which is the best available answer
+        // and never silently drops a root.
+        Err(_) => root.to_path_buf(),
+    }
+}
+
+/// Drop roots that resolve to a directory already in the list, keeping the first.
+///
+/// The first occurrence is the one that keeps its place in the precedence order, so a
+/// duplicate never promotes a root past the `.agents` alias.
+fn dedupe_roots(roots: Vec<PathBuf>) -> Vec<PathBuf> {
+    let mut seen: Vec<PathBuf> = Vec::new();
+    let mut out: Vec<PathBuf> = Vec::new();
+    for root in roots {
+        let key = root_key(&root);
+        if seen.contains(&key) {
+            continue;
+        }
+        seen.push(key);
+        out.push(root);
+    }
+    out
+}
+
+/// Every skill root this launch scans: the user's own, then the workspace's **when trusted**.
+///
+/// This is the one place the table and the trust gate meet, and it is here rather than in
+/// `epsilon-runtime` because two front ends need it: the composition path builds the running
+/// agent through it, and the terminal's `/reload` re-reads the same list mid-session.
+/// `epsilon-tui` cannot depend on `epsilon-runtime` (that edge would be a cycle in review
+/// terms — the runtime is a *dev*-dependency of the TUI, and the shipped binary must not
+/// reach into the thing that composes it), so a table owned by runtime would have to be
+/// copied into the TUI, which is the second-copy-of-composition defect `AGENTS.md` §2.2 names.
+/// `epsilon-core` is the crate both already depend on.
+pub fn all_roots(workspace: &Path, project_trusted: bool) -> Vec<PathBuf> {
+    let mut roots = user_roots();
+    if project_trusted {
+        roots.extend(project_roots(workspace));
+    }
+    dedupe_roots(roots)
+}
+
 /// One discovered skill.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Skill {
@@ -744,6 +919,315 @@ mod tests {
         assert!(
             dangling.notices[0].contains(&link.display().to_string()),
             "the notice must name the root: {dangling:?}"
+        );
+    }
+
+    // ---------------------------------------------------------------------------------------------
+    // The cross-harness root table
+    // ---------------------------------------------------------------------------------------------
+
+    /// Write a `SKILL.md` under `<root>/<name>/`, creating the root on the way.
+    fn write_skill_at(root: &Path, name: &str, description: &str, body: &str) {
+        let d = root.join(name);
+        std::fs::create_dir_all(&d).unwrap();
+        std::fs::write(
+            d.join("SKILL.md"),
+            format!("---\nname: {name}\ndescription: {description}\n---\n{body}"),
+        )
+        .unwrap();
+    }
+
+    /// **A skill another harness wrote is a skill this one may use.**
+    ///
+    /// This is the whole point of the table, and the failure it replaces was total: the
+    /// root list used to be two directories long (`.epsilon/skills` and `.agents/skills`),
+    /// so a user who had been running Claude Code or Codex for a year had dozens of skills
+    /// on disk and this harness read none of them. Nothing reported it either — an empty
+    /// catalog and a `/skills` command that said "no skills discovered", which is the
+    /// silent failure `AGENTS.md` §2.7 names.
+    ///
+    /// Drives the real discovery over the real `project_roots` list rather than a
+    /// hand-picked root, so a root added to the table is covered by this test.
+    #[test]
+    fn a_skill_written_for_another_harness_is_discovered_and_loaded() {
+        let ws = tempfile::tempdir().unwrap();
+        for (dir, name) in [
+            (".claude", "claude-wrote-me"),
+            (".codex", "codex-wrote-me"),
+            (".gemini", "gemini-wrote-me"),
+            (".cursor", "cursor-wrote-me"),
+            (".windsurf", "windsurf-wrote-me"),
+            (".opencode", "opencode-wrote-me"),
+            (".dsh", "dsh-wrote-me"),
+            (".agents", "agents-wrote-me"),
+            (".epsilon", "epsilon-wrote-me"),
+        ] {
+            write_skill_at(
+                &ws.path().join(dir).join("skills"),
+                name,
+                "From that tool.",
+                "body",
+            );
+        }
+
+        let roots = all_roots(ws.path(), true);
+        // The wiring, not just the table: every project root must appear in the list
+        // `all_roots` hands to discovery, or the table is documentation.
+        for root in project_roots(ws.path()) {
+            assert!(
+                roots.contains(&root),
+                "{root:?} is a project root and all_roots must hand it to discovery: {roots:?}"
+            );
+        }
+        // Discovery runs over the project roots alone. `all_roots` also carries the real
+        // home directory's skill tree, and what this machine happens to have installed in
+        // `~/.claude/skills` is not this test's subject.
+        let found = discover_with_notices(&project_roots(ws.path()));
+        for name in [
+            "claude-wrote-me",
+            "codex-wrote-me",
+            "gemini-wrote-me",
+            "cursor-wrote-me",
+            "windsurf-wrote-me",
+            "opencode-wrote-me",
+            "dsh-wrote-me",
+            "agents-wrote-me",
+            "epsilon-wrote-me",
+        ] {
+            assert!(
+                found.skills.iter().any(|s| s.name == name),
+                "{name} is on disk under one of the project roots and discovery must reach \
+                 it: {found:?}"
+            );
+        }
+        assert!(
+            found.notices.is_empty(),
+            "nine well-formed skills is nine well-formed skills, not nine problems: {found:?}"
+        );
+        // And the body loads — a catalog entry with no readable body is half a feature.
+        let claude = found
+            .skills
+            .iter()
+            .find(|s| s.name == "claude-wrote-me")
+            .unwrap();
+        assert_eq!(claude.load_body().unwrap().trim(), "body");
+    }
+
+    /// **The portable alias outranks the tool-specific directory inside a tier.**
+    ///
+    /// This is Gemini CLI's documented rule (`geminicli.com/docs/cli/skills`: "the
+    /// `.agents/skills/` alias takes precedence over the `.gemini/skills/` directory"),
+    /// and following it is what makes a shared skill tree behave the same in every tool
+    /// that reads it. The alternative — Epsilon inventing its own precedence — would mean
+    /// a user's one skill tree resolves differently depending on which harness they
+    /// happened to open, with nothing on screen to explain the difference.
+    #[test]
+    fn within_a_tier_the_portable_agents_alias_outranks_the_tool_specific_directory() {
+        let ws = tempfile::tempdir().unwrap();
+        write_skill_at(
+            &ws.path().join(".claude").join("skills"),
+            "shared",
+            "The Claude copy.",
+            "claude-body",
+        );
+        write_skill_at(
+            &ws.path().join(".agents").join("skills"),
+            "shared",
+            "The portable copy.",
+            "agents-body",
+        );
+
+        let found = discover_with_notices(&project_roots(ws.path()));
+        assert_eq!(found.skills.len(), 1, "one name, one winner: {found:?}");
+        assert_eq!(
+            found.skills[0].load_body().unwrap().trim(),
+            "agents-body",
+            "the portable alias wins the project tier: {found:?}"
+        );
+    }
+
+    /// **A workspace skill outranks a user skill.**
+    ///
+    /// The other half of the documented precedence, and the one that matters for a
+    /// repository: a team's standard version of `commit` must beat each member's personal
+    /// one, or the team standard is advisory.
+    #[test]
+    fn a_workspace_skill_outranks_a_user_skill_of_the_same_name() {
+        let ws = tempfile::tempdir().unwrap();
+        let user = tempfile::tempdir().unwrap();
+        write_skill_at(user.path(), "commit", "Mine.", "user-body");
+        write_skill_at(
+            &ws.path().join(".epsilon").join("skills"),
+            "commit",
+            "The team's.",
+            "project-body",
+        );
+
+        // Both roots, in the order `all_roots` puts them: the user tier first, so the
+        // project tier lands later and wins.
+        let mut roots = vec![user.path().to_path_buf()];
+        roots.extend(project_roots(ws.path()));
+        let found = discover_with_notices(&roots);
+        assert_eq!(
+            found.skills[0].load_body().unwrap().trim(),
+            "project-body",
+            "the later root wins, and the project root is the later one: {found:?}"
+        );
+    }
+
+    /// **An untrusted workspace contributes no roots at all.**
+    ///
+    /// Every project-tier directory is repository-controlled, so a `.claude/skills` in a
+    /// checkout the user has not agreed to trust is exactly as gated as an `.epsilon/skills`
+    /// one. The user tier survives: those files are the user's own, in the user's own home
+    /// directory, and a repository has no say in them.
+    #[test]
+    fn an_untrusted_workspace_contributes_no_roots_and_the_user_tier_survives() {
+        let ws = tempfile::tempdir().unwrap();
+        for root in project_roots(ws.path()) {
+            std::fs::create_dir_all(&root).unwrap();
+        }
+
+        let untrusted = all_roots(ws.path(), false);
+        assert!(
+            untrusted.iter().all(|r| !r.starts_with(ws.path())),
+            "nothing under an untrusted workspace may be scanned: {untrusted:?}"
+        );
+        let trusted = all_roots(ws.path(), true);
+        assert!(
+            trusted.iter().any(|r| r.starts_with(ws.path())),
+            "and trusting it unlocks them: {trusted:?}"
+        );
+    }
+
+    /// **Two spellings of one directory are scanned once.**
+    ///
+    /// Running Epsilon in your home directory puts the same directory in both tiers:
+    /// `~/.claude/skills` from the user list, `<home>/.claude/skills` from the project
+    /// list. Scanning it twice would find every skill a second time, and
+    /// `discover_with_notices` would announce each one as shadowing itself — a notice
+    /// naming two identical paths and declaring a winner, on every launch, for every
+    /// skill the user owns. That notice is what makes this test's assertion observable:
+    /// with the dedupe removed, `notices` is non-empty rather than merely the list being
+    /// longer.
+    #[test]
+    fn one_directory_spelled_two_ways_is_scanned_once() {
+        let ws = tempfile::tempdir().unwrap();
+        let root = ws.path().join(".claude").join("skills");
+        write_skill_at(&root, "solo", "The only copy.", "body");
+
+        // The same directory reached by two routes: as a workspace root and as a
+        // differently-spelled path to it. `ws.path()` is already absolute, so the second
+        // spelling goes through the `..` form, which is the same directory.
+        let aliased = ws
+            .path()
+            .join(".claude")
+            .join("..")
+            .join(".claude")
+            .join("skills");
+        let roots = dedupe_roots(vec![root.clone(), aliased.clone()]);
+        assert_eq!(
+            roots.len(),
+            1,
+            "two spellings of one directory must collapse to one root: {roots:?}"
+        );
+
+        // The observable half: one skill, and no claim that it shadows something.
+        let found = discover_with_notices(&roots);
+        assert_eq!(found.skills.len(), 1, "one copy, one skill: {found:?}");
+        assert!(
+            found.notices.is_empty(),
+            "and no notice saying a skill shadows itself: {found:?}"
+        );
+        assert_eq!(found.skills[0].load_body().unwrap().trim(), "body");
+    }
+
+    /// **The dedupe keeps the first spelling, so precedence is not silently rewritten.**
+    ///
+    /// Dropping the *later* duplicate instead would be equally correct as a set operation
+    /// and wrong as a precedence rule: the surviving root's position in the list is what
+    /// decides which skill wins a name collision.
+    #[test]
+    fn the_dedupe_keeps_the_first_spelling_rather_than_the_last() {
+        let ws = tempfile::tempdir().unwrap();
+        let root = ws.path().join("skills");
+        std::fs::create_dir_all(&root).unwrap();
+        let aliased = ws.path().join(".").join("skills");
+
+        let kept = dedupe_roots(vec![root.clone(), aliased]);
+        assert_eq!(
+            kept,
+            vec![root],
+            "the first spelling keeps its place in the precedence order: {kept:?}"
+        );
+    }
+
+    /// **A root that resolves to nothing still gets a stable key.**
+    ///
+    /// Most of these directories do not exist, which is the ordinary case and must stay
+    /// silent. `canonicalize` fails on all of them, so the key walks up to the nearest
+    /// ancestor that does resolve; if even that fails, the root is compared as spelled.
+    /// Either way a root is never dropped from the list for want of a key.
+    #[test]
+    fn a_root_that_does_not_exist_still_gets_a_usable_key() {
+        let ws = tempfile::tempdir().unwrap();
+        let missing = ws.path().join("nope").join("deeper").join("skills");
+        let key = root_key(&missing);
+        assert!(
+            key.ends_with("skills"),
+            "the key must still identify the directory: {key:?}"
+        );
+        // Two spellings of a directory that does not exist collide on the same ancestor.
+        let spelled_twice = ws
+            .path()
+            .join(".")
+            .join("nope")
+            .join("deeper")
+            .join("skills");
+        assert_eq!(
+            root_key(&spelled_twice),
+            key,
+            "the key is derived from the nearest existing ancestor, so both spellings agree"
+        );
+    }
+
+    /// **The project root list is the one discovery uses, and it is a real list.**
+    ///
+    /// Not a documentation test for its own sake: `trust_requiring_resources` in
+    /// `epsilon-runtime` reads this list to decide what a trust prompt has to name, so a
+    /// root added here and not there is a gate with a hole in it. If a new harness
+    /// convention is added to `project_roots`, this test is where the reader is told the
+    /// other call site exists.
+    #[test]
+    fn the_project_roots_are_the_conventions_they_claim_to_be() {
+        let ws = Path::new("/work/repo");
+        let roots = project_roots(ws);
+        for dir in [
+            ".epsilon",
+            ".claude",
+            ".codex",
+            ".gemini",
+            ".cursor",
+            ".windsurf",
+            ".opencode",
+            ".dsh",
+            ".agents",
+        ] {
+            assert!(
+                roots.contains(&ws.join(dir).join("skills")),
+                "{dir}/skills is a convention harnesses read and is missing: {roots:?}"
+            );
+        }
+        assert_eq!(
+            roots.len(),
+            9,
+            "the list is exactly the documented conventions: {roots:?}"
+        );
+        // The portable alias is last, so it wins the tier.
+        assert_eq!(
+            roots.last().unwrap(),
+            &ws.join(".agents").join("skills"),
+            "the portable alias must be last in the project tier: {roots:?}"
         );
     }
 }

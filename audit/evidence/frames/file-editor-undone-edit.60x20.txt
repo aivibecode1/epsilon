@@ -1,0 +1,24 @@
+
+=== file-editor-undone-edit @ 60x20 ===
++------------------------------------------------------------+
+|idle        Faux (offline scripted) • thinking off · offline|
+|                                                            |
+|      ╭ edit undo-demo.txt — alt+s saves, esc cancels       |
+|      │ the quick brown fox!                         │      |
+|      │                                              │      |
+|      │                                              │      |
+|      │                                              │      |
+|      │                                              │      |
+|      │                                              │      |
+|      │                                              │      |
+|      │                                              │      |
+|      │                                              │      |
+|      │                                              │      |
+|      │                                              │      |
+|      │                                              │      |
+|▎ ❯ un│                                              │      |
+|      │ type/enter edit · alt+s save · esc cancel    │      |
+|❯ ask ╰──────────────────────────────────────────────╯      |
+|────────────────────────────────────────────────────────────|
+|edit · type edit · enter · esc  …\Epsilon\crates\epsilon-tui|
++------------------------------------------------------------+

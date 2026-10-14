@@ -370,6 +370,11 @@ pub(crate) struct App {
     /// Plan 009: timeline picker overlay (pi timeline parity — not a notice dump).
     timeline_open: bool,
     timeline_index: usize,
+    /// Fork mode for the timeline picker (P-074): `Some(refill)` while
+    /// `/fork` is picking the message to branch at — Enter forks instead of
+    /// navigating, and the carried text goes back into the composer. `None`
+    /// is the navigate mode `/timeline` and `/tree` have always had.
+    timeline_fork_refill: Option<String>,
     /// Rows the timeline showed last frame, measured at paint time (P-306).
     ///
     /// A Page key in the handler knows no geometry, and pi's page size is the
@@ -489,6 +494,15 @@ pub(crate) struct App {
     /// discovery is one Enter, not memorizing ids. Filtered by `input`.
     auth_pick_open: bool,
     auth_pick_index: usize,
+    think_pick_open: bool,
+    think_pick_index: usize,
+    /// P-047: `/scoped-models` checklist over the F2 cycle scope. Staged ==
+    /// `favorites` (the cycle list reads it, so Space rescopes live); the
+    /// file moves only on Ctrl+S. `scope_snapshot` is the pre-open list Esc
+    /// reverts to. Filtered by `input`, like the think picker.
+    scope_open: bool,
+    scope_index: usize,
+    scope_snapshot: Vec<String>,
     /// P-061: the subscription-billing warning has fired this session. Pi
     /// warns once ever with a settings toggle; this tree has no such toggle,
     /// so once per session is the honest scope — stated in the matrix row.
@@ -507,6 +521,13 @@ pub(crate) struct App {
     /// walking two directories to discover files that have not changed would tax the
     /// one path that must stay fast. `/reload` is the refresh, same as for skills.
     prompt_templates: Vec<epsilon_contracts::prompt_template::PromptTemplate>,
+    /// Skills discovered at startup and on `/reload`, for the slash popup.
+    ///
+    /// Cached for the same reason as `prompt_templates`: the popup derives
+    /// from the editor buffer on every keystroke, and that path carries no
+    /// agent handle — so the rows refresh where both meet (startup in
+    /// `drive`, the `/reload` arm in `run_command`) rather than per key.
+    skills_cache: Vec<epsilon_core::skills::Skill>,
     /// Cached git branch + when it was read (2s TTL — no git dependency).
     branch_cache: (Option<String>, std::time::Instant),
     /// Cached `@`-completion inputs: the ignore rules, the file list they produced, and
@@ -813,6 +834,63 @@ impl App {
         }
     }
 
+    /// Persist the staged `/scoped-models` checklist (P-047: pi's Ctrl+S).
+    ///
+    /// Space stages in `favorites` (memory only, so the F2 cycle rescopes
+    /// live); this lands the staged list in the file. Thinking memories are
+    /// reconciled the way one-at-a-time starring does: added ids remember
+    /// the current session level, removed ids forget. Failure keeps the
+    /// checklist open so the user can uncheck down to the cap and retry.
+    fn save_scope(&mut self, agent: &Arc<Agent>) {
+        let dir = self
+            .config_dir_override
+            .clone()
+            .or_else(epsilon_core::config::global_dir);
+        let Some(dir) = dir else {
+            self.ui
+                .push_notice("scope not saved: no home directory resolved");
+            return;
+        };
+        match epsilon_core::config::save_favorite_models_in(&dir, &self.favorites) {
+            Ok(()) => {
+                let level = agent.thinking_level().as_str().to_string();
+                for id in &self.favorites {
+                    if !self.scope_snapshot.contains(id)
+                        && let Err(e) =
+                            epsilon_core::config::set_favorite_thinking_in(&dir, id, Some(&level))
+                    {
+                        self.ui
+                            .push_notice(format!("thinking memory not saved: {e}"));
+                    }
+                }
+                for id in &self.scope_snapshot {
+                    if !self.favorites.contains(id)
+                        && let Err(e) =
+                            epsilon_core::config::set_favorite_thinking_in(&dir, id, None)
+                    {
+                        self.ui
+                            .push_notice(format!("thinking memory not saved: {e}"));
+                    }
+                }
+                self.favorite_thinking = epsilon_core::config::load_favorite_thinking_in(&dir);
+                self.scope_snapshot.clear();
+                self.scope_open = false;
+                self.scope_index = 0;
+                self.input.clear();
+                self.cursor_chars = 0;
+                self.unstash_draft();
+                self.invalidate_picker();
+                self.ui.push_notice(format!(
+                    "scoped models saved: {} favorite(s) (F2 cycles them)",
+                    self.favorites.len()
+                ));
+            }
+            Err(e) => {
+                self.ui.push_notice(format!("scope not saved: {e}"));
+            }
+        }
+    }
+
     /// Cycle to the next/previous favorite model (M23; pi's cycleModel over
     /// scoped models — opencode's `cycleFavorite`). No-op with guidance when
     /// no favorites exist.
@@ -914,6 +992,15 @@ impl App {
         // has no `--prompt` flag yet, so there is nothing to append.
         self.prompt_templates = pt::merge(user, project, Vec::new());
         self.prompt_templates.len()
+    }
+
+    /// Refresh the cached skill rows from the agent (P-043).
+    ///
+    /// Called where the app meets the agent with both in hand — startup in
+    /// `drive` and the `/reload` arm — because the slash popup derives from
+    /// the editor buffer on every keystroke and that path carries no agent.
+    pub(super) fn refresh_skills(&mut self, agent: &Arc<Agent>) {
+        self.skills_cache = agent.skills();
     }
 
     /// Expand `text` if it names a prompt template, else `None`.
@@ -1745,7 +1832,8 @@ mod panels;
 // keeps the set of things drawn over the transcript readable in one place.
 use panels::{
     draw_at_file, draw_auth_picker, draw_auth_prompt, draw_dialog, draw_label_prompt, draw_palette,
-    draw_picker, draw_session_browser, draw_slash_autocomplete, draw_timeline, draw_transcript,
+    draw_picker, draw_scope_picker, draw_session_browser, draw_slash_autocomplete,
+    draw_think_picker, draw_timeline, draw_transcript,
 };
 
 mod keys;
@@ -1935,6 +2023,12 @@ fn draw(f: &mut Frame<'_>, app: &mut App) {
     }
     if app.auth_pick_open {
         draw_auth_picker(f, app, f.area());
+    }
+    if app.think_pick_open {
+        draw_think_picker(f, app, f.area());
+    }
+    if app.scope_open {
+        draw_scope_picker(f, app, f.area());
     }
     if app.timeline_open {
         draw_timeline(f, app, f.area());

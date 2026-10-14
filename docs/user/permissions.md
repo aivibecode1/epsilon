@@ -45,7 +45,7 @@ presets clears the session's always-allow memory.
 ```
 
 `/preset` lists the four with the current marked and switches mid-session in
-both front ends. Switching *down* applies at once; switching *up* to
+the terminal IDE. Switching *down* applies at once; switching *up* to
 `danger-full-access` asks first — type `yes` to confirm, anything else leaves
 the posture unchanged. Parked approval asks keep the policy that raised them.
 

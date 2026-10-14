@@ -138,30 +138,18 @@ impl TableState {
 
 /// Display width of a string, counting the characters a terminal actually shows.
 fn display_width(s: &str) -> usize {
-    use unicode_width::UnicodeWidthStr;
-    UnicodeWidthStr::width(s)
+    crate::ui::layout::display_width(s)
 }
 
 /// Truncate to `w` display columns, appending an ellipsis when anything was cut.
+///
+/// This was a fourth hand-rolled cut that walked `char`s summing
+/// `UnicodeWidthChar::width`, which is the arithmetic that splits an emoji ZWJ sequence in
+/// half — see [`crate::wrap::prefix_at_width`] for the measured disagreement between the
+/// two width rules. It now delegates to the one grapheme-aware implementation in the
+/// crate, which already measures the ellipsis it appends.
 fn truncate_to_width(s: &str, w: usize) -> String {
-    if display_width(s) <= w {
-        return s.to_string();
-    }
-    if w <= 1 {
-        return "…".to_string();
-    }
-    let mut out = String::new();
-    let mut used = 0usize;
-    for ch in s.chars() {
-        let cw = unicode_width::UnicodeWidthChar::width(ch).unwrap_or(0);
-        if used + cw > w.saturating_sub(1) {
-            break;
-        }
-        out.push(ch);
-        used += cw;
-    }
-    out.push('…');
-    out
+    crate::wrap::fit_width(s, w)
 }
 
 /// Convert assistant markdown into styled transcript rows.
@@ -611,5 +599,47 @@ mod tests {
         );
         assert!(!joined.contains('$'), "delimiters stripped: {joined}");
         assert!(!joined.contains(r"\alpha"), "raw latex gone: {joined}");
+    }
+
+    /// **A table cell holding an emoji or a CJK string is cut whole and padded right.**
+    ///
+    /// The table renderer truncates each cell to its column and then pads with spaces
+    /// counted by `display_width(&text)..w`. When truncation walked `char`s, an emoji cell
+    /// was cut mid-cluster *and* the padding arithmetic disagreed with the width actually
+    /// emitted, so the row came out a different width from its neighbours — the columns
+    /// stopped lining up, which is the whole point of a table.
+    ///
+    /// This is the frame-level witness: the rows are compared by **display width**, not by
+    /// character count, because `"👨‍👩‍👧‍👦".chars().count()` is 4 and `│` is 1 while the pair
+    /// occupies 3 columns together.
+    #[test]
+    fn a_table_cell_with_an_emoji_or_cjk_is_cut_whole_and_padded_right() {
+        use unicode_width::UnicodeWidthStr;
+        let theme = theme();
+        let family = "\u{1F468}\u{200D}\u{1F469}\u{200D}\u{1F467}\u{200D}\u{1F466}";
+        let md = format!(
+            "| who | note |\n|---|---|\n| {family}{family} | a |\n| \u{65E5}\u{672C}\u{8A9E} | b |"
+        );
+        let lines = md_to_lines_in(&md, &theme, 40);
+        let widths: Vec<usize> = lines
+            .iter()
+            .map(plain)
+            .filter(|s| s.starts_with('\u{2502}'))
+            .map(|s| UnicodeWidthStr::width(s.as_str()))
+            .collect();
+        assert!(widths.len() >= 3, "header and two body rows: {widths:?}");
+        assert!(
+            widths.windows(2).all(|w| w[0] == w[1]),
+            "every row is the same number of COLUMNS, whatever the script: {widths:?}"
+        );
+        // And no row carries a cluster cut in half: the family emoji appears whole or not
+        // at all, so a stray zero-width joiner is the defect.
+        for line in &lines {
+            let text = plain(line);
+            assert!(
+                !text.contains('\u{200D}') || text.contains(family),
+                "a ZWJ survived without its sequence: {text:?}"
+            );
+        }
     }
 }

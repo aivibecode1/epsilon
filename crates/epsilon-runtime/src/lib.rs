@@ -635,6 +635,15 @@ pub fn trust_requiring_resources(workspace: &Path) -> Vec<TrustRequiringResource
     if dot.join("APPEND_SYSTEM.md").is_file() {
         found.push(TrustRequiringResource::AppendSystemMd);
     }
+    // Every project-tier skills root discovery would scan, not just Epsilon's own: a
+    // repository that ships `.claude/skills/` is writing instructions for whoever opens it
+    // exactly as one that ships `.epsilon/skills/` does, and the gate that names one spelling
+    // of a nine-spelling path is a gate with a hole in the common case.
+    for root in project_skill_roots(workspace) {
+        if root.is_dir() && !found.contains(&TrustRequiringResource::Skills) {
+            found.push(TrustRequiringResource::Skills);
+        }
+    }
     // `.agents/skills` in the workspace or any ancestor (pi walks to root).
     let mut dir: Option<&Path> = Some(workspace);
     while let Some(d) = dir {
@@ -688,31 +697,35 @@ pub fn project_rules_layer(rules: &[ProjectRule]) -> epsilon_safety::Ruleset {
     }
 }
 
-/// Skill roots: global (`~/.config/epsilon/skills`) then project (`.epsilon/skills`).
+/// Skill roots: global (the user's own, across every harness convention) then project
+/// (the workspace's, every convention it ships).
 ///
 /// M39: pass `project_trusted = false` to curtail project-local roots when the
 /// project is untrusted (pi's "settings/extensions curtailed" scoping) — the
 /// global root always loads, so built-in skills keep working while third-party
 /// project skills stay out until the user trusts them.
+///
+/// **The table lives in `epsilon_core::skills`, not here.** This function is a
+/// delegation so that the terminal's `/reload` path (`epsilon-tui`) and this composition
+/// path read one list; a second copy is the defect `AGENTS.md` §2.2 names. What stays here
+/// is the part that is genuinely composition: which launch this is, and whether it trusts
+/// the workspace.
 pub fn skill_roots(workspace: &Path) -> Vec<PathBuf> {
     skill_roots_trusted(workspace, true)
 }
 
 /// [`skill_roots`] with an explicit trust gate.
 pub fn skill_roots_trusted(workspace: &Path, project_trusted: bool) -> Vec<PathBuf> {
-    let mut roots = Vec::new();
-    if let Some(dir) = epsilon_core::config::global_dir() {
-        roots.push(dir.join("skills"));
-    }
-    if !project_trusted {
-        return roots;
-    }
-    // Portable cross-harness convention (.agents/skills — read by most harnesses;
-    // lets one skill tree serve Claude Code, opencode, Epsilon, ...).
-    roots.push(workspace.join(".agents").join("skills"));
-    // Native project-local location (M11).
-    roots.push(workspace.join(".epsilon").join("skills"));
-    roots
+    epsilon_core::skills::all_roots(workspace, project_trusted)
+}
+
+/// Project skill roots this launch would scan, for the trust prompt to name.
+///
+/// The prompt has to list what trusting would unlock, and the list must be the same one
+/// discovery uses — a prompt that names `.epsilon/skills` while a repository also ships
+/// `.claude/skills` is telling the user about half of what they are agreeing to.
+pub fn project_skill_roots(workspace: &Path) -> Vec<PathBuf> {
+    epsilon_core::skills::project_roots(workspace)
 }
 
 /// MCP servers this launch may attach: the user's own, plus the project's **when trusted**.
@@ -933,7 +946,7 @@ pub async fn attach_extensions(
 // that sees both, and it already owns `spawn_event_forwarder`.
 
 /// Fan one interception out to every attached extension and reduce the answers to a single
-/// [`BeforeToolCallResult`].
+/// ``BeforeToolCallResult``.
 ///
 /// **Any** extension that blocks blocks the call. That is deliberately not a majority or a
 /// first-wins rule: an extension declaring a veto is asserting something the harness cannot
@@ -2006,6 +2019,73 @@ mod tests {
         // Back-compat shims stay fully trusted (all existing callers).
         assert_eq!(skill_roots(ws), skill_roots_trusted(ws, true));
         assert_eq!(extension_roots(ws), extension_roots_trusted(ws, true));
+    }
+
+    /// **A repository's `.claude/skills` must gate trust, exactly as `.epsilon/skills` does.**
+    ///
+    /// Discovery reads nine project-tier directories (one per harness convention), and the
+    /// trust detector used to name one of them. A repository that shipped `.claude/skills`
+    /// therefore produced a workspace the gate called clean: no prompt, and then — because
+    /// the project was untrusted — no skills either, with nothing on screen to say why.
+    /// The half the user sees is "trusting this repository does nothing", which is the
+    /// silent-failure shape `AGENTS.md` §2.7 names.
+    ///
+    /// Verified by control: with the loop over `project_skill_roots` removed, `found` is
+    /// empty for a workspace carrying only `.claude/skills` and this test fails on
+    /// `contains`.
+    #[test]
+    fn a_workspace_shipping_another_harness_skills_directory_is_a_trust_gate() {
+        let tmp = tempfile::tempdir().unwrap();
+        let ws = tmp.path();
+        std::fs::create_dir_all(ws.join(".claude").join("skills").join("deploy")).unwrap();
+        std::fs::write(
+            ws.join(".claude")
+                .join("skills")
+                .join("deploy")
+                .join("SKILL.md"),
+            "---\nname: deploy\ndescription: Ship it.\n---\nbody\n",
+        )
+        .unwrap();
+
+        let found = trust_requiring_resources(ws);
+        assert!(
+            found.contains(&TrustRequiringResource::Skills),
+            "a repo-controlled skills directory is exactly what the gate exists for: {found:?}"
+        );
+    }
+
+    /// **The negative control.** A workspace with none of the nine directories is clean, so
+    /// the gate above cannot be passing for the wrong reason.
+    ///
+    /// The ancestor walk is a *separate* rule, already pinned by the test that agrees it
+    /// against the real chain above — and on a machine whose home directory holds
+    /// `.agents/skills` it fires for a temp directory, which is correct and is exactly why
+    /// this control cannot simply assert `found` is empty. What it asserts instead is the
+    /// part the new loop owns: with all nine directories absent, the loop contributes
+    /// nothing, so the gate can only come from the walk or from nothing.
+    #[test]
+    fn a_workspace_with_no_skills_directory_of_its_own_is_not_a_trust_gate() {
+        let tmp = tempfile::tempdir().unwrap();
+        let found = trust_requiring_resources(tmp.path());
+        assert!(
+            project_skill_roots(tmp.path()).iter().all(|r| !r.is_dir()),
+            "the control's own precondition: none of the nine exists here: {found:?}"
+        );
+        let mut ambient = false;
+        let mut dir: Option<&Path> = Some(tmp.path());
+        while let Some(d) = dir {
+            if d.join(".agents").join("skills").is_dir() {
+                ambient = true;
+                break;
+            }
+            dir = d.parent();
+        }
+        assert_eq!(
+            found.contains(&TrustRequiringResource::Skills),
+            ambient,
+            "with none of the nine present the gate must come from the ancestor walk or \
+             from nowhere at all: {found:?}"
+        );
     }
 
     /// **The property, stated as the test name: an untrusted project's declared MCP

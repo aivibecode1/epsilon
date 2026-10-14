@@ -1,0 +1,24 @@
+
+=== compaction-opened @ 60x20 ===
++------------------------------------------------------------+
+|idle        Faux (offline scripted) • thinking off · offline|
+|                                                            |
+|                                                            |
+|                                                            |
+|                                                            |
+|                                                            |
+|                                                            |
+|                                                            |
+|                                                            |
+|▎ ❯ compact                                                 |
+|                                                            |
+|• ── context compacted · from 96k tokens · ↑12k ↓310 · 21k  |
+|• re-read ──                                                |
+|│ The reader is porting the desktop's approval gate. The    |
+|│ Enter routing defect is fixed and the honesty half is     |
+|│ pinned. Nothing else is in flight.                        |
+|                                                            |
+|❯ ask anything                                              |
+|────────────────────────────────────────────────────────────|
+|insert · enter send · pageup    …\Epsilon\crates\epsilon-tui|
++------------------------------------------------------------+

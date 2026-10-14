@@ -46,7 +46,7 @@
 //!    `Reset` too and carries "quiet" with `DIM`, because every ANSI slot that
 //!    would read as "quiet grey" is invisible on one of the two backgrounds
 //!    (bright black on white, black on black). Which roles those are is a column
-//!    of the palette tables — [`Slot::quiet`] — and not a comment. Filled bands
+//!    of the palette tables — ``Slot::quiet`` — and not a comment. Filled bands
 //!    are withheld entirely off truecolor ([`Theme::has_surfaces`]) rather than
 //!    approximated with a background that collides with the user's own theme.
 //! 4. **A palette is selected, never sniffed.** There is no reliable
@@ -767,6 +767,13 @@ palette! {
     code:          (0xe0, 0xaf, 0x68), Color::Yellow, false;
 
     code_block:    (0x9a, 0xa3, 0xb5), Color::Gray, true;
+
+    // Search. A hit is written on the row it was found in, so it has to read
+    // as *that word* and not as the row: warm, and never the quiet grey a dim
+    // role would be. The underline and the reverse are what carry it when the
+    // colour does not (see `Theme::search`), so this slot is the second signal
+    // rather than the only one.
+    search:        (0xff, 0xd9, 0x6b), Color::Yellow, false;
     // Filled bands. Deliberately close to a dark terminal background: a band
     // should read as a change of surface, not as a selected row. They are never
     // emitted on ANSI-16 at all ([`Theme::has_surfaces`]), so `quiet` is moot.
@@ -888,6 +895,13 @@ light_palette! {
     code:          (0x7a, 0x4a, 0x12), Color::Yellow, false;
 
     code_block:    (0x4a, 0x53, 0x64), Color::Reset, true;
+
+    // Search. On white the hit cannot be the dark table's yellow, so it keeps
+    // the hue's *meaning* — warm, unmistakably marked — at a weight that clears
+    // the body-text floor. The 16-colour slot is `Blue` rather than `Yellow`:
+    // yellow is light on white, and this palette's under-floor slots are a
+    // decision rather than a detail.
+    search:        (0x8a, 0x63, 0x00), Color::Blue, false;
     // Filled bands: pale tints of white, dark enough to hold body text at 4.5:1
     // and light enough to read as a change of surface rather than as a
     // selection. A band that the text on it cannot sit on is worse than no band.
@@ -983,6 +997,11 @@ contrast_palette! {
     code:          (0xff, 0xd7, 0x7d), Color::Yellow, false;
 
     code_block:    (0xe0, 0xe0, 0xe0), Color::Reset, false;
+
+    // 16.6:1. A search hit in this palette has to survive a reader who turned
+    // high contrast on because colour is hard for them — so it keeps the dark
+    // table's slot (yellow reads on black) and the underline still carries it.
+    search:        (0xff, 0xe6, 0x00), Color::Yellow, false;
     // Filled bands: near-black, tinted enough to read as a *different* surface from
     // the page and no brighter — a band is a boundary, and the text on it is body
     // copy that has to clear 7:1 too. These measure 16–18:1 under white text.
@@ -1166,6 +1185,24 @@ impl Theme {
     /// A completed action.
     pub fn success(&self) -> Style {
         self.role(Role::success, Emphasis::Plain)
+    }
+
+    /// A transcript search hit: the word the reader asked for, wherever it sits.
+    ///
+    /// Colour is half the signal at most. The draw path underlines every hit and
+    /// reverses the current one, so a reader who cannot separate the highlight
+    /// colour from body copy still sees which word it was — and with
+    /// `NO_COLOR`, where `Emphasis::Plain` collapses to no colour at all, the
+    /// attributes are the whole signal.
+    pub fn search(&self) -> Style {
+        self.role(Role::search, Emphasis::Plain)
+    }
+
+    /// The hit the search is currently on. Strong so the **bold** survives a
+    /// terminal with no colour; the reverse is added by the draw path, which is
+    /// the only place that knows a hit can be the one you are standing on.
+    pub fn search_strong(&self) -> Style {
+        self.role(Role::search, Emphasis::Strong)
     }
 
     /// A failed action, or a destructive option.
@@ -1752,6 +1789,11 @@ mod tests {
             // Code. `code` keeps dark's slot on purpose: see the light table.
             E::new(Role::code, C::Yellow, C::Yellow, false),
             E::new(Role::code_block, C::Reset, C::Gray, true),
+            // Search: the two columns are different members of the safe set on
+            // purpose — yellow is the dark palette's mark-on-black, and yellow is
+            // invisible on white, so the light column takes blue (8.6:1 on white).
+            // The underline is what carries the hit where neither colour can.
+            E::new(Role::search, C::Blue, C::Yellow, false),
             // Bands. Never emitted on ANSI-16 at all ([`Theme::has_surfaces`]);
             // the slot is still declared and still checked, so turning surfaces on
             // for 16 colors would be a visible change in this table rather than a

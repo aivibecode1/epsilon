@@ -1,0 +1,34 @@
+
+=== search-marks-second @ 100x30 ===
++----------------------------------------------------------------------------------------------------+
+|idle                ?/1.0M · ↑0 ↓0 · R0 W0 CH n/a · Faux (offline scripted) • thinking off · offline|
+|                                                                                                    |
+|                                                                                                    |
+|                                                                                                    |
+|                                                                                                    |
+|                                                                                                    |
+|                                                                                                    |
+|                                                                                                    |
+|                                                                                                    |
+|                                                                                                    |
+|                                                                                                    |
+|                                                                                                    |
+|                    ╭ search ──────────────────────────────────────────────────╮                    |
+|                    │ n next · p previous · esc close                          │                    |
+|                    │       2 of 2                                             │                    |
+|                    │                                                          │                    |
+|                    ╰──────────────────────────────────────────────────────────╯                    |
+|                                                                                                    |
+|                                                                                                    |
+|                                                                                                    |
+|                                                                                                    |
+|                                                                                                    |
+|                                                                                                    |
+|• the Needle sits in the first row                                                                  |
+|• a row with nothing to find in it                                                                  |
+|• and a second NEEDLE down here                                                                     |
+|                                                                                                    |
+|❯ ask anything                                                                                      |
+|────────────────────────────────────────────────────────────────────────────────────────────────────|
+|insert · enter send · pageup scroll back · pagedown scroll forward      …\Epsilon\crates\epsilon-tui|
++----------------------------------------------------------------------------------------------------+

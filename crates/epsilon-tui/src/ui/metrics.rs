@@ -21,7 +21,7 @@
 //!   tracking the current conversation.
 //! * **What has this cost?** → [`Metrics::cost_micro_usd`], integer micro-USD,
 //!   priced from the catalog for the active model. Unknown models report
-//!   [`Metrics::cost`] as `None` rather than a confident `$0`.
+//!   ``Metrics::cost`` as `None` rather than a confident `$0`.
 
 use crate::ui::format::{format_cache_percent, format_cost, format_percent, format_tokens};
 

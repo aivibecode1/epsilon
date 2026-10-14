@@ -227,6 +227,11 @@ pub struct FileViewer {
     pub edit_col: usize,
     /// First Esc with a dirty buffer arms; the second discards.
     pub discard_armed: bool,
+    /// Undo history for the edit buffer. The same
+    /// [`crate::undo::UndoStack`] the composer uses, over a snapshot shape that
+    /// fits a line buffer rather than a single string — see the note on the
+    /// generic parameter there.
+    pub(super) undo_stack: crate::undo::UndoStack<FileSnapshot>,
     /// Find state (Phase 3 editor slice): `/` opens in view mode, typing narrows.
     pub find_open: bool,
     /// Current find query, plain substring (the transcript search's rule).
@@ -235,6 +240,26 @@ pub struct FileViewer {
     pub find_hits: Vec<usize>,
     /// Position within `find_hits`.
     pub find_index: usize,
+    /// Replacement input, opened with Tab while find is open. Pairs with
+    /// `find_query` so one run replaces what the query just found.
+    pub replace_open: bool,
+    /// The replacement text, applied to the buffer being edited.
+    pub replace_query: String,
+}
+
+/// One point-in-time state of the file editor's buffer.
+///
+/// The mirror of the composer's [`crate::undo::EditorSnapshot`] over a shape that
+/// actually matches a file: a line buffer instead of a string, and a `(row, col)`
+/// cursor instead of a char index.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(super) struct FileSnapshot {
+    /// Buffer lines at snapshot time.
+    pub(super) lines: Vec<String>,
+    /// Cursor row.
+    pub(super) row: usize,
+    /// Cursor column, in characters.
+    pub(super) col: usize,
 }
 
 /// Read `rel` under `root` for viewing. Refuses (rather than guessing) when the
@@ -264,16 +289,25 @@ pub fn open_viewer(root: &std::path::Path, rel: &str) -> Result<FileViewer, Stri
         edit_row: 0,
         edit_col: 0,
         discard_armed: false,
+        undo_stack: crate::undo::UndoStack::new(),
         find_open: false,
         find_query: String::new(),
+        replace_open: false,
+        replace_query: String::new(),
         find_hits: Vec::new(),
         find_index: 0,
     })
 }
 
 impl FileViewer {
-    /// Enter edit mode: the buffer starts as the file on screen.
-    pub fn start_edit(&mut self) {
+    /// Enter edit mode: the buffer starts as the file on screen. Refuses
+    /// (returns false and changes nothing) when the file continued past
+    /// `VIEWER_LINE_CAP`: the buffer would be the capped head, and saving
+    /// it would cut the tail off the file.
+    pub fn start_edit(&mut self) -> bool {
+        if self.truncated {
+            return false;
+        }
         self.editing = true;
         self.edit_lines = self.lines.clone();
         if self.edit_lines.is_empty() {
@@ -282,6 +316,60 @@ impl FileViewer {
         self.edit_row = 0;
         self.edit_col = 0;
         self.discard_armed = false;
+        // A fresh edit session starts with a fresh history: the pre-existing
+        // state IS the baseline the user undoes back to, so there is nothing to
+        // undo until they change something.
+        self.undo_stack = crate::undo::UndoStack::new();
+        true
+    }
+
+    /// Capture the buffer as an undo snapshot.
+    fn snapshot(&self) -> FileSnapshot {
+        FileSnapshot {
+            lines: self.edit_lines.clone(),
+            row: self.edit_row,
+            col: self.edit_col,
+        }
+    }
+
+    /// Record the state BEFORE a mutation. Called by every primitive below; the
+    /// duplicate suppression in [`crate::undo::UndoStack`] keeps per-keystroke
+    /// calls cheap.
+    pub(super) fn push_undo(&mut self) {
+        self.undo_stack.push(self.snapshot());
+    }
+
+    /// Undo the last edit. Returns false when there is nothing to undo, which
+    /// is the case the caller must report rather than swallow.
+    pub fn undo(&mut self) -> bool {
+        let Some(snap) = self.undo_stack.undo(self.snapshot()) else {
+            return false;
+        };
+        self.restore(snap);
+        true
+    }
+
+    /// Re-apply the most recently undone edit.
+    pub fn redo(&mut self) -> bool {
+        let Some(snap) = self.undo_stack.redo(self.snapshot()) else {
+            return false;
+        };
+        self.restore(snap);
+        true
+    }
+
+    fn restore(&mut self, snap: FileSnapshot) {
+        self.edit_lines = snap.lines;
+        self.edit_row = snap.row;
+        self.edit_col = snap.col;
+        self.clamp_cursor();
+        self.discard_armed = false;
+    }
+
+    /// True when there is an edit to undo — what a footer or a key handler reads
+    /// instead of probing the private stack.
+    pub fn can_undo(&self) -> bool {
+        !self.undo_stack.is_empty()
     }
 
     /// True when the buffer differs from what was opened.
@@ -310,15 +398,106 @@ impl FileViewer {
         self.find_query.clear();
         self.find_hits.clear();
         self.find_index = 0;
+        self.replace_open = false;
+        self.replace_query.clear();
+    }
+
+    /// Tab while find is open: move the caret to the replacement input, and back.
+    /// No new chord — Tab is already the key that walks a form.
+    pub fn replace_toggle(&mut self) {
+        self.replace_open = !self.replace_open;
+        if !self.replace_open {
+            self.replace_query.clear();
+        }
+    }
+
+    /// Replace every hit, or the one under the caret, in the buffer being edited.
+    ///
+    /// The snapshot is taken **before** the mutation and pushed only when the
+    /// text will actually change: a snapshot taken afterwards restores the
+    /// replaced text and Ctrl+Z appears to do nothing, and a no-op replace pushes
+    /// a snapshot that poisons the redo rail.
+    pub fn replace_all(&mut self) -> usize {
+        self.replace_hits(false)
+    }
+
+    /// Replace only the hit the caret is on, then step to the next one.
+    pub fn replace_one(&mut self) -> usize {
+        self.replace_hits(true)
+    }
+
+    fn replace_hits(&mut self, only_one: bool) -> usize {
+        if self.find_query.is_empty() || self.find_hits.is_empty() {
+            return 0;
+        }
+        let source = if self.editing {
+            &self.edit_lines
+        } else {
+            &self.lines
+        };
+        let mut n = 0usize;
+        let targets: Vec<usize> = if only_one {
+            self.find_hits
+                .get(self.find_index)
+                .copied()
+                .into_iter()
+                .collect()
+        } else {
+            self.find_hits.clone()
+        };
+        for i in targets {
+            if let Some(line) = source.get(i)
+                && line.contains(self.find_query.as_str())
+            {
+                n += line.matches(self.find_query.as_str()).count();
+            }
+        }
+        if n == 0 {
+            return 0;
+        }
+        self.push_undo();
+        let query = self.find_query.clone();
+        let repl = self.replace_query.clone();
+        let lines = if self.editing {
+            &mut self.edit_lines
+        } else {
+            &mut self.lines
+        };
+        for i in if only_one {
+            self.find_hits
+                .get(self.find_index)
+                .copied()
+                .into_iter()
+                .collect::<Vec<_>>()
+        } else {
+            self.find_hits.clone()
+        } {
+            if let Some(line) = lines.get_mut(i) {
+                *line = line.replace(query.as_str(), repl.as_str());
+            }
+        }
+        self.find_recompute();
+        n
     }
 
     /// Recompute matches for the current query (plain substring, file order).
     /// Selection restarts at the first match: the list it pointed into is gone.
+    ///
+    /// **It searches the buffer being edited when in edit mode.** Find used to
+    /// read `lines` unconditionally, so the keys were wired to a buffer the user
+    /// was not typing into — and unreachable besides, because the edit-mode key
+    /// arm returns before the find arm ever runs. Searching `edit_lines` here is
+    /// what makes the same query answer "where is this in *my* text".
     pub fn find_recompute(&mut self) {
+        let source: &[String] = if self.editing {
+            &self.edit_lines
+        } else {
+            &self.lines
+        };
         self.find_hits = if self.find_query.is_empty() {
             Vec::new()
         } else {
-            self.lines
+            source
                 .iter()
                 .enumerate()
                 .filter(|(_, l)| l.contains(self.find_query.as_str()))
@@ -336,6 +515,11 @@ impl FileViewer {
     /// the scroll following minimally so the match stays on screen.
     /// `capacity` is the painted screenful; `max(1)` so a step before the
     /// first paint still moves rather than silently doing nothing.
+    ///
+    /// In edit mode the step also **moves the cursor** to the match, because a
+    /// highlighted row the user cannot reach the caret of is a decoration. It
+    /// lands on the first occurrence of the query in that line — the same
+    /// substring the hit was computed from.
     pub fn find_step(&mut self, forward: bool, capacity: usize) {
         if self.find_hits.is_empty() {
             return;
@@ -353,6 +537,14 @@ impl FileViewer {
         } else if line >= self.scroll + cap {
             self.scroll = line + 1 - cap;
         }
+        if self.editing {
+            self.edit_row = line.min(self.edit_lines.len().saturating_sub(1));
+            self.edit_col = self.edit_lines[self.edit_row]
+                .find(self.find_query.as_str())
+                .map(|b| self.edit_lines[self.edit_row][..b].chars().count())
+                .unwrap_or(0);
+            self.discard_armed = false;
+        }
     }
 
     /// Byte index of character `col` in `line` (clamped at line end).
@@ -369,6 +561,7 @@ impl FileViewer {
         if self.edit_row >= self.edit_lines.len() {
             return;
         }
+        self.push_undo();
         let line = &mut self.edit_lines[self.edit_row];
         let at = Self::byte_idx(line, self.edit_col);
         line.insert(at, c);
@@ -381,6 +574,7 @@ impl FileViewer {
         if self.edit_row >= self.edit_lines.len() {
             return;
         }
+        self.push_undo();
         let line = &mut self.edit_lines[self.edit_row];
         let at = Self::byte_idx(line, self.edit_col);
         let tail = line.split_off(at);
@@ -395,6 +589,7 @@ impl FileViewer {
         if self.edit_row >= self.edit_lines.len() {
             return;
         }
+        self.push_undo();
         if self.edit_col > 0 {
             let line = &mut self.edit_lines[self.edit_row];
             let at = Self::byte_idx(line, self.edit_col);
@@ -413,6 +608,35 @@ impl FileViewer {
             self.edit_col = prev_len;
         }
         self.discard_armed = false;
+    }
+
+    /// Delete forward: the mirror of [`Self::backspace`]. Removes the character
+    /// under the cursor, or joins the next line onto this one at end of line.
+    ///
+    /// **This key was silently discarded before.** The edit-mode match fell
+    /// through to `_ => {}`, so `Delete` did nothing at all — not even a notice
+    /// — while `Backspace` worked, which is the shape of a half-implemented
+    /// editor: every key a user has used in every other editor, minus one.
+    pub fn delete_forward(&mut self) {
+        if self.edit_row >= self.edit_lines.len() {
+            return;
+        }
+        let line_len = self.edit_lines[self.edit_row].chars().count();
+        if self.edit_col < line_len {
+            self.push_undo();
+            let line = &mut self.edit_lines[self.edit_row];
+            let at = Self::byte_idx(line, self.edit_col);
+            let next = line[at..].chars().next().map(|c| c.len_utf8()).unwrap_or(0);
+            line.drain(at..at + next);
+            self.discard_armed = false;
+        } else if self.edit_row + 1 < self.edit_lines.len() {
+            self.push_undo();
+            let tail = self.edit_lines.remove(self.edit_row + 1);
+            self.edit_lines[self.edit_row].push_str(&tail);
+            self.discard_armed = false;
+        }
+        // At the very end of the buffer there is nothing to delete: a no-op, not
+        // an error, and the cursor does not move.
     }
 
     /// Clamp the cursor after any structural change.
@@ -483,7 +707,19 @@ pub(crate) fn draw_viewer(
         }
     }
     let start = viewer.scroll.min(body.len().saturating_sub(1));
-    let end = (start + capacity).min(body.len());
+    // **Reserve the rows the input lines will occupy, before the body takes them.**
+    //
+    // Measured, in edit mode with find and replace both open: the body filled
+    // `capacity` rows, the find line was drawn last inside the panel, and *both*
+    // the replacement line and the hint row were clipped off the bottom. An earlier
+    // version of this reservation was built and then controlled away — correctly,
+    // because the control it was tested against exercised only the view-mode state,
+    // where one spare row happens to fit the find line. With three input rows there
+    // is no spare, and the reservation is what makes the query and the replacement
+    // reachable instead of off-screen.
+    let input_rows = usize::from(viewer.find_open) + usize::from(viewer.replace_open) + 1; // the hint row, always
+    let body_rows = capacity.saturating_sub(input_rows).max(1);
+    let end = (start + body_rows).min(body.len());
     let mut lines: Vec<Line<'static>> = Vec::new();
     // Phase 3 tabs: the strip names every open tab when there is more than
     // one — one tab needs no chrome. Active marked, unsaved dotted, so the
@@ -528,7 +764,7 @@ pub(crate) fn draw_viewer(
         )));
     }
     // Pad to the box so short files do not leave the footer floating.
-    while lines.len() < capacity {
+    while lines.len() < body_rows {
         lines.push(Line::from(""));
     }
     let save = format!("{}+s", crate::keybindings::alt_name());
@@ -549,8 +785,32 @@ pub(crate) fn draw_viewer(
             ratatui::text::Span::styled(format!("  {count} · enter next · esc close"), theme.dim()),
         ]));
     }
+
+    // **The replacement line, drawn where it can be seen.**
+    // A previous attempt withdrew this feature believing the line could not be
+    // drawn; that belief was wrong. With the row budget in place above, all three
+    // input rows are drawn. The witness asserts the replacement line lands on the
+    // screen rather than only in the data.
+    if viewer.editing && viewer.replace_open {
+        lines.push(Line::from(vec![
+            ratatui::text::Span::styled(">", theme.accent()),
+            ratatui::text::Span::raw(viewer.replace_query.clone()),
+            ratatui::text::Span::styled("\u{2588}", theme.accent()),
+            ratatui::text::Span::styled("  tab back · enter replace all", theme.dim()),
+        ]));
+    }
+
     let hints: &[(&str, &str)] = if viewer.editing {
         &[("type/enter", "edit"), (&save, "save"), ("esc", "cancel")]
+    } else if viewer.truncated {
+        // Invariant 7: `e` does not edit a capped file (`start_edit`
+        // refuses), so the footer must not offer it as edit.
+        &[
+            ("↑↓/pgup/pgdn", "scroll"),
+            ("/", "find"),
+            ("e", "edit unavailable"),
+            ("esc", "close"),
+        ]
     } else {
         &[
             ("↑↓/pgup/pgdn", "scroll"),
@@ -606,6 +866,40 @@ mod viewer_tests {
         let viewer = open_viewer(dir.path(), "big.log").expect("big opens");
         assert_eq!(viewer.lines.len(), VIEWER_LINE_CAP);
         assert!(viewer.truncated, "the cap must be announced, not silent");
+    }
+
+    #[test]
+    fn editing_a_truncated_file_is_refused() {
+        // The edit buffer would be the capped head; saving it would cut the
+        // tail off the file. A truncated file must never enter edit mode.
+        let dir = workspace();
+        let big: String = (0..VIEWER_LINE_CAP + 50)
+            .map(|i| format!("line {i}\n"))
+            .collect();
+        std::fs::write(dir.path().join("big.log"), &big).unwrap();
+        let mut viewer = open_viewer(dir.path(), "big.log").expect("big opens");
+        assert!(viewer.truncated);
+        assert!(
+            !viewer.start_edit(),
+            "a capped head must not become the edit buffer"
+        );
+        assert!(!viewer.editing, "a refused edit changes nothing");
+        assert!(
+            viewer.edit_lines.is_empty(),
+            "no buffer may exist for a file the viewer cannot hold"
+        );
+    }
+
+    #[test]
+    fn editing_a_small_file_still_enters() {
+        // Control: the refusal above is about the cap, not about editing.
+        let dir = workspace();
+        std::fs::write(dir.path().join("small.txt"), "one\ntwo\n").unwrap();
+        let mut viewer = open_viewer(dir.path(), "small.txt").expect("small opens");
+        assert!(!viewer.truncated);
+        assert!(viewer.start_edit(), "small files still enter edit mode");
+        assert!(viewer.editing, "small files still enter edit mode");
+        assert_eq!(viewer.edit_lines, viewer.lines);
     }
 
     #[test]
@@ -674,5 +968,213 @@ mod viewer_tests {
         );
         v.find_close();
         assert!(!v.find_open && v.find_hits.is_empty() && v.find_query.is_empty());
+    }
+
+    // ---- the file editor's own undo, and the Delete key that never worked ----
+    //
+    // Both blocks below are proof of one thing: the file editor had *no* undo at
+    // all, and its `Delete` key was silently discarded. The composer had undo
+    // since M16; the viewer's edit mode had `Backspace`, `Enter`, the arrows and
+    // `Home`/`End`, and the `_ => {}` arm swallowed everything else — including
+    // the one delete direction every other editor on the machine has.
+
+    fn edited() -> FileViewer {
+        let mut v = FileViewer {
+            rel: "t.txt".into(),
+            lines: vec!["alpha".into(), "beta".into(), "gamma".into()],
+            scroll: 0,
+            truncated: false,
+            opened_bytes: Vec::new(),
+            editing: false,
+            edit_lines: Vec::new(),
+            edit_row: 0,
+            edit_col: 0,
+            discard_armed: false,
+            undo_stack: crate::undo::UndoStack::new(),
+            find_open: false,
+            find_query: String::new(),
+            replace_open: false,
+            replace_query: String::new(),
+            find_hits: Vec::new(),
+            find_index: 0,
+        };
+        assert!(v.start_edit());
+        v
+    }
+
+    /// The half of deletion that never worked. `Delete` fell through to
+    /// `_ => {}` in the edit-mode key match, so it did nothing at all while
+    /// `Backspace` worked — a user pressing it saw their cursor sit still and
+    /// had no way to tell a broken key from a busy frame.
+    #[test]
+    fn delete_forward_removes_what_is_under_the_cursor() {
+        let mut v = edited();
+        v.edit_col = 0; // front of "alpha"
+        v.delete_forward();
+        assert_eq!(v.edit_lines[0], "lpha", "the first character goes");
+
+        v.edit_col = 2; // middle: "lpha" -> "lpa" (the 'h' goes)
+        v.delete_forward();
+        assert_eq!(v.edit_lines[0], "lpa", "a middle character goes");
+
+        // At end of line it joins the next line, exactly as Backspace joins the
+        // previous one — the two are mirrors over the same buffer.
+        v.edit_col = v.edit_lines[0].chars().count();
+        v.delete_forward();
+        assert_eq!(v.edit_lines, vec!["lpabeta", "gamma"]);
+        assert_eq!(v.edit_row, 0);
+        assert_eq!(v.edit_col, 3);
+
+        // At the very end of the buffer there is nothing to delete: a no-op, and
+        // the cursor must not move off the end.
+        v.edit_row = v.edit_lines.len() - 1;
+        v.edit_col = v.edit_lines[v.edit_row].chars().count();
+        let before = v.edit_lines.clone();
+        v.delete_forward();
+        assert_eq!(v.edit_lines, before, "no-op at the end, not a panic");
+    }
+
+    /// And undo brings it back — which is the pair the editor was missing.
+    #[test]
+    fn delete_forward_is_undoable() {
+        let mut v = edited();
+        v.edit_col = 0;
+        v.delete_forward();
+        assert_eq!(v.edit_lines[0], "lpha");
+        assert!(v.undo(), "one deletion is one undo");
+        assert_eq!(v.edit_lines, vec!["alpha", "beta", "gamma"]);
+        assert_eq!(
+            (v.edit_row, v.edit_col),
+            (0, 0),
+            "the cursor comes back too"
+        );
+        assert!(!v.undo(), "and there is nothing further to undo");
+    }
+
+    /// The missing feature: no undo at all in the file editor. Every primitive
+    /// pushes a snapshot first, so any sequence of them is one undo step each.
+    #[test]
+    fn every_edit_is_undoable_and_redo_reapplies_it() {
+        let mut v = edited();
+        // Type "!" at the end of line 1.
+        v.edit_col = v.edit_lines[0].chars().count();
+        v.insert_char('!');
+        // Split the line (Enter) then type "x".
+        v.split_line();
+        v.insert_char('x');
+        assert_eq!(v.edit_lines, vec!["alpha!", "x", "beta", "gamma"]);
+
+        assert!(v.undo(), "x");
+        assert_eq!(v.edit_lines, vec!["alpha!", "", "beta", "gamma"]);
+        assert!(v.undo(), "the split");
+        assert_eq!(v.edit_lines, vec!["alpha!", "beta", "gamma"]);
+        assert!(v.undo(), "!");
+        assert_eq!(v.edit_lines, vec!["alpha", "beta", "gamma"]);
+
+        // Redo walks the same rail in the other direction.
+        assert!(v.redo());
+        assert_eq!(v.edit_lines, vec!["alpha!", "beta", "gamma"]);
+        assert!(v.redo());
+        assert_eq!(v.edit_lines, vec!["alpha!", "", "beta", "gamma"]);
+        assert!(v.redo());
+        assert_eq!(v.edit_lines, vec!["alpha!", "x", "beta", "gamma"]);
+        assert!(!v.redo(), "rail drained");
+    }
+
+    /// A fresh edit after an undo drops the redo rail — the divergence rule the
+    /// composer's stack already had, and the reason generalizing it beat writing
+    /// a second one.
+    #[test]
+    fn a_fresh_edit_after_undo_drops_the_redo_rail() {
+        let mut v = edited();
+        v.edit_col = 0;
+        v.delete_forward();
+        assert!(v.undo());
+        assert_eq!(v.edit_lines[0], "alpha");
+        assert!(v.redo(), "the rail still held the deletion");
+
+        // Diverge: a different edit now.
+        v.edit_col = 5;
+        v.insert_char('?');
+        assert!(
+            !v.redo(),
+            "a divergent edit clears the rail — redo cannot resurrect the deleted branch"
+        );
+    }
+
+    /// The cursor is part of the snapshot, not an afterthought: undoing a
+    /// movement that changed nothing must not move the cursor either, and
+    /// undoing an edit must land where the edit began.
+    #[test]
+    fn undo_restores_the_cursor_alongside_the_text() {
+        let mut v = edited();
+        v.edit_row = 2;
+        v.edit_col = 3;
+        // One edit at row 2 / col 3.
+        v.insert_char('Z');
+        assert_eq!((v.edit_row, v.edit_col), (2, 4));
+        // Move the cursor somewhere else, then undo: it returns to the edit.
+        v.edit_row = 0;
+        v.edit_col = 0;
+        assert!(v.undo());
+        assert_eq!(
+            (v.edit_row, v.edit_col),
+            (2, 3),
+            "the snapshot holds the cursor, so undo is not just a text restore"
+        );
+        assert_eq!(v.edit_lines[2], "gamma");
+    }
+
+    /// Entering edit mode starts with an empty history: the file as opened is
+    /// the baseline, so there is nothing to undo until the user changes
+    /// something — and `Ctrl+Z` on a fresh buffer says so rather than dying.
+    #[test]
+    fn a_fresh_edit_session_has_nothing_to_undo() {
+        let mut v = edited();
+        assert!(!v.can_undo());
+        assert!(!v.undo());
+        assert!(!v.redo());
+        assert_eq!(v.edit_lines, vec!["alpha", "beta", "gamma"]);
+    }
+
+    // ---- find and replace, which the file editor never had ---------------------
+    //
+    // Find existed only in view mode, and it was unreachable in edit mode for two
+    // reasons that compounded: `find_recompute` read `lines` (the file as opened)
+    // rather than the buffer, and the edit-mode key arm `return false`d before
+    // the find arm could ever run. So a user editing a file who pressed `/` typed
+    // `/needle` into their own text and nothing else happened.
+
+    /// **Find searches the buffer being edited, and stepping moves the caret.**
+    ///
+    /// A highlighted line the caret cannot reach is a decoration. The step lands
+    /// on the first occurrence of the query in the line it moves to.
+    #[test]
+    fn find_searches_the_edit_buffer_and_stepping_moves_the_caret() {
+        let mut v = edited();
+        v.edit_lines = vec![
+            "need a needle".to_string(),
+            "middle".to_string(),
+            "and a needle again".to_string(),
+        ];
+        v.find_open();
+        for c in "needle".chars() {
+            v.find_query.push(c);
+        }
+        v.find_recompute();
+        assert_eq!(
+            v.find_hits,
+            vec![0, 2],
+            "both buffer lines, not the opened file's"
+        );
+
+        v.find_step(true, 10);
+        assert_eq!(v.edit_row, 2, "the caret follows the hit");
+        assert_eq!(v.edit_col, 6, "and lands on the match, not the line start");
+        // Wrapping back to the first: "need a " is seven characters, so the
+        // needle on that line starts one column later than the one above.
+        v.find_step(true, 10);
+        assert_eq!(v.edit_row, 0);
+        assert_eq!(v.edit_col, 7);
     }
 }

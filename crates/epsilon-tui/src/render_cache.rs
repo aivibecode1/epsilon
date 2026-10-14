@@ -58,7 +58,7 @@ pub struct RenderState<'a> {
     /// other selects a subset of the conversation to read.
     pub filter: crate::state::TranscriptFilter,
     /// Ids of cards the user opened individually; ids the user closed individually
-    /// while [`Self::expand_all`] was on live in [`Self::collapsed`].
+    /// while [`Self::expand_all`] was on live in ``Self::collapsed``.
     pub expanded: &'a [(u64, bool)],
     /// The key that opens a card, resolved from the live binding table. `None`
     /// when the binding does not resolve, and then the affordance promises nothing.
@@ -386,7 +386,7 @@ impl RenderCache {
     ///
     /// Exists for the one case the cache key cannot express: a change to something the
     /// transcript renders *through* but that the key does not carry. M160 leans on the palette
-    /// being in [`CacheKey`] for the rebuild and uses this for the same frame, so a row already
+    /// being in ``CacheKey`` for the rebuild and uses this for the same frame, so a row already
     /// drawn with the old palette cannot survive one frame.
     pub fn clear(&mut self) {
         self.rendered.clear();
@@ -578,6 +578,25 @@ impl RenderCache {
     /// index needs both ends of the mapping.
     pub fn line_count(&self) -> usize {
         self.reconciled_ids.len()
+    }
+
+    /// The **logical line** a screen row belongs to — the inverse of
+    /// [`RenderCache::row_of_line`], and the one the search highlight needs.
+    ///
+    /// The draw path asks "which line is this screen row painting?" so it can
+    /// mark the rows of a matching line. Binary search over the same offsets the
+    /// forward mapping binary-searches, so the two cannot disagree about a row
+    /// they both walk.
+    pub fn line_of_row(&self, row: usize) -> Option<usize> {
+        if self.offsets.is_empty() || row >= self.total_rows {
+            return None;
+        }
+        // The last line whose start is at or before `row` — i.e. the line whose
+        // [start, next start) span contains it.
+        let idx = self.offsets.partition_point(|&start| start <= row);
+        // `partition_point` returns 0 only when offsets[0] > row, which the guard
+        // above already ruled out; the subtraction cannot underflow.
+        Some(idx.saturating_sub(1))
     }
 
     /// The same window, each row paired with the [`LineKind`] it came from.

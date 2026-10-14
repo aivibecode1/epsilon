@@ -17,7 +17,7 @@ pub const COMPACTION_MARKER: &str = "[context compacted]";
 ///
 /// One shared ladder for every wire; each provider maps/clamps it to its own
 /// parameter shape at request-build time (`ProviderWire::apply_thinking`). The
-/// level rides in [`crate::LlmContext`](epsilon context) per call and persists
+/// level rides in ``crate::LlmContext``(epsilon context) per call and persists
 /// across turns like the model id.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]

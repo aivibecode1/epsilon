@@ -2878,8 +2878,9 @@ a new surface. This ADR is the one structural rule the convergence added.
 ## ADR-034: The transcript's live edge is the row above the composer
 
 **Decided (round 133).** A terminal conversation shorter than the viewport draws its spare rows
-**above** the content, so the newest row is always the row directly above the composer's rule.
-Deliberately different from pi, and the welcome screen is deliberately exempt.
+**above** the content, so the newest row is always the row directly above the ending blank — the
+one row between the transcript and the composer. Deliberately different from pi, and the welcome
+screen is deliberately exempt.
 
 **Why.** `ratatui`'s `Paragraph` lays its rows from the top of the region it is given, so the
 transcript was top-anchored: at 80×24 a user turn, a separator and one notice drew on rows 1–3 of

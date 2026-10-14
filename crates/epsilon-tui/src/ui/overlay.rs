@@ -312,7 +312,7 @@ pub fn list_row_marked(
 const MIN_META_GAP: usize = 2;
 
 /// Columns between the selection bar and the label.
-const GUTTER_AFTER_BAR: usize = 1;
+pub(crate) const GUTTER_AFTER_BAR: usize = 1;
 
 /// The paired arrow a hint row offers for moving a selection: `↑↓`, or `^v` in the ASCII set.
 ///

@@ -320,6 +320,11 @@ fn frames_streaming_tool_output() {
     use epsilon_contracts::agent_event::AgentEvent;
     let (mut app, _a, _r) = test_app();
     app.ui.push_local_input("cargo build");
+    // The header's `RunState` is fed by `AgentStart` (`app.rs:1767`). Without it the
+    // frame captured a header reading `idle` above a card reading `pending` — two rows
+    // of one screen describing different worlds, in a fixture named for a tool that is
+    // running. The frame is evidence; it has to describe the state it is named for.
+    app.ui.apply(&AgentEvent::AgentStart);
     app.ui.apply(&AgentEvent::MessageEnd {
         message: Box::new(Message::Assistant(AssistantMessage {
             id: "m-stream".into(),
@@ -409,6 +414,271 @@ fn frames_command_palette() {
     app.ui.push_local_input("type to filter");
     app.palette_open = true;
     shoot("palette-open", &mut app);
+}
+
+/// **The search highlight, on a real frame (P-218).**
+///
+/// The panel counted matches for as long as it existed while the transcript
+/// showed none of them. This is the picture that ends: both hits underlined, the
+/// one you are on reversed, and every other row untouched — which is the only
+/// way to see that the mark lands on the *word* and not on the row, and that the
+/// live-edge padding above it is not dragged into the mark.
+#[test]
+#[ignore = "a rendering fixture; run with --ignored --nocapture"]
+fn frames_the_search_marks_its_matches() {
+    let (mut app, _a, _r) = test_app();
+    for text in [
+        "the Needle sits in the first row",
+        "a row with nothing to find in it",
+        "and a second NEEDLE down here",
+    ] {
+        app.ui.push_notice(text);
+    }
+    app.search_own_transcript("needle");
+    shoot("search-marks", &mut app);
+
+    // Stepped to the second hit: the two marks swap, so the frame shows the
+    // feature is a state of the search rather than a property of the row.
+    app.search_step(true);
+    shoot("search-marks-second", &mut app);
+}
+
+/// **Halfwidth katakana wrapping a row the buffer can fill — the sound-mark rule.**
+///
+/// `unicode-width` reports `ﾞ` (U+FF9E) and `ﾟ` (U+FF9F) as zero-width, terminals
+/// draw them as independent halfwidth cells, so ratatui's `CellWidth for str`
+/// counts one column each. While `wrap.rs` spent the uncorrected rule the
+/// wrapper believed it had columns ratatui did not give it, and the renderer
+/// clipped the last character of every line — silently, in the direction where
+/// we *under*-measure.
+///
+/// This frame is the witness that both ends now use one number. `shoot` renders it
+/// at 100×30, 80×24 and 60×20 — the disagreement only shows when a mark lands near
+/// a row boundary, so a single width would not find it — and `frame_text` states a
+/// row's overspill rather than clipping it, so an over-long row cannot be hidden by
+/// the presentation. `display_width_agrees_with_the_rule_ratatui_places_cells_by`
+/// proves the measurement matches placement; this proves the *wrapped row* obeys it.
+///
+/// # How to read this frame, and the trap in doing so
+///
+/// Each katakana row must fill its frame **exactly**. The trap is that
+/// `frame_text`'s own overspill guard counts `char`s while the bug is expressed in
+/// *columns*, and the two are not interchangeable here — so verify by the identity
+/// ratatui's `CellWidth for str` defines rather than by eyeballing:
+///
+/// ```text
+/// cell_width = UnicodeWidthStr::width + count(ﾞ, ﾟ)
+///            = (char_count - marks) + marks
+///            = char_count
+/// ```
+///
+/// because the marks are the only zero-width characters in these rows. So the row
+/// is in budget exactly when its char count equals the frame width — which is what
+/// the rows above do. I first measured this wrong (adding the marks to a char count
+/// that already contained them) and read a correct frame as 119 columns wide; the
+/// arithmetic, not the code, was the defect. Measure the number, not the intuition.
+#[test]
+#[ignore = "a rendering fixture; run with --ignored --nocapture"]
+fn frames_halfwidth_katakana_wraps_within_the_column_the_buffer_has() {
+    let (mut app, _a, _r) = test_app();
+    app.ui.push_local_input("cargo check");
+    app.ui.apply(&AgentEvent::MessageEnd {
+        message: Box::new(Message::Assistant(AssistantMessage {
+            id: "m-kana".into(),
+            timestamp_ms: 0,
+            provider: "faux".into(),
+            model_id: "faux-1".into(),
+            content: vec![epsilon_contracts::content::ContentBlock::ToolCall {
+                id: "k1".into(),
+                name: "bash".into(),
+                arguments: serde_json::json!({ "command": "cat build.log" }),
+            }],
+            stop_reason: StopReason::ToolUse,
+            error_message: None,
+            usage: Usage::default(),
+        })),
+    });
+    super::apply_with_scroll(
+        &mut app,
+        &AgentEvent::ToolExecutionStart {
+            tool_call_id: "k1".into(),
+            tool_name: "bash".into(),
+            args: serde_json::json!({ "command": "cat build.log" }),
+        },
+    );
+    // The rows go through `render_cache`, which is the real draw path into
+    // `wrap_line` — a notice row would not have exercised it.
+    super::apply_with_scroll(
+        &mut app,
+        &AgentEvent::ToolExecutionUpdate {
+            tool_call_id: "k1".into(),
+            tool_name: "bash".into(),
+            partial: epsilon_contracts::tool::ToolPartial {
+                content: vec![epsilon_contracts::content::ContentBlock::Text {
+                    text: "\u{FF76}\u{FF9E}".repeat(40).to_string(),
+                }],
+                details: serde_json::json!({}),
+            },
+        },
+    );
+    shoot("katakana-sound-marks", &mut app);
+}
+
+/// **The file editor's own undo, on a frame the reader can check.**
+///
+/// Two things this makes visible that no state assertion can: that `Ctrl+Z` reaches
+/// the *file* buffer (not the composer's, which has had undo since M16), and that the
+/// rendered row is what was restored — a delta that lands mid-word is only obvious
+/// when the word is drawn.
+///
+/// The first frame is the edit, the second is after `Ctrl+Z`. They must differ, and
+/// the second must match the file as opened.
+#[test]
+#[ignore = "a rendering fixture; run with --ignored --nocapture"]
+fn frames_the_file_editors_undo_restores_the_drawn_row() {
+    let (mut app, _a, _r) = test_app();
+    let dir = std::env::temp_dir().join(format!("epsilon-frame-undo-{}", std::process::id()));
+    let _ = std::fs::create_dir_all(&dir);
+    let path = dir.join("undo-demo.txt");
+    std::fs::write(&path, "the quick brown fox\n").unwrap();
+
+    // Open the viewer on that file: `open_viewer` refuses a directory and a binary,
+    // so this is the real construction path rather than a hand-built struct.
+    let viewer =
+        crate::tree::open_viewer(dir.as_path(), "undo-demo.txt").expect("the demo file opens");
+    app.open_viewer_tab(viewer);
+    app.ui.push_local_input("undo-demo");
+    {
+        let v = app.active_viewer_mut().expect("the tab is active");
+        assert!(v.start_edit(), "the file is small enough to edit");
+        v.edit_col = v.edit_lines[0].chars().count();
+        v.insert_char('!');
+        v.clamp_cursor();
+    }
+    let edited = shoot("file-editor-undone-edit", &mut app);
+
+    // Undo, and draw again: the row comes back to the file as opened.
+    assert!(app.active_viewer_mut().expect("still open").undo());
+    let restored = shoot("file-editor-undone-restored", &mut app);
+
+    assert_ne!(
+        edited, restored,
+        "the two frames must differ — an undo that changes nothing is not an undo"
+    );
+    assert!(
+        edited.contains("fox!"),
+        "the edited frame carries the character that was typed: {edited}"
+    );
+    assert!(
+        restored.contains("fox") && !restored.contains("fox!"),
+        "the restored frame is the file as opened: {restored}"
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// **Find works in the file editor, not just over the opened file.**
+///
+/// `/` in edit mode searches the buffer being typed into, and `Enter` steps the
+/// *caret* to the match — a highlighted line the caret cannot reach is a
+/// decoration. Before this the key typed a literal slash into the text: the
+/// edit-mode arm `return false`d before the find arm could run, and the hit list
+/// was computed from `lines` (the file as opened), so it named text the user had
+/// already changed.
+#[test]
+#[ignore = "a rendering fixture; run with --ignored --nocapture"]
+fn frames_find_in_the_file_editor_moves_the_caret() {
+    let (mut app, _a, _r) = test_app();
+    let dir = std::env::temp_dir().join(format!("epsilon-frame-efind-{}", std::process::id()));
+    let _ = std::fs::create_dir_all(&dir);
+    std::fs::write(
+        dir.join("find.txt"),
+        "a needle here\nnothing\nand a needle again\n",
+    )
+    .unwrap();
+    let viewer = crate::tree::open_viewer(dir.as_path(), "find.txt").expect("opens");
+    app.open_viewer_tab(viewer);
+    {
+        let v = app.active_viewer_mut().expect("active");
+        assert!(v.start_edit());
+        v.find_open();
+        v.find_query = "needle".into();
+        v.find_recompute();
+    }
+    // Step to the second hit: the caret must land on that line, on the match.
+    app.active_viewer_mut().expect("active").find_step(true, 24);
+    let v = app.active_viewer().expect("active");
+    assert_eq!(v.edit_row, 2, "the caret follows the hit");
+    assert_eq!(v.edit_col, 6, "and lands on the match, not the line start");
+
+    let frame = shoot("file-editor-find", &mut app);
+    let _ = frame; // the frame is written for a reader; the assertions above are the proof.
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// **The find line survives a body longer than the panel.**
+///
+/// The row budget is what this guards: the body was painted into `capacity` rows
+/// and the find line, the replacement line and the hint row were appended after a
+/// pad to `capacity`, so they sat past the edge of a `capacity + 1` area. Which of
+/// them survived depended on how long the body was — a long file lost its query
+/// line and a short one kept it, so the same code drew two different screens.
+///
+/// This one is *long on purpose*: the file has more lines than the panel holds, so
+/// the query line is only on screen if the budget was reserved.
+#[test]
+#[ignore = "a rendering fixture; run with --ignored --nocapture"]
+fn frames_the_find_line_survives_a_body_longer_than_the_panel() {
+    let (mut app, _a, _r) = test_app();
+    let dir = std::env::temp_dir().join(format!("epsilon-frame-efind2-{}", std::process::id()));
+    let _ = std::fs::create_dir_all(&dir);
+    // Far more lines than a 24-row panel can show, so the body fills the window.
+    let long: String = (0..200)
+        .map(|i| format!("line {i} of the body\n"))
+        .collect();
+    std::fs::write(dir.join("big.txt"), &long).unwrap();
+    let viewer = crate::tree::open_viewer(dir.as_path(), "big.txt").expect("big opens");
+    app.open_viewer_tab(viewer);
+    {
+        let v = app.active_viewer_mut().expect("active");
+        // Edit mode, because the replacement input is only offered where a
+        // replacement can be made — in the buffer, not in the file as opened.
+        v.start_edit();
+        v.find_open();
+        v.find_query = "line 42".into();
+        v.replace_toggle();
+        v.replace_query = "with".into();
+        v.find_recompute();
+    }
+    let frame = shoot("file-editor-find-long", &mut app);
+    // Scoped to the panel: a row inside the box, identified by the gutter glyph
+    // that only panel body rows carry. The earlier version checked for "esc close",
+    // which also appears in the *application footer* outside the panel and so could
+    // never fail — an assertion that can pass for the wrong reason is worse than none.
+    let panel_row = |needle: &str| {
+        frame
+            .lines()
+            .filter(|l| l.contains('\u{2502}'))
+            .any(|l| l.contains(needle))
+    };
+    assert!(
+        panel_row("/line 42"),
+        "the query line must be drawn inside the panel even when the body fills it: {frame}"
+    );
+    // The replacement input the feature was withdrawn over. It is asserted here,
+    // on the frame, because "it is in the data" is exactly the claim that has cost
+    // this repository two features.
+    assert!(
+        panel_row(">with"),
+        "the replacement line must be drawn too: {frame}"
+    );
+    // The hint row's wording differs by mode (edit mode names save, not scroll),
+    // so what is checked is that *some* hint row is inside the panel — the
+    // overrun that took this row out took the replacement line with it.
+    assert!(
+        panel_row("esc cancel"),
+        "and the panel's own hint row: {frame}"
+    );
+    let _ = std::fs::remove_dir_all(&dir);
 }
 
 /// **The conversation's live edge, next to the composer (roadmap item 5).**

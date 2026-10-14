@@ -60,6 +60,40 @@ pub fn test_app() -> (App, Arc<Agent>, TestReceivers) {
     (app, agent, (frx, nrx))
 }
 
+/// An app wired like the product's, with a **scripted** faux provider.
+///
+/// [`test_app`] hands the agent `FauxProvider::new(vec![])` — an empty script —
+/// so the very first turn falls back to "out of scripted steps". That is the
+/// right default for a fixture nobody asked to converse with, and it is why
+/// every `run_one_turn` in the suite produces exactly one assistant row of
+/// disclaimer text and nothing else.
+///
+/// A test that needs to *look at* a conversation needs one, so this hands over
+/// the script. Same composition, same order, same `PanicGuard` wrapper — the
+/// only difference from [`test_app`] is what the provider has been told to say,
+/// which is the whole point and the only thing changed.
+pub fn test_app_with_faux(steps: Vec<epsilon_llm::FauxStep>) -> (App, Arc<Agent>, TestReceivers) {
+    let (ftx, frx) = tokio::sync::mpsc::unbounded_channel();
+    let (ntx, nrx) = tokio::sync::mpsc::unbounded_channel();
+    let (otx, _orx) = tokio::sync::mpsc::unbounded_channel();
+    let approvals = Arc::new(ChannelApprovalUi::new());
+    let gate = Arc::new(RulesetGate::new(
+        Arc::clone(&approvals) as Arc<dyn epsilon_safety::ApprovalUi>
+    ));
+    let agent = Agent::new(
+        epsilon_core::LoopLimits::default(),
+        Arc::new(epsilon_llm::PanicGuard(epsilon_llm::FauxProvider::new(
+            steps,
+        ))),
+        Arc::new(epsilon_core::ToolRegistry::new()),
+        gate,
+        std::env::temp_dir(),
+    );
+    let mut app = App::new("faux-1".into(), ftx, ntx, otx);
+    app.default_model = None;
+    (app, agent, (frx, nrx))
+}
+
 /// An app whose agent has a **durable session file**, plus the `TempDir` that owns it.
 ///
 /// The goal lives in the session log and nowhere else, so a `/goal` test on an agent with no

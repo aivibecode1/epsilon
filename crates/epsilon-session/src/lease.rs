@@ -151,8 +151,8 @@ const WAIT_POLL: Duration = Duration::from_millis(100);
 /// ## Why this is safe, in the same terms the steal is
 ///
 /// The predicate is **exactly** the one [`SessionLease::acquire`] already uses to decide a lock may
-/// be taken: an mtime that has not moved for [`STALE_AFTER`]. A live holder re-touches its lock
-/// every [`HEARTBEAT`], so a lock untouched for thirty seconds has no live holder — and `acquire`
+/// be taken: an mtime that has not moved for ``STALE_AFTER``. A live holder re-touches its lock
+/// every ``HEARTBEAT``, so a lock untouched for thirty seconds has no live holder — and `acquire`
 /// would steal it without hesitating. This function deletes precisely the files `acquire` would
 /// otherwise have to work around, so it can neither take a lock from a living process nor change
 /// any decision: removing a stealable lock only saves the next process from watching it.

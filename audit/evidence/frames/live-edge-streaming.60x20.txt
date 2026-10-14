@@ -1,0 +1,24 @@
+
+=== live-edge-streaming @ 60x20 ===
++------------------------------------------------------------+
+|idle        Faux (offline scripted) • thinking off · offline|
+|                                                            |
+|                                                            |
+|                                                            |
+|                                                            |
+|                                                            |
+|                                                            |
+|                                                            |
+|                                                            |
+|                                                            |
+|                                                            |
+|▎ ❯ run the tests                                           |
+|                                                            |
+|▪ I will start by listing the files in the workspace and    |
+|▪ then read the layout module to understand how the frame is|
+|▪ composed before making any changes to it.                 |
+|                                                            |
+|❯ ask anything                                              |
+|────────────────────────────────────────────────────────────|
+|insert · enter send · pageup    …\Epsilon\crates\epsilon-tui|
++------------------------------------------------------------+

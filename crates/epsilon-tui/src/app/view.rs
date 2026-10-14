@@ -164,8 +164,12 @@ impl App {
             let Some(card) = line.card.as_ref() else {
                 continue;
             };
-            let moved =
-                card.ended_at_ms.is_some() || streaming.is_some_and(|id| card.tool_call_id == id);
+            let moved = card.ended_at_ms.is_some()
+                || streaming.is_some_and(|id| {
+                    // `Some("")` is the abort sentinel: no id to match, so every
+                    // in-flight card is named — the abort settles all of them.
+                    id.is_empty() || (!card.tool_call_id.is_empty() && card.tool_call_id == id)
+                });
             if moved && !self.card_restale.contains(&line.id) {
                 self.card_restale.insert(line.id);
             }
@@ -414,10 +418,9 @@ impl App {
                 Hints::approval_deny_only()
             }
         } else if !self.viewer_tabs.is_empty() {
-            let editing = self
-                .viewer_tabs
-                .get(self.viewer_tab)
-                .is_some_and(|v| v.editing);
+            let viewer = self.viewer_tabs.get(self.viewer_tab);
+            let editing = viewer.is_some_and(|v| v.editing);
+            let truncated = viewer.is_some_and(|v| v.truncated);
             Hints {
                 mode: Some(if editing {
                     "edit".into()
@@ -434,6 +437,15 @@ impl App {
                     }
                     keys.push(("esc".into(), "cancel".into()));
                     keys
+                } else if truncated {
+                    // Invariant 7: `e` does not edit a capped file
+                    // (`start_edit` refuses), so the footer must not offer
+                    // it as edit.
+                    vec![
+                        ("arrows/pgup/pgdn".into(), "scroll".into()),
+                        ("e".into(), "edit unavailable".into()),
+                        ("esc".into(), "close".into()),
+                    ]
                 } else {
                     vec![
                         ("arrows/pgup/pgdn".into(), "scroll".into()),

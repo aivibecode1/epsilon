@@ -580,6 +580,42 @@ pub(super) fn draw_transcript(
     // Padding is therefore computed from what survived the window, not from a
     // separate test of the scroll state.
     let spare = visible.saturating_sub(rows.len());
+
+    // **The search highlight runs here, on the drawn rows, and not in the cache.**
+    // The cache is keyed by width and render state and deliberately carries no
+    // theme (see `CacheKey`), and a search is more transient than either: the
+    // same rows are queried, re-queried and cleared inside a second. Highlighting
+    // at draw time also means the mark lands on the text *as wrapped*, which is
+    // the text the reader is reading, rather than on the logical line's source.
+    //
+    // **Before the padding splice below**, and that ordering is the point: at this
+    // moment row `i` of `rows` is screen row `skip + i` exactly, which is the
+    // coordinate `line_of_row` speaks. Once the live-edge blanks are spliced in
+    // at the front the two no longer agree, and a highlight would land on
+    // whatever the padding happened to push it onto.
+    if let Some(s) = app.search.as_ref().filter(|s| !s.query.is_empty()) {
+        for (i, (_kind, line)) in rows.iter_mut().enumerate() {
+            // Every screen row of a matching line is a hit, so a hit that wrapped
+            // is marked on both of its rows rather than half of it.
+            let row_line = app.render_cache.line_of_row(skip + i);
+            let is_hit = row_line.is_some_and(|l| s.matches.binary_search(&l).is_ok());
+            let is_current = row_line.is_some_and(|l| s.matches.get(s.current) == Some(&l));
+            if is_hit || is_current {
+                let taken = std::mem::take(&mut line.spans);
+                line.spans = crate::ui::transcript::highlight_matches(
+                    taken,
+                    &s.query,
+                    if is_current {
+                        app.theme.search_strong()
+                    } else {
+                        app.theme.search()
+                    },
+                    is_current,
+                );
+            }
+        }
+    }
+
     if spare > 0 {
         let blank = (crate::state::LineKind::Blank, Line::from(Vec::new()));
         rows.splice(0..0, std::iter::repeat_n(blank, spare));
@@ -765,7 +801,12 @@ pub(super) fn draw_timeline(f: &mut Frame<'_>, app: &mut App, outer: Rect) {
     // The active filter is named in the title, because a picker that silently
     // hides entries is the "silent no-op" this repo treats as worse than a
     // missing feature. `f` cycles it.
-    let title = format!("timeline \u{00b7} {}", app.tree_filter.label());
+    // P-074: fork mode names itself — the same list forks instead of jumping.
+    let title = if app.timeline_fork_refill.is_some() {
+        "fork · pick a message".to_string()
+    } else {
+        format!("timeline \u{00b7} {}", app.tree_filter.label())
+    };
     let panel = Panel {
         theme: &app.theme,
         area: overlay::centered(outer, width, height),
@@ -914,7 +955,16 @@ pub(super) fn draw_timeline(f: &mut Frame<'_>, app: &mut App, outer: Rect) {
                 // the branch sizes that need it. Early in the list so the
                 // budget drops later hints first, not this one.
                 ("left/right", "page"),
-                ("enter", "jump"),
+                // P-074: fork mode forks on Enter instead of jumping — the
+                // hint names the action the key takes, not the other mode's.
+                (
+                    "enter",
+                    if app.timeline_fork_refill.is_some() {
+                        "fork"
+                    } else {
+                        "jump"
+                    },
+                ),
                 ("f", "filter"),
                 ("/", "search"),
                 // From the repertoire table: `⇧` is not in CP437, and this is the ONLY
@@ -940,7 +990,7 @@ pub(super) fn draw_timeline(f: &mut Frame<'_>, app: &mut App, outer: Rect) {
 pub(super) fn draw_slash_autocomplete(f: &mut Frame<'_>, app: &App, transcript_area: Rect) {
     use crate::ui::overlay::{self, Panel};
 
-    let candidates = crate::picker::slash_items(&app.input);
+    let candidates = app.popup_candidates();
     if !app.slash_open || candidates.is_empty() {
         return;
     }
@@ -949,11 +999,123 @@ pub(super) fn draw_slash_autocomplete(f: &mut Frame<'_>, app: &App, transcript_a
     // covers the conversation it is helping with.
     let capacity = 8usize.min(total);
     let start = crate::scroll::scroll_start(total, app.slash_index, capacity);
-    let height = capacity as u16 + 1 + 2; // rows + hint + frame
+    let window = &candidates[start..(start + capacity).min(total)];
+
+    // **The box takes the width the terminal offers.** It was capped at 56
+    // columns, and at 80 that wasted twenty-four of them on the transcript while
+    // the description column had thirty-seven to work with — which is why
+    // `browse session files in this workspace` arrived as `browse session files
+    // in this workspac…`. The description is the part a user reads to choose, so
+    // it gets the room, and the cap only bites on a genuinely narrow terminal.
+    let width = transcript_area.width.clamp(40, 80);
+    let inner_width = (width as usize).saturating_sub(4);
+
+    // The label column is **measured from the rows on screen**, not fixed: `/models`
+    // is seven columns and `/scoped-models` is fourteen, and a shared column lets
+    // the eye find the description by position rather than by scanning. The gap
+    // after it is the same `MIN_META_GAP` the shared row renderer reserves, so a
+    // slash row and a picker row use one rhythm.
+    const MIN_META_GAP: usize = 2;
+    let label_col = window
+        .iter()
+        .map(|item| crate::ui::layout::display_width(item.value.as_str()))
+        .max()
+        .unwrap_or(0)
+        + MIN_META_GAP;
+
+    let mut lines: Vec<Line<'static>> = Vec::with_capacity(window.len() * 2);
+    for (offset, item) in window.iter().enumerate() {
+        let selected = start + offset == app.slash_index;
+        // The bar marks selection for a monochrome terminal, and the accent
+        // carries it for the rest: two statements of the same fact, neither of
+        // which is the only one.
+        let bar = if selected {
+            app.theme.glyphs.cursor_bar
+        } else {
+            " "
+        };
+        let label_style = if selected {
+            app.theme.selected()
+        } else {
+            app.theme.text()
+        };
+        let value = safe_to_show(&item.value);
+        let label_width = crate::ui::layout::display_width(&value);
+        let mut row = vec![
+            Span::styled(
+                format!("{bar}{}", " ".repeat(overlay::GUTTER_AFTER_BAR)),
+                app.theme.accent(),
+            ),
+            Span::styled(value.clone(), label_style),
+        ];
+        // A description is wrapped onto continuation lines rather than
+        // truncated when it will not fit beside its command. Truncating said
+        // `show or switch the permission preset (A…` — worse than saying nothing,
+        // because it looks like the sentence ended there. The continuation is
+        // indented under the description column, so the second line reads as
+        // more of the same thought and not as a new row.
+        let desc_budget = inner_width.saturating_sub(1 + 1 + label_col).max(1);
+        let description = safe_to_show(&item.description);
+        if description.is_empty() {
+            row.push(Span::raw(" ".repeat(desc_budget)));
+            lines.push(Line::from(row));
+            continue;
+        }
+        let pad = label_col.saturating_sub(label_width);
+        row.push(Span::raw(" ".repeat(pad)));
+        row.push(Span::styled(description.clone(), app.theme.dim()));
+        lines.push(Line::from(row));
+        // Wrap what did not fit beside the command onto continuation lines rather
+        // than cutting it: a truncated description used to read
+        // `show or switch the permission preset (A…`, which is worse than useless
+        // because it looks as though the sentence ended there. `wrap_line` is
+        // measured in columns from a span list, and the continuation is padded to
+        // the column the description began, so a second line reads as more of the
+        // same thought rather than as a new row.
+        //
+        // **The first line's cut is on a word boundary, not on a column count.**
+        // `fit_width` cuts wherever the budget runs out, which leaves
+        // `...underscore spell` + `g)` on its own line — a one-word orphan that
+        // reads as a mistake. Breaking at the last space before the budget means
+        // the remainder is a whole phrase, which is what wrapping is for.
+        //
+        // **Split on a byte boundary that a grapheme respects.** The cut index
+        // comes from a column budget, so it can land inside a multi-byte
+        // sequence; slicing by it would panic or split a grapheme. Searching
+        // backwards for the nearest ASCII space lands on a char boundary by
+        // construction — a space is one byte and cannot be part of a sequence.
+        let head = crate::wrap::fit_width(description.as_str(), desc_budget);
+        let cut = if head.len() < description.len() {
+            let candidate = description[..head.len()].rfind(' ').unwrap_or(head.len());
+            description[..candidate].trim_end().len()
+        } else {
+            description.len()
+        };
+        if cut < description.len() {
+            let continuation = description[cut..].trim_start();
+            for wrapped in crate::wrap::wrap_line(&[(continuation, app.theme.dim())], desc_budget) {
+                let mut line = vec![Span::raw(" ".repeat(1 + 1 + label_col))];
+                line.extend(
+                    wrapped
+                        .into_iter()
+                        .map(|(text, style)| Span::styled(text, style)),
+                );
+                lines.push(Line::from(line));
+            }
+        }
+    }
+    lines.push(Line::from(""));
+    let arrows = overlay::up_down(app.theme.glyphs.up, app.theme.glyphs.down);
+    lines.push(overlay::hint_row(
+        &app.theme,
+        &[(&arrows, "pick"), ("tab", "apply"), ("esc", "dismiss")],
+    ));
+    let capacity = lines.len().min(20);
+    let height = capacity as u16 + 2;
     let area = Rect {
         x: transcript_area.x,
         y: transcript_area.bottom().saturating_sub(height),
-        width: transcript_area.width.min(56),
+        width,
         height,
     };
     let panel = Panel {
@@ -964,28 +1126,6 @@ pub(super) fn draw_slash_autocomplete(f: &mut Frame<'_>, app: &App, transcript_a
         border: None,
     };
     let inner = panel.open(f);
-
-    let mut lines: Vec<Line<'static>> = candidates[start..(start + capacity).min(total)]
-        .iter()
-        .enumerate()
-        .map(|(offset, item)| {
-            overlay::list_row(
-                &app.theme,
-                start + offset == app.slash_index,
-                item.value,
-                // The description is the hint column; `list_row` right-aligns it,
-                // and an empty one means "no hint" rather than a blank column.
-                Some(item.description).filter(|d| !d.is_empty()),
-                inner.width as usize,
-            )
-        })
-        .collect();
-    lines.push(Line::from(""));
-    let arrows = overlay::up_down(app.theme.glyphs.up, app.theme.glyphs.down);
-    lines.push(overlay::hint_row(
-        &app.theme,
-        &[(&arrows, "pick"), ("tab", "apply"), ("esc", "dismiss")],
-    ));
     f.render_widget(Paragraph::new(lines), inner);
 }
 
@@ -1251,6 +1391,141 @@ pub(super) fn draw_auth_prompt(f: &mut Frame<'_>, app: &App, outer: Rect) {
     if x < inner.x + inner.width && y < inner.y + inner.height {
         f.set_cursor_position((x, y));
     }
+}
+
+/// Level picker for bare `/think` (P-048): the provider-picker shape with
+/// one row per level and the current one marked in words, not only colour.
+pub(super) fn draw_think_picker(f: &mut Frame<'_>, app: &App, outer: Rect) {
+    use crate::ui::overlay::{self, Panel, Width};
+    let levels = crate::picker::match_think_levels(&app.input);
+    let width = Width::PANEL.resolve(outer);
+    let height = 12u16.min(outer.height.saturating_sub(2));
+    let panel = Panel {
+        theme: &app.theme,
+        // Top-aligned like the model picker: the two are the same list at
+        // different moments, and a panel that moves between them is disorienting.
+        area: Rect {
+            y: outer.y + 1,
+            ..overlay::centered(outer, width, height)
+        },
+        title: "thinking — pick a level",
+        focused: true,
+        border: None,
+    };
+    let inner = panel.open(f);
+    let theme = &app.theme;
+    let capacity = inner.height.saturating_sub(2).max(1) as usize;
+    let start = crate::scroll::scroll_start(levels.len(), app.think_pick_index, capacity);
+    let end = (start + capacity).min(levels.len());
+    let mut lines: Vec<Line<'static>> = Vec::new();
+    if levels.is_empty() {
+        lines.push(Line::from(Span::styled(
+            format!("no level matches '{}' — clear the filter", app.input),
+            theme.dim(),
+        )));
+    }
+    for (index, level) in levels.iter().enumerate().skip(start).take(end - start) {
+        // The current level is a word, not only a colour: consoles that
+        // cannot render the highlight still read which level is active.
+        let current = if *level == app.thinking {
+            Some("current")
+        } else {
+            None
+        };
+        lines.push(overlay::list_row(
+            theme,
+            index == app.think_pick_index,
+            level.as_str(),
+            current,
+            inner.width as usize,
+        ));
+    }
+    lines.push(Line::from(""));
+    let arrows = crate::ui::overlay::up_down(theme.glyphs.up, theme.glyphs.down);
+    lines.push(overlay::hint_row(
+        theme,
+        &[
+            ("type", "filter"),
+            (&arrows, "move"),
+            ("enter", "apply"),
+            ("esc", "keep current"),
+        ],
+    ));
+    f.render_widget(ratatui::widgets::Paragraph::new(lines), inner);
+}
+
+/// P-047: `/scoped-models` checklist over the F2 cycle scope.
+///
+/// The think-picker chrome (Panel, `list_row`, `hint_row`, measured
+/// capacity) over the flat catalog rows, with staged membership as the
+/// checkbox: `[x]` is in the scope F2 cycles, `[ ]` is not. Words, not only
+/// colour — the same console rule as the think picker's `current` mark.
+pub(super) fn draw_scope_picker(f: &mut Frame<'_>, app: &App, outer: Rect) {
+    use crate::ui::overlay::{self, Panel, Width};
+    let rows = crate::picker::build_rows_with(
+        &app.input,
+        &app.model_id,
+        &[],
+        &app.favorites,
+        None,
+        &app.live_cache,
+        &app.customs,
+    );
+    let width = Width::PANEL.resolve(outer);
+    let height = 16u16.min(outer.height.saturating_sub(2));
+    let panel = Panel {
+        theme: &app.theme,
+        area: Rect {
+            y: outer.y + 1,
+            ..overlay::centered(outer, width, height)
+        },
+        title: &format!(
+            "scoped models · {} of {}",
+            app.favorites.len(),
+            epsilon_core::config::FAVORITE_MAX
+        ),
+        focused: true,
+        border: None,
+    };
+    let inner = panel.open(f);
+    let theme = &app.theme;
+    let capacity = inner.height.saturating_sub(2).max(1) as usize;
+    let start = crate::scroll::scroll_start(rows.len(), app.scope_index, capacity);
+    let end = (start + capacity).min(rows.len());
+    let mut lines: Vec<Line<'static>> = Vec::new();
+    if rows.is_empty() {
+        lines.push(Line::from(Span::styled(
+            format!("no model matches '{}' — clear the filter", app.input),
+            theme.dim(),
+        )));
+    }
+    for (index, row) in rows.iter().enumerate().skip(start).take(end - start) {
+        let mark = if row.is_favorite { "[x]" } else { "[ ]" };
+        lines.push(overlay::list_row(
+            theme,
+            index == app.scope_index,
+            &format!("{mark} {} · {}", row.label, row.provider),
+            if row.is_favorite {
+                Some("in scope")
+            } else {
+                None
+            },
+            inner.width as usize,
+        ));
+    }
+    lines.push(Line::from(""));
+    let arrows = crate::ui::overlay::up_down(theme.glyphs.up, theme.glyphs.down);
+    lines.push(overlay::hint_row(
+        theme,
+        &[
+            ("type", "filter"),
+            (&arrows, "move"),
+            ("space", "toggle"),
+            ("^S", "save"),
+            ("esc", "discard"),
+        ],
+    ));
+    f.render_widget(ratatui::widgets::Paragraph::new(lines), inner);
 }
 
 /// M32b: provider picker for bare `/login` — opencode DialogProvider parity.

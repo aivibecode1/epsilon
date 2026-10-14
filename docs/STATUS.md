@@ -15,8 +15,703 @@ Last updated: 2026-10-12 (revised goal: desktop removed, TUI-as-IDE; Phase 1 in 
 Revised goal (2026-10-12): remove the desktop frontend and focus on core solidity,
 docs/navigability, and an opencode-style full-screen TUI (tree + editor + agent, mouse,
 palette) that meets or beats the reference UX. Native terminal stack only.
-Phase 1 (this session): delete `crates/epsilon-desktop`, rewire workspace/gates/docs,
-record ADR-039 with its revisit trigger, battery green with the tree clean.
+Phase 1 (landed 2026-10-12): `crates/epsilon-desktop` deleted (`8992fec`, ADR-039),
+workspace at 13 crates, `AGENTS.md` v4 rewritten from the tree and relocked (lock check green).
+Prior slice (2026-10-12, covered by every battery since): viewer refuses edit mode
+past the line cap, live-docs hygiene outside frozen history
+(`audit/evidence/gate-viewer-trunc-b-20261012.log`, `viewer-red/green2/clippy`).
+This slice (landed 2026-10-13): the `/` popup merges discovered skills and
+prompt templates (P-043) — `App::slash_candidates` over owned `SlashCandidate`
+rows, skills cached on the app and refreshed at startup + `/reload`, templates
+shadowing a head with their own description; extension commands recorded as
+no-target (no slash-command surface). Battery green
+(`gate-slash-merge-20261013`, 15/15 legs, 2034 passed / 0 failed / 10 ignored,
++3 over the previous battery, summed from the log's own `test result` lines).
+Evidence: `audit/evidence/gate-slash-merge-20261013.log` (+ `slash-merge-red-`,
+`slash-merge-green2-`, `slash-merge-clippy-`, `slash-merge-probe-20261013.log`;
+frames read at 80×24 and 100×30 from the probe log).
+Next slice (landed 2026-10-13): P-044 slash argument completer —
+`App::popup_candidates` (`crates/epsilon-tui/src/app/completion.rs`) is the
+single function every popup path (open, navigate, apply, draw) reads:
+head-mode rows, or second-word rows once the head is followed by a space
+(`/think` levels, `/skill` names, `/preset` postures, `/theme` palettes),
+ranked on the argument alone (`rank_candidates_by` in
+`crates/epsilon-tui/src/picker.rs` — ranking the full value ties on the
+head's own letters; caught two live Tab-order failures before the fix).
+`/model` and `/login` keep their dedicated pickers; deeper words out of
+scope. Correction, disclosed: the first GREEN battery for this slice
+(`gate-slash-args-20261013`, 2040 passed) still contained the temporary
+frame probe — an earlier removal patch deleted a stale copy while the live
+probe survived, found by reconciling the +6 delta against the 5 new tests
+(`--list` + `grep probe_slash`). The probe is removed (0 matches in tree
+and in this battery's log); verify deletions with `grep`, not with a patch
+success message. Battery green (`gate-slash-args2-20261013`, 15/15 legs,
+2039 passed / 0 failed / 10 ignored = prior 2034 + 5 new, reconciled per
+result line). Evidence: `audit/evidence/gate-slash-args2-20261013.log` (+
+`slash-args-red/green/clippy-20261013.log`; row content asserted on real
+80×24 frames in the 4 key-path tests).
+Next slice (landed 2026-10-13): P-048 bare-`/think` level picker —
+`think_pick_open`/`think_pick_index` (`crates/epsilon-tui/src/app.rs`,
+`app/session.rs`), bare arm opens preselected on the current level
+(`app/commands.rs`), key branch + paste parity (`app/keys.rs`),
+`draw_think_picker` on the `list_row`/`hint_row` chrome (`app/panels.rs`),
+dispatch (`app.rs`), shared `match_think_levels` filter (`picker.rs`) — the
+bare-`/login` provider-picker shape throughout, Enter applies through the
+`set_thinking` choke point, Esc keeps. Persisting a default is deferred (no
+default-thinking config key). Matrix repaired alongside: P-048 done-half
+recorded, P-046 refresh-on-miss recorded deliberately absent (miss text does
+not name a live provider; refresh stays `Ctrl+F`/M20), P-262–P-265 reworded
+(they claimed "no panel" — the picker exists; their deliberate cores are
+unannotated, reset-to-row-0 convention, no persist, no key advertisement).
+- Tests: 2 key-path (`bare_think_opens_a_level_picker_listing_all_levels`
+  asserts all 7 names + `current` on a real 80×24 frame;
+  `think_picker_enter_applies_and_esc_keeps_the_level`) + 1 filter unit;
+  sweep + `think_command_...` + `trust_review_holds_...` updated to the new
+  bare behavior (the last caught live by the first battery: bare no longer
+  reports inline).
+- Batteries: `gate-think-picker-20261013` FAILed the test leg on exactly
+  that sibling (679/1); `gate-think-picker2-20261013` passed tests but
+  FAILed `fmt --check` on the fix's line width; `gate-think-picker3-20261013`
+  GATE PASS, 15/15 legs, 2042 passed / 0 failed / 10 ignored (= prior 2039
+  + 3 new, reconciled per result line), probe-free (`grep probe_think`
+  = 0). All three logs preserved (failures kept for the trail) at
+  `audit/evidence/gate-think-picker{,-2,-3}-20261013.log` (+
+  `think-picker-green/clippy/probe-20261013.log`; frames read at 80×24 and
+  100×30 from the probe log).
+Next slice (landed 2026-10-13): P-074 `/fork` message picker —
+`Command::Fork(Option<String>)` carries the typed tail
+(`crates/epsilon-contracts/src/command.rs`), `timeline_fork_refill`
+(`app.rs`, `app/session.rs`) marks fork mode, `/fork [text]` opens the
+timeline picker in fork mode (`app/commands.rs`: `fork_user_rows`, user
+messages only, newest pre-selected), Enter forks through the one shared
+path (`fork_at_picked_row` in `app/keys.rs` — fork-mode Enter with refill
+and the pre-existing `k` chord without now call the same guard +
+destination rule + notice, instead of two copies) via
+`store.fork_branch_at` (fresh header, picked branch only), the typed text
+refilled into the composer; Esc closes without forking; the picker title
+reads `fork · pick a message` and the hint row `enter fork`
+(`app/panels.rs`); `refilter` re-applies the user-only rule so a query
+cannot resurface assistant rows the picker never showed. Correction,
+disclosed: the first frame dump showed the shared hint row still reading
+`enter jump` in fork mode (Invariant 7 — a key advertising the other
+mode's action); fixed at the tuple, and the generic overlay footer
+(`view.rs`, `enter choose`) deliberately left — it is mode-agnostic chrome
+shared by every overlay, and the in-panel hint is the precise one. Matrix:
+P-074 done, P-310 reworded to the picker (was "no separate dialog"),
+P-311 reworded (one-line rows, not three-line cards), P-026 blocker (2)
+dissolved (the fork value has a safe surface now; the M17b trigger
+conflict keeps it deliberately different alone), counts 87/114/0/138.
+- Tests: `fork_opens_a_message_picker_newest_preselected` (user-only rows,
+  newest pre-selected, `enter fork` on a real 80×24 frame),
+  `fork_enter_forks_at_the_picked_message_and_refills_composer` (new file
+  beside the source, picked text only, composer refilled),
+  `fork_esc_closes_without_forking`, `fork_creates_...` re-driven through
+  the picker; `*.jsonl` filter on dir counts (the session write lease
+  shares the directory — the established fork-test pattern).
+- Battery green (`gate-fork-picker-b-20261013`, 15/15 legs, 2045 passed /
+  0 failed / 10 ignored = prior 2042 + 3 new, reconciled per result
+  line), probe-free (`grep probe_fork` = 0 in tree and log). The first
+  battery for this slice (`gate-fork-picker-20261013`) also passed 15/15
+  but its log kept only the verdict line — my shell redirect collided
+  with the script's own `Tee-Object` on the same file; re-ran under a
+  fresh label with no redirect (the thin log deleted, not preserved).
+  Evidence: `audit/evidence/gate-fork-picker-b-20261013.log` (+
+  `fork-picker-green/clippy/probe-20261013.log`; frames read at 80×24 and
+  100×30 from the probe log).
+Next slice (landed 2026-10-13): P-047 `/scoped-models` checklist — the F2
+cycle scope is now editable in one screen instead of one Ctrl+F at a time.
+`Command::ScopedModels` opens `scope_open` (`app.rs` fields, `session.rs`
+init) over the flat catalog (`draw_scope_picker` in `app/panels.rs`:
+`[x]`/`[ ]` rows, `n of 16` cap in the title, think-picker chrome —
+Panel/`list_row`/`hint_row`/measured capacity). Space (or Enter) stages
+membership directly in `app.favorites`, the list F2 cycles, so the scope
+rescopes live; `Ctrl+S` is the only write (`App::save_scope` →
+`config::save_favorite_models_in`, the bulk twin of
+`toggle_favorite_model_in`, with thinking memories reconciled the way
+one-at-a-time starring does: added ids remember the session level, removed
+ids forget). Esc restores `scope_snapshot` and the stashed draft. Gated
+like cycling (M27): a pending trust review refuses with its notice.
+- Test correction, disclosed: the first GREEN run failed on the ambient
+  machine's real `config.toml` — `test_app()` loads favorites from the
+  global dir, so the fixture's staged scope carried `gpt-4` too. Both
+  persistence tests now clear `app.favorites` first (the `f2_cycles...`
+  test's existing pattern; machine-independent or they are not a test).
+  The second pass caught a real defect the state tests could not: the
+  frame showed `[ ]` on the row the user had just staged. Cause: the
+  current-model row is pushed before the favorites section with
+  `is_favorite` unset, and the dedupe drops the flagged copy — a staged
+  current model lost its mark. Fixed at the builder (`build_rows_with`
+  sets both flags on the current row) and pinned on the frame (`[x]`
+  assert in the staging test), because this is exactly the class
+  "asserting on state" misses.
+- Matrix: P-047 done; counts 88/113/0/138.
+- Tests: `scoped_models_opens_a_searchable_checklist` (open + filter on a
+  real 80×24 frame), `scope_space_stages_live_and_ctrl_s_persists`
+  (stage → `[x]` on the frame → save → reread from the file),
+  `scope_esc_discards_unstaged_toggles` (file untouched),
+  `favorites_bulk_save_round_trips_and_enforces_the_cap`; neighbouring
+  builders re-green (`favorites_section_orders_above_recents_...`,
+  `ctrl_s_in_the_picker_...`, `two_stage_picker_...`, `typing_a_query_...`,
+  `f2_cycles_...`) — 11 TUI + 3 config tests.
+- Evidence: `audit/evidence/scope-green-20261013.log`,
+  `scope-clippy-20261013.log` (both crates, `-D warnings`, clean),
+  `scope-probe-20261013.log` (frame read at 80×24 and 100×30, probe then
+  removed — `grep probe_scope` = 0). Battery:
+  `gate-scope-b-20261013` (below).
+
+Next slice (landed 2026-10-13): the slash popup's descriptions were unreadable.
+The box was a fixed 56 columns inside an 80-column terminal — twenty-four
+columns of transcript unused while the description had thirty-seven to work
+with — and `list_row` right-aligned the description, so each sentence started
+in a different column and prose was clipped to `browse session files in this
+workspac…` and `show or switch the permission preset (A…`.
+
+- The box now takes the width the terminal offers (`transcript_area.width
+  .min(80).max(40)`), the label column is **measured from the rows on screen**
+  so every command's description starts at one column, and a description that
+  still will not fit wraps onto a continuation line indented under that column
+  rather than being cut. The cut falls on a word boundary: a column-count cut
+  left `(underscore spell` / `g)` — a one-word orphan that reads as a mistake.
+- Reuse before adding: the wrapping is `wrap::wrap_line`, the crate's one
+  wrapping implementation, and the truncation cut is `wrap::fit_width`, the
+  same cut with no mark. No new width arithmetic.
+- Control proved it: the width reverted to 56 and the frame test failed with
+  exactly the reported symptom (`the slash popup clipped the description it is
+  offering`). A test that cannot fail for the reason it names is not a test.
+- Correction, disclosed: my first two assertions measured the **byte** offset
+  of a substring, so the frame's 3-byte box glyphs made an aligned row look
+  misaligned and then made a truncated one look fine. The third counts
+  `row[..at].chars()` — the unit the layout itself uses.
+- `HALF_GAP` was raised 1→2 for the header/footer gap and **reverted with the
+  reason recorded**: two columns cost the footer a whole hint at 80, and the
+  hint it dropped was `e edit unavailable` — the statement that a bound key
+  does not act (invariant 7). A hint is dropped whole or not at all, so one
+  decorative column is exactly one safety statement. The trade is written down
+  in `layout.rs` rather than left as an unexplained constant.
+- Tests: `the_slash_popup_fits_the_description_it_offers` (whole description
+  on a real 80×24 frame, no ellipsis, one description column) and
+  `a_long_slash_description_wraps_to_a_whole_continuation_line` (continuation
+  readable, no orphan). Frames were also dumped at 100×30 via a temporary
+  probe, read, and removed (`grep probe_slash` / `probe_turn` = 0).
+- Cache, per the standing small-drive instruction: `scripts/clear-cache.sh`
+  (new) clears `$CARGO_TARGET_DIR` (default `%LOCALAPPDATA%/Temp/epsilon-target`),
+  reports what it freed. 18 GB reclaimed this round; 35 GB → 53 GB free. Every
+  build or test round is followed by it.
+- Batteries, three rounds, and two failures this slice caused:
+  `gate-tui-quality-20261013` FAILed `check-line-endings` — the `patch` tool
+  wrote CRLF into four files and `cargo fmt --check` failed beside it, so both
+  legs were red for a reason that had nothing to do with the change. `cargo fmt
+  --all` and a byte-level `\r\n` → `\n` rewrite fixed it; the lesson is that a
+  tool-written file is not a gate-clean file until `check-line-endings` says so.
+  `gate-tui-quality-b-20261013` FAILed clippy on `manual_clamp`
+  (`.min(80).max(40)` → `clamp(40, 80)`).
+  `gate-tui-quality-c-20261013` **GATE PASS, 15/15 legs, 2051 passed /
+  0 failed / 10 ignored** (= prior 2042 + 2 new tests + 7 from the intervening
+  P-047 slice, reconciled per result line), probe-free (`grep probe_slash` /
+  `probe_turn` = 0 in tree and in the log). All three logs preserved (failures
+  kept for the trail) at `audit/evidence/gate-gate-tui-quality{,-b,-c}-20261013.log`
+  (+ `tui-quality-clippy-20261013.log`, `slash-popup-{probe,widths,fix,green}-`,
+  `slash-popup-CONTROL-narrow-`, `turn-frame-probe-`, `gap-check-20261013.log`).
+
+### Transcript spacing, the second half — landed (open slice, uncommitted)
+
+The user's third complaint was "proper spacing between responses and the display
+layout". A real two-turn frame (`test_app_with_faux`, a new fixture that hands the
+agent a scripted faux provider — `test_app()` gives it an empty one, so every
+`run_one_turn` in the suite produced only the out-of-script disclaimer text) showed
+the last assistant row touching `❯ ask anything` with **no row between them**, and
+the composer's prompt glyph is deliberately the one a submitted turn keeps, so the
+input line read as the answer's last line. The transcript's own block language is
+a blank row (`push_line`), and the layout declined to draw a second *rule* there
+(`Regions`), so the fix is the one thing left: the blocks already separate, and now
+the **last** block does too — `Regions::gap`, one row, blank, between the transcript
+and the composer.
+
+- `ui/layout.rs` gains `Regions::gap` (`Constraint::Length(1)`), `CHROME_ROWS` 3 → 4.
+  The module doc explains why the row came back *without* bringing back the removed
+  rule: a rule divides with a line, a blank is the row `push_line` already uses, and
+  a bare join made the composer read as one more transcript row. Honest about the
+  trade — the transcript lost a row to chrome, the thing the cut rule bought back.
+- `ui/shell.rs` renders an explicit blank `Paragraph` into the gap. Not for looks:
+  the transcript used to own that row, so a diff-based redraw would otherwise leave
+  the previous frame's last line sitting where the gap should be.
+- Frame proof at 80×24 and 100×30 (`a_finished_answer_separates_from_the_composer_it_feeds`,
+  plus the probe's own dumped frame): before → after is `▪ Confirmed…` / `❯ ask anything`
+  → `▪ Confirmed…` / blank / `❯ ask anything`.
+- **Control run**: reverting the constraint to `Length(0)` makes the test fail with
+  `the row above the composer must be blank, not "▪ That is where most of the
+  population sits, on the river."` — the reported defect, reproduced and then closed.
+- Three existing tests and one golden frame asserted the *old* geometry ("the
+  transcript runs into the composer with nothing between them"). They were honest
+  expectations of the behaviour the user reported as a defect, so each was moved to
+  the new position and its message updated rather than deleted: `regions_tile…`,
+  `the_chrome_budget_is_spent_on_header_blank_rule_and_footer`,
+  `a_short_conversation_sits_directly_above_the_ending_blank` (renamed),
+  `a_scrolled_back_view_fills_the_body_from_the_top`,
+  `a_streaming_tail_arrives_next_to_the_composer`,
+  `golden::the_one_rule_sits_between_the_transcript_and_the_composer`, and
+  ADR-034's first line.
+- Colour **is** separated by construction — `Role::user`, `Role::assistant` and
+  `Role::thinking` (`ui/theme.rs`), the composer's prompt on `theme.accent()` —
+  and it is now measured on the buffer rather than asserted from the table:
+  **"distinct text colours", the third half, landed below.**
+- **Verification**: `gate-transcript-gap-20261013` FAILed `check-citation-placement`
+  — adding the two layout tests pushed two parity citations for `display_width` past
+  `#[cfg(test)] mod tests` in `layout.rs`, so `pi-tui.md` now cited a test rather than
+  the function. Repointed to `ui/layout.rs:330` (`display_width`'s real line, which
+  moved because of the added tests) and re-checked: 0 inside a test module.
+  `gate-transcript-gap-2-20261013` **GATE PASS, 15/15 legs, 2053 passed / 0 failed /
+  10 ignored** (= tui-quality's 2051 + `test_app_with_faux`'s own test + the renamed
+  short-conversation one, reconciled per result line), probe-free (`probe_slash` /
+  `probe_turn` / `probe_transcript` = 0 in the tree and in the log). Both logs kept at
+  `audit/evidence/gate-gate-transcript-gap{,-2}-20261013.log`.
+
+### Distinct text colours, the third half — landed (open slice, uncommitted)
+
+The user's second complaint was "distinct text colors". A colour claim lives in
+the **buffer**, not in the text: `row_text` reads symbols, so a decorated frame and
+a plain one produce the same string. The styles were read off a real two-turn
+frame with `render_buffer` at 80×24, under both colour depths, and the pair is
+genuinely distinct — user `Rgb(0x7d,0xd3,0xfc)` against answer
+`Rgb(0xd7,0xdb,0xe2)` on truecolour, `Color::Cyan` against `Color::Reset` on
+ANSI-16, with the composer's prompt on `Color::Magenta`. The gutter and the body
+of a user row both resolve through `Role::user` (`ui/transcript.rs::row_style`,
+`render_cache.rs::style_for`), so a row cannot end up half-styled.
+
+- `a_user_row_and_an_answer_are_distinct_on_screen` asserts the first cell's
+  foreground of the prompt row and of the answer row, at **both** colour depths,
+  plus the glyph half: the prompt row starts with the cursor bar `▎` and the
+  answer never wears the caret `❯`. Distinct colour *and* distinct glyph, so the
+  distinction does not rest on colour alone.
+- **Control run**: collapsing both `role`s to `Role::assistant` (the gutter's and
+  the body's) fails the test with `the user row's colour under Truecolor`,
+  `left: Some(Rgb(215, 219, 226))` against the expected sky. The gutter alone is
+  what the first cell reads, so the control had to change both halves — one of
+  them alone leaves the test green, which is worth knowing the next time someone
+  reverts a style.
+- One artefact, recorded so it is not mistaken for a defect: re-theming an
+  **already-rendered** app serves truecolour cells under an ANSI-16 theme, because
+  `render_cache::CacheKey` keys on the palette and deliberately not on the colour
+  depth (`it is detected once at startup and never changes`). The probe hit it
+  first; the test therefore builds one app per mode and sets the theme before the
+  first frame.
+- Frames for the record: `audit/evidence/frames/` (44, from the crate's own
+  `frame_dump` fixture). `streaming.80x24.txt` carries a user row, a blank, a
+  compaction notice, a blank, three assistant rows and a blank before the queued
+  follow-up — the spacing and the two speakers in one screen.
+- `epsilon-tui --lib`: **691 passed / 0 failed / 9 ignored** (= 690 + this test).
+
+### Search matches, on the screen at last — landed (open slice, uncommitted)
+
+`P-218` was the last of the user's "make the TUI legible" complaints left open, and
+it was ours, not Pi's: the search panel has always named the query and counted the
+matches (`3 of 7`) while the transcript showed **none** of them. A reader took the
+count on trust and scrolled for themselves, and the row they were standing on was
+pixel-identical to the six others. The parity row even gave a reason it could not
+be done — *"the transcript is paged by row offset rather than re-rendered with
+styled spans"* — and that was true of the design it was written against, not of
+the one that exists now: the cache yields `Line`s, and a `Line` is spans.
+
+- `ui/transcript.rs::highlight_matches` splits a row's body spans at every
+  case-insensitive occurrence of the query and patches the row's **own** style
+  with the mark, so a hit inside a thinking trace stays dim as well as
+  underlined. The fold is per-character and records the byte offset every folded
+  character came from, so a match is cut on the original's char boundaries —
+  U+0130 folds to *two* characters and a byte offset read as a char index is an
+  off-by-one that marks the wrong letters. **That off-by-one was real**: the
+  first version of this sliced with `String::find` and my own multi-byte test
+  caught it producing `İ n` / `eedle ` across a query for `needle`.
+- `Role::search` joins the palette (dark `#ffd96b` 15.4:1 on black, light
+  `#8a6300` 5.4:1 on white, contrast `#ffe600` 16.6:1). Its two ANSI slots are
+  deliberately different members of the safe set — yellow on a black page, blue
+  on a white one (8.6:1) — which the ansi table enforces and the light-palette
+  floor explains: yellow is invisible on white. The underline carries the hit
+  where neither colour can, and the hit you are on is **reversed and bold**, so
+  `NO_COLOR` still says where you are.
+- The mark is applied at **draw** time, before the live-edge padding splice. That
+  ordering is the load-bearing detail: at that moment row `i` is screen row
+  `skip + i`, which is the coordinate `RenderCache::line_of_row` speaks. The first
+  attempt did it after the splice and the highlight landed on nothing — the
+  padding had shifted every row. `line_of_row` is new, the binary-search inverse
+  of the cache's existing `row_of_line`, over the same offsets.
+- Frames were rendered and **read** at 80×24, 100×30 and 60×20
+  (`audit/evidence/frames/search-marks*.txt`): the panel, both hits, and every
+  other row unmarked. Text dumps cannot show an underline, so the buffer is
+  asserted in `search_matches_are_marked_on_the_transcript_and_the_current_one_more_so`
+  — reversed vs underlined, and a row with no match marked not at all, which is
+  what stops "everything is underlined" from passing for "the match is".
+- **Control run**: `!s.query.is_empty()` → `false && …` and the frame test fails
+  at `the match you are on is reversed`.
+- Known limit, priced in a test rather than hidden: a query split across two
+  styled fragments (*need* | *le*) is not found. Matching inside a span keeps the
+  fragment's own style on the marked run; matching across one would mean
+  re-styling a neighbour's text. The reader still sees the word, unmarked, and
+  can search a shorter fragment.
+- `P-218` is **done**; counts move to **90 done / 111 partial**
+  (`check-parity-counts` green). Frames: `audit/evidence/frames/search-marks*`.
+- `epsilon-tui --lib`: **698 passed / 0 failed / 10 ignored** (was 691 + this
+  frame test + six unit tests + the ignored fixture is the tenth).
+- **Verification**: `gate-search-marks-20261013` **GATE PASS, 15/15 legs,
+  2061 passed / 0 failed / 11 ignored** (= 2054 + six unit tests + the frame
+  test; the eleventh ignored test is the new fixture), probe-free in the tree and
+  in the log. Log preserved at `audit/evidence/gate-gate-search-marks-20261013.log`,
+  frames at `audit/evidence/frames/search-marks*.txt`. Cache cleared afterwards:
+  14 GB reclaimed, 53 GB free.
+
+### Escape's third arm, pinned — and a parity row that understated its coverage
+
+`P-209` in the Pi matrix claimed our Escape-eats-the-popup behaviour had **no**
+test ("`slash_popup_opens_and_arrows_move_selection` is state only and does not
+press Esc"). Reading the row against the suite found the test one screen away:
+`esc_dismisses_popup_before_quitting_or_aborting` pressed Esc, asserted the popup
+closed and the text survived, then asserted the idle Esc quit. What was genuinely
+uncovered was the **interrupt** half — the sentence the row itself names first, and
+the half that matters, because an Esc meant to dismiss a popup must not throw away
+a running turn.
+
+- That half is now in the test, driven through `handle_key` on the real key path:
+  a run in flight (`AgentEvent::AgentStart`), a goal armed, the popup open. First
+  Esc → the popup closes and `goal_armed()` is still true. Second Esc → the goal
+  disarms, which only the interrupt arm does, and returns `false` rather than the
+  quit `true`. Third Esc, idle → quits. The interrupt arm's observable at this
+  seam is the goal disarm (`agent.set_goal_armed`, no session store needed);
+  `set_running_for_test` tried first failed for a real reason — the UI's running
+  flag is cleared by the event loop when the run *ends*, so the key handler cannot
+  clear it and the assertion was wrong, not the code.
+- **Control**: `if app.slash_open` → `if false && app.slash_open` in
+  `keys.rs:2139` and the test fails at `and it dismisses the popup`, the exact
+  symptom of the guard going missing — the first Esc lands on the interrupt and
+  the popup survives the keypress meant to close it.
+- `docs/parity/pi-tui.md`: `P-209` is now **`done`** with that test named, so the
+  counts move (area 3: 6 done / 12 partial → 7 / 11; total 113 partial / 88 done
+  → 112 / 89, `check-parity-counts` green). The area-3 reason line also named
+  `P-022` ("no test typing `!`") and `P-030` ("pinned by no test at all") — both
+  rows were already `done` with tests, so the summary was stale in **both**
+  directions and now says so rather than leaving a second, wronger copy of the
+  truth in the file.
+- `epsilon-tui --lib`: **691 passed / 0 failed / 9 ignored** (both new tests
+  landed; no third, no regression).
+- **Verification**: `gate-tui-colour-esc-20261013` was interrupted by the shell's
+  420 s foreground cap mid-build — a partial log kept at
+  `audit/evidence/gate-gate-tui-colour-esc-INTERRUPTED-20261013.log` rather than
+  re-used (a re-run on the same label truncates it, so the evidence would have
+  described nothing). Re-run as `gate-tui-colour-esc-b-20261013`: **GATE PASS,
+  15/15 legs, 2054 passed / 0 failed / 10 ignored** (= 2053 + the colour test;
+  the Esc slice added coverage, not a new test), probe-free in the tree and in
+  the log. Both logs preserved in `audit/evidence/`. Cache cleared afterwards:
+  14 GB reclaimed, 53 GB free.
+
+### Cuts that could not split a glyph, and a loop that could not end — landed
+
+The cross-platform rendering audit (criterion 1) found three defects, all with one root
+cause: **four functions in this crate decided where to cut text with `unicode-width`'s
+per-character rule while the wrap decision used its per-string rule, and the two disagree
+for exactly the characters a coding agent's output is full of.**
+
+| sequence | `UnicodeWidthStr::width` | sum of `UnicodeWidthChar::width` |
+|---|---|---|
+| `👨‍👩‍👧‍👦` (ZWJ family) | 2 | 8 |
+| `👍🏽` (skin tone) | 2 | 4 |
+| `❤️` (VS16) | 2 | 1 |
+| `1️⃣` (keycap) | 2 | 1 |
+
+Measured, not recalled. Consequences, in severity order:
+
+- **The draw thread hung.** `wrap_line`'s hard-split loop advanced by `cut.len()`, and
+  `split_at_width` returned the **empty** string when the row was narrower than the first
+  grapheme — every wide glyph at width 1. Zero advance with the condition still true never
+  terminates. **Reachable**: `app/panels.rs:1057` floors the slash popup's description
+  budget at one column with `.max(1)` and passes it to `wrap_line`, so a narrow terminal
+  with a long command head plus a description starting with CJK or an emoji froze the frame.
+  A probe run on the old code hung past 60 seconds and had to be killed.
+- **Emoji clusters were cut at row boundaries at most widths.** Measured on the old code:
+  `row0='👨‍'`, `row0='👨‍👩‍👧‍'` at widths 2–7 and 10; widths 8 and 9 happened to be clean.
+  A row ending in an orphaned ZWJ draws as a *different emoji* — one person where the text
+  said a family of four — and on some terminals the joiner combines with the next row.
+  Width-dependence is what makes the class easy to miss.
+- **`clamp_line`'s stated reason was false.** It claimed the two crates depended on
+  different *versions* of `unicode-width`. Measured against `Cargo.lock`, `ratatui-core
+  0.1.2` and `ratatui-widgets 0.3.2` both resolve to `unicode-width 0.2.2`, the same crate
+  the workspace pins; the second copy in the lock (`0.1.14`) comes from `uuid` and `vt100`,
+  neither in the render graph. The disagreement is real but lives elsewhere: ratatui's
+  `CellWidth for str` adds one column per halfwidth katakana sound mark (`ﾞ` U+FF9E, `ﾟ`
+  U+FF9F), which `unicode-width` calls zero-width, citing microsoft/terminal#18087. So
+  `display_width("ｶﾞ")` is 1 while the buffer advances 2 — live in the wrap budget too,
+  which `clamp_line` does not cover.
+
+**What landed.** One grapheme-aware primitive pair in `wrap.rs` — `prefix_at_width` and
+`suffix_at_width`, both cutting on `unicode_segmentation` boundaries and measuring with
+`UnicodeWidthStr::width` per grapheme. `split_at_width`, `layout::cut`,
+`layout::cut_keeping_tail` and `markdown::truncate_to_width` all now go through them, which
+deletes four hand-rolled implementations of one idea (ratatui's own `Buffer::set_stringn`
+was already grapheme-aware; we were reimplementing a worse version beside it). The
+hard-split arm gains a progress guarantee: when the cut is empty it emits the whole
+grapheme that does not fit, so nothing is lost and nothing is halved. At width 1 that row
+overhangs by one column — the deliberate, documented trade, bounded by the grapheme's own
+width and clipped at the edge exactly as a wide glyph in a too-narrow row already is
+everywhere else.
+
+- **Controls, run before the fix and after.** Reverting only `split_at_width` to the
+  char walk makes both new wrap tests **hang** — the production defect reproduced. Reverting
+  only `cut` fails with `width 2: the head cut through a cluster: "👨\u{200d}"`. Reverting
+  only `truncate_to_width` fails with `a ZWJ survived without its sequence:
+  "│ 👨\u{200d}👩\u{200d}…"` and breaks `a_table_becomes_columns` beside it, because the
+  padding counted columns the cut did not emit.
+- **Two of my own test detectors were wrong first**, and both are worth recording: a
+  "row ends in a zero-width character" check reports every `❤️` as broken (the VS16 is
+  *supposed* to be there), and a metric over the concatenated rows reports nothing at all
+  (concatenating re-joins the cluster). The check that works walks the input's graphemes
+  once and consumes exactly as many as each row holds.
+- `suffix_at_width` itself was wrong on the first attempt — it walked forward accumulating
+  and returned whatever offset it held when the sum passed budget, measured
+  `"ix👨‍👩‍👧‍👦👨‍👩‍👧‍👦"` for a budget of 4. Caught by its own test, not by review.
+- Verified-correct from the audit, recorded so nobody re-litigates them: **crossterm enables
+  `ENABLE_VIRTUAL_TERMINAL_PROCESSING` itself** and `Print` is ANSI-only on Windows, so
+  UTF-8 works on any Windows 10+ console; control characters are stripped twice
+  (`text_safety::display_safe` at source, ratatui's `set_stringn` again at draw); bidi
+  coverage is complete for U+202A–202E, U+2066–2069, U+200E/F, U+061C and all C0/C1 except
+  tab/LF/CR; `unicode-width 0.2.2` is Unicode 16.0.0 and the same table ratatui uses.
+- **Known limit, priced rather than hidden.** The ASCII repertoire (`EPSILON_ASCII=1`) covers
+  the UI's chrome glyphs, not model or tool text — a CJK filename or an emoji in tool output
+  is still mojibake on a legacy console, and sanitizing it would misrepresent the data. Now
+  documented in `docs/user/troubleshooting.md` beside the variable, so a user who sets it
+  and still sees boxes has an explanation.
+- **Disclosed**: the first battery for this slice failed `check-citation-placement` — adding
+  the layout tests pushed `display_width` from line 330 into the test module, so two parity
+  rows cited a harness line. Re-pointed to 417, the real function. Log kept at
+  `audit/evidence/gate-grapheme-cuts-20261013.log`.
+- **Verification**: second battery `gate-grapheme-cuts-b-20261013` (below) GATE PASS.
+  Working state: [`agents/memory/grapheme-cuts.md`](../agents/memory/grapheme-cuts.md).
+
+### The halfwidth katakana sound mark — the audit's last finding, closed
+
+The measurement disagreement the audit recorded as still open is now settled, and the
+direction was decided by what the render does. `ratatui-core`'s `CellWidth for str`
+(`buffer/cell_width.rs`) is `unicode-width` **plus one column per halfwidth katakana
+sound mark** — `ﾞ` (U+FF9E) and `ﾟ` (U+FF9F) — because `unicode-width` reports both as
+zero-width (they carry `Grapheme_Extend`) while terminals draw them as independent
+halfwidth cells. ratatui cites Ruby's reline PR #832 for the same class.
+
+Every place this crate measured a width with the uncorrected rule under-counted by one
+column per mark, and there were **four** such places, not one:
+
+1. `ui::layout::display_width` — the measurement every status-row and footer budget is
+   counted in.
+2. `wrap::prefix_at_width` / `suffix_at_width` — the cut decision, so a row boundary fell
+   in the wrong place.
+3. `wrap_line`'s word-fit and hard-split loops.
+4. `ui::card::cols` — and this was the consequential one: `render_cache` asks `card::row_width`
+   whether a row needs wrapping, so a katakana row measured one column short per mark was
+   **accepted as fitting and never wrapped**, then drawn twice its budget and clipped.
+
+The fix is one correction applied once, in `display_width`, with the other three delegates
+re-pointing at it. `display_width` and `wrap`'s per-grapheme sum are now the same formula
+ratatui applies, so they agree by construction rather than by coincidence.
+
+- **Verified against ratatui's own trait, not a number.** `display_width_agrees_with_the_rule_ratatui_places_cells_by` asserts `str::cell_width() == display_width` across the emoji, the marks, CJK, ASCII and a mixed sample, so a ratatui bump cannot silently move the two apart. Reverting the correction fails it.
+- **The wrap test measures with ratatui's rule too.** Its first version asserted `display_width(row) <= width`, which passes under *either* rule when wrapper and assertion share a unit — it proved nothing. It now asserts `row.cell_width() <= width`, and the control (revert `display_width` only) fails it at width 2 with four columns.
+- **Two controls, one for each half**: reverting `display_width` fails the agreement and wrap tests; reverting only the cut functions' measurement, with `display_width` left fixed, still fails the wrap test — the two were independently wrong.
+- **Frame witness** at 100×30, 80×24 and 60×20, driven through `render_cache` (a *notice* row would not have reached `wrap_line` at all). Every katakana row fills its frame exactly.
+- **Recorded trap**: I first measured that frame as 119 columns wide and nearly "fixed" a correct render. `cell_width = unicode_width + marks = (chars − marks) + marks = chars`, because the marks are the only zero-width characters present — my script had added the marks to a count that already contained them. The arithmetic was wrong, not the code. The identity is now written into the frame test so the next reader does not repeat it.
+- **Disclosed**: this also pushed `display_width` from line 417 to 502, so the two `pi-tui.md` citations were re-pointed again.
+- **Verification**: battery `gate-sound-marks-a-20261013` (below) GATE PASS.
+  Working state: [`agents/memory/grapheme-cuts.md`](../agents/memory/grapheme-cuts.md).
+
+### The file editor gained undo, and the `Delete` key it never had — landed
+
+The cross-platform work found its last defect by asking what the *editor* actually
+did, and the answer was: less than the composer beside it. The file viewer's edit mode
+had `Backspace`, `Enter`, the arrows, `Home`/`End` — and then a `_ => {}` arm that
+**silently discarded everything else**, including `Delete`. It also had **no undo at
+all**, while the composer has had `Ctrl+Z` since M16. So a user editing a file had no
+way back from a bad backspace except `Esc` — which discards *everything*.
+
+**What landed.**
+
+- **`Delete` (forward delete)** — the mirror of `Backspace`: removes the character
+  under the cursor, joins the next line at end of line, and is a no-op (not a panic)
+  at the very end of the buffer.
+- **`Ctrl+Z` / `Ctrl+Y` / `Ctrl+Shift+Z` undo and redo** over the file buffer, and an
+  exhausted rail is *reported* ("nothing to redo") rather than swallowed — the same
+  defect class as the swallowed `Delete`.
+- **`UndoStack` generalized** from the composer's `(String, cursor)` snapshot to the
+  line-buffer shape. Duplicating a bounded stack with duplicate suppression and a redo
+  rail to get file-editor undo would have been the second copy of one idea in the same
+  crate.
+
+**Controls, one for each half.** Removing the key arms makes both handler tests fail.
+Removing only `push_undo` from the five mutating primitives — with the ops intact —
+fails six more. And `Ctrl+Z` reaching the *file* buffer rather than the composer's is
+proven by a test that types into a file, not the composer.
+
+**Frame witness** at 100×30, 80×24 and 60×20. The edited frame reads
+`the quick brown fox!` with `(modified)` in the title; the frame after `Ctrl+Z` reads
+`the quick brown fox` with no marker. The title's own state marker is what makes it
+readable at a glance — the frame is the evidence, not an assertion about state.
+
+**What is deliberately still absent** from the file editor, so it is not mistaken for
+oversight: text selection, cut/copy/paste, multi-cursor and `Tab` insertion. Each is a
+separate feature with its own keybinding question, and none is the user's work being at
+risk — which undo was.
+
+### An aborted turn settles its in-flight tool cards — landed (P-051)
+
+Aborting used to push the stopped-reply line and leave the card exactly as it
+was — , spinner intact — so the transcript showed a tool still working on
+a turn that had ended. Session repair at the *next launch* synthesised results
+for those calls, which fixed the stored session and never the screen.
+
+A new `CardStatus::Stopped` settles every `Pending`/`Running` card and appends one
+line to its body. It renders as the warning glyph and the word **stopped**, not as
+a cross and **failed** — the tool did not fail, the turn was stopped, and a red X
+on a command that was never allowed to finish reads as a defect where there was a
+decision (C-110's wording convention). Called from both the live path and the
+resume path.
+
+**The control is the interesting part.** The unit test calls the helper directly,
+which proves the helper and *not the wiring* — removing both call sites left it
+green. The control that matters drives the real `apply` path: a `MessageEnd`
+carrying a `ToolCall` block (that is what **commits** the card;
+`ToolExecutionStart` only promotes `pending` to `running`), then a `MessageEnd`
+with `StopReason::Aborted`. Verified by control: removing the two settle calls
+fails it.
+
+**The frame witness found a second bug, and it was the one that mattered.** Settling
+the status and the body was not enough to make the change reach the screen: the
+render cache rebuilds a row only when its line is *named*, and `restale_cards` names
+a card whose `ended_at_ms` is set. So the first frame witness — drawn *before* the
+abort, which is the live streaming case — still showed the ghost spinner with the
+correct data underneath. The golden test I had written passed only because it never
+drew a frame before the abort. **`settle_cards_for_abort` now sets `ended_at_ms`**,
+which is also semantically right: the call did end, just not with a result.
+
+The witness also had to drive the real dispatcher (`apply_with_scroll`), not
+`app.ui.apply` directly — the naming lives in the dispatcher, and a test that
+bypassed it proved nothing.
+
+**Controls**: removing `ended_at_ms` fails the frame test. An attempt to name
+aborted cards in `restale_cards` was built, controlled, found redundant (naming runs
+*after* `apply`, so `ended_at_ms` is already visible to it), and **deleted** — the
+smaller change, one mechanism, and the control that proved it redundant is why it
+went. Recorded in
+[`agents/memory/grapheme-cuts.md`](../agents/memory/grapheme-cuts.md).
+
+### Find works in the editor; replace was withdrawn rather than half-shipped
+
+`/` in edit mode now searches **the buffer being typed into**, and stepping moves the
+caret to the match. Before, the key typed a literal slash into the text: the edit-mode
+key arm returned before the find arm ran, and the hit list was computed from the file as
+opened, so it named text the user had already changed. Two unit tests cover it, plus a
+frame witness that steps the caret onto the second needle.
+
+**Find-and-replace was built, tested green, and then deleted**, and the reason is worth
+recording. The buffer ops worked — and their tests caught two bugs I wrote: a snapshot
+taken *after* the mutation makes `Ctrl+Z` restore the replaced text, and a replace that
+changes nothing still pushes a snapshot and poisons the rail. Both fixed. Then the frame
+witness caught the one that mattered: **the replacement line was never drawn.** The
+> **The row-budget diagnosis below was disproven and is kept only as history.**
+> A control and a panel-scoped frame test showed the find line and the panel's own
+> hint row **were never clipped** — both are drawn even when a long file fills the
+> window, and reverting the reservation changed no frame. The paragraph arithmetic
+> that looked convincing was measured to be wrong: the `+1` row in the painted area
+> is exactly what fits the find line. What remains unknown is why the *replacement*
+> line was not drawn, and that is not recoverable retrospectively — the fix is to
+> re-add the field, measure, then fix, in that order. Do not reuse the reasoning below.
+>
+> The panel pads its line list to the panel height and *then* appends the query line,
+> the replacement line and the hint row, and a `Paragraph` paints only its first
+> `inner.height` rows — so the extras fall past the edge. Shipping an input the user
+> cannot see is the silent no-op the rules forbid, so the feature came out whole
+> rather than ship half of it.
+
+The row-budget defect is real and identified in
+[`agents/memory/grapheme-cuts.md`](../agents/memory/grapheme-cuts.md) with the exact
+fix. It is the next concrete step in this area.
+
+
+
+The harness read two skill roots: `~/.config/epsilon/skills` and the workspace's
+`.epsilon/skills` plus `.agents/skills`. `SKILL.md` directories are an **open
+convention**, not an Epsilon one — Claude Code shipped it and Codex, Gemini CLI,
+Cursor, Windsurf, opencode and DeepSeek Harness all read the same shape — so a user
+who had been running any of those already had skills on disk and was told *"no
+skills discovered"*. On this machine that was 27 real skills in `~/.gemini/skills`
+and `~/.agents/skills`, none of which the harness could see.
+
+- The root table is in `epsilon_core::skills` (`user_roots`, `project_roots`,
+  `all_roots`), one place for every caller. **Why core and not runtime**: two
+  front ends need the list — the composition path (`build_runtime`) and the TUI's
+  `/reload` — and `epsilon-tui` cannot depend on `epsilon-runtime` (that edge is a
+  cycle in review terms; the runtime is a dev-dependency of the TUI and the shipped
+  binary must not reach into the thing that composes it). A table owned by runtime
+  would have to be copied into the TUI, which is the second-copy-of-composition
+  defect `AGENTS.md` §2.2 names. What stays in runtime is the genuinely
+  compositional part: which launch this is, and whether it trusts the workspace.
+  `epsilon_runtime::skill_roots_trusted` is now a delegation.
+- Roots: user tier `.config/epsilon`, `.claude`, `.codex`, `.gemini`, `.agents`
+  under the home directory; project tier `.epsilon`, `.claude`, `.codex`,
+  `.gemini`, `.cursor`, `.windsurf`, `.opencode`, `.dsh`, `.agents` under the
+  workspace. Each convention is cited at its line in `skills.rs`. Every project
+  root sits behind the existing trust gate — a repository that ships
+  `.claude/skills` is writing instructions for whoever opens it, exactly as one
+  that ships `.epsilon/skills` does.
+- Precedence follows the ecosystem rather than inventing a rule: `discover` lets
+  the later root win a name collision, so the user tier precedes the project tier
+  and inside a tier the portable `.agents` alias comes last and wins — Gemini
+  CLI's documented rule, followed so one skill tree resolves the same way in every
+  tool that reads it.
+- **`trust_requiring_resources` named one of the nine project roots.** A repo
+  shipping `.claude/skills` produced a workspace the trust gate called clean: no
+  prompt, and then — being untrusted — no skills either, with nothing on screen to
+  say why. The gate now iterates `project_skill_roots`. Tests:
+  `a_workspace_shipping_another_harness_skills_directory_is_a_trust_gate` and its
+  negative control (the control asserts the *walk* agreement, because on a machine
+  whose home holds `.agents/skills` the ancestor rule fires for a temp directory —
+  that is correct and is why "found is empty" would have been the wrong assertion).
+- **The TUI's `/reload` skipped the trust gate** every sibling path applies. It
+  carries `!self.trust_review_pending` and the agents reload one screen below it
+  passes that flag; skills did not, so an untrusted checkout had its
+  `.epsilon/skills` loaded by `/reload` after startup had refused them.
+- **Duplicates, two levels.** `dedupe_roots` collapses two spellings of one
+  directory — running Epsilon in your home directory otherwise puts
+  `~/.claude/skills` in both tiers, and every skill would be reported as shadowing
+  *itself*, on every launch. The key canonicalizes the nearest existing ancestor
+  because most of these roots do not exist. `discover` already deduped by skill
+  name.
+- **The scope label looked up the wrong key.** `skill_lines` asked the scope map
+  for the skill's own directory while the map is keyed by the root, so `get`
+  returned `None` for every skill ever discovered and the `(user)` / `(project)`
+  labels never rendered. This was my own uncommitted addition from an earlier
+  turn; the frame test is what caught it.
+- `M223` widened, not weakened: the gate that counted `global_dir` implementations
+  now counts `home_dir` too, so reading `$HOME` stays a one-place rule. The new
+  `epsilon_llm::auth::home_dir` is that one place and `global_dir` delegates to it.
+- Deliberately **not** scanned, each recorded in the module comment rather than
+  left to be discovered: nested monorepo directories (`<subdir>/.claude/skills`),
+  command-line-added roots (`--add-dir`, Codex's `/etc/codex/skills`), plugin
+  skills, and rules files that are not skills (`.clinerules`, `.cursor/rules`,
+  `CONVENTIONS.md`, …).
+- Tests: 7 in `epsilon-core` (the cross-harness sweep, both precedence rules, the
+  trust curtailment, root dedupe + its observable "no self-shadow notice", the
+  key for a root that does not exist, the table's own contents), 2 in
+  `epsilon-runtime` (the trust gate and its control), 1 frame test
+  (`the_skills_listing_draws_the_scope_label_on_a_real_frame`, 100×120 scrolled to
+  the top, 80×24 and 100×30 live). Three neighbouring TUI tests were re-driven:
+  two asserted counts that assumed a two-root list and now assert `>= 1` or scroll
+  before reading — a count pinned to one machine's home directory is not a test.
+- **Disclosed**: the first battery for this slice (`gate-gate-skills-crossharness-20261013`)
+  went red on clippy (`needless_borrow` on `&user.path()`) and I edited the source
+  while it was still running, so that log describes a mixed tree and is **not**
+  cited as evidence. The two rounds after it are.
+- **Verification**: `skills-crossharness-final-20261013` **GATE PASS, 15/15 legs,
+  2073 passed / 0 failed / 0 ignored** (= 2072 + the frame test), probe-free in the
+  tree and in the log, debug info off (`CARGO_PROFILE_DEV_DEBUG=0`,
+  `CARGO_PROFILE_TEST_DEBUG=0`, named here per `AGENTS.md` §4). Evidence:
+  `audit/evidence/skills-crossharness-final-20261013.log` and
+  `audit/evidence/skills-crossharness-frame-20261013.log` — the `/skills` frame
+  showing 27 `(user)` skills from `~/.gemini` and `~/.agents` plus
+  `commit-craft — Craft commits. (project)`. Working state:
+  [`agents/memory/skills-crossharness.md`](../agents/memory/skills-crossharness.md).
 
 ### Goal session 2026-10-11 (complete, 10/10 tasks)
 
@@ -63,7 +758,7 @@ Rule: a working, verified product beats breadth. Anything cut goes in the
 | 11:45 | 3. **M276 continued** — second batch | Done and verified. The three security rows the review named: **A33** (a `.env.` spelling), **A34** (credentials to third-party children), **A36** (goal gates run shell nobody was asked about). |
 | 11:50 | 4. Repo gates after the `AGENTS.md` v2 rewrite | Green — `check-links` 642/0, `check-control-bytes` 932/0, `check-line-endings`, `check-agents-lock` matches. |
 | 11:40–12:05 | 5. Reference study and credit | Done — six reference pages under `docs/references/`, [`references/TUI-DECISION.md`](references/TUI-DECISION.md), and root [`CREDITS.md`](../CREDITS.md). |
-| 12:00–12:10 | 6. Documentation set | Done — [`START-HERE.md`](START-HERE.md) + [Arabic](START-HERE.ar.md), [`CONTRIBUTING.md`](../CONTRIBUTING.md), and a README in all 14 crates. |
+| 12:00–12:10 | 6. Documentation set | Done — [`START-HERE.md`](START-HERE.md), [`CONTRIBUTING.md`](../CONTRIBUTING.md), and a README in all 14 crates. |
 | 12:10 → | 7. **M277–M291** — the hardening run | Fifteen milestones landed against a fixed tree, each with a battery: rollback made reachable, manifests corrected, two command lies closed, the screen-reader tree built, the transcript virtualised, layout agency, the registry move, the backup-ordering fix. Recorded user-visibly in [`../CHANGELOG.md`](../CHANGELOG.md); the reasoning is in **Roadmap** and **Known-broken** below. |
 | 07:20 (10-04) | 8. Four read-only investigations | Done — the session lease, subagent permissions, the `.pre-epsilon` backup ordering, and whether the transcript is actually virtualised. **Two roadmap items were wrong as written and one premise was false**; all three are corrected below rather than acted on blindly. |
 | 07:35–08:15 (10-04) | 9. **M290 finished, M291 landed** | M290's files were on disk from an **interrupted** battery and unverified; they are now verified and the desktop reads the registry from `epsilon-contracts`. M291 fixes the backup ordering defect with the RED control run first. |
@@ -242,7 +937,7 @@ otices. **And one real lesson about egui: a click's effect is applied by the wid
 | Decision | Where | One line |
 |---|---|---|
 | **TUI stack: keep Ratatui** | [`references/TUI-DECISION.md`](references/TUI-DECISION.md) | OpenTUI needs Bun ≥ 1.3 / Node ≥ 26.4 at runtime and ships 8 prebuilt native FFI packages, against a product promise of one binary with no Node or Python runtime. Licence was **not** the deciding factor — both are MIT. |
-| **One command registry** | `AGENTS.md` §2.4 | Declared once, read by both front ends; per-front-end capability as data, not a second list. |
+| **One command registry** | `AGENTS.md` §2 | Declared once, read by every mode; per-mode capability as data, not a second list. |
 | **`AGENTS.md` locked by SHA-256** | `scripts/check-agents-lock.py` | An agent that can rewrite the rules it is held to is not governed by them. Negative control run: a tampered file exits 1. |
 
 ### Corrections to the *old* `AGENTS.md` (dropped by the v2 rewrite)
@@ -309,8 +1004,8 @@ inventories are inventories.
 
 | Matrix | Rows | done | partial | missing | deliberately different |
 |---|---|---|---|---|---|
-| [`parity/pi-tui.md`](parity/pi-tui.md) | **339** | 69 | 101 | 141 | 28 |
-| [`parity/dsh-desktop.md`](parity/dsh-desktop.md) | **433** | 32 | 95 | 257 | 49 |
+| [`parity/pi-tui.md`](parity/pi-tui.md) | **339** | 86 | 115 | 0 | 138 |
+| [`parity/dsh-desktop.md`](parity/dsh-desktop.md) | **433** | 32 | 95 | 257 | 49 — **RETIRED (ADR-039): frozen history, not a gap list** |
 
 > **Corrected 2026-10-06 by [an independent review](reviews/2026-10-06-objective-review.md).** The
 > DSH row above read `11 / 85 / 295 / 42` and was wrong in two columns. Recounted from the matrix's
@@ -3229,6 +3924,40 @@ bodies, not counted line by line.
 ---
 
 ## Next
+
+### Usage and cost accounting — audited, criterion 6
+
+An audit of the whole accounting pipeline against criterion 6, rather than against the
+assertion that errors must exist. What was found:
+
+- **The wire boundary is correct and tested.**
+  `crates/epsilon-llm/tests/usage_arithmetic.rs` (M140) holds eleven tests, and its
+  header cites pi's own rule at `openai-completions.ts:1534` and
+  `openai-responses-shared.ts:567`: cached and cache-write tokens are *inside*
+  `input_tokens` and must be subtracted. That is the double-count that would have
+  inflated context, cache rate and cost at once.
+- **The pricing arithmetic is correct and was debugged.**
+  `crates/epsilon-tui/src/ui/cost.rs:124` prices four buckets in integer micro-USD,
+  then divides once (`:88`). Dividing per component let a sub-micro-USD bucket truncate
+  to nothing, so a session could total to free.
+- **Per-model pricing exists** (`breakdown_per_model`, M141): a session that switches
+  models is priced in pieces, not at a blended average.
+- **Subagent usage is folded in** (M229/A11, `epsilon-core/src/lib.rs:2553`): the
+  `task` tool's child makes billed requests on the parent's account, and that usage was
+  previously aggregated nowhere.
+- **Retry cannot double-count**, established by reading the accumulator: usage is summed
+  on one line (`:3558`) keyed to `StreamEvent::Done`, and `Done` is terminal (`:3124`).
+  An attempt that never reached `Done` contributes nothing; one that did is never
+  retried.
+
+**The retry claim is a code read, not an executed test** — the one part of this audit
+with no failing-on-purpose control, recorded as such.
+
+**Conclusion:** criterion 6 describes defects already found, fixed and
+regression-tested under M140/M141/M229/A11. No new defect was located and none was
+invented to satisfy the expectation. The honest remaining risk is providers exposing
+usage categories the decoder does not map — reasoning tokens being the named case with
+no site found in this audit.
 
 ### The five investigations of 2026-10-08 — what to take next, in value order
 
