@@ -44,6 +44,22 @@ See [`auth.md`](auth.md) for client-id resolution and refresh limitations.
 command = "code --wait"   # used by Ctrl+O / Alt+E and /editor
 ```
 
+## Launch modes
+
+Two flags change what the agent may do before it answers anything. Both are
+composed into the permission engine's layer stack at startup, so they hold for the
+whole run regardless of what the model asks for.
+
+| Flag | Effect |
+|---|---|
+| `--plan` | Plan mode. A layer that denies every mutating capability is prepended to the engine and monotonic-deny keeps that boundary against project rules and mid-run approvals (ADR-006's F10 amendment). Reads, searches and diagnostics still work; writes, edits and shell commands that change anything are refused with the reason. There is no exit-normal transition — to allow edits, restart without the flag |
+| `--preset <name>` | Set the permission baseline: `auto` (default), `workspace-write`, `read-only`, `danger-full-access`. The elevation presets are deliberately not persisted; `danger-full-access` in particular is re-confirmed each launch |
+| `--fallback <model>[,<model>…]` | After this flag's model list, fall through to the next candidate when a call fails for a retryable reason. Each candidate resolves its own credentials at stream time |
+| `-c` / `--continue` | Resume the newest session for the current workspace instead of starting a new one |
+
+`--plan` and `--preset` stack: plan mode's deny layer is prepended first, so a
+`danger-full-access` preset cannot reopen mutations under `--plan`.
+
 ## Environment
 
 | Variable | Purpose |
