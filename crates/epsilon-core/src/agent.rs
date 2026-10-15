@@ -125,6 +125,20 @@ impl Agent {
         self.gate.current_preset()
     }
 
+    /// Enable (`true`) or disable (`false`) plan mode mid-session.
+    ///
+    /// Returns what the gate reported: `false` means nothing switched (a
+    /// fixed-posture gate with nothing to switch, or a lock failure the gate
+    /// refused fail-closed). Mirrors [`Self::set_preset`].
+    pub fn set_plan_mode(&self, on: bool) -> bool {
+        self.gate.set_plan_mode(on)
+    }
+
+    /// Whether plan mode is on (what bare `/plan` reports).
+    pub fn in_plan_mode(&self) -> bool {
+        self.gate.in_plan_mode()
+    }
+
     /// Append a `model_change` entry to the attached session, if there is one.
     ///
     /// Called by [`Agent::set_model_id`]; separate only so the test that drives a front end's

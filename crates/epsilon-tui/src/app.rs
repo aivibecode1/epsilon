@@ -519,6 +519,10 @@ pub(crate) struct App {
     /// `draw` has no agent, and the panel owns the keyboard, so this cannot go stale
     /// under the user.
     settings_preset: String,
+    /// Plan-mode mirror for the settings panel's plan row, captured when the
+    /// panel opens alongside `settings_preset` and refreshed when Enter
+    /// changes it. Same reason: the draw path carries no agent.
+    settings_plan: bool,
     /// P-047: `/scoped-models` checklist over the F2 cycle scope. Staged ==
     /// `favorites` (the cycle list reads it, so Space rescopes live); the
     /// file moves only on Ctrl+S. `scope_snapshot` is the pre-open list Esc
@@ -1221,7 +1225,39 @@ impl App {
         // P-079's sibling (ADR-032): a pending preset switch holds ALL
         // submits until answered. Only the two answers are accepted; anything
         // else repeats the question (the gate must not eat a prompt).
+        // Criterion 4 reuses this same gate for a pending plan DISABLE
+        // (held under the `PENDING_PLAN_DISABLE` sentinel): disabling is the
+        // privilege-raising direction, so it asks exactly like
+        // danger-full-access does, and enabling never reaches this arm.
         if let Some(name) = self.pending_preset.clone() {
+            if name == Self::PENDING_PLAN_DISABLE {
+                match text.trim().to_ascii_lowercase().as_str() {
+                    "yes" | "y" => {
+                        self.pending_preset = None;
+                        if agent.set_plan_mode(false) {
+                            self.settings_plan = false;
+                            self.ui
+                                .push_notice("plan mode: off (was on) — mutations allowed again");
+                        } else {
+                            self.ui.push_notice(
+                                "plan not switched — the gate reported no change (off)",
+                            );
+                        }
+                    }
+                    "no" | "n" => {
+                        self.pending_preset = None;
+                        self.ui.push_notice(
+                            "plan disable cancelled — still on (writes, edits and shell denied)",
+                        );
+                    }
+                    _ => {
+                        self.ui.push_notice(
+                            "Disable plan mode? Writes, edits and shell will be allowed again. (yes/no)",
+                        );
+                    }
+                }
+                return false;
+            }
             match text.trim().to_ascii_lowercase().as_str() {
                 "yes" | "y" => {
                     self.pending_preset = None;

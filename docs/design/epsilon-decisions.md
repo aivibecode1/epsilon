@@ -3420,3 +3420,69 @@ immediate failure result instead. No disk writes; no new capability; no new crat
 hub rather than copying the overlay), or the footer-hint wart gets fixed properly:
 `overlay_open()` does not know about the ask overlay, so the footer advertises the
 composer's keys while a question owns the keyboard.
+
+---
+
+## ADR-045: Plan mode as a gate slot with a mid-session `/plan` toggle
+
+**Status: accepted (criterion 4, 2026-10-15).**
+
+**The problem.** Plan mode was launch-flag-only: `--plan` baked `plan_ruleset()`
+into the base engine at composition, and the TUI had zero plan surface — no
+`/plan`, no indicator, no toggle. A research run that needed to act had to
+restart, and a run that should have stayed read-only had nothing on screen
+naming the state. The policy existed; reaching it mid-session did not.
+
+**Decision: a plan-layer slot in the gate, mirroring the preset layer.**
+
+- *Gate.* `RulesetGate` owns a plan slot beside the preset slot: a
+  mutex-swapped ruleset (`plan_ruleset()` when on, empty when off) plus the
+  flag bare `/plan` reports. `evaluate()` checks the slot FIRST, so a plan
+  deny wins before base, preset, or memory — the same position the baked
+  layer held, which is why `--plan` launches behave byte-identical after the
+  move. Either switch clears the session memory, the `set_preset` rule for
+  the same reason: a promotion under the old policy must not survive it.
+  Lock failure denies (fail closed), like the preset layer.
+- *Seam.* The core trait defaults `set_plan_mode` / `in_plan_mode` to
+  refuse/off (the `set_preset` / `current_preset` pattern), so `AutoAllow`,
+  `AutoDeny`, and test doubles compile unchanged; `Agent` passes both
+  through, mirroring `set_preset` / `current_preset`.
+- *Composition.* The composition builds the non-plan base always, then
+  applies the flag to the slot beside the preset application — still one
+  composition point (ADR-021). Equivalence is proven, not asserted: a
+  slot-on gate authorizes exactly like the old baked engine across the
+  plan-relevant capabilities, and the flag is proven to reach the gate
+  through the real `build_runtime`.
+- *Front end.* `/plan` bare reports the state; `on` enables at once
+  (restricting asks nothing); `off` while on holds the `pending_preset`
+  yes-gate until the reader types `yes` — the same gate
+  danger-full-access uses, not a second idiom. The settings panel gains the
+  sixth row (`plan on/off`); the panel budgets eight rows, so the row fits
+  without moving the height. (`/plan` is routed before the shared command
+  registry, which has no `Plan` variant in this change: the registry's
+  `Unknown` carries the head only and would drop the `on`/`off` tail.)
+
+**Rejected.** (a) A second engine copy per mode (a plan engine beside a
+normal engine, swapped at the front end): two compositions of the same
+policy is the one-composition-point defect ADR-021 names — they drift, and
+the drift is silent. (b) TUI-side emulation that never touches the gate
+(refusing edits in the transcript layer, warning on shell): a control the
+model loop does not enforce is decoration — the tool pipeline would still
+run what the screen claimed was denied, which AGENTS.md §2.7 forbids by
+name.
+
+**Confirm-on-disable rationale.** Disabling plan mode is a privilege raise
+— mutations become possible — so it belongs to the danger class with
+danger-full-access: the question must survive a reflexive Enter, and only
+`yes` takes it. Enabling restricts, so it submits immediately, the way
+switching a preset down does (D-080).
+
+**The behaviour change this records** (AGENTS.md §5): `/plan [on|off]`
+switches the live gate mid-session (`off` asks first); `--plan` behavior
+is unchanged.
+
+**Revisit trigger.** A second mode needs plan state it cannot read through
+the agent (persist the flag beside the preset file), the plan layer grows
+non-deny rules (revisit the check-first order against the baked semantics
+it replaced), or the command registry gains a `Plan` variant (route
+through it and delete the pre-registry intercept).

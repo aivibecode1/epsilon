@@ -266,6 +266,10 @@ pub const SLASH_ITEMS: &[SlashItem] = &[
         value: "/preset",
         description: "show or switch the permission preset (ADR-032)",
     },
+    SlashItem {
+        value: "/plan",
+        description: "show or switch plan mode: read-only research, off re-allows mutations (asks first)",
+    },
 ];
 
 /// A parsed editor command.
@@ -409,6 +413,9 @@ pub enum Command {
     ScopedModels,
     /// Show or switch the permission preset (ADR-032).
     Preset(Option<String>),
+    /// Show or switch plan mode (ADR-045): bare reports, `on` restricts now,
+    /// `off` re-allows mutations after confirmation.
+    Plan(Option<String>),
     /// Exit the session.
     Quit,
     /// A `/word` we do not know — surfaced as an error, never sent to the model.
@@ -470,6 +477,7 @@ pub const COMMAND_HEADS: &[&str] = &[
     "settings",
     "scoped_models",
     "preset",
+    "plan",
     "clear",
     // M194: the palette's "Toggle tool output expand" entry shipped a `\u{1}expand`
     // pseudo-command this parser cannot read, so choosing it ran nothing. Naming a
@@ -618,6 +626,11 @@ pub fn parse_command(input: &str) -> Option<Command> {
         "settings" => Some(Command::Settings),
         "scoped-models" | "scoped_models" => Some(Command::ScopedModels),
         "preset" => Some(Command::Preset(if tail.is_empty() {
+            None
+        } else {
+            Some(tail.to_string())
+        })),
+        "plan" => Some(Command::Plan(if tail.is_empty() {
             None
         } else {
             Some(tail.to_string())

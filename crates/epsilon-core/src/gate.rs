@@ -99,6 +99,25 @@ pub trait PermissionGate: Send + Sync {
     fn current_preset(&self) -> String {
         "unknown".to_string()
     }
+
+    /// Enable (`true`) or disable (`false`) plan mode mid-session, or `false`
+    /// when this gate has no notion of plan mode.
+    ///
+    /// Defaulted to `false` so fixed-posture gates (`AutoAllow`, `AutoDeny`,
+    /// test doubles) compile unchanged — and correctly, since a gate that
+    /// allows or denies everything has nothing to switch. `RulesetGate`
+    /// overrides it: it installs `plan_ruleset()` / restores the empty layer
+    /// and clears the session memory (a promotion under the old policy must
+    /// not survive the switch, whichever direction it goes).
+    fn set_plan_mode(&self, _on: bool) -> bool {
+        false
+    }
+
+    /// Whether plan mode is on, or `false` for gates with no notion of it.
+    /// What bare `/plan` reports.
+    fn in_plan_mode(&self) -> bool {
+        false
+    }
 }
 
 /// Allows everything without asking — for tests and trusted automation only.
@@ -116,7 +135,6 @@ pub struct AutoDeny {
     /// Guidance returned in the denial result so the model can adapt.
     pub guidance: String,
 }
-
 #[async_trait]
 impl PermissionGate for AutoDeny {
     async fn authorize(&self, _req: PermissionRequest) -> Authorization {
@@ -124,5 +142,23 @@ impl PermissionGate for AutoDeny {
             decision: PermissionDecision::Deny,
             asked: false,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Fixed-posture gates have no plan mode to switch: the defaulted trait
+    /// methods refuse and report off, so existing doubles compile unchanged.
+    #[test]
+    fn fixed_posture_gates_have_no_plan_mode() {
+        assert!(!AutoAllow.set_plan_mode(true));
+        assert!(!AutoAllow.in_plan_mode());
+        let deny = AutoDeny {
+            guidance: "no".to_string(),
+        };
+        assert!(!deny.set_plan_mode(true));
+        assert!(!deny.in_plan_mode());
     }
 }

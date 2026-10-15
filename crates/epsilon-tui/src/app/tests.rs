@@ -3240,6 +3240,29 @@ async fn slash_popup_completes_preset_names() {
     assert!(!app.slash_open, "popup closed after apply");
 }
 
+/// P-044: `/plan` completes its argument — `/plan o` offers `/plan on` and
+/// `/plan off` through the popup.
+#[tokio::test]
+async fn slash_popup_completes_plan_names() {
+    let (mut app, agent, (_f, _n)) = test_app();
+    for c in "/plan o".chars() {
+        handle_key(&mut app, &agent, key(KeyCode::Char(c)));
+    }
+    assert!(app.slash_open, "popup opens for /plan o");
+    let screen = render_rows(&mut app, 80, 24).join("\n");
+    assert!(
+        screen.contains("/plan on") && screen.contains("/plan off"),
+        "both plan rows are offered: {screen}"
+    );
+    handle_key(&mut app, &agent, key(KeyCode::Tab));
+    assert!(
+        app.input == "/plan on" || app.input == "/plan off",
+        "Tab applies a plan row: {:?}",
+        app.input
+    );
+    assert!(!app.slash_open, "popup closed after apply");
+}
+
 /// P-044: `/theme` completes its argument — `/theme hig` offers
 /// `/theme high-contrast` through the popup.
 #[tokio::test]

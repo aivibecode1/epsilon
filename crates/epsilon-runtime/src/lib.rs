@@ -5021,7 +5021,8 @@ pub struct RunParams<'a> {
     /// M39: config-hash trust from dispatch (`Changed` ⇒ false). Gates the
     /// trusted root variants so project code never loads untrusted.
     pub project_trusted: bool,
-    /// Prepend the plan-mode ruleset: mutating capabilities are denied outright.
+    /// Enable plan mode: mutating capabilities are denied outright, applied
+    /// to the gate's plan slot after the base stack is built.
     pub plan_mode: bool,
     /// Named permission posture (ADR-032), layered over the defaults.
     pub preset: epsilon_safety::Preset,
@@ -5373,24 +5374,21 @@ pub async fn build_runtime_and_gate_runner(
     notices.extend(ext_notices.iter().cloned());
 
     // Ruleset gate: defaults + optional project [[rules]] layer (last-match-wins; any
-    // deny still wins immediately — ADR-006 stacking semantics). `--plan` prepends the
-    // plan-mode layer: mutating capabilities are DENIED outright and monotonic-deny
-    // makes that boundary hold regardless of project rules or approvals.
+    // deny still wins immediately — ADR-006 stacking semantics). `--plan` is
+    // applied to the gate afterwards, not layered here: the gate owns the plan
+    // layer separately so mid-session `/plan` toggles keep the base stack
+    // (defaults + project) intact, and a `--plan` launch authorizes exactly
+    // like the old baked layer (deny-monotonic, plan checked first).
     // `--preset` (ADR-032) is applied to the gate afterwards, not layered here:
     // the gate owns the preset layer separately so mid-session switches keep
     // the base stack (defaults + project) intact.
-    let base_engine = if plan_mode {
-        let mut layers = vec![epsilon_safety::plan_ruleset()];
-        if !project.rules.is_empty() {
-            layers.push(project_rules_layer(&project.rules));
-        }
-        epsilon_safety::PermissionEngine::layered(layers)
-    } else if project.rules.is_empty() {
+    let base_engine = if project.rules.is_empty() {
         epsilon_safety::PermissionEngine::with_defaults()
     } else {
         epsilon_safety::PermissionEngine::layered(vec![project_rules_layer(&project.rules)])
     };
     let gate = Arc::new(RulesetGate::layered(base_engine, approvals));
+    gate.set_plan_mode(plan_mode);
     // Wave 20: the preset persists across restarts — a switch the TUI wrote
     // down is the project's file first, then the global one, and only an
     // explicit `--preset` flag outranks both. Unknown file names fall through
@@ -5822,6 +5820,73 @@ mod composition_notice_tests {
             agent.current_preset(),
             "workspace-write",
             "an explicit flag outranks the project file"
+        );
+    }
+
+    /// **Criterion 4: `--plan` reaches the composed gate's plan slot.**
+    ///
+    /// Same rig as the preset tests: the flag is the only thing that differs,
+    /// and the gate must run plan mode for it. The *posture* equivalence
+    /// (slot-on authorizes exactly like the old baked layer) is proven in
+    /// `epsilon-safety`'s `plan_slot_matches_the_baked_layer_posture`; this
+    /// proves the *wiring* (the flag flips the slot through the real
+    /// composition). Each compose gets its own session file: the store holds
+    /// a lease while its agent lives, and reusing one path would wait that
+    /// lease out.
+    #[tokio::test]
+    async fn plan_flag_reaches_the_composed_gate() {
+        use epsilon_llm::FauxProvider;
+        let ws = tempfile::tempdir().unwrap();
+        let project = load_project_config(ws.path()).0;
+
+        let mut sink = Vec::new();
+        let agent = build_runtime(RunParams {
+            workspace: ws.path(),
+            stream_fn: Arc::new(FauxProvider::new(Vec::<FauxStep>::new())),
+            approvals: Arc::new(epsilon_safety::AutoApprove),
+            mcp_servers: &[],
+            session_file: ".epsilon/sessions/plan-flag.jsonl".to_string(),
+            confinement: &epsilon_tools::Confinement::Off,
+            lsp: Lsp::Off,
+            model_id: "faux-1",
+            model_explicit: false,
+            resume: &Resume::No,
+            project: &project,
+            project_trusted: true,
+            plan_mode: true,
+            preset: epsilon_safety::Preset::Auto,
+            notices: &mut sink,
+        })
+        .await
+        .expect("composition succeeds in a scratch workspace");
+        assert!(
+            agent.in_plan_mode(),
+            "--plan: the composed gate runs plan mode"
+        );
+
+        let mut sink = Vec::new();
+        let plain = build_runtime(RunParams {
+            workspace: ws.path(),
+            stream_fn: Arc::new(FauxProvider::new(Vec::<FauxStep>::new())),
+            approvals: Arc::new(epsilon_safety::AutoApprove),
+            mcp_servers: &[],
+            session_file: ".epsilon/sessions/plan-off.jsonl".to_string(),
+            confinement: &epsilon_tools::Confinement::Off,
+            lsp: Lsp::Off,
+            model_id: "faux-1",
+            model_explicit: false,
+            resume: &Resume::No,
+            project: &project,
+            project_trusted: true,
+            plan_mode: false,
+            preset: epsilon_safety::Preset::Auto,
+            notices: &mut sink,
+        })
+        .await
+        .expect("composition succeeds in a scratch workspace");
+        assert!(
+            !plain.in_plan_mode(),
+            "no flag: the composed gate runs without plan mode"
         );
     }
 

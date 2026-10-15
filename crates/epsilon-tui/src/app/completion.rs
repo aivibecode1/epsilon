@@ -80,6 +80,13 @@ impl App {
                     description: "palette".to_string(),
                 })
                 .collect(),
+            "plan" => ["on", "off"]
+                .iter()
+                .map(|name| crate::picker::SlashCandidate {
+                    value: format!("/plan {name}"),
+                    description: "plan mode".to_string(),
+                })
+                .collect(),
             _ => return None,
         };
         // Rank the fragment against the argument alone: every value shares

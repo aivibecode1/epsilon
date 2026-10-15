@@ -60,6 +60,13 @@ pub struct RulesetGate {
     /// `/preset` reports — the gate is the only place that knows both the
     /// launch posture and every mid-session switch.
     current: Mutex<String>,
+    /// The plan-mode layer (criterion 4): `plan_ruleset()` when on, an empty
+    /// ruleset when off. Mirrors the preset layer — mutex-swapped, fail-closed
+    /// on lock failure — so mid-session `/plan` toggles keep the base stack
+    /// (defaults + project rules) intact.
+    plan: Mutex<crate::engine::Ruleset>,
+    /// Whether plan mode is on. What bare `/plan` reports.
+    plan_on: Mutex<bool>,
     ui: Arc<dyn ApprovalUi>,
     memory: SessionMemory,
 }
@@ -79,6 +86,11 @@ impl RulesetGate {
                 std::path::Path::new(""),
             )),
             current: Mutex::new(crate::engine::Preset::Auto.name().to_string()),
+            plan: Mutex::new(crate::engine::Ruleset {
+                name: "plan:off".into(),
+                rules: Vec::new(),
+            }),
+            plan_on: Mutex::new(false),
             ui,
             memory: Arc::new(Mutex::new(Vec::new())),
         }
@@ -92,16 +104,42 @@ impl RulesetGate {
             .unwrap_or_else(|_| "unknown".to_string())
     }
 
+    /// Whether plan mode is on (diagnostics/front ends; what bare `/plan`
+    /// reports). Mirrors [`Self::current_preset`]: the gate is the only place
+    /// that knows the live plan state.
+    pub fn in_plan_mode(&self) -> bool {
+        self.plan_on.lock().map(|on| *on).unwrap_or(false)
+    }
+
     /// Read-only view of promoted always-allow pairs (diagnostics/tests).
     pub fn session_allows(&self) -> Vec<(String, String)> {
         self.memory.lock().map(|m| m.clone()).unwrap_or_default()
     }
 
-    /// Evaluate one capability/subject across base + preset: either side's
-    /// deny wins immediately (monotonic, both directions), a preset match
-    /// otherwise decides, and no preset match falls back to base. A lock
+    /// Evaluate one capability/subject across plan + base + preset: any side's
+    /// deny wins immediately (monotonic, all directions), a plan or preset
+    /// match otherwise decides, and no match falls back to base. A lock
     /// failure denies (fail closed, like the engine helper below).
+    ///
+    /// The plan slot is checked FIRST: a plan deny wins before base, preset,
+    /// or memory — the same position the baked plan layer held, so `--plan`
+    /// launches behave byte-identical after the un-baking.
     fn evaluate(&self, capability: &str, pattern: &str) -> Action {
+        let Ok(plan) = self.plan.lock() else {
+            return Action::Deny;
+        };
+        for rule in &plan.rules {
+            if rule.capability != "*" && rule.capability != capability {
+                continue;
+            }
+            if !crate::glob_match(&rule.pattern, pattern) {
+                continue;
+            }
+            if rule.action == Action::Deny {
+                return Action::Deny;
+            }
+        }
+        drop(plan);
         let base = self
             .base
             .lock()
@@ -211,8 +249,12 @@ impl PermissionGate for RulesetGate {
     fn child_gate(&self) -> Option<std::sync::Arc<dyn epsilon_core::PermissionGate>> {
         let base = self.base.lock().ok()?.clone();
         let preset = self.preset.lock().ok()?.clone();
+        let plan = self.plan.lock().ok()?.clone();
+        let plan_on = self.plan_on.lock().ok().map(|on| *on).unwrap_or(false);
         let mut gate = Self::layered(base, std::sync::Arc::clone(&self.ui));
         gate.preset = Mutex::new(preset);
+        gate.plan = Mutex::new(plan);
+        gate.plan_on = Mutex::new(plan_on);
         Some(std::sync::Arc::new(gate))
     }
 
@@ -244,6 +286,37 @@ impl PermissionGate for RulesetGate {
             .lock()
             .map(|c| c.clone())
             .unwrap_or_else(|_| "unknown".to_string())
+    }
+
+    /// Install (`true`) or remove (`false`) the plan-mode layer (criterion 4)
+    /// and clear the session memory: a promotion under the old policy must not
+    /// survive the switch, whichever direction it goes — the `set_preset`
+    /// rule, because the reason is the same. The base stack (defaults +
+    /// project rules) and the preset layer are untouched. A lock failure
+    /// refuses (`false`, fail closed) rather than running half a policy.
+    fn set_plan_mode(&self, on: bool) -> bool {
+        let Ok(mut layer) = self.plan.lock() else {
+            return false;
+        };
+        *layer = if on {
+            crate::engine::plan_ruleset()
+        } else {
+            crate::engine::Ruleset {
+                name: "plan:off".into(),
+                rules: Vec::new(),
+            }
+        };
+        if let Ok(mut flag) = self.plan_on.lock() {
+            *flag = on;
+        }
+        if let Ok(mut mem) = self.memory.lock() {
+            mem.clear();
+        }
+        true
+    }
+
+    fn in_plan_mode(&self) -> bool {
+        self.plan_on.lock().map(|on| *on).unwrap_or(false)
     }
 }
 
@@ -395,5 +468,94 @@ mod tests {
         assert!(!gate.set_preset("yolo", ws), "unknown refuses");
         let c = gate.authorize(req("bash", "echo hi")).await;
         assert!(c.allowed(), "a refused switch changes nothing");
+    }
+
+    /// `set_plan_mode(true)` denies mutations outright (the `--plan` posture);
+    /// `set_plan_mode(false)` restores the base posture; either switch clears
+    /// the session memory like a preset switch. RED-first for criterion 4.
+    #[tokio::test]
+    async fn set_plan_mode_round_trip_denies_then_restores_and_clears_memory() {
+        use epsilon_core::PermissionGate;
+        let ui = Arc::new(ScriptedUi {
+            answers: Mutex::new(vec![PermissionDecision::AlwaysSession]),
+            asked: Mutex::new(0),
+        });
+        let gate = RulesetGate::new(Arc::clone(&ui) as Arc<dyn ApprovalUi>);
+        assert!(!gate.in_plan_mode(), "off at construction");
+
+        // Promote something memorable under the base policy, so the switch
+        // has memory to clear.
+        let first = gate.authorize(req("bash", "git")).await;
+        assert!(first.allowed(), "promotion happened");
+        assert_eq!(gate.session_allows().len(), 1);
+
+        assert!(gate.set_plan_mode(true));
+        assert!(gate.in_plan_mode(), "on after enabling");
+        assert!(
+            gate.session_allows().is_empty(),
+            "enabling clears the old policy's promotions"
+        );
+        let denied = gate.authorize(req("write", "src/main.rs")).await;
+        assert!(
+            !denied.allowed() && !denied.asked,
+            "plan on denies writes outright"
+        );
+        let denied_shell = gate.authorize(req("bash", "cargo test")).await;
+        assert!(
+            !denied_shell.allowed() && !denied_shell.asked,
+            "plan on denies shell outright"
+        );
+        let read = gate.authorize(req("read", "src/main.rs")).await;
+        assert!(read.allowed(), "reads stay free in plan mode");
+
+        assert!(gate.set_plan_mode(false));
+        assert!(!gate.in_plan_mode(), "off after disabling");
+        assert!(
+            gate.session_allows().is_empty(),
+            "disabling clears plan-era promotions too"
+        );
+        let write = gate.authorize(req("write", "src/main.rs")).await;
+        assert!(write.allowed(), "plan off restores the base posture");
+    }
+
+    /// The slot matches the old baked layer outcome for outcome: a gate with
+    /// the slot on authorizes exactly like an engine with the plan layer
+    /// baked in. This is the equivalence proof for the composition un-baking.
+    #[tokio::test]
+    async fn plan_slot_matches_the_baked_layer_posture() {
+        use epsilon_core::PermissionGate;
+        let ui = Arc::new(ScriptedUi {
+            answers: Mutex::new(vec![]),
+            asked: Mutex::new(0),
+        });
+        let slotted = RulesetGate::new(Arc::clone(&ui) as Arc<dyn ApprovalUi>);
+        assert!(slotted.set_plan_mode(true));
+        let baked = RulesetGate::layered(
+            PermissionEngine::layered(vec![Ruleset {
+                name: "plan".into(),
+                rules: crate::plan_ruleset().rules,
+            }]),
+            Arc::clone(&ui) as Arc<dyn ApprovalUi>,
+        );
+        for (cap, subject) in [
+            ("write", "src/main.rs"),
+            ("edit", "src/main.rs"),
+            ("bash", "cargo test"),
+            ("shell", "echo hi"),
+            ("read", "src/main.rs"),
+            ("grep", "*"),
+        ] {
+            let a = slotted.authorize(req(cap, subject)).await;
+            let b = baked.authorize(req(cap, subject)).await;
+            assert_eq!(
+                a.allowed(),
+                b.allowed(),
+                "slot vs baked disagree on ({cap}, {subject})"
+            );
+            assert_eq!(
+                a.asked, b.asked,
+                "slot vs baked ask-flag disagree on ({cap}, {subject})"
+            );
+        }
     }
 }

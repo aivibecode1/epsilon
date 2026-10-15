@@ -716,8 +716,11 @@ impl App {
             // rather than with the view commands because half its verbs write.
             | crate::picker::Command::Goal(_)
             // ADR-032: the session's permission posture — bare reads it,
-            // a name switches it (full-access confirms first).
-            | crate::picker::Command::Preset(_) => self.run_session_command(agent, command),
+            // a name switches it (full-access confirms first). Plan mode rides
+            // beside it (ADR-045): bare reports, `on` restricts, `off`
+            // confirms first for the same privilege-raise reason.
+            | crate::picker::Command::Preset(_)
+            | crate::picker::Command::Plan(_) => self.run_session_command(agent, command),
             // Show the user something.
             crate::picker::Command::Help
             | crate::picker::Command::Skills
@@ -953,6 +956,7 @@ impl App {
             | crate::picker::Command::Resume(_)
             | crate::picker::Command::Reload => self.run_restore_command(agent, command),
             crate::picker::Command::Preset(arg) => self.run_preset_command(agent, arg),
+            crate::picker::Command::Plan(arg) => self.run_plan_command(agent, arg),
             crate::picker::Command::Skill(arg) => {
                 let arg = arg.trim();
                 let (name, want_off) = match arg.rsplit_once(char::is_whitespace) {
@@ -1517,6 +1521,69 @@ impl App {
         }
         false
     }
+
+    /// Show or switch plan mode (criterion 4).
+    ///
+    /// Bare reports the live gate state. `on` enables immediately (restricting
+    /// is the safe direction, so no confirm — the D-080 rule the preset path
+    /// follows). `off` while on is the privilege-raising direction (mutations
+    /// become possible), so it holds the question in `pending_preset` under
+    /// [`PENDING_PLAN_DISABLE`] until the reader types `yes`, answered in
+    /// `submit_editor` beside the preset gate — the same yes-gate shape, not
+    /// a second confirmation idiom. Anything else is usage. Every path
+    /// answers in the transcript and names the outcome.
+    pub(super) fn run_plan_command(&mut self, agent: &Arc<Agent>, arg: Option<String>) -> bool {
+        let on = agent.in_plan_mode();
+        let Some(tail) = arg.as_deref().map(str::trim).filter(|s| !s.is_empty()) else {
+            self.ui.push_notice(format!(
+                "plan mode: {} — {}",
+                if on { "on" } else { "off" },
+                if on {
+                    "writes, edits and shell are denied; `/plan off` allows mutations (asks first)"
+                } else {
+                    "mutations allowed; `/plan on` restricts to read-only research"
+                }
+            ));
+            return false;
+        };
+        match tail.to_ascii_lowercase().as_str() {
+            "on" => {
+                if on {
+                    self.ui.push_notice("plan mode: already on");
+                } else if agent.set_plan_mode(true) {
+                    self.settings_plan = true;
+                    self.ui.push_notice(
+                        "plan mode: on (was off) — writes, edits and shell are now denied",
+                    );
+                } else {
+                    self.ui
+                        .push_notice("plan not switched — the gate reported no change (on)");
+                }
+            }
+            "off" => {
+                if !on {
+                    self.ui.push_notice("plan mode: already off");
+                } else {
+                    self.pending_preset = Some(Self::PENDING_PLAN_DISABLE.to_string());
+                    self.ui.push_notice(
+                        "Disable plan mode? Writes, edits and shell will be allowed again. (yes/no)",
+                    );
+                }
+            }
+            _ => {
+                self.ui
+                    .push_notice("usage: /plan [on|off] — bare reports the state");
+            }
+        }
+        false
+    }
+
+    /// Sentinel held in `pending_preset` while a plan-disable waits for its
+    /// `yes`. Reuses the preset yes-gate (same field, same submit path) so a
+    /// second confirmation idiom never exists; the value cannot collide with
+    /// a real preset name, which `Preset::parse` restricts to the four
+    /// kebab-case words.
+    pub(super) const PENDING_PLAN_DISABLE: &'static str = "__plan_off__";
 
     fn run_branch_command(&mut self, agent: &Arc<Agent>, command: crate::picker::Command) -> bool {
         match command {
@@ -2089,7 +2156,12 @@ impl App {
     }
 
     /// The settings rows, in the order the panel draws them.
-    pub(super) fn setting_rows(&self) -> [(&'static str, String); 5] {
+    ///
+    /// Six rows in a panel whose inner height budgets eight (`draw_settings`:
+    /// height 12 minus 2 border minus 2 hint rows minus 1 blank leaves room
+    /// for 6 rows with scrolling below that), so the plan row fits without
+    /// moving the height.
+    pub(super) fn setting_rows(&self) -> [(&'static str, String); 6] {
         [
             ("model", self.model_id.clone()),
             ("thinking", self.thinking.as_str().to_string()),
@@ -2108,6 +2180,14 @@ impl App {
                     "auto".to_string()
                 } else {
                     self.settings_preset.clone()
+                },
+            ),
+            (
+                "plan",
+                if self.settings_plan {
+                    "on".to_string()
+                } else {
+                    "off".to_string()
                 },
             ),
         ]
@@ -2173,6 +2253,21 @@ impl App {
                 self.run_preset_command(agent, Some(next.to_string()));
                 if self.settings_open {
                     self.settings_preset = agent.current_preset();
+                }
+            }
+            5 => {
+                // The plan row toggles through the same `/plan` path the
+                // command uses, so the raising direction (off) holds the
+                // same yes-gate: closing the panel first, like the preset
+                // raising direction does, so the question is answered in the
+                // composer rather than under an overlay.
+                let next = if agent.in_plan_mode() { "off" } else { "on" };
+                if next == "off" {
+                    self.settings_open = false;
+                }
+                self.run_plan_command(agent, Some(next.to_string()));
+                if self.settings_open {
+                    self.settings_plan = agent.in_plan_mode();
                 }
             }
             _ => {}
@@ -2621,6 +2716,7 @@ impl App {
             }
             crate::picker::Command::Settings => {
                 self.settings_preset = agent.current_preset();
+                self.settings_plan = agent.in_plan_mode();
                 self.settings_index = 0;
                 self.settings_open = true;
             }
@@ -3762,5 +3858,144 @@ mod tests {
             !screen.contains("tokens100/700"),
             "the split is never added to the total: {screen}"
         );
+    }
+
+    /// `/plan` routes through the shared registry, not a pre-registry
+    /// intercept: the registry carries a `Plan` variant, so the tail survives
+    /// parsing and the bidirectional drift checks cover the head.
+    #[test]
+    fn plan_routes_through_the_shared_registry() {
+        use crate::picker::parse_command;
+        assert_eq!(
+            parse_command("/plan"),
+            Some(crate::picker::Command::Plan(None))
+        );
+        assert_eq!(
+            parse_command("/plan on"),
+            Some(crate::picker::Command::Plan(Some("on".to_string())))
+        );
+        assert_eq!(
+            parse_command("  /PLAN off  "),
+            Some(crate::picker::Command::Plan(Some("off".to_string())))
+        );
+    }
+
+    /// Bare `/plan` reports the live gate state and switches nothing,
+    /// through the real key path.
+    #[test]
+    fn plan_bare_reports_the_state_and_switches_nothing() {
+        let (mut app, agent, _rx) = test_app();
+        assert!(!agent.in_plan_mode());
+        assert!(!type_and_enter(&mut app, &agent, "/plan"));
+        let lines: Vec<_> = app.ui.lines().iter().map(|l| l.text.clone()).collect();
+        assert!(
+            lines.iter().any(|l| l.contains("plan mode: off")),
+            "bare must name the state: {lines:?}"
+        );
+        assert!(!agent.in_plan_mode(), "reporting switches nothing");
+    }
+
+    /// `/plan on` enables immediately (the restricting direction asks
+    /// nothing) and names the outcome; unknown tails are usage.
+    #[test]
+    fn plan_on_enables_immediately_and_unknown_is_usage() {
+        let (mut app, agent, _rx) = test_app();
+        assert!(!type_and_enter(&mut app, &agent, "/plan on"));
+        assert!(agent.in_plan_mode(), "on switches at once");
+        let lines: Vec<_> = app.ui.lines().iter().map(|l| l.text.clone()).collect();
+        assert!(
+            lines
+                .iter()
+                .any(|l| l.contains("plan mode: on") && l.contains("was off")),
+            "must name the outcome: {lines:?}"
+        );
+
+        assert!(!type_and_enter(&mut app, &agent, "/plan frobnicate"));
+        assert!(agent.in_plan_mode(), "an unknown tail switches nothing");
+        let lines: Vec<_> = app.ui.lines().iter().map(|l| l.text.clone()).collect();
+        assert!(
+            lines.iter().any(|l| l.contains("usage: /plan")),
+            "must print usage: {lines:?}"
+        );
+    }
+
+    /// `/plan off` while on holds the disable question (privilege raise =
+    /// danger class); only `yes` disables, `no` and other text do not.
+    #[test]
+    fn plan_off_asks_and_only_yes_disables() {
+        let (mut app, agent, _rx) = test_app();
+        assert!(!type_and_enter(&mut app, &agent, "/plan on"));
+        assert!(agent.in_plan_mode());
+
+        assert!(!type_and_enter(&mut app, &agent, "/plan off"));
+        assert!(
+            app.pending_preset.is_some(),
+            "disabling holds the question open"
+        );
+        assert!(agent.in_plan_mode(), "asking switches nothing");
+        let lines: Vec<_> = app.ui.lines().iter().map(|l| l.text.clone()).collect();
+        assert!(
+            lines.iter().any(|l| l.contains("Disable plan mode?")),
+            "must ask before raising: {lines:?}"
+        );
+
+        assert!(!type_and_enter(&mut app, &agent, "no"));
+        assert!(app.pending_preset.is_none(), "no closes the question");
+        assert!(agent.in_plan_mode(), "no switches nothing");
+
+        assert!(!type_and_enter(&mut app, &agent, "/plan off"));
+        assert!(!type_and_enter(&mut app, &agent, "yes"));
+        assert!(!agent.in_plan_mode(), "yes disables");
+        let lines: Vec<_> = app.ui.lines().iter().map(|l| l.text.clone()).collect();
+        assert!(
+            lines
+                .iter()
+                .any(|l| l.contains("plan mode: off") && l.contains("was on")),
+            "must name the outcome: {lines:?}"
+        );
+    }
+
+    /// The settings panel names the plan row with the live value, and Enter
+    /// on it toggles through the same `/plan` path (raising still asks).
+    #[test]
+    fn plan_settings_row_mirrors_the_gate_and_toggles() {
+        let (mut app, agent, _rx) = test_app();
+        app.settings_plan = agent.in_plan_mode();
+        let rows = app.setting_rows();
+        assert_eq!(rows.len(), 6, "the plan row joins the five");
+        assert_eq!(rows[5].0, "plan");
+        assert_eq!(rows[5].1, "off");
+
+        // Enter on the plan row enables immediately and stays in the panel
+        // with the new value visible (the successful-toggle shape).
+        app.settings_open = true;
+        app.apply_setting(&agent, 5);
+        assert!(agent.in_plan_mode(), "the row enables at once");
+        assert!(app.settings_open, "a successful toggle stays in the panel");
+        assert_eq!(app.setting_rows()[5].1, "on");
+
+        // Enter again is the raising direction: the panel closes and the
+        // disable question holds, switching nothing yet.
+        app.apply_setting(&agent, 5);
+        assert!(agent.in_plan_mode(), "asking switches nothing");
+        assert!(!app.settings_open, "the raising direction leaves the panel");
+        assert!(app.pending_preset.is_some(), "and holds the question open");
+    }
+
+    /// The settings panel draws the plan row on the real frame (UNICODE
+    /// pinned per the suite rule), at both evidence widths.
+    #[test]
+    fn the_settings_panel_names_the_plan_row_on_the_frame() {
+        let (mut app, _agent, _rx) = test_app();
+        app.theme.glyphs = crate::ui::theme::UNICODE;
+        app.settings_plan = false;
+        app.settings_open = true;
+        for (w, h) in [(80u16, 24u16), (100u16, 30u16)] {
+            let screen = frame(&mut app, w, h);
+            assert!(
+                screen.contains("plan"),
+                "{w}x{h} lost the plan row: {screen}"
+            );
+        }
     }
 }
