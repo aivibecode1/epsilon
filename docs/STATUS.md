@@ -93,14 +93,30 @@ filed with provenance headers, audit/history/15-17), and the fourth was verified
 - **`32947dd`** — `--plan`, `--preset`, `--fallback` and `-c` documented for the first time
   (the capability audit found plan mode working and invisible), both claims checked against
   the gate's evaluate order before they were written.
-- **In flight:** Wave E (criterion 7 — `[thinking] level` as a persisted key, session
-  thinking restore, the frontend's model id following the composed agent through one shared
-  applier for launch and live resume, the project-or-global resolver for model saves, the
-  OAuth refresh-guard placement). Queued behind it: Wave C (criterion 6 — the Gemini
-  `thoughtsTokenCount` under-count and the reasoning bucket across four parsers) and Wave D
-  (criterion 5 — `ModelInfo` capability/deprecation/long-context price fields against the
-  module's own violated invariant). The G1 skills test (the untested user-tier root table)
-  lands with the first crate-touching change after Wave E.
+- **`e4c8d81`** — Wave E, criterion 7: `[thinking] level` is a real config key (global with a
+  project override, cross-contamination-tested); a session's thinking level is restored on
+  resume through `apply_resumed_context`, the shared applier the model already needed, so
+  the launch and live-`/resume` paths cannot drift; the frontend names the model the run is
+  actually on (`agent.model_id()` after composition — the header, picker, `/session` and
+  `/settings` no longer name the launch model while the turn runs on the session's, pinned
+  by a real frame at 100×30 and 80×24); a model save lands in the workspace's own
+  `.epsilon/config.toml` through one resolver; and the OAuth pre-emptive refresh is alive
+  again — the call site's gate is the only one asked now, the inner duplicate that closed the
+  door inside its last 60 seconds is gone, and Copilot's varless client id no longer fails
+  every refresh before it starts. Fifteen new tests, each RED before its fix. Verified by
+  the integrator on an idle machine: fmt clean, workspace clippy clean,
+  **2,157 passed / 0 failed** across 73 binaries; the one failure in the first full run was
+  the documented load-sensitive `epsilon-tools` wall-clock test (0.52 s in isolation), with
+  that log kept beside the green one.
+- **In flight:** Wave C (criterion 6 — the Gemini `thoughtsTokenCount` under-count: pi maps
+  output as candidates + thoughts and we dropped every thought token; the fix adds a
+  `reasoning_tokens` bucket to the `Usage` contract, key-presence driven like
+  `cache_reported`, mapped across the Gemini/completions/Responses/Anthropic parsers and
+  rendered only when a provider reported it). Queued behind it: Wave D (criterion 5 —
+  `ModelInfo` capability/deprecation/long-context price fields against the module's own
+  violated invariant), then the `changes` panel (audit/history/18 ranked it first). The G1
+  skills test (the untested user-tier root table) lands with the first crate-touching
+  change after Wave C.
 
 Revised goal (2026-10-12): remove the desktop frontend and focus on core solidity,
 docs/navigability, and an opencode-style full-screen TUI (tree + editor + agent, mouse,
