@@ -87,10 +87,6 @@ run "check-parity-counts" python scripts/check-parity-counts.py --quiet || overa
 # something else entirely -- M231 lost a battery to a dispatcher reported as
 # having no catch-all arm, which was false.  One second, and it names the file.
 run "check-line-endings" python scripts/check-line-endings.py --quiet || overall=1
-# `AGENTS.md` is maintainer-owned and locked: an agent that may rewrite the rules is
-# not governed by them.  The lock is a SHA-256 in `AGENTS.md.sha256`; this gate fails
-# when the bytes move.  A proposal belongs in `docs/AGENTS-PROPOSALS.md`.
-run "check-agents-lock" python scripts/check-agents-lock.py || overall=1
 # A C0 control byte inside a tracked text file is a corrupted *letter*, not content:
 # `e` -> 0x1B, `a` -> 0x07, `b` -> 0x08 is the shape this repository has shipped 15
 # times, twice inside `epsilon-runtime/src/text_safety.rs` -- the module whose whole

@@ -14,9 +14,9 @@ human or agent, and it is short on purpose. It covers:
 - the accessibility standard the terminal IDE is held to;
 - how to be a good subagent, if you are one.
 
-**`AGENTS.md` is locked.** It is maintainer-owned, its SHA-256 is in `AGENTS.md.sha256`, and
-`scripts/check-agents-lock.py` fails the build when the bytes move. If you think it is wrong,
-write a proposal in [`docs/AGENTS-PROPOSALS.md`](docs/AGENTS-PROPOSALS.md) — do not edit it.
+**`AGENTS.md` is versioned like any other file** since the 2026-10-15 unlock — if you
+think a rule is wrong, correct it directly. (The lock-era proposals live in
+[`docs/AGENTS-PROPOSALS.md`](docs/AGENTS-PROPOSALS.md) as history.)
 
 ## Get oriented
 
@@ -49,7 +49,7 @@ bash scripts/gate.sh mylabel           # macOS, Linux
 ```
 
 It runs, in order: documentation links, lint-table consistency, line endings, control bytes,
-**the `AGENTS.md` lock**, formatting, clippy, the test suite, the offline demo, and a check
+formatting, clippy, the test suite, the offline demo, and a check
 that the real-provider path still compiles. The log lands at `target/gate-<label>.log` and
 `target/` is disposable.
 

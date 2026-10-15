@@ -2,10 +2,9 @@
 
 **Version 4.0 · 2026-10-12**
 
-> **LOCKED: maintainer-owned; agents never edit this file.**
-> Its SHA-256 is in `AGENTS.md.sha256` and `scripts/check-agents-lock.py` fails CI when they
-> differ. If you believe this file is wrong, append a proposal to
-> [`docs/AGENTS-PROPOSALS.md`](docs/AGENTS-PROPOSALS.md) and say so in your final report.
+> The lock was removed 2026-10-15 on the owner's direct instruction: this file is
+> now versioned like any other, and corrections go in directly. Past proposals
+> live in [`docs/AGENTS-PROPOSALS.md`](docs/AGENTS-PROPOSALS.md) as history.
 >
 > v4 was rewritten from the tree under explicit owner authorisation to unlock, rewrite and
 > relock, then relocked. v3 → v4 retires the desktop: the crate is deleted (`8992fec`,
@@ -105,7 +104,7 @@ cargo check -p epsilon-cli --features real
 cargo run -q -p epsilon-cli                               # the terminal UI
 ```
 
-**The battery runs all of it plus ten repository gates, fifteen legs in all:**
+**The battery runs all of it plus nine repository gates, fourteen legs in all:**
 
 ```sh
 pwsh -File scripts/gate.ps1 <label>    # Windows — use this one here
@@ -113,7 +112,7 @@ bash scripts/gate.sh <label>           # POSIX and CI
 pwsh -File scripts/gate-until-pass.ps1 -Label <label>   # retry with a fingerprint, stops on a repeat
 ```
 
-Legs, in order: `check-links`, `check-agents-lock`, `check-lint-tables`,
+Legs, in order: `check-links`, `check-lint-tables`,
 `check-parity-citations`, `check-citation-placement`, `check-reference-citations`,
 `check-verb-counts`, `check-parity-counts`, `check-line-endings`, `check-control-bytes`,
 `fmt`, `clippy`, `test`, `demo`, `real-check`. The log lands at
@@ -262,7 +261,7 @@ Applies to the terminal IDE first and to every other mode as far as each can.
   and the build the project needs — never several experimental builds.
 - Before deleting anything, check `git status` that it is untracked and regenerable. **Never run
   a blanket clean** (`git clean -fdx`, broad `rm -rf`).
-- Protect `references/`, `.git`, `AGENTS.md`, `AGENTS.md.sha256`, lockfiles and user data.
+- Protect `references/`, `.git`, `AGENTS.md`, lockfiles and user data.
 - Do not push, publish, or touch any remote. Never commit secrets.
 
 ## 12. Subagents
@@ -287,7 +286,7 @@ not be the author. Route over-engineering findings through Ponytail review.
 - [ ] New public items are documented; behaviour-level changes have an ADR.
 - [ ] Docs updated and their commands actually run; links resolve.
 - [ ] Ponytail's audit is clean, or each remaining finding is justified in writing.
-- [ ] `CREDITS.md` complete; `AGENTS.md` lock check passing; workspace clean.
+- [ ] `CREDITS.md` complete; workspace clean.
 - [ ] `docs/STATUS.md` says what changed and what is still broken.
 
 ## 14. Conflict resolution

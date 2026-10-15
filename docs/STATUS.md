@@ -2,7 +2,7 @@
 
 **This file is the living record.** It holds everything that changes: progress, decisions
 in flight, what is cut, what is broken. The permanent rules live in
-[`../AGENTS.md`](../AGENTS.md), which is locked. Do not put moving state in `AGENTS.md`.
+[`../AGENTS.md`](../AGENTS.md). Do not put moving state in `AGENTS.md`.
 
 Last updated: 2026-10-12 (revised goal: desktop removed, TUI-as-IDE; Phase 1 in progress)
 
@@ -122,6 +122,13 @@ filed with provenance headers, audit/history/15-17), and the fourth was verified
   **2,163 passed / 0 failed / 15 ignored** across 73 binaries: +13 from the
   committed Wave E since the last battery, +6 from this wave, reconciled
   per-binary from both logs). Log: `audit/evidence/gate-settings-changes-20261015.log`.
+- **`unlock (2026-10-15)`** — the `AGENTS.md` maintainer lock is removed on the
+  owner's direct instruction: the notice is gone, `AGENTS.md.sha256` and
+  `scripts/check-agents-lock.py` are deleted, and the leg is out of `gate.sh`,
+  `gate.ps1` and CI (fourteen legs now). Eleven live references updated;
+  `docs/AGENTS-PROPOSALS.md` is history. Battery green
+  (`gate-unlock-20261015`, 14/14, 2,163/0/15 — Rust bytes identical to wave 19).
+  Log force-added to `audit/evidence/` like the wave-19 one.
 - **In flight:** Wave C (criterion 6 — the Gemini `thoughtsTokenCount` under-count: pi maps
   output as candidates + thoughts and we dropped every thought token; the fix adds a
   `reasoning_tokens` bucket to the `Usage` contract, key-presence driven like

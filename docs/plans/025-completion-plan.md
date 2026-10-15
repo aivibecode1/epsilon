@@ -167,14 +167,14 @@ rows and 38 variants, and the earlier "3 of 38" figure was wrong.
 OS credential store."* The product writes API keys **and OAuth refresh tokens** to
 `<config dir>/auth.json`; `keyring` is in neither `crates/**/*.rs` nor `Cargo.lock`; and the `0600`
 is unix-only by the code's own comment ([`../../crates/epsilon-llm/src/auth.rs`](../../crates/epsilon-llm/src/auth.rs)).
-This is the only place where a locked rule and the tree disagree outright.
+This is the only place where a rule in `AGENTS.md` and the tree disagree outright.
 
 **What.** Pick one, in writing, and do it:
 - **Preferred:** an ADR for the keychain crate, `auth.json` kept as import/export for CI, migrate on
   first read, and the file deleted after migration. Plus an explicit Windows ACL (or a documented
   decision that the profile ACL is enough).
-- **Interim:** amend §6 through [`../AGENTS-PROPOSALS.md`](../AGENTS-PROPOSALS.md) to state what is
-  actually enforced, per platform, so the locked file stops describing a product that does not exist.
+- **Interim:** amend §6 directly to state what is
+  actually enforced, per platform, so the file stops describing a product that does not exist.
 
 **Done when.** Either no plaintext credential is on disk after a login, or §6 says what the tree
 does and names the platform gap.

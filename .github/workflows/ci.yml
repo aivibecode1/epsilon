@@ -33,12 +33,6 @@ jobs:
       - name: Cache cargo
         uses: Swatinem/rust-cache@v2
 
-      # `AGENTS.md` is maintainer-owned and locked by SHA-256. An agent that can
-      # rewrite the rules is not governed by them, so an edit to it must fail CI
-      # rather than merge quietly. Proposals go in `docs/AGENTS-PROPOSALS.md`.
-      - name: AGENTS.md lock (agents never edit the rules they are held to)
-        run: python scripts/check-agents-lock.py
-
       - name: Formatting gate (no diffs tolerated)
         run: cargo fmt --all -- --check
 

@@ -22,9 +22,9 @@ curated open-work notes, evidence pointers and safe resumption steps, not produc
 
 | Folder / file | What lives there | Read it when |
 |---|---|---|
-| [`../AGENTS.md`](../AGENTS.md) | **the rules for anyone writing code here** — locked, maintainer-owned, enforced by a SHA-256 check | before your first change |
-| [`AGENTS-PROPOSALS.md`](AGENTS-PROPOSALS.md) | proposed changes to `AGENTS.md`, which no agent may make directly | you think a rule is wrong |
-| [`AGENTS-v4-DRAFT.md`](AGENTS-v4-DRAFT.md) | the complete v4 rewrite draft for owner application (desktop retired) — apply verbatim, then re-issue the lock | you are the maintainer relocking the rules |
+| [`../AGENTS.md`](../AGENTS.md) | **the rules for anyone writing code here** — versioned like any other file since the 2026-10-15 unlock | before your first change |
+| [`AGENTS-PROPOSALS.md`](AGENTS-PROPOSALS.md) | the lock-era proposals, kept as history — corrections now go directly into `AGENTS.md` | you think a rule is wrong |
+| [`AGENTS-v4-DRAFT.md`](AGENTS-v4-DRAFT.md) | the complete v4 rewrite draft (desktop retired), kept as history | you want the v4 reasoning |
 | [`design/`](design) | **how and why**: the architecture tour, the ADR log, the skills design | you are changing behaviour |
 
 Three files sit there. [`epsilon-architecture.md`](design/epsilon-architecture.md) is the live tour,

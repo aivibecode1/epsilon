@@ -1,8 +1,9 @@
-# Proposals for `AGENTS.md`
+# Proposals for `AGENTS.md` — history since the 2026-10-15 unlock
 
-`AGENTS.md` is **locked**: maintainer-owned, SHA-256 in `AGENTS.md.sha256`, enforced by
-`scripts/check-agents-lock.py` in both the gate battery and CI. **No agent or subagent may edit
-it.** An agent that can rewrite the rules it is held to is not governed by them.
+`AGENTS.md` was maintainer-locked (SHA-256 in `AGENTS.md.sha256`, enforced by
+`scripts/check-agents-lock.py`) until the owner removed the lock outright.
+Corrections now go directly into `AGENTS.md`. Everything below is the record
+of what the lock era proposed, kept because the reasoning is still worth reading.
 
 If you think `AGENTS.md` is wrong, or is missing something, **append a proposal here**
 and mention it in your final report. The maintainer applies proposals and re-issues the lock.

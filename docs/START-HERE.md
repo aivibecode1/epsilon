@@ -52,7 +52,7 @@ For the real thing you need credentials for a model provider; see
 2. **[`design/epsilon-decisions.md`](design/epsilon-decisions.md)** — the numbered decisions
    (ADRs) with their reasoning. Skim the headings; the reasons are the interesting part.
 3. **[`../AGENTS.md`](../AGENTS.md)** — the rules anyone changing this code must follow: the
-   invariants, the commands, the evidence standard. It is locked and deliberately holds only
+   invariants, the commands, the evidence standard. It holds only
    what stays true; for what is true **today**, read [`STATUS.md`](STATUS.md).
 
 ---

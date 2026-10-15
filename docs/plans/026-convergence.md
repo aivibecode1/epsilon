@@ -24,7 +24,7 @@ it landed. This plan says what survived that, what the fresh audit found, and wh
 | B — make the scoreboard trustworthy | **Landed and still passing.** | `check-parity-citations` is a gate leg; totals re-counted from the matrices this week match `STATUS.md` exactly. |
 | C — the window's usable floor | **Landed.** | 36 of 37 heads answered, `/editor` refused by name; presets engine + `/preset` (rounds 66–68). |
 | D — command coverage by construction | **Landed.** | Verb rows derived from `SUPPORTED` (round 11). |
-| E — the credential contradiction | **CARRIED — still open.** §6 of the locked file and the tree still disagree: credentials sit in `<config dir>/auth.json`; proposal 7 is unanswered. R6 below. |
+| E — the credential contradiction | **CARRIED — still open.** `AGENTS.md` §6 and the tree still disagree: credentials sit in `<config dir>/auth.json`; proposal 7 is unanswered. R6 below. |
 | F — the terminal's user-visible Pi rows | **Largely landed.** | The rows F named (P-237, P-250, P-260, P-294) and the five-investigation queue all closed by rounds 70–103. What remains is R2 below. |
 | G — evidence integrity | **Landed.** | Three more checkers are gate legs; `gate.ps1` copies its own log. |
 | H — witness the accessibility | **CARRIED — untouched.** No screen-reader transcript, no human keyboard-only pass, either front end. R5 below, and it is the item that has slipped every round. |
@@ -186,7 +186,7 @@ every defect it found carrying a test that fails without its fix.
 
 ### R6 — The credential contradiction, decided (plan 025 §2.E)
 
-**Why.** The locked §6 says secrets belong in the OS credential store; the tree writes API keys
+**Why.** `AGENTS.md` §6 says secrets belong in the OS credential store; the tree writes API keys
 and OAuth refresh tokens to `auth.json`. One rule, one product — but this needs the owner's
 signature and (probably) an ADR plus a dependency decision.
 

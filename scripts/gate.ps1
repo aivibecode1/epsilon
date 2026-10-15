@@ -179,10 +179,6 @@ $gates = @(
     # see this class. `audit/history/` is excluded on purpose: it is superseded
     # and deliberately unrepaired (AGENTS.md).
     @{ Name = "check-links"; Exe = "python"; Args = @("scripts/check-links.py", "--quiet") },
-    # `AGENTS.md` is maintainer-owned and locked: an agent that may rewrite the rules is
-    # not governed by them. The lock is a SHA-256 in `AGENTS.md.sha256`, and this gate
-    # fails when the bytes move. A proposal goes in `docs/AGENTS-PROPOSALS.md` instead.
-    @{ Name = "check-agents-lock"; Exe = "python"; Args = @("scripts/check-agents-lock.py") },
     # Cargo does not merge a package `[lints]` table with `[workspace.lints]`: a
     # package table REPLACES it unless it says `workspace = true`, and cargo
     # rejects `workspace = true` outright when the same table carries overrides.

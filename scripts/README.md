@@ -23,7 +23,7 @@ this reason (`*.log` there is gitignored).
 | `gate.sh` | The same gates for POSIX and CI. |
 | `gate-until-pass.ps1` | Wraps either. Gives **every attempt its own label**, fingerprints a failure (test names plus machine-fault markers like `LNK1104` or `0xc0000142`), and stops on the second identical fingerprint — which is what "not transient" means for a suite. It never edits the gate scripts; those are the evidence of record. |
 
-Gates, in order: `check-links`, `check-agents-lock`, `check-lint-tables`, `check-line-endings`,
+Gates, in order: `check-links`, `check-lint-tables`, `check-line-endings`,
 `check-control-bytes`, `fmt`, `clippy`, `test`, `demo`, `real-check`.
 
 **Two rules that cost everyone time when forgotten:** never re-use a label (the gate truncates
@@ -36,7 +36,6 @@ Each of these can be run on its own; all of them are fast.
 
 | Script | What it fails on |
 |---|---|
-| `check-agents-lock.py` | `AGENTS.md` no longer matching its SHA-256. `AGENTS.md` is maintainer-owned and locked; agents never edit it, and this is what makes that true rather than aspirational. |
 | `check-links.py` | A broken relative link anywhere in the documentation. A dead citation looks exactly like a live one until a reader follows it. |
 | `check-line-endings.py` | A tracked text file carrying CRLF. `.gitattributes` normalises on commit, so `git diff` shows a CRLF working copy as unchanged — and a CRLF working copy is a different file to every tool that parses this repository's source. |
 | `check-control-bytes.py` | A C0 control byte inside a tracked text file. These are corrupted *letters*, not content (`e`→0x1B, `a`→0x07), which is why no other gate can see them: `fmt` and `clippy` read code, and a control byte in a comment is not code. |

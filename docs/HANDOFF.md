@@ -6,7 +6,7 @@ for a human reviewer meeting the project for the first time.
 
 Read in this order:
 
-1. [`../AGENTS.md`](../AGENTS.md) — the locked contract. **Read it in full, every session.** It is
+1. [`../AGENTS.md`](../AGENTS.md) — the contract. **Read it in full, every session.** It is
    short on purpose and it is not negotiable.
 2. **This file** — what is true right now, what is verified, and what has bitten.
 3. [`STATUS.md`](STATUS.md) — the living record: every milestone, every measurement, every open
