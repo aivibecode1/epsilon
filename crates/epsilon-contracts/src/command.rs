@@ -530,6 +530,25 @@ pub fn parse_command(input: &str) -> Option<Command> {
         Some((h, t)) => (h, t.trim()),
         None => (rest, ""),
     };
+    // Pi's `/skill:name` slash shape folds into `/skill <name>` before matching, so the
+    // alias and the house shape are one grammar below — same arm, same tail, same
+    // handler. Only `skill` folds: a colon after any other head stays part of the word
+    // and reaches `Unknown` exactly as it does today. The fold uses a `char` literal,
+    // not a quoted head, so the reverse-drift check (which reads quoted tokens) keeps
+    // seeing exactly the heads it already knows.
+    let (head, tail): (&str, std::borrow::Cow<'_, str>) = match head.split_once(':') {
+        Some((h, first)) if h.eq_ignore_ascii_case("skill") => {
+            let folded: std::borrow::Cow<'_, str> = if first.is_empty() {
+                tail.into()
+            } else if tail.is_empty() {
+                first.into()
+            } else {
+                format!("{first} {tail}").into()
+            };
+            (h, folded)
+        }
+        _ => (head, tail.into()),
+    };
     match head.to_ascii_lowercase().as_str() {
         "models" | "model" if tail.is_empty() => Some(Command::Models),
         // **Both spellings take the argument, and the reason is the alternative one used
@@ -890,6 +909,52 @@ mod tests {
         assert_eq!(split_export_arg("json"), ("json".into(), "".into()));
     }
 
+    /// Pi's `/skill:name` slash shape is an alias for `/skill <name>`.
+    ///
+    /// Skill directories are portable across harnesses; invocation syntax is not, and
+    /// `/skill:name` is the muscle memory a Pi user arrives with. The fold happens
+    /// before matching, so the alias and the house shape are one grammar: same variant,
+    /// same tail, same handler — and `/skills` (the listing) stays a different command.
+    #[test]
+    fn the_skill_colon_shape_is_an_alias_for_skill_with_a_space() {
+        assert_eq!(
+            parse_command("/skill:commit"),
+            parse_command("/skill commit"),
+            "the colon shape must reach the same command as the space shape"
+        );
+        assert_eq!(
+            parse_command("/skill:commit off"),
+            parse_command("/skill commit off"),
+            "a tail after the alias still rides along"
+        );
+        assert_eq!(
+            parse_command("/SKILL:commit"),
+            parse_command("/skill commit"),
+            "heads fold case before the colon is folded away"
+        );
+        // A bare `/skill:` carries nothing, like a bare `/skill` — the handler prints
+        // usage, it does not guess.
+        match parse_command("/skill:") {
+            Some(Command::Skill(tail)) => assert!(
+                tail.trim().is_empty(),
+                "a bare /skill: carries nothing, so nothing can be assumed: {tail:?}"
+            ),
+            other => panic!("expected a Skill command, got {other:?}"),
+        }
+        // The listing is not the toggle, in either spelling.
+        assert_eq!(
+            parse_command("/skills"),
+            Some(Command::Skills),
+            "the listing is not the toggle"
+        );
+        // And a colon after any other head is still just an unknown word.
+        assert_eq!(
+            parse_command("/models:gpt"),
+            Some(Command::Unknown("models:gpt".into())),
+            "only skill folds; every other colon stays unknown"
+        );
+    }
+    ///
     /// `/skill <name> on|off` parses, and a bare `/skill` does not guess.
     ///
     /// M196: a setting with no writer is the repo's own documented defect class

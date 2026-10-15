@@ -51,7 +51,9 @@ pub struct LoadableSkill {
     pub name: String,
     /// One-line purpose, shown when the model asks for something unavailable.
     pub description: String,
-    /// Directory containing `SKILL.md`.
+    /// Directory containing `SKILL.md` — or, for a flat `<name>.md` skill, the
+    /// parent skills root itself. Discovery sets this (its `Skill::dir` documents
+    /// the two shapes); the loader below reads whichever shape is on disk.
     pub dir: PathBuf,
 }
 
@@ -150,7 +152,23 @@ impl Tool for SkillTool {
             )));
         };
 
-        let path = skill.dir.join("SKILL.md");
+        let bundle = skill.dir.join("SKILL.md");
+        // `dir` is the bundle directory — or, for a flat `<name>.md` skill, its
+        // parent root. The bundle shape is tried first so every skill that loads today
+        // loads byte-identical tomorrow; the flat fallback only fires where no bundle
+        // exists. The containment check keeps the name inside the root: `join` with
+        // an absolute or `..`-carrying name would otherwise escape it, and the name
+        // arrives from model input via `find`, not from validated discovery.
+        let flat = skill.dir.join(format!("{}.md", skill.name));
+        let path = if bundle.is_file() {
+            bundle
+        } else if flat.parent().is_some_and(|parent| parent == skill.dir) && flat.is_file() {
+            flat
+        } else {
+            // Neither shape: report the bundle path, which is the shape discovery
+            // promises and the one every skill on disk today uses.
+            skill.dir.join("SKILL.md")
+        };
         let raw = std::fs::read_to_string(&path).map_err(|e| {
             ToolFailure::msg(format!(
                 "cannot read skill '{}' at {}: {e}",
@@ -266,6 +284,28 @@ mod tests {
             "---\nname: alpha\ndescription: does a thing\n---\n\n# Alpha\n\nStep one.\n",
         );
         let tool = tool_with(vec![("alpha", "does a thing", tmp.path().join("alpha"))]);
+        let out = run(&tool, "alpha").await.expect("loads");
+        let text = text_of(&out);
+        assert!(text.contains("Step one."), "{text}");
+        assert!(
+            !text.contains("description:"),
+            "frontmatter is harness metadata, not skill material: {text}"
+        );
+        assert_eq!(out.details["skill"], "alpha");
+    }
+
+    #[tokio::test]
+    async fn a_flat_file_skill_loads_from_name_dot_md_beside_the_root() {
+        // Discovery reports a flat `<name>.md` skill with `dir` set to its parent root
+        // (there is no skill directory), so the tool must read `<dir>/<name>.md` when
+        // no `<dir>/SKILL.md` exists — otherwise every flat skill discovers and none loads.
+        let tmp = tempfile::tempdir().expect("tmp");
+        std::fs::write(
+            tmp.path().join("alpha.md"),
+            "---\nname: alpha\ndescription: does a thing\n---\n\n# Alpha\n\nStep one.\n",
+        )
+        .expect("flat skill body");
+        let tool = tool_with(vec![("alpha", "does a thing", tmp.path().to_path_buf())]);
         let out = run(&tool, "alpha").await.expect("loads");
         let text = text_of(&out);
         assert!(text.contains("Step one."), "{text}");

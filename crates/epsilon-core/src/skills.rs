@@ -33,6 +33,11 @@ const MAX_DESC: usize = 1024;
 // * **extra directories passed on the command line** — Claude Code's `--add-dir`, and
 //   Codex's `/etc/codex/skills` admin tier. Epsilon has no flag that adds a root today, so
 //   there is no surface to hang this on; when one exists, [`all_roots`] is where it goes.
+//   Whether that surface is a CLI flag or a config key is a product decision not made
+//   here, so nothing is built for it. (Deferred, not overlooked.)
+// * **descending below the roots** — discovery reads one level: the entries of each
+//   root, never their subdirectories. DSH deliberately reads the same depth, so a skill
+//   tree resolves identically in both harnesses. (Deferred, not overlooked.)
 // * **plugin skills** — `<plugin>/skills/<name>/SKILL.md`, namespaced by plugin. A plugin
 //   root is installed software, not a directory the user typed into, and would need its own
 //   trust story rather than borrowing the workspace's.
@@ -63,6 +68,10 @@ pub fn user_roots() -> Vec<PathBuf> {
         roots.push(home.join(".codex").join("skills"));
         // Gemini CLI: `~/.gemini/skills` (geminicli.com/docs/cli/skills).
         roots.push(home.join(".gemini").join("skills"));
+        // opencode's XDG-style global dir (`~/.config/opencode/skills`).
+        roots.push(home.join(".config").join("opencode").join("skills"));
+        // DeepSeek Harness: `~/.dsh/skills`, the home-tier twin of `.dsh/skills`.
+        roots.push(home.join(".dsh").join("skills"));
         // The portable alias. Gemini CLI documents it explicitly and gives it precedence over
         // the tool's own directory within a tier, which is the rule this ordering follows.
         roots.push(home.join(".agents").join("skills"));
@@ -96,6 +105,9 @@ pub fn project_roots(workspace: &Path) -> Vec<PathBuf> {
         // DeepSeek Harness — the same convention the reference tree in `references/` uses
         // (`packages/skill/skill-filesystem/src/index.ts:250`).
         workspace.join(".dsh").join("skills"),
+        // Pi's native config dir (CONFIG_DIR_NAME). This harness began as a port of Pi,
+        // so a skill written for it is a skill written for this one's shape.
+        workspace.join(".pi").join("skills"),
         // The portable alias, last so it wins the tier, per Gemini CLI's documented rule.
         workspace.join(".agents").join("skills"),
     ]
@@ -187,11 +199,21 @@ pub fn all_roots(workspace: &Path, project_trusted: bool) -> Vec<PathBuf> {
 /// One discovered skill.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Skill {
-    /// Validated skill name (directory name unless frontmatter overrides).
+    /// Validated skill name (directory name unless frontmatter overrides; file stem
+    /// for a flat `<name>.md` skill, where a frontmatter `name:` is ignored).
     pub name: String,
     /// One-line purpose shown in the catalog.
     pub description: String,
-    /// Directory containing SKILL.md.
+    /// Where the skill lives: the directory containing `SKILL.md` for a bundle, the
+    /// parent skills **root** for a flat `<name>.md` file.
+    ///
+    /// The root plays the bundle directory's only role — locating the file — so the
+    /// loader reads `<dir>/SKILL.md` first and falls back to `<dir>/<name>.md`, and a
+    /// flat skill's `dir` plus its name always locates its file. No extra field carries
+    /// the filename: `LoadableSkill` in `epsilon-tools` has exactly
+    /// `(name, description, dir)`, its constructor in `epsilon-runtime` is outside this
+    /// change, and a second channel for the same path would be the second copy this
+    /// codebase keeps refusing to add.
     pub dir: PathBuf,
     /// When true, only slash-command style invocation may load it (not model choice).
     pub disable_model_invocation: bool,
@@ -199,6 +221,12 @@ pub struct Skill {
 
 /// Parse `---` delimited frontmatter into key/value pairs (flat strings only).
 /// Returns the pairs and the body AFTER the closing marker.
+///
+/// Unknown keys (`whenToUse`, `metadata`, licence blocks, ...) are ignored, not
+/// preserved: opencode reads the same files and ignores what it does not know, and
+/// discovery has no field worth adding to carry them — the catalog prints name and
+/// description, the loader prints the body, and nothing in between is rendered
+/// anywhere. (Deferred, not overlooked.)
 fn parse_frontmatter(raw: &str) -> (Vec<(String, String)>, String) {
     if raw.lines().next().map(str::trim) != Some("---") {
         return (Vec::new(), raw.to_string());
@@ -237,7 +265,8 @@ pub struct Discovered {
     pub notices: Vec<String>,
 }
 
-/// Discover skills across root directories (each scanned one level deep for `SKILL.md`).
+/// Discover skills across root directories (each scanned one level deep for
+/// `SKILL.md` bundles and top-level `<name>.md` flat files).
 ///
 /// **Name collisions: last root wins, which is NOT what pi does.** pi keeps the
 /// *first* skill registered under a name and records a collision diagnostic naming
@@ -272,20 +301,27 @@ pub fn discover(roots: &[PathBuf]) -> Vec<Skill> {
 /// * **a root that could not be read** — named, with the reason. A root that is simply
 ///   *absent* is not a notice: most workspaces have no `.epsilon/skills` at all, and a
 ///   channel that speaks on every launch is a channel people learn to stop reading.
-/// * **an entry the directory could not hand over**, and **a `SKILL.md` that is there but
-///   cannot be read** — the latter is not the same as a directory with no `SKILL.md`,
-///   which is a skills root holding something else and is not a defect.
+/// * **an entry the directory could not hand over**, and **a `SKILL.md` or `<name>.md`
+///   that is there but cannot be read** — the latter is not the same as a directory with
+///   no `SKILL.md`, which is a skills root holding something else and is not a defect.
 /// * **a skill the name or description rules reject** — the author wrote it and it will
 ///   never load. Silence here is what makes "my skill does nothing" unfixable.
 /// * **a name collision** — both paths and the winner. See [`discover`] for why the later
 ///   root wins; that behaviour is unchanged, it is now only announced.
 ///
-/// What deliberately does **not** produce one: a plain file in a skills root, and a
-/// directory that is not a skill. Those are ordinary trees, and a notice per unrelated
-/// entry would bury the ones that matter.
+/// What deliberately does **not** produce one: a file in a skills root that is neither
+/// a skill directory nor a `<name>.md` flat skill (a top-level `SKILL.md` is excluded
+/// outright), and a directory that is not a skill. Those are ordinary trees, and a
+/// notice per unrelated entry would bury the ones that matter.
 pub fn discover_with_notices(roots: &[PathBuf]) -> Discovered {
     let mut out: Vec<Skill> = Vec::new();
     let mut notices: Vec<String> = Vec::new();
+    // Real paths of skill files already taken. Two roots can reach one file — a linked
+    // skill directory, a linked flat file, or the same root listed twice — and without
+    // this the second copy either doubles the skill or announces that the skill shadows
+    // itself. This mirrors Pi's `realPathSet`; the roots-level dedupe above stays as it
+    // is, because two roots are not the same thing as two routes to one file.
+    let mut seen_files: Vec<PathBuf> = Vec::new();
     for root in roots {
         let entries = match std::fs::read_dir(root) {
             Ok(entries) => entries,
@@ -309,11 +345,51 @@ pub fn discover_with_notices(roots: &[PathBuf]) -> Discovered {
                     continue;
                 }
             };
-            let dir = e.path();
-            if !dir.is_dir() {
+            let path = e.path();
+            // Two shapes reach the same validation below. A directory may hold a bundle
+            // (`<dir>/SKILL.md`); a top-level `<name>.md` file IS the skill — DSH,
+            // opencode and Pi all read loose files in a skills root, and a harness that
+            // reads only bundles requires their authors to rewrap every file by hand.
+            // Anything else is ordinary tree and stays silent.
+            //
+            // A top-level `SKILL.md` is excluded outright: it is not inside a skill
+            // directory, and `SKILL` is not a valid stem, so without this it would fail
+            // the name rules noisily on every launch for a file that names no skill.
+            let (skill_file, dir, default_name, origin, is_flat) = if path.is_dir() {
+                let dir_name = path
+                    .file_name()
+                    .map(|n| n.to_string_lossy().to_string())
+                    .unwrap_or_default();
+                let origin = path.clone();
+                let skill_file = path.join("SKILL.md");
+                (skill_file, path, dir_name, origin, false)
+            } else if path.is_file()
+                && path.extension().is_some_and(|ext| ext == "md")
+                && !path.file_name().is_some_and(|name| name == "SKILL.md")
+            {
+                let stem = path
+                    .file_stem()
+                    .map(|n| n.to_string_lossy().to_string())
+                    .unwrap_or_default();
+                let origin = path.clone();
+                // `dir` is the file's parent root: the bundle directory's only role is
+                // locating its `SKILL.md`, and the root plays that role for a flat file
+                // (see [`Skill::dir`]).
+                (path, root.clone(), stem, origin, true)
+            } else {
+                continue;
+            };
+            // An already-seen file reached by a second route is skipped silently: there
+            // is no second skill here, so there is nothing to announce — not a shadow,
+            // not a problem. A path that does not resolve (a bundle directory with no
+            // `SKILL.md` in it) keys on itself, which never collides with a real file.
+            let file_key = skill_file
+                .canonicalize()
+                .unwrap_or_else(|_| skill_file.clone());
+            if seen_files.contains(&file_key) {
                 continue;
             }
-            let skill_file = dir.join("SKILL.md");
+            seen_files.push(file_key);
             let raw = match std::fs::read_to_string(&skill_file) {
                 Ok(raw) => raw,
                 Err(e) => {
@@ -328,17 +404,22 @@ pub fn discover_with_notices(roots: &[PathBuf]) -> Discovered {
             let (fm, _) = parse_frontmatter(&raw);
             let get = |k: &str| fm.iter().find(|(key, _)| key == k).map(|(_, v)| v.clone());
 
-            let dir_name = dir
-                .file_name()
-                .map(|n| n.to_string_lossy().to_string())
-                .unwrap_or_default();
-            let name = get("name").unwrap_or(dir_name);
+            let name = if is_flat {
+                // The stem names a flat skill; a frontmatter `name:` is ignored rather
+                // than honoured. The loader finds a flat skill at `<dir>/<name>.md`
+                // from the catalogued name alone, so honouring an override would
+                // discover a skill the `skill` tool cannot then open — and the filename
+                // is the name on disk in every harness that reads loose files.
+                default_name
+            } else {
+                get("name").unwrap_or(default_name)
+            };
             if !valid_name(&name) {
                 notices.push(format!(
                     "skills: ignoring {}: '{name}' is not a valid skill name (lowercase a-z, \
                      0-9 and hyphens, no leading, trailing or doubled hyphen, at most \
                      {MAX_NAME} characters)",
-                    dir.display()
+                    origin.display()
                 ));
                 continue;
             }
@@ -347,23 +428,34 @@ pub fn discover_with_notices(roots: &[PathBuf]) -> Discovered {
                 notices.push(format!(
                     "skills: ignoring {}: no description, and the description is the only line \
                      the catalog shows before a skill is invoked",
-                    dir.display()
+                    origin.display()
                 ));
                 continue;
             }
             if description.len() > MAX_DESC {
                 notices.push(format!(
                     "skills: ignoring {}: description is {} bytes, over the {MAX_DESC}-byte limit",
-                    dir.display(),
+                    origin.display(),
                     description.len()
                 ));
                 continue;
             }
-            let skill = Skill {
-                name,
-                description,
-                dir,
-                disable_model_invocation: invocation_flag(get("disable-model-invocation")),
+            let skill = {
+                let raw_flag = get("disable-model-invocation");
+                let Some(disable_model_invocation) = invocation_flag(raw_flag.clone()) else {
+                    notices.push(format!(
+                        "skills: ignoring {}: unrecognized disable-model-invocation '{}'",
+                        origin.display(),
+                        raw_flag.unwrap_or_default()
+                    ));
+                    continue;
+                };
+                Skill {
+                    name,
+                    description,
+                    dir,
+                    disable_model_invocation,
+                }
             };
             // Shadowing: replace the earlier-root skill with the same name. This is a
             // deliberate divergence from pi (see the doc comment above): pi keeps the
@@ -405,32 +497,21 @@ fn root_is_absent(root: &Path, err: &std::io::Error) -> bool {
 
 /// Read a frontmatter boolean the way YAML spells them.
 ///
-/// # Why this exists, and why it fails **closed**
+/// Returns `None` when the key is present but holds no recognised spelling. The caller
+/// then **skips the skill with a notice** instead of guessing: DSH drops a skill whose
+/// boolean it cannot read and warns, and that strictness is the standard here — Pi's
+/// fail-open (load it as invocable) is weaker, and the interim fail-closed answer
+/// (load it with the restriction applied) still loaded a skill on a guess about what
+/// the author meant. The notice channel carries the warning, so nothing is silent.
 ///
-/// This used to be `get("disable-model-invocation").map(|v| v == "true").unwrap_or(false)` —
-/// which meant a skill whose frontmatter said `disable-model-invocation: yes`, or `True`, or
-/// `on`, was parsed as **model-invocable**. A user's own opt-out silently did nothing, on a
-/// field whose entire purpose is to withhold a skill from the model.
-///
-/// That is the shape `AGENTS.md` §6 forbids: an unrecognised value on a capability must be
-/// `Ask`, never `Allow`. So an unrecognised spelling now means **the restriction applies**.
-///
-/// **Why not DSH's stronger answer.** DeepSeek Harness accepts the same YAML boolean set and, on
-/// a rejected spelling, **drops the whole skill with a warning**. That is the better rule, and
-/// [`discover_with_notices`] is now the channel that could carry the warning — but dropping the
-/// skill is a different behaviour from loading it with the restriction applied, and changing what
-/// loads is not this function's business. What is left is the safe direction: the worst outcome
-/// is a skill a person can still invoke by name, rather than a skill the author asked to withhold
-/// from the model and now cannot use at all.
-///
-/// Absent means `false`: the key was not written, so there is no restriction to honour.
-fn invocation_flag(value: Option<String>) -> bool {
-    let Some(raw) = value else { return false };
+/// Absent means `Some(false)`: the key was not written, so there is no restriction.
+fn invocation_flag(value: Option<String>) -> Option<bool> {
+    let Some(raw) = value else { return Some(false) };
     match raw.trim().to_ascii_lowercase().as_str() {
-        "true" | "yes" | "on" | "1" => true,
-        "false" | "no" | "off" | "0" => false,
-        // Unrecognised: honour the restriction rather than ignore it.
-        _ => true,
+        "true" | "yes" | "on" | "1" => Some(true),
+        "false" | "no" | "off" | "0" => Some(false),
+        // Unrecognised: no guess. The caller drops the skill and says so.
+        _ => None,
     }
 }
 
@@ -630,23 +711,31 @@ mod tests {
         }
     }
 
-    /// An unrecognised spelling fails **closed**.
+    /// An unrecognised spelling **skips the skill with a notice**.
     ///
-    /// The key is present, so someone wrote something intended to restrict the skill. We cannot
-    /// know what, and `AGENTS.md` §6 is explicit that an unrecognised value on a capability is
-    /// `Ask`, never `Allow` — so the restriction applies. The old behaviour did the opposite.
+    /// DSH is the standard here, not Pi: DSH drops a skill whose boolean it cannot read
+    /// and warns, while Pi loads it fail-open. Dropping is the stricter answer and the
+    /// notice channel now exists to carry the warning, so a skill whose author wrote
+    /// something unreadable in a capability field never loads in any capacity — neither
+    /// as model-invocable (the old fail-open bug) nor as restricted (the interim
+    /// fail-closed answer, which loaded a skill on a guess about what the author meant).
     #[test]
-    fn an_unrecognised_spelling_fails_closed_rather_than_open() {
+    fn an_unrecognised_spelling_skips_the_skill_with_a_notice() {
         for spelling in [
             "disable-model-invocation: perhaps",
             "disable-model-invocation:",
         ] {
             let dir = tempfile::tempdir().unwrap();
-            let flag = discovered_flag(dir.path(), "mystery", &format!("{spelling}\n"));
-            assert_eq!(
-                flag,
-                Some(true),
-                "`{spelling}` is not a boolean we recognise, so the restriction must apply"
+            write_raw(dir.path(), "mystery", &format!("{spelling}\n"));
+            let found = discover_with_notices(&[dir.path().to_path_buf()]);
+            assert!(
+                found.skills.iter().all(|s| s.name != "mystery"),
+                "an unreadable capability field must not load the skill: {found:?}"
+            );
+            assert!(
+                found.notices.iter().any(|n| n.contains("mystery")
+                    && n.contains("unrecognized disable-model-invocation")),
+                "dropping a skill the author wrote must be announced: {found:?}"
             );
         }
     }
@@ -903,6 +992,200 @@ mod tests {
     }
 
     // ---------------------------------------------------------------------------------------------
+    // Flat-file skills: a top-level `<name>.md` directly inside a root
+    // ---------------------------------------------------------------------------------------------
+
+    /// Write a flat-file skill: `<root>/<name>.md` with the given frontmatter lines.
+    fn write_flat_skill(root: &Path, name: &str, extra: &str) {
+        std::fs::write(
+            root.join(format!("{name}.md")),
+            format!("---\ndescription: a thing\n{extra}---\nbody\n"),
+        )
+        .unwrap();
+    }
+
+    /// **A top-level `<name>.md` is a skill named for its stem.**
+    ///
+    /// DSH, opencode and Pi all read loose markdown files in a skills root; Epsilon used
+    /// to walk past them because only `<name>/SKILL.md` directories counted. `dir` is the
+    /// file's parent root — the bundle's directory plays no other role than locating its
+    /// `SKILL.md`, and the root plays that role for a flat file — and the name is the
+    /// file stem, validated by the same rules as a directory name.
+    #[test]
+    fn a_top_level_md_file_is_a_skill_named_for_its_stem() {
+        let dir = tempfile::tempdir().unwrap();
+        write_flat_skill(dir.path(), "commit-craft", "");
+        write_skill(dir.path(), "bundled", "A bundle.", "body");
+
+        let found = discover_with_notices(&[dir.path().to_path_buf()]);
+        assert_eq!(found.skills.len(), 2, "{found:?}");
+        let flat = found
+            .skills
+            .iter()
+            .find(|s| s.name == "commit-craft")
+            .expect("the flat file must be discovered");
+        assert_eq!(
+            flat.dir,
+            dir.path(),
+            "a flat skill's dir is its parent root: {flat:?}"
+        );
+        assert_eq!(flat.description, "a thing");
+        assert!(
+            found.notices.is_empty(),
+            "a well-formed flat file is not a problem: {found:?}"
+        );
+    }
+
+    /// A flat file without a description is announced, exactly like a bundle without one.
+    #[test]
+    fn a_flat_skill_without_a_description_is_announced_like_a_bundle() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("no-desc.md"), "---\n---\nbody\n").unwrap();
+
+        let found = discover_with_notices(&[dir.path().to_path_buf()]);
+        assert!(found.skills.is_empty(), "{found:?}");
+        assert_eq!(found.notices.len(), 1, "{found:?}");
+        assert!(
+            found.notices[0].contains("no-desc.md") && found.notices[0].contains("description"),
+            "the notice must name the file and say what is missing: {found:?}"
+        );
+    }
+
+    /// A flat file whose stem breaks the name rules is announced, not loaded.
+    #[test]
+    fn a_flat_skill_with_an_invalid_stem_is_announced() {
+        let dir = tempfile::tempdir().unwrap();
+        write_flat_skill(dir.path(), "Bad_Name", "");
+
+        let found = discover_with_notices(&[dir.path().to_path_buf()]);
+        assert!(found.skills.is_empty(), "{found:?}");
+        assert_eq!(found.notices.len(), 1, "{found:?}");
+        assert!(
+            found.notices[0].contains("Bad_Name") && found.notices[0].contains("skill name"),
+            "the stem answers to the same rules as a directory name: {found:?}"
+        );
+    }
+
+    /// **A top-level `SKILL.md` is not a skill, and saying so every launch would be noise.**
+    ///
+    /// It matches neither shape — it is not inside a skill directory, and `SKILL` is not a
+    /// valid stem (uppercase) — so without an explicit exclusion it would fail the name
+    /// rules noisily on every launch. Excluding it keeps the channel honest: a notice must
+    /// mean something the author can fix, and there is no skill here to fix.
+    #[test]
+    fn a_top_level_skill_md_is_excluded() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(
+            dir.path().join("SKILL.md"),
+            "---\nname: stray\ndescription: a thing\n---\nbody\n",
+        )
+        .unwrap();
+
+        let found = discover_with_notices(&[dir.path().to_path_buf()]);
+        assert!(found.skills.is_empty(), "{found:?}");
+        assert!(
+            found.notices.is_empty(),
+            "an excluded file is not a problem to report: {found:?}"
+        );
+    }
+
+    /// An unreadable flat file is announced, like an unreadable bundle file.
+    #[test]
+    fn an_unreadable_flat_file_is_announced() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("broken.md"), [0xff, 0xfe, 0x00]).unwrap();
+
+        let found = discover_with_notices(&[dir.path().to_path_buf()]);
+        assert!(found.skills.is_empty(), "{found:?}");
+        assert_eq!(found.notices.len(), 1, "{found:?}");
+        assert!(
+            found.notices[0].contains("broken.md"),
+            "the notice must name the file it could not read: {found:?}"
+        );
+    }
+
+    /// **A flat skill and a bundle of the same name collide like any two skills.**
+    ///
+    /// The shape on disk does not matter to precedence: the later root still wins, and
+    /// the notice still names both sides.
+    #[test]
+    fn a_flat_skill_collides_with_a_bundle_of_the_same_name() {
+        let earlier = tempfile::tempdir().unwrap();
+        let later = tempfile::tempdir().unwrap();
+        write_flat_skill(earlier.path(), "shared", "");
+        write_skill(later.path(), "shared", "The bundle copy.", "body");
+
+        let roots = vec![earlier.path().to_path_buf(), later.path().to_path_buf()];
+        let found = discover_with_notices(&roots);
+        assert_eq!(found.skills.len(), 1, "one name, one winner: {found:?}");
+        assert_eq!(
+            found.skills[0].description, "The bundle copy.",
+            "the later root wins across shapes too: {found:?}"
+        );
+        assert_eq!(found.notices.len(), 1, "one collision, one line: {found:?}");
+    }
+
+    // ---------------------------------------------------------------------------------------------
+    // Symlink dedupe: one file reached twice loads once
+    // ---------------------------------------------------------------------------------------------
+
+    /// **One root listed twice is scanned once.**
+    ///
+    /// No link is involved — the same `SKILL.md` simply arrives twice — and without a
+    /// file-level dedupe the second copy announces that the skill shadows itself, a
+    /// notice naming two identical paths and declaring a winner.
+    #[test]
+    fn one_root_listed_twice_loads_each_skill_once_and_says_nothing() {
+        let dir = tempfile::tempdir().unwrap();
+        write_skill(dir.path(), "solo", "The only copy.", "body");
+
+        let roots = vec![dir.path().to_path_buf(), dir.path().to_path_buf()];
+        let found = discover_with_notices(&roots);
+        assert_eq!(found.skills.len(), 1, "one file, one skill: {found:?}");
+        assert!(
+            found.notices.is_empty(),
+            "and no notice saying the skill shadows itself: {found:?}"
+        );
+    }
+
+    /// **One file reached through two roots loads once and says nothing.**
+    ///
+    /// This is Pi's `realPathSet`: the second root reaches the same `SKILL.md` through
+    /// a link, and discovery that cannot tell answers with the skill twice — or, where
+    /// the names agree, with a notice claiming the skill shadows itself. The link is a
+    /// directory link (`test_support::dir_link`: a junction on Windows, a symlink
+    /// elsewhere), following the dangling-root test's lead — a file link needs a
+    /// privilege a stock Windows machine does not hold, and a hard link is a second
+    /// directory entry rather than a second route to one file, so neither proves what
+    /// this test names.
+    #[test]
+    fn one_file_reached_through_two_roots_loads_once_and_says_nothing() {
+        let first = tempfile::tempdir().unwrap();
+        write_skill(first.path(), "shared", "The one copy.", "body");
+        let second = tempfile::tempdir().unwrap();
+        assert!(
+            crate::test_support::dir_link(
+                &first.path().join("shared"),
+                &second.path().join("shared"),
+            ),
+            "the platform refused to create a directory link, so this test asserted nothing"
+        );
+
+        let roots = vec![first.path().to_path_buf(), second.path().to_path_buf()];
+        let found = discover_with_notices(&roots);
+        assert_eq!(found.skills.len(), 1, "one file, one skill: {found:?}");
+        assert_eq!(
+            found.skills[0].dir,
+            first.path().join("shared"),
+            "the first route wins, because the second never loads: {found:?}"
+        );
+        assert!(
+            found.notices.is_empty(),
+            "and no notice saying the skill shadows itself: {found:?}"
+        );
+    }
+
+    // ---------------------------------------------------------------------------------------------
     // The cross-harness root table
     // ---------------------------------------------------------------------------------------------
 
@@ -939,6 +1222,7 @@ mod tests {
             (".windsurf", "windsurf-wrote-me"),
             (".opencode", "opencode-wrote-me"),
             (".dsh", "dsh-wrote-me"),
+            (".pi", "pi-wrote-me"),
             (".agents", "agents-wrote-me"),
             (".epsilon", "epsilon-wrote-me"),
         ] {
@@ -971,6 +1255,7 @@ mod tests {
             "windsurf-wrote-me",
             "opencode-wrote-me",
             "dsh-wrote-me",
+            "pi-wrote-me",
             "agents-wrote-me",
             "epsilon-wrote-me",
         ] {
@@ -982,7 +1267,7 @@ mod tests {
         }
         assert!(
             found.notices.is_empty(),
-            "nine well-formed skills is nine well-formed skills, not nine problems: {found:?}"
+            "ten well-formed skills is ten well-formed skills, not ten problems: {found:?}"
         );
     }
 
@@ -1181,6 +1466,9 @@ mod tests {
             ".windsurf",
             ".opencode",
             ".dsh",
+            // Pi's native config dir (CONFIG_DIR_NAME): this harness began as a port of
+            // it, and its project skills live beside the other harness dirs.
+            ".pi",
             ".agents",
         ] {
             assert!(
@@ -1190,7 +1478,7 @@ mod tests {
         }
         assert_eq!(
             roots.len(),
-            9,
+            10,
             "the list is exactly the documented conventions: {roots:?}"
         );
         // The portable alias is last, so it wins the tier.
@@ -1223,6 +1511,10 @@ mod tests {
                     home.join(".claude").join("skills"),
                     home.join(".codex").join("skills"),
                     home.join(".gemini").join("skills"),
+                    // opencode's XDG-style global dir and DeepSeek Harness's home dir:
+                    // both read by their harnesses, so both are read here too.
+                    home.join(".config").join("opencode").join("skills"),
+                    home.join(".dsh").join("skills"),
                     home.join(".agents").join("skills"),
                 ];
                 assert_eq!(
