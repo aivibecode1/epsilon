@@ -14,12 +14,15 @@ Last updated: 2026-10-12 (revised goal: desktop removed, TUI-as-IDE; Phase 1 in 
 
 **Scoreboard at 2026-10-14:** Pi matrix `docs/parity/pi-tui.md` — **339 rows: 89 done / 112 partial / 0 missing / 138 deliberately different** (`check-parity-counts` green). Every `missing` row is gone; the partials are half-built behaviours with their live halves named. Dated "Counts now …" rows in the phase log below are historical records of their day, not the current total.
 
+**Verification verdict, 2026-10-15: `gate-production-20261015-c` GATE PASS — 15/15 legs, 2,144 passed / 0 failed / 15 ignored across 73 test binaries** (`audit/evidence/gate-production-20261015-c.log`, sha `fc65c89e895b214a`; debug info off, `CARGO_BUILD_JOBS=1`, cache cleared before the round per the disk rule). The shipped binary was reinstalled from the proved bytes and driven in a real console (`scripts/console-probe.py`): the window does not shrink (80×24 before and after), the frame renders with today's polish, and typed keys land in the composer (`❯ explain the layout module`). Probe JSON preserved at `audit/evidence/console-probe-{,-typed-}production-20261015.json`.
+
+**Attempt history for this round, kept because a failed attempt is evidence too.** `gate-production-20261015` was killed by the harness's 420 s foreground cap at the demo leg (partial log kept). `gate-production-20261015-b` GATE FAIL on exactly the two `epsilon-tools` wall-clock tests the repo's own notes call load-sensitive (`a_normal_command_reports_complete_output_immediately` at 6.6 s against a 4 s bound, `a_descendant_holding_the_pipe_does_not_hang_the_call`) — both pass in isolation on an idle machine (1.5 s and 16 s), the disk was at 30 GB free after ten hours of builds, and after clearing the build cache (target 13 GB → 6 MB, disk 42 GB free) the same suite passed inside the battery. The disposition is environmental load, and the logs for both attempts are kept rather than only the green one.
+
 ### 2026-10-14 production-readiness session — landed so far
 
 Five read-only audits (defect ledger, pi port, reference capabilities, TUI polish from the
-captured frames, code quality + docs honesty) ran against the tree; their reports live in the
-session note [`../agents/memory/2026-10-14-production-push.md`](../agents/memory/2026-10-14-production-push.md).
-What landed from them:
+captured frames, code quality + docs honesty) ran against the tree; their findings are
+integrated into the ledger and the list below. What landed from them:
 
 - **`52b246d`** — the 22-slice uncommitted working stack settled into the commit record
   (each slice carries its own GATE PASS log in `audit/evidence/`); all ten non-build gate
@@ -38,10 +41,26 @@ What landed from them:
   unnamed editor undo, the footer's bare-key hints, the @ popup's missing empty state, the
   palette flush at 60 columns, and a streaming card reading `pending`. All 63 evidence
   frames regenerated and reviewed.
-- **In flight:** four core defects (retry's `insufficient_quota` spelling, `read_all`'s
-  panic, the discarded trust-hash write, CSI residue in `display_safe`), then the
-  remaining TUI/tools defect batch, then the dead-code and dependency-edge cleanup, then
-  the full battery and the real-console probe of the installed binary.
+- **`f9fa4b7`** — four live ledger findings closed (retry's `quota exceeded` double meaning
+  with ADR-041 recording the behaviour change, the session-store short read named instead
+  of an anonymous EOF, the trust-hash failure routed into notices, CSI residue stripped in
+  `display_safe`).
+- **`3a863ec`** — nine more audit defects: the tool's own omission marker survives the card
+  cap, the affordance counts rows because rows are what it counts, `TranscriptLine::hidden`
+  is wired rather than deleted, the orphaned tool-result card goes through the same
+  sanitize funnel, `render_cache`'s cost claim corrected with measurements, `in_hunk`
+  resets per document, a cancelled call says `cancelled` (P-158), the footer names the
+  session (P-200), and the header counts the retry down (P-189).
+- **`322f7b0`** — the permission dialog shows the diff it is approving: a defaulted
+  `Tool::preview` seam merged into the ask detail by epsilon-core (so every mode inherits
+  it), implemented by write and edit over one shared implementation with their execute
+  paths, drawn by the existing diff shape.
+- **In flight at the end of the session:** none. Queued with its brief: the dead-code and
+  dependency-edge cleanup (21 zero-reference `pub` items + five unused edges — the brief
+  and per-item caller classification are in the session note), the test-only `pub`
+  narrowing list, OSC-sequence stripping in `display_safe`, a live whole-second tick on the
+  retry countdown, and the reference capabilities ranked below the permission diff
+  (`changes` panel, the question tool, plan mode).
 
 Revised goal (2026-10-12): remove the desktop frontend and focus on core solidity,
 docs/navigability, and an opencode-style full-screen TUI (tree + editor + agent, mouse,

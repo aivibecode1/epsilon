@@ -49,7 +49,6 @@ next.
 | [`f09-path-policy.md`](f09-path-policy.md) | **F09: the resolved-path policy** — the lexical resolver, what it delegated, and the containment work that followed | historical reasoning; the landed result is M199 (`m199-containment.md`) |
 | [`port-revalidation.md`](port-revalidation.md) | **The autonomous audit + complete-port arc**: its authority and scope, and the port-fidelity thread it opened | standing context for why the port frames the project; superseded as *status* by `audit/01`-`07` |
 | [`tui-redesign.md`](tui-redesign.md) | **TUI redesign: chrome economy** — the overlay-chrome migration across every list panel and prompt | landed and green at the time of writing; the later pass over the same surface is M201 (`frame-reading-pass.md`) |
-| [`2026-10-14-production-push.md`](2026-10-14-production-push.md) | **The production-readiness push: tree settled at `52b246d`, five audits + the lib.rs split in flight** | live — heads this session |
 | [`next-hardening.md`](next-hardening.md) | **This machine, and this repo's open threads** — procedure and traps, explicitly *not* status | reference; the open-item map of record is named inside it |
 
 ## Superseded notes (kept for history, not for direction)
