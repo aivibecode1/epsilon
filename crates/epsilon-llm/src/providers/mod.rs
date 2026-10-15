@@ -654,14 +654,19 @@ impl HttpEventStream {
             .and_then(|v| v.as_u64())
             .unwrap_or(0);
         u.cache_read = cached;
-        // **Same rule as Anthropic and Bedrock (K1):** Mistral parsed eight spellings of
+        // **Same rule as Anthropic and Bedrock (K1):** Mistral parsed every spelling of
         // "cached tokens" here, and then reported that it does not report caching at all —
         // so a session with a working prompt cache printed `CH n/a` next to the tokens it
         // had just moved. The flag says the provider *speaks about* caching, which is a
         // property of its usage shape and not of whether this particular turn hit the cache.
+        // D4: the parse above also reads `num_cached_tokens`/`numCachedTokens`, so the
+        // flag reads them too — one list, read twice, kept in step.
         u.cache_reported = Self::MISTRAL_CACHE_POINTERS
             .iter()
-            .any(|p| usage.pointer(p).is_some());
+            .any(|p| usage.pointer(p).is_some())
+            || ["num_cached_tokens", "numCachedTokens"]
+                .iter()
+                .any(|k| usage.get(*k).is_some());
         u.total_tokens = usage
             .get("total_tokens")
             .and_then(|v| v.as_u64())
@@ -1676,6 +1681,18 @@ pub mod test_support {
     ) -> epsilon_contracts::message::Usage {
         let mut st = super::HttpEventStream::new("test-model", "test", false);
         st.seed_usage_compat(&super::openai_responses::responses_usage(usage));
+        st.usage_tail
+            .expect("a usage block with tokens yields a tail")
+    }
+
+    /// Run a raw Mistral `usage` object through the Mistral decoder.
+    ///
+    /// D4: the parse reads `num_cached_tokens`/`numCachedTokens` as well as the
+    /// pointer shapes, so the helper must cover both — otherwise a test here
+    /// cannot pin the flag to the parse.
+    pub fn mistral_usage_from_json(usage: &serde_json::Value) -> epsilon_contracts::message::Usage {
+        let mut st = super::HttpEventStream::new("test-model", "test", false);
+        st.seed_usage_mistral(usage);
         st.usage_tail
             .expect("a usage block with tokens yields a tail")
     }

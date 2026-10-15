@@ -877,6 +877,41 @@ impl App {
         }
     }
 
+    /// Persist a successfully switched permission preset (Wave 20:
+    /// `[permissions] preset`).
+    ///
+    /// One writer for both switch sites — `run_preset_command` (`/preset`
+    /// and the settings panel) and the `pending_preset` yes-path below — so
+    /// every switch lands in the same file the composition reads, resolved
+    /// through [`Self::project_dir_or_global`] like the model default (the
+    /// project's own file when the workspace has one). The switch itself
+    /// already happened: a write failure is a notice naming the reason, never
+    /// a revert (the thinking-level shape), and nothing closes — in
+    /// particular the settings panel stays open on failure so the reader sees
+    /// why (the `save_scope` shape).
+    ///
+    /// A privilege-raising preset is never written down: the `yes` confirmed
+    /// this session's switch, and a standing full-access file would reload
+    /// the next launch with no question asked. Fail closed beats seamless —
+    /// danger applies to the run that confirmed it, and the notice says so.
+    fn persist_preset(&mut self, preset_name: &str) {
+        if epsilon_safety::Preset::parse(preset_name).is_ok_and(|p| p.raises_privilege()) {
+            self.ui.push_notice(format!(
+                "permission preset {preset_name} applies to this run only — danger is never saved"
+            ));
+            return;
+        }
+        let Some(dir) = self.project_dir_or_global() else {
+            self.ui
+                .push_notice("permission preset not saved: no home directory resolved");
+            return;
+        };
+        if let Err(e) = epsilon_core::config::save_preset_in(&dir, preset_name) {
+            self.ui
+                .push_notice(format!("permission preset {preset_name} not saved: {e}"));
+        }
+    }
+
     /// Persist the staged `/scoped-models` checklist (P-047: pi's Ctrl+S).
     ///
     /// Space stages in `favorites` (memory only, so the F2 cycle rescopes
@@ -1171,6 +1206,9 @@ impl App {
                 "yes" | "y" => {
                     self.pending_preset = None;
                     if agent.set_preset(&name, &self.workspace_root) {
+                        // Wave 20: the confirmed raise persists like any other
+                        // switch — the same writer `run_preset_command` uses.
+                        self.persist_preset(&name);
                         self.ui.push_notice(format!(
                             "permission preset: {name} — everything nothing forbids is now allowed"
                         ));

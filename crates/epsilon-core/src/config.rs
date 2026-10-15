@@ -698,6 +698,71 @@ pub fn save_thinking_level(level: epsilon_contracts::ThinkingLevel) -> Result<Pa
     save_thinking_level_in(&dir, level)
 }
 
+// ---- permission preset default (Wave 20) -----------------------------------
+
+/// Persisted permission preset name (`[permissions] preset`) from
+/// `config_dir/config.toml`.
+///
+/// A string, not a `Preset`: `epsilon-safety` (where `Preset` lives) depends
+/// on this crate, so naming the type here would be a dependency cycle. Name
+/// validity is decided at the one place that can name it —
+/// `epsilon_runtime::resolve_effective_preset` — and unknown names fall
+/// through there, never reaching the gate.
+///
+/// Same fail-open contract as every reader here: a missing file, table or
+/// key, a non-string value, or a blank value is `None` — never an error, and
+/// never a silent clamp, because a typo must not change the policy a launch
+/// runs under.
+pub fn load_preset_in(config_dir: &Path) -> Option<String> {
+    load_config_string_in(config_dir, "permissions", "preset")
+}
+
+/// [`load_preset_in`] against the resolved global directory.
+pub fn load_preset() -> Option<String> {
+    global_dir().and_then(|d| load_preset_in(&d))
+}
+
+/// Set `[permissions] preset`, preserving every other key. Persists
+/// immediately; returns the file written.
+///
+/// Same read-modify-write idiom as [`save_thinking_level_in`]: a second way
+/// of editing `config.toml` is a second way of losing a setting. Production
+/// callers pass `Preset::name()`; the empty string is refused, like every
+/// other saver here.
+pub fn save_preset_in(config_dir: &Path, preset: &str) -> Result<PathBuf, String> {
+    if preset.trim().is_empty() {
+        return Err("refusing to persist an empty preset".into());
+    }
+    std::fs::create_dir_all(config_dir)
+        .map_err(|e| format!("create {}: {e}", config_dir.display()))?;
+    let path = config_dir.join("config.toml");
+    let mut table: toml::Table = std::fs::read_to_string(&path)
+        .ok()
+        .and_then(|raw| toml::from_str(&raw).ok())
+        .unwrap_or_default();
+
+    table
+        .entry("permissions")
+        .or_insert(toml::Value::Table(toml::map::Map::new()))
+        .as_table_mut()
+        .ok_or_else(|| "[permissions] exists but is not a table".to_string())?
+        .insert(
+            "preset".into(),
+            toml::Value::String(preset.trim().to_string()),
+        );
+
+    let serialized =
+        toml::to_string_pretty(&table).map_err(|e| format!("serialize config: {e}"))?;
+    std::fs::write(&path, serialized).map_err(|e| format!("write {}: {e}", path.display()))?;
+    Ok(path)
+}
+
+/// [`save_preset_in`] against the resolved global directory.
+pub fn save_preset(preset: &str) -> Result<PathBuf, String> {
+    let dir = global_dir().ok_or_else(|| "no home directory resolved".to_string())?;
+    save_preset_in(&dir, preset)
+}
+
 /// Persist `[tui] theme`, preserving every other key.
 ///
 /// The settings panel writes this. Bare `/theme` still does not: that key is a
@@ -1110,6 +1175,73 @@ mod tests {
             load_favorite_models_in(dir),
             vec!["deepseek-chat".to_string()],
             "the [picker] table survives a thinking write"
+        );
+    }
+
+    /// **Wave 20: `[permissions] preset` round-trips, and a write leaves
+    /// every other key alone.**
+    ///
+    /// `/preset` used to swap only the in-memory gate, so every restart came
+    /// back `auto` with no notice. The round trip is the whole fix on the
+    /// config side; the coexistence assertion keeps it from becoming a second
+    /// way of losing a setting.
+    ///
+    /// Name validity is NOT decided here: this layer persists the string and
+    /// reads it back, and `epsilon_runtime::resolve_effective_preset` (the one
+    /// place that can name `Preset`) decides what an unknown name means.
+    #[test]
+    fn preset_round_trips_and_leaves_other_keys_alone() {
+        let tmp = tempfile::tempdir().expect("tmp");
+        let dir = tmp.path();
+
+        // Unset reads None; a blank value is not configuration either.
+        assert_eq!(load_preset_in(dir), None);
+        std::fs::write(dir.join("config.toml"), "[permissions]\npreset = \"   \"\n").unwrap();
+        assert_eq!(load_preset_in(dir), None);
+
+        // Set, read back; then re-set beside another key and read both.
+        save_preset_in(dir, "read-only").unwrap();
+        assert_eq!(load_preset_in(dir).as_deref(), Some("read-only"));
+        toggle_favorite_model_in(dir, "deepseek-chat").unwrap();
+        save_preset_in(dir, "workspace-write").unwrap();
+        assert_eq!(load_preset_in(dir).as_deref(), Some("workspace-write"));
+        assert_eq!(
+            load_favorite_models_in(dir),
+            vec!["deepseek-chat".to_string()],
+            "the [picker] table survives a preset write"
+        );
+    }
+
+    #[test]
+    fn preset_missing_blank_or_malformed_loads_as_none() {
+        let tmp = tempfile::tempdir().expect("tmp");
+        let dir = tmp.path();
+
+        assert_eq!(load_preset_in(dir), None, "no file yet");
+
+        std::fs::write(dir.join("config.toml"), "not [ valid toml {{{{").unwrap();
+        assert_eq!(load_preset_in(dir), None);
+
+        std::fs::write(dir.join("config.toml"), "[permissions]\npreset = 7\n").unwrap();
+        assert_eq!(load_preset_in(dir), None, "a non-string is not our key");
+
+        std::fs::write(dir.join("config.toml"), "[other]\nkey = 1\n").unwrap();
+        assert_eq!(load_preset_in(dir), None);
+    }
+
+    #[test]
+    fn preset_empty_refuses_to_persist_and_non_table_section_errors() {
+        let tmp = tempfile::tempdir().expect("tmp");
+        let dir = tmp.path();
+        assert!(save_preset_in(dir, "  ").is_err());
+
+        // A pre-existing scalar `permissions = ...` must error rather than be
+        // silently clobbered — same shape as the `[model]` guard above.
+        std::fs::create_dir_all(dir).unwrap();
+        std::fs::write(dir.join("config.toml"), "permissions = \"scalar\"\n").unwrap();
+        assert!(
+            save_preset_in(dir, "read-only").is_err(),
+            "must refuse to overwrite a non-table [permissions]"
         );
     }
 

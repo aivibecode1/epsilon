@@ -832,6 +832,9 @@ async fn oauth_need_code_opens_the_overlay_and_done_closes_it() {
 #[test]
 fn oauth_completion_warns_once_about_subscription_billing() {
     let (mut app, _agent, (_f, _n)) = test_app();
+    // Pinned repertoire: the assertion strips the Unicode continuation marks
+    // (`•`, `│`), so an ASCII runner would leave its own (`*`, `|`) in place.
+    app.theme.glyphs = crate::ui::theme::UNICODE;
     fn texts(app: &super::App) -> Vec<String> {
         app.ui
             .lines()
@@ -4924,6 +4927,11 @@ async fn a_finished_answer_separates_from_the_composer_it_feeds() {
         ),
         epsilon_llm::FauxStep::say("That is where most of the population sits, on the river."),
     ]);
+    // Pinned repertoire: this asserts exact frame widths, and `Theme::detect()`
+    // reads the runner's env (round-105 precedent: a TERM change flipped the
+    // suite ASCII<->unicode with no source change). Only the glyphs change here,
+    // not the colour mode. golden.rs pins the same way.
+    app.theme.glyphs = crate::ui::theme::UNICODE;
     for prompt in [
         "what is the capital of France?",
         "and is that where the population sits?",
@@ -8615,6 +8623,14 @@ async fn a_model_switch_is_recorded_where_a_resume_will_find_it() {
 #[tokio::test]
 async fn a_thinking_switch_is_recorded_where_a_resume_will_find_it() {
     let (mut app, agent, _receivers) = test_app();
+    // Pinned config dir: `set_thinking` persists the level, and without the
+    // override that write lands in the developer's real global config — the
+    // suite polluting the machine it runs on (found via a battery FAIL whose
+    // frames all carried the ambient `high`). The sibling test below pins the
+    // same way; this one never reads the disk, so the override changes nothing
+    // it asserts.
+    let cfg = tempfile::tempdir().expect("a config dir");
+    app.config_dir_override = Some(cfg.path().to_path_buf());
     let tmp = tempfile::tempdir().expect("a temporary workspace");
     let store = std::sync::Arc::new(std::sync::Mutex::new(
         epsilon_core::SessionStore::open(tmp.path().join("s.jsonl")).unwrap(),
@@ -9304,6 +9320,10 @@ fn preset_bare_lists_with_current_marked() {
 #[test]
 fn preset_switch_down_applies_and_unknown_names_choices() {
     let (mut app, agent, _rx) = test_app();
+    // Pinned: switches persist since Wave 20, and a test writes nowhere near
+    // a real config.
+    let cfg = tempfile::tempdir().expect("a config dir");
+    app.config_dir_override = Some(cfg.path().to_path_buf());
     app.run_command(
         &agent,
         crate::picker::parse_command("/preset read-only").expect("/preset parses"),
@@ -9333,6 +9353,10 @@ fn preset_switch_down_applies_and_unknown_names_choices() {
 #[test]
 fn preset_full_access_asks_and_only_yes_switches() {
     let (mut app, agent, _rx) = test_app();
+    // Pinned for the same reason as the switch test above: the `yes` path
+    // persists since Wave 20.
+    let cfg = tempfile::tempdir().expect("a config dir");
+    app.config_dir_override = Some(cfg.path().to_path_buf());
     app.run_command(
         &agent,
         crate::picker::parse_command("/preset danger-full-access").expect("/preset parses"),
@@ -9360,6 +9384,141 @@ fn preset_full_access_asks_and_only_yes_switches() {
     app.input = "yes".to_string();
     app.submit_editor(&agent, false);
     assert_eq!(agent.current_preset(), "danger-full-access");
+}
+
+/// Wave 20: `/preset read-only` writes `[permissions] preset` through, so a
+/// restart reads it back instead of returning to `auto` with no notice.
+#[test]
+fn preset_switch_writes_through_and_reloads_from_disk() {
+    let (mut app, agent, _rx) = test_app();
+    // Pinned: a switch persists, and a test writes nowhere near a real
+    // config. `project_dir_or_global` prefers the override, so this is the
+    // dir asserted on below.
+    let cfg = tempfile::tempdir().expect("a config dir");
+    app.config_dir_override = Some(cfg.path().to_path_buf());
+
+    app.run_command(
+        &agent,
+        crate::picker::parse_command("/preset read-only").expect("/preset parses"),
+    );
+    assert_eq!(agent.current_preset(), "read-only");
+    assert_eq!(
+        epsilon_core::config::load_preset_in(cfg.path()).as_deref(),
+        Some("read-only"),
+        "the switch is in the FILE, not only in the gate"
+    );
+
+    // ...and composition resolves it: no flag plus this file is this preset.
+    assert_eq!(
+        epsilon_runtime::resolve_effective_preset(
+            epsilon_safety::Preset::Auto,
+            epsilon_core::config::load_preset_in(cfg.path()).as_deref(),
+            None,
+        ),
+        epsilon_safety::Preset::ReadOnly,
+        "a restart with no flag comes back on the persisted preset"
+    );
+}
+
+/// Wave 20: `danger-full-access` still gates through `pending_preset` — but a
+/// `yes` applies to the run that confirmed it and is never written down. A
+/// standing full-access file would reload the next launch with no question
+/// asked, which is the leak fail-closed forbids: asking writes nothing,
+/// refusing writes nothing, and confirming switches in memory only.
+#[test]
+fn preset_danger_still_gates_and_never_persists() {
+    let (mut app, agent, _rx) = test_app();
+    let cfg = tempfile::tempdir().expect("a config dir");
+    app.config_dir_override = Some(cfg.path().to_path_buf());
+
+    app.run_command(
+        &agent,
+        crate::picker::parse_command("/preset danger-full-access").expect("/preset parses"),
+    );
+    assert!(
+        app.pending_preset.is_some(),
+        "raising still holds the question"
+    );
+    assert_eq!(agent.current_preset(), "auto", "asking switches nothing");
+    assert!(
+        !cfg.path().join("config.toml").exists(),
+        "asking writes nothing"
+    );
+
+    app.input = "no".to_string();
+    app.submit_editor(&agent, false);
+    assert_eq!(agent.current_preset(), "auto", "no switches nothing");
+    assert!(
+        !cfg.path().join("config.toml").exists(),
+        "refusing writes nothing either"
+    );
+
+    app.run_command(
+        &agent,
+        crate::picker::parse_command("/preset danger-full-access").expect("/preset parses"),
+    );
+    app.input = "yes".to_string();
+    app.submit_editor(&agent, false);
+    assert_eq!(agent.current_preset(), "danger-full-access");
+    assert!(
+        !cfg.path().join("config.toml").exists(),
+        "a confirmed danger switch applies to this run only — it is never saved"
+    );
+    assert!(
+        app.ui
+            .lines()
+            .iter()
+            .any(|l| l.text.contains("this run only")),
+        "and the notice says so: {:?}",
+        app.ui.lines().iter().map(|l| &l.text).collect::<Vec<_>>()
+    );
+}
+
+/// Wave 20: the settings panel shares `run_preset_command`, so Enter on the
+/// permission row persists too — and a write failure keeps the panel open
+/// with the reason instead of closing over it (the `save_scope` shape).
+#[test]
+fn preset_settings_row_persists_and_a_failed_write_keeps_the_panel_open() {
+    let (mut app, agent, _rx) = test_app();
+    let cfg = tempfile::tempdir().expect("a config dir");
+    app.config_dir_override = Some(cfg.path().to_path_buf());
+    app.settings_open = true;
+    app.settings_preset = "auto".to_string();
+    app.apply_setting(&agent, 4);
+    assert_eq!(agent.current_preset(), "workspace-write");
+    assert!(
+        app.settings_open,
+        "a successful toggle stays in the panel with the new value visible"
+    );
+    assert_eq!(
+        epsilon_core::config::load_preset_in(cfg.path()).as_deref(),
+        Some("workspace-write"),
+        "the panel path writes through like /preset does"
+    );
+
+    // Failure half: the override points at a FILE, so the write cannot land.
+    let (mut app, agent, _rx) = test_app();
+    let dir = tempfile::tempdir().expect("tmp");
+    let blocker = dir.path().join("blocker");
+    std::fs::write(&blocker, "not a dir").unwrap();
+    app.config_dir_override = Some(blocker);
+    app.settings_open = true;
+    app.settings_preset = "auto".to_string();
+    app.apply_setting(&agent, 4);
+    assert_eq!(
+        agent.current_preset(),
+        "workspace-write",
+        "in-memory still switches — the notice, not a revert, carries the failure"
+    );
+    assert!(
+        app.settings_open,
+        "the panel stays open so the reader sees the reason"
+    );
+    assert!(
+        app.ui.lines().iter().any(|l| l.text.contains("not saved")),
+        "and the reason is said out loud: {:?}",
+        app.ui.lines().iter().map(|l| &l.text).collect::<Vec<_>>()
+    );
 }
 
 /// `next_preset` walks auto, workspace-write, read-only, danger-full-access,

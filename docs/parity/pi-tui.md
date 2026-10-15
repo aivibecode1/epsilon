@@ -791,7 +791,7 @@ nothing here is a claim that the behaviour cannot be built.
 
 _All 339 rows are dispositioned: no `missing` rows remain._
 
-### The `partial` rows — 113
+### The `partial` rows — 110
 
 An `E-` row covers these and something is not finished. The reason column is the shortest honest statement of what.
 
@@ -806,7 +806,7 @@ An `E-` row covers these and something is not finished. The reason column is the
 | Auth, login and permissions (4) | P-062, P-064, P-065, P-067 | one masked modal instead of an auth-type → provider → dialog chain with `onBack`; one of four dialog event kinds; the TUI path for `/logout <provider>` is unpinned; bedrock resolves through the ambient chain with the marker-never-a-key rule pinned, but no dialog states the profiles hint in words |
 | Sessions (5) | P-070, P-072, P-077, P-080, P-082 | no cross-directory scope / rename / delete in the picker; no branch summarisation; no cache-warming status; reload covers four resource kinds, not six; share exports HTML and tries gh gist but has no Radius preference and no dedicated happy-path test |
 | Themes (6) | P-091, P-093, P-097, P-099, P-102, P-269 | three palettes and no file-loaded themes; the measured contrast floor is asserted for `high-contrast` only; an unknown name is refused rather than silently reverted; no theme-token language; the ASCII repertoire is overridable but colour depth is not; no theme submenu |
-| Settings (10) | P-104, P-107, P-108, P-109, P-110, P-112, P-274, P-276, P-278, P-280 | a fixed eight-row popup; a trust review rather than a layered merge; no keybinding migration; a Windows predicate for glyphs, not chords; 23 ids against 44+; empty states live in transcript notices; one enum edited by name; capacity measured rather than a ten-row cap; the stage is named by the title, not `Step N/M`; delivery modes both exist (OneAtATime default, All explicit) with no user-facing switch |
+| Settings (10) | P-104, P-107, P-108, P-109, P-110, P-112, P-274, P-276, P-278, P-280 | a fixed five-row panel; a trust review rather than a layered merge; no keybinding migration; a Windows predicate for glyphs, not chords; 23 ids against 44+; empty states live in transcript notices; one enum edited by name; capacity measured rather than a ten-row cap; the stage is named by the title, not `Step N/M`; delivery modes both exist (OneAtATime default, All explicit) with no user-facing switch |
 | Project trust (2) | P-115, P-117 | a hash-triggered review answered in the composer, not a five-option dialog naming parent-folder trust; the trigger is a changed config hash, not one of eight named resource kinds |
 | Tool cards (6) | P-138, P-140, P-142, P-145, P-146, P-147 | a named headline instead of bare JSON for an unregistered tool; a title row survives an empty body; twelve rows rather than ten; per-card call-heads adapted from pairs (expanded pairs have no counterpart); arguments not re-rendered as they stream; the diff arrives as a result field, so there is no partial-args guard |
 | Bash cards (5) | P-153, P-154, P-155, P-156, P-177 | `!!` exclusion named on running, result and error rows (`kept out of context`); the run state is in the header, not a cancellable card line; tab/CR normalisation pinned by source only; twelve rows and which end is kept is unestablished; the `(cancelled)` half is open (no `CardStatus` names one) but the exit **number** is on the card now; duration yes, truncation warning no |

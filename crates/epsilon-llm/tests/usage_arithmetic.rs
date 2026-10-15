@@ -208,3 +208,41 @@ fn an_uncached_turn_is_untouched() {
     assert_eq!(u.cache_write, 0);
     assert_eq!(u.output, 200);
 }
+
+/// D4: Mistral's `num_cached_tokens` shape is parsed into `cache_read`, so it
+/// must also set `cache_reported` — otherwise a turn with real cached tokens
+/// prints `CH n/a` next to the tokens it just moved.
+#[test]
+fn mistral_num_cached_tokens_sets_reported() {
+    let u = epsilon_llm::providers::test_support::mistral_usage_from_json(&json!({
+        "prompt_tokens": 110,
+        "completion_tokens": 10,
+        "total_tokens": 120,
+        "num_cached_tokens": 30,
+    }));
+
+    assert_eq!(u.cache_read, 30, "the parse reads the num_* shape");
+    assert_eq!(u.input, 80, "110 prompt minus 30 cached");
+    assert!(
+        u.cache_reported,
+        "a parsed cache read is a measurement, not silence"
+    );
+}
+
+/// D5: a Responses reply with no `input_tokens_details` is cache-silent, not a
+/// measured zero — the reshaping step must not invent zero keys that the flag
+/// then reads as evidence.
+#[test]
+fn responses_silent_stays_silent() {
+    let u = epsilon_llm::providers::test_support::responses_usage_from_json(&json!({
+        "input_tokens": 1_500,
+        "output_tokens": 200,
+        "total_tokens": 1_700,
+    }));
+
+    assert_eq!(u.cache_read, 0);
+    assert!(
+        !u.cache_reported,
+        "no cache key appeared on the wire, so nothing was measured"
+    );
+}

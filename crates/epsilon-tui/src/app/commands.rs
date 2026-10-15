@@ -1407,7 +1407,9 @@ impl App {
     /// immediately except `danger-full-access`, which holds the question in
     /// `pending_preset` until the reader types `yes` (answered in
     /// `submit_editor`, next to the trust and import gates). Switching down
-    /// never confirms (D-080: only the raising direction gates).
+    /// never confirms (D-080: only the raising direction gates). A successful
+    /// switch writes `[permissions] preset` through (Wave 20), so a restart
+    /// comes back on it.
     fn run_preset_command(&mut self, agent: &Arc<Agent>, arg: Option<String>) -> bool {
         let current = agent.current_preset();
         let Some(name) = arg.as_deref().map(str::trim).filter(|s| !s.is_empty()) else {
@@ -1431,6 +1433,10 @@ impl App {
             return false;
         }
         if agent.set_preset(preset.name(), &self.workspace_root) {
+            // Wave 20: write-through — the gate alone forgets on restart.
+            // Failure is a notice, never a revert, and never closes the
+            // settings panel (see `persist_preset`).
+            self.persist_preset(preset.name());
             self.ui.push_notice(format!(
                 "permission preset: {} (was {current})",
                 preset.name()
@@ -3067,6 +3073,10 @@ mod tests {
     #[tokio::test]
     async fn a_confirmed_restore_reverts_the_file_and_the_frame_says_so() {
         let (mut app, agent, (_f, _n)) = test_app();
+        // Pinned repertoire: this asserts exact frame widths, and `Theme::detect()`
+        // reads the runner's env (round-105 precedent: a TERM change flipped the
+        // suite ASCII<->unicode with no source change). golden.rs pins the same way.
+        app.theme.glyphs = crate::ui::theme::UNICODE;
         let dir = tempfile::tempdir().expect("a temporary workspace");
         app.workspace_root = dir.path().to_path_buf();
         let created = created_by_the_agent(dir.path(), "src/new.rs", "// written by the model\n");
@@ -3124,6 +3134,8 @@ mod tests {
     #[tokio::test]
     async fn a_restore_refused_because_the_file_changed_leaves_it_and_says_why() {
         let (mut app, agent, (_f, _n)) = test_app();
+        // Pinned repertoire: exact frame widths (see the pin above).
+        app.theme.glyphs = crate::ui::theme::UNICODE;
         let dir = tempfile::tempdir().expect("a temporary workspace");
         app.workspace_root = dir.path().to_path_buf();
         let file = checkpointed(dir.path(), "src/lib.rs", "as the agent saw it\n");
@@ -3156,6 +3168,8 @@ mod tests {
     #[tokio::test]
     async fn a_created_file_the_user_edited_is_refused_and_the_frame_says_why() {
         let (mut app, agent, (_f, _n)) = test_app();
+        // Pinned repertoire: exact frame widths (see the pin above).
+        app.theme.glyphs = crate::ui::theme::UNICODE;
         let dir = tempfile::tempdir().expect("a temporary workspace");
         app.workspace_root = dir.path().to_path_buf();
         let created = created_by_the_agent(dir.path(), "src/new.rs", "// written by the model\n");
@@ -3273,6 +3287,8 @@ mod tests {
     #[tokio::test]
     async fn a_skill_root_reload_cannot_read_is_named_on_the_frame() {
         let (mut app, agent, (_f, _n)) = test_app();
+        // Pinned repertoire: exact frame widths (see the pin above).
+        app.theme.glyphs = crate::ui::theme::UNICODE;
         let dir = tempfile::tempdir().expect("a temporary workspace");
         app.workspace_root = dir.path().to_path_buf();
 
@@ -3346,6 +3362,8 @@ mod tests {
     #[tokio::test]
     async fn an_agents_root_reload_cannot_read_is_named_on_the_frame() {
         let (mut app, agent, (_f, _n)) = test_app();
+        // Pinned repertoire: exact frame widths (see the pin above).
+        app.theme.glyphs = crate::ui::theme::UNICODE;
         let dir = tempfile::tempdir().expect("a temporary workspace");
         app.workspace_root = dir.path().to_path_buf();
         app.trust_review_pending = false;
@@ -3543,6 +3561,8 @@ mod tests {
     #[tokio::test]
     async fn the_skills_listing_draws_the_scope_label_on_a_real_frame() {
         let (mut app, agent, (_f, _n)) = test_app();
+        // Pinned repertoire: exact frame widths (see the pin above).
+        app.theme.glyphs = crate::ui::theme::UNICODE;
         let dir = tempfile::tempdir().expect("a temporary workspace");
         app.workspace_root = dir.path().to_path_buf();
         let root = dir.path().join(".epsilon").join("skills");

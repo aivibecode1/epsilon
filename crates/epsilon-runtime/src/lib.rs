@@ -98,6 +98,11 @@ pub struct ProjectConfig {
     /// the global default, under an explicit session record; see
     /// [`resolve_default_thinking_level`] for the whole chain.
     pub thinking_level: Option<String>,
+    /// `[permissions] preset` — the workspace's own permission posture, as the
+    /// raw string the file holds (parsing is composition's job). Over the
+    /// global file, under the `--preset` flag; see
+    /// [`resolve_effective_preset`] for the whole chain.
+    pub preset: Option<String>,
     /// `[[rules]]` entries stacked over the defaults as a `"project"` layer
     /// (last-match-wins; any deny still wins immediately per ADR-006 semantics).
     pub rules: Vec<ProjectRule>,
@@ -232,6 +237,12 @@ pub fn load_project_config(workspace: &Path) -> (ProjectConfig, TrustDecision, V
     cfg.thinking_level = parsed
         .get("thinking")
         .and_then(|t| t.get("level"))
+        .and_then(|v| v.as_str())
+        .map(str::to_string);
+
+    cfg.preset = parsed
+        .get("permissions")
+        .and_then(|p| p.get("preset"))
         .and_then(|v| v.as_str())
         .map(str::to_string);
 
@@ -410,6 +421,60 @@ mod project_hash_tests {
         .unwrap();
         let (bad_cfg, _d, bad_notices) = load_project_config(empty.path());
         assert_eq!(bad_cfg.thinking_level, None, "a non-string is not our key");
+        assert!(
+            bad_notices.iter().all(|n| !n.contains("invalid")),
+            "and it is not an error either: {bad_notices:?}"
+        );
+    }
+
+    /// **Wave 20: `[permissions] preset` is a project setting, read beside
+    /// `[model] id` in the one function that reads the project file.**
+    ///
+    /// The project's own value must come through as the raw string the file
+    /// holds (parsing is composition's job); a workspace without one answers
+    /// `None`; a malformed one is ignored rather than fatal (fail-open reads).
+    #[test]
+    fn a_projects_preset_is_read_from_its_own_config() {
+        let tmp = tempfile::tempdir().unwrap();
+        let ws = tmp.path();
+        std::fs::create_dir_all(ws.join(".epsilon")).unwrap();
+        std::fs::write(
+            ws.join(".epsilon").join("config.toml"),
+            "[model]\nid = \"faux-9\"\n\n[permissions]\npreset = \"read-only\"\n",
+        )
+        .unwrap();
+
+        let (cfg, _decision, notices) = load_project_config(ws);
+        assert!(
+            !notices
+                .iter()
+                .any(|n| n.contains("invalid") || n.contains("ignoring")),
+            "a valid config produces no complaints: {notices:?}"
+        );
+        assert_eq!(
+            cfg.preset.as_deref(),
+            Some("read-only"),
+            "the project's own preset must reach the composition"
+        );
+        assert_eq!(
+            cfg.model_id.as_deref(),
+            Some("faux-9"),
+            "and the model key beside it is undisturbed"
+        );
+
+        // The control: a workspace with no project config has no value, and a
+        // malformed one is ignored rather than fatal (fail-open reads).
+        let empty = tempfile::tempdir().unwrap();
+        let (none_cfg, _d, _n) = load_project_config(empty.path());
+        assert_eq!(none_cfg.preset, None);
+        std::fs::create_dir_all(empty.path().join(".epsilon")).unwrap();
+        std::fs::write(
+            empty.path().join(".epsilon").join("config.toml"),
+            "[permissions]\npreset = 7\n",
+        )
+        .unwrap();
+        let (bad_cfg, _d, bad_notices) = load_project_config(empty.path());
+        assert_eq!(bad_cfg.preset, None, "a non-string is not our key");
         assert!(
             bad_notices.iter().all(|n| !n.contains("invalid")),
             "and it is not an error either: {bad_notices:?}"
@@ -5038,7 +5103,16 @@ pub async fn build_runtime_and_gate_runner(
         epsilon_safety::PermissionEngine::layered(vec![project_rules_layer(&project.rules)])
     };
     let gate = Arc::new(RulesetGate::layered(base_engine, approvals));
-    gate.set_preset(preset.name(), workspace);
+    // Wave 20: the preset persists across restarts — a switch the TUI wrote
+    // down is the project's file first, then the global one, and only an
+    // explicit `--preset` flag outranks both. Unknown file names fall through
+    // to `auto` inside the resolver, never inventing a policy.
+    let effective_preset = resolve_effective_preset(
+        preset,
+        project.preset.as_deref(),
+        epsilon_core::config::load_preset().as_deref(),
+    );
+    gate.set_preset(effective_preset.name(), workspace);
     // `Agent::new` already returns an `Arc`, which is why the extension hooks below can be
     // installed through it without unwrapping or re-wrapping.
     let agent = Agent::new(
@@ -5366,6 +5440,103 @@ mod composition_notice_tests {
         .expect("composition succeeds in a scratch workspace");
     }
 
+    /// **Wave 20: a persisted project preset reaches the composed gate.**
+    ///
+    /// The file the TUI writes (`[permissions] preset`) is the file
+    /// composition reads: `build_runtime` resolves flag-over-file and applies
+    /// the winner to the gate, so a restart comes back on the chosen preset
+    /// instead of `auto` with no notice. Each compose gets its own session
+    /// file: the store holds a lease while its agent lives, and reusing one
+    /// path would wait that lease out.
+    #[tokio::test]
+    async fn a_project_preset_file_reaches_the_composed_gate() {
+        use epsilon_llm::FauxProvider;
+        let ws = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(ws.path().join(".epsilon")).unwrap();
+        std::fs::write(
+            ws.path().join(".epsilon/config.toml"),
+            "[permissions]\npreset = \"read-only\"\n",
+        )
+        .unwrap();
+        let project = load_project_config(ws.path()).0;
+        assert_eq!(
+            project.preset.as_deref(),
+            Some("read-only"),
+            "the file the TUI wrote is the file composition reads"
+        );
+
+        let mut sink = Vec::new();
+        let agent = build_runtime(RunParams {
+            workspace: ws.path(),
+            stream_fn: Arc::new(FauxProvider::new(Vec::<FauxStep>::new())),
+            approvals: Arc::new(epsilon_safety::AutoApprove),
+            mcp_servers: &[],
+            session_file: ".epsilon/sessions/preset-project.jsonl".to_string(),
+            confinement: &epsilon_tools::Confinement::Off,
+            lsp: Lsp::Off,
+            model_id: "faux-1",
+            model_explicit: false,
+            resume: &Resume::No,
+            project: &project,
+            project_trusted: true,
+            plan_mode: false,
+            preset: epsilon_safety::Preset::Auto,
+            notices: &mut sink,
+        })
+        .await
+        .expect("composition succeeds in a scratch workspace");
+        assert_eq!(
+            agent.current_preset(),
+            "read-only",
+            "no flag: the project's persisted preset is what the gate runs"
+        );
+    }
+
+    /// **Wave 20: an explicit `--preset` flag still outranks the file,
+    /// through the real composition.**
+    ///
+    /// Same rig as above, but the flag names another posture while the
+    /// project file names `read-only`: the gate must run the flag. The flag
+    /// path never reads the global config, so this holds on any machine.
+    #[tokio::test]
+    async fn an_explicit_preset_flag_outranks_the_project_file() {
+        use epsilon_llm::FauxProvider;
+        let ws = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(ws.path().join(".epsilon")).unwrap();
+        std::fs::write(
+            ws.path().join(".epsilon/config.toml"),
+            "[permissions]\npreset = \"read-only\"\n",
+        )
+        .unwrap();
+        let project = load_project_config(ws.path()).0;
+
+        let mut sink = Vec::new();
+        let agent = build_runtime(RunParams {
+            workspace: ws.path(),
+            stream_fn: Arc::new(FauxProvider::new(Vec::<FauxStep>::new())),
+            approvals: Arc::new(epsilon_safety::AutoApprove),
+            mcp_servers: &[],
+            session_file: ".epsilon/sessions/preset-flag.jsonl".to_string(),
+            confinement: &epsilon_tools::Confinement::Off,
+            lsp: Lsp::Off,
+            model_id: "faux-1",
+            model_explicit: false,
+            resume: &Resume::No,
+            project: &project,
+            project_trusted: true,
+            plan_mode: false,
+            preset: epsilon_safety::Preset::WorkspaceWrite,
+            notices: &mut sink,
+        })
+        .await
+        .expect("composition succeeds in a scratch workspace");
+        assert_eq!(
+            agent.current_preset(),
+            "workspace-write",
+            "an explicit flag outranks the project file"
+        );
+    }
+
     /// **A notice emitted during composition reaches the caller.**
     ///
     /// `.epsilon/SYSTEM.md` is the trigger: it makes composition announce that the
@@ -5543,6 +5714,42 @@ pub fn resolve_default_thinking_level(
     project_level
         .and_then(epsilon_contracts::ThinkingLevel::parse)
         .or(global_level)
+        .unwrap_or_default()
+}
+
+/// The permission preset a launch starts on (Wave 20).
+///
+/// Precedence, in the order the code reads it: an explicit `--preset` flag,
+/// then the project's own `[permissions] preset`, then the global one, then
+/// [`Preset::Auto`](epsilon_safety::Preset::Auto).
+///
+/// The flag is `Auto` both when it was never given and when it was given as
+/// `auto`, and the two are deliberately not distinguished: `Auto` names
+/// today's posture, which is exactly what "no standing choice" resolves to.
+/// An explicit `--preset auto` therefore does not mask a persisted preset for
+/// one run — edit the file (or switch mid-session) to stand down.
+///
+/// Both file values arrive as the raw strings the readers return rather than
+/// being read here, so the rule is testable without a home directory — the
+/// same shape as [`resolve_default_thinking_level`]. A name this build does
+/// not know is not a setting and falls through to the next layer (the
+/// fail-open idiom the thinking level uses: a typo must not silently run a
+/// different policy than asked for).
+///
+/// Deny stays monotonic whatever this returns: the preset only layers allows
+/// over the base stack, and any deny — project, user or plan — still wins
+/// immediately (ADR-032).
+pub fn resolve_effective_preset(
+    flag: epsilon_safety::Preset,
+    project_preset: Option<&str>,
+    global_preset: Option<&str>,
+) -> epsilon_safety::Preset {
+    if flag != epsilon_safety::Preset::Auto {
+        return flag;
+    }
+    project_preset
+        .and_then(|n| epsilon_safety::Preset::parse(n).ok())
+        .or_else(|| global_preset.and_then(|n| epsilon_safety::Preset::parse(n).ok()))
         .unwrap_or_default()
 }
 
@@ -6016,6 +6223,66 @@ mod thinking_resume_tests {
             resolve_default_thinking_level(None, None),
             epsilon_contracts::ThinkingLevel::default(),
             "and with neither, the compile-time default"
+        );
+    }
+
+    /// **Wave 20: the effective preset — `--preset` flag over project file
+    /// over global file over `auto`.**
+    ///
+    /// Pure, so no home directory is read: the flag arrives as the parsed
+    /// value the CLI already carries, and both file values arrive as the raw
+    /// strings `load_project_config` / `load_preset_in` read.
+    #[test]
+    fn preset_flag_beats_project_beats_global_beats_auto() {
+        use epsilon_safety::Preset;
+        assert_eq!(
+            resolve_effective_preset(
+                Preset::ReadOnly,
+                Some("workspace-write"),
+                Some("danger-full-access")
+            ),
+            Preset::ReadOnly,
+            "an explicit flag outranks every file"
+        );
+        assert_eq!(
+            resolve_effective_preset(Preset::Auto, Some("workspace-write"), Some("read-only")),
+            Preset::WorkspaceWrite,
+            "the project's own file wins — it is the more specific answer"
+        );
+        assert_eq!(
+            resolve_effective_preset(Preset::Auto, None, Some("read-only")),
+            Preset::ReadOnly,
+            "no project value: the global file stands"
+        );
+        assert_eq!(
+            resolve_effective_preset(Preset::Auto, None, None),
+            Preset::Auto,
+            "and with neither, today's posture under a name"
+        );
+    }
+
+    /// **Wave 20: a preset name this build does not know is not a setting.**
+    ///
+    /// Same fail-open idiom as the thinking level: a typo must never silently
+    /// run a different policy than asked for, so an unknown name falls through
+    /// to the next layer instead of inventing one.
+    #[test]
+    fn preset_unknown_names_fall_through_instead_of_inventing_a_policy() {
+        use epsilon_safety::Preset;
+        assert_eq!(
+            resolve_effective_preset(Preset::Auto, Some("banana"), Some("read-only")),
+            Preset::ReadOnly,
+            "an unknown project name is not a setting: fail open to global"
+        );
+        assert_eq!(
+            resolve_effective_preset(Preset::Auto, Some("banana"), None),
+            Preset::Auto,
+            "and with no global either, the default — never a guess"
+        );
+        assert_eq!(
+            resolve_effective_preset(Preset::Auto, None, Some("banana")),
+            Preset::Auto,
+            "an unknown global name is not a setting either"
         );
     }
 

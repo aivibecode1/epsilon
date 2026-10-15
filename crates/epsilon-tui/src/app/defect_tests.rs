@@ -1109,6 +1109,11 @@ fn a_cancelled_shell_card_says_cancelled_and_not_failed() {
 #[test]
 fn the_footer_names_the_session_beside_the_location() {
     let (mut app, _agent, _rx) = test_app();
+    // Pinned glyphs (not the colour mode): the location assertion compares
+    // against `location_span`, whose ellipsis comes from the repertoire — under
+    // the runner's ASCII default the two sides of the comparison disagree about
+    // widths with no source change (round-105 precedent).
+    app.theme.glyphs = UNICODE;
     app.session_name = Some("work".into());
     let rows = render_rows(&mut app, 80, 24);
     let footer = rows.last().expect("the footer row");
@@ -1128,6 +1133,7 @@ fn the_footer_names_the_session_beside_the_location() {
     );
     // And an unnamed session draws no bullet.
     let (mut app, _agent, _rx) = test_app();
+    app.theme.glyphs = UNICODE;
     app.session_name = None;
     let footer = render_rows(&mut app, 80, 24).pop().expect("the footer row");
     assert!(

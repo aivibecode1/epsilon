@@ -324,17 +324,19 @@ fn short_model(model: &str) -> &str {
 /// billed at the full input rate with no floor marker. pi carries the same object and
 /// subtracts both counts (`openai-responses-shared.ts:567`).
 pub(crate) fn responses_usage(usage: &serde_json::Value) -> serde_json::Value {
-    json!({
+    let mut out = json!({
         "input_tokens": usage.get("input_tokens").cloned().unwrap_or(json!(0)),
         "output_tokens": usage.get("output_tokens").cloned().unwrap_or(json!(0)),
         "total_tokens": usage.get("total_tokens").cloned().unwrap_or(json!(0)),
-        // Forwarded verbatim; `seed_usage_compat` reads the cached and written counts out
-        // of it. Absent on a reply with no cache activity, which the decoder tolerates.
-        "prompt_tokens_details": usage.get("input_tokens_details").cloned().unwrap_or(json!({
-            "cached_tokens": 0,
-            "cache_write_tokens": 0,
-        })),
-    })
+    });
+    // Forwarded verbatim when present; `seed_usage_compat` reads the cached and
+    // written counts out of it. Absent on a reply with no cache activity — and
+    // left absent here, because inventing zero keys would turn silence into a
+    // measured zero (D5: `CH 0%` instead of `CH n/a`).
+    if let Some(details) = usage.get("input_tokens_details") {
+        out["prompt_tokens_details"] = details.clone();
+    }
+    out
 }
 
 /// pi `mapStopReason`: `completed` → stop, `incomplete/max_output_tokens` →
