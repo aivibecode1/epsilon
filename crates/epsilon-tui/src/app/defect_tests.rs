@@ -1206,3 +1206,253 @@ fn the_header_counts_a_retry_down_in_whole_seconds() {
         wide[0]
     );
 }
+
+// ==========================================================================================
+// The permission dialog shows the change it is approving
+//
+// A dialog that carries only `cap` and one line of `what` asks a reader to authorise a write
+// having seen neither the old nor the new bytes: `summarize_request` answers `what` from
+// `detail["path"]`, so the screen named the file and nothing else. The preview seam closes
+// that — `Tool::preview` (epsilon-contracts) produces the diff, `exec::ask_detail`
+// (epsilon-core) merges it into the ask's `detail`, and `draw_dialog` renders it in the shape
+// a tool result's diff already uses.
+//
+// **Every frame below is produced by the real ask path.** The fixtures park an ask through
+// `epsilon_core::exec::run_local`, which runs the tool's real `preview` and the real merge,
+// rather than hand-writing a `detail` object. That is what makes the controls real: deleting
+// the merge in `exec.rs` makes the diff vanish from the frame, and these tests fail.
+// ==========================================================================================
+
+/// An app whose agent registers the real `write`, `edit` and `bash` tools under a policy that
+/// **asks** about them, plus the approval channel that ask goes to and a workspace on disk to
+/// write into.
+///
+/// The ask-every-write rule is the point: the defaults allow `write`/`edit` inside the
+/// workspace, so the gate would decide silently and no ask would ever be parked. Layering one
+/// rule over the defaults is a policy a user can hold, and it makes the ask happen on the
+/// product's own path — `exec::run_local` → the gate → `detail: ask_detail(...)` — rather than
+/// a hand-built request.
+///
+/// The agent is constructed here rather than in `tests_support` because it is the only fixture
+/// that needs file-mutating tools: every other test either wants an empty registry or wants
+/// `bash`.
+fn app_with_file_tools() -> (App, Arc<Agent>, ChannelApprovalUi, tempfile::TempDir) {
+    let workspace = tempfile::tempdir().expect("a temporary workspace");
+    let (ftx, _frx) = tokio::sync::mpsc::unbounded_channel();
+    let (ntx, _nrx) = tokio::sync::mpsc::unbounded_channel();
+    let (otx, _orx) = tokio::sync::mpsc::unbounded_channel();
+    let approvals = ChannelApprovalUi::new();
+    let ui: Arc<dyn epsilon_safety::ApprovalUi> = Arc::new(approvals.clone());
+    let engine = epsilon_safety::PermissionEngine::layered(vec![epsilon_safety::Ruleset {
+        name: "ask-every-write".into(),
+        rules: vec![
+            epsilon_safety::Rule::new("write", "*", epsilon_safety::Action::Ask),
+            epsilon_safety::Rule::new("edit", "*", epsilon_safety::Action::Ask),
+        ],
+    }]);
+    let gate = Arc::new(epsilon_safety::RulesetGate::layered(engine, ui));
+    let mut registry = epsilon_core::ToolRegistry::new();
+    registry.register(Arc::new(epsilon_tools::WriteTool::new()));
+    registry.register(Arc::new(epsilon_tools::EditTool::new()));
+    registry.register(Arc::new(epsilon_tools::BashTool::new()));
+    let agent = Agent::new(
+        epsilon_core::LoopLimits::default(),
+        Arc::new(epsilon_llm::PanicGuard(epsilon_llm::FauxProvider::new(
+            vec![],
+        ))),
+        Arc::new(registry),
+        gate,
+        workspace.path().to_path_buf(),
+    );
+    (
+        App::new("faux-write".into(), ftx, ntx, otx),
+        agent,
+        approvals,
+        workspace,
+    )
+}
+
+/// Park the ask a gated tool call produces, through the core's real ask path.
+///
+/// The call itself never completes: the gate holds it until somebody answers, which is the
+/// product's behaviour and exactly the state the dialog has to cover. The task is left parked;
+/// when the ask is dropped without a reply the channel resolves to deny and it ends.
+///
+/// Bounded, so a gate that answers silently fails the test rather than the suite.
+async fn park_a_real_ask(
+    app: &mut App,
+    agent: &Arc<Agent>,
+    approvals: &ChannelApprovalUi,
+    name: &str,
+    args: serde_json::Value,
+) {
+    let agent = Arc::clone(agent);
+    let name = name.to_string();
+    let call =
+        tokio::spawn(async move { epsilon_core::exec::run_local(&agent, &name, args).await });
+    let ask = tokio::time::timeout(std::time::Duration::from_secs(20), approvals.next_ask())
+        .await
+        .expect("the gated call parks an ask — a silent gate would mean no dialog to draw")
+        .expect("a gated call asks");
+    app.pending_ask = Some(ask);
+    // The task must not be joined: it is blocked on the answer nobody gives, which is the
+    // point. Keeping the handle alive is not needed for the frame.
+    std::mem::forget(call);
+}
+
+/// The row a needle first appears on, or a panic naming what the frame did show.
+fn row_of(rows: &[String], needle: &str) -> usize {
+    rows.iter()
+        .position(|r| r.contains(needle))
+        .unwrap_or_else(|| panic!("{needle:?} never reached the screen: {rows:#?}"))
+}
+
+#[tokio::test]
+async fn a_write_approval_shows_the_new_content_as_added_lines() {
+    let (mut app, agent, approvals, _workspace) = app_with_file_tools();
+    pin_theme(&mut app, ThemeColorMode::Ansi16);
+    // A file that does not exist yet: every line of the write is an addition, so the frame
+    // must show the bytes the reader is authorising and nothing else.
+    park_a_real_ask(
+        &mut app,
+        &agent,
+        &approvals,
+        "write",
+        serde_json::json!({
+            "path": "created.txt",
+            "content": "first new line\nsecond new line\n"
+        }),
+    )
+    .await;
+
+    let rows = render_rows(&mut app, 80, 24);
+    let screen = rows.join("\n");
+    // The one-line answer still names the file, unchanged — a reader skimming gets the path.
+    assert!(
+        screen.contains("created.txt"),
+        "the `what` row still names the file: {screen}"
+    );
+    // The diff row names the size of the change: two additions, no removals.
+    assert!(
+        screen.contains("2 added, 0 removed"),
+        "the summary row counts the change: {screen}"
+    );
+    // The added lines themselves, each on its own row with its `+` sign beside its number —
+    // the sign is in its own cell, so colour is never the only thing saying which is which.
+    let first = row_of(&rows, "first new line");
+    let second = row_of(&rows, "second new line");
+    assert!(
+        rows[first].contains('+') && rows[second].contains('+'),
+        "each added row carries its sign: {:?} / {:?}",
+        rows[first],
+        rows[second]
+    );
+    assert!(
+        first < second,
+        "the added lines read in file order: {first} then {second}\n{screen}"
+    );
+    // **Nothing is claimed to be removed.** A write to a new file removes nothing, and a
+    // frame that drew a `-` row would be describing a change that is not the change.
+    assert!(
+        !rows.iter().any(|r| r.trim_start().starts_with('-')),
+        "a new file cannot remove a line: {screen}"
+    );
+    // And the decision keys are still on the screen, under the diff.
+    assert!(
+        second < row_of(&rows, "y allow once"),
+        "the diff is read before the keys that act on it\n{screen}"
+    );
+}
+
+#[tokio::test]
+async fn an_edit_approval_shows_the_removed_line_then_the_added_one() {
+    let (mut app, agent, approvals, workspace) = app_with_file_tools();
+    pin_theme(&mut app, ThemeColorMode::Ansi16);
+    std::fs::write(workspace.path().join("notes.txt"), "alpha\nbeta\ngamma\n")
+        .expect("the fixture file");
+    park_a_real_ask(
+        &mut app,
+        &agent,
+        &approvals,
+        "edit",
+        serde_json::json!({
+            "path": "notes.txt",
+            "old_string": "beta",
+            "new_string": "BETA"
+        }),
+    )
+    .await;
+
+    let rows = render_rows(&mut app, 80, 24);
+    let screen = rows.join("\n");
+    // The old line, the new line, and the removed one **first** — that is the shape a unified
+    // diff reads in and the order the renderer owes the reader.
+    let removed = row_of(&rows, "beta");
+    let added = row_of(&rows, "BETA");
+    assert!(
+        removed < added,
+        "the removed line precedes the added one: {removed} then {added}\n{screen}"
+    );
+    // Both carry their sign, so colour is never the only thing saying which is which.
+    assert!(
+        rows[removed].contains('-') && rows[added].contains('+'),
+        "each row carries its own sign: {:?} / {:?}",
+        rows[removed],
+        rows[added]
+    );
+    // Context either side is drawn too: a diff with no context cannot be placed in the file.
+    assert!(
+        screen.contains("alpha") && screen.contains("gamma"),
+        "the change is shown with its context: {screen}"
+    );
+    // ...and the two decision rows still sit under it.
+    let keys = row_of(&rows, "y allow once");
+    assert!(
+        added < keys,
+        "the diff is read before the keys that act on it: {added} then {keys}\n{screen}"
+    );
+}
+
+#[tokio::test]
+async fn an_approval_whose_tool_previews_nothing_is_the_six_row_dialog_it_was() {
+    // The control on the whole feature: `bash` implements no `preview`, so its ask carries no
+    // `preview` key and the dialog must be the one the golden frame pins — six rows, `cap`,
+    // `what`, and the decision keys, with no `diff` row and no label. A tool that previews
+    // nothing must not move the ask it was already making.
+    let (mut app, agent, approvals, _workspace) = app_with_file_tools();
+    pin_theme(&mut app, ThemeColorMode::Ansi16);
+    park_a_real_ask(
+        &mut app,
+        &agent,
+        &approvals,
+        "bash",
+        serde_json::json!({ "command": "echo hello" }),
+    )
+    .await;
+
+    let rows = render_rows(&mut app, 80, 24);
+    let screen = rows.join("\n");
+    assert!(
+        screen.contains("cap") && screen.contains("bash") && screen.contains("echo hello"),
+        "the fields the dialog has always shown are still there: {screen}"
+    );
+    assert!(
+        !screen.contains("diff"),
+        "an ask with no preview grows no diff row: {screen}"
+    );
+    assert!(
+        !rows.iter().any(|r| r.contains("added,")),
+        "and no summary row either: {screen}"
+    );
+    for key in [
+        "y allow once",
+        "a always (session)",
+        "n deny",
+        "e deny + guidance",
+    ] {
+        assert!(
+            screen.contains(key),
+            "the dialog must offer `{key}`: {screen}"
+        );
+    }
+}

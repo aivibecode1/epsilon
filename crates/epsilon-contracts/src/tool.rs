@@ -460,6 +460,41 @@ pub trait Tool: Send + Sync {
         None
     }
 
+    /// A preview of what this call will change, for the screen that decides whether it may.
+    ///
+    /// The dialog's one-line `what` names the *subject* — the path, the command. This carries
+    /// the **change**: a unified diff between the bytes the file holds now and the bytes the
+    /// call would leave, in the format [`crate::tool::Tool`]'s result details already use for
+    /// an edit. Without it a reader approves a write having seen neither the old nor the new
+    /// content, which is the gap the dialog was carrying (opencode 1.18.34,
+    /// `packages/tui/src/routes/session/permission.tsx:49-85` renders the request's diff and
+    /// prints `No diff provided` rather than omitting it).
+    ///
+    /// `None` — **the default, so every tool that does not implement it is unchanged** — means
+    /// "there is nothing to preview". The core merges the preview into the ask's `detail`, so
+    /// a front end renders whatever it is given and adds no policy of its own.
+    ///
+    /// # It is a preview, so it is read-only
+    ///
+    /// It runs at **ask** time, before the gate decides, and therefore runs for calls that are
+    /// ultimately denied. It must not write, rename, or otherwise change anything: no
+    /// checkpoints, no read-log entries, no mutation queue. Reading the current bytes is the
+    /// whole cost.
+    ///
+    /// # The two ends of one disagreement
+    ///
+    /// It cannot be authoritative, and does not need to be. It reads the file *now*, while
+    /// `execute` re-reads it under the mutation queue; if the bytes change in between, the
+    /// executed write wins and its own `read_log`/checkpoint guards still apply. A preview is
+    /// what the approver is shown, not what runs.
+    ///
+    /// `base` is the same workspace root [`Tool::resource_key`] resolves against, so the
+    /// preview and the call name the same file by construction.
+    fn preview(&self, arguments: &serde_json::Value, base: &std::path::Path) -> Option<String> {
+        let _ = (arguments, base);
+        None
+    }
+
     /// Execute one invocation. Implementations should:
     /// - poll `ctx.token` between work units and bail out promptly on cancellation;
     /// - emit `on_update` sparingly (the sink throttles, but formatting costs are real).
@@ -568,6 +603,75 @@ mod tests {
         // The mode is what tells the planner whether `None` means "reader, harmless" or
         // "unknown reach, serialize everything".
         assert_eq!(tool.descriptor().execution_mode, ExecutionMode::Sequential);
+    }
+
+    /// A tool that implements nothing but `execute` — which is every implementor that
+    /// existed before the preview seam did.
+    #[test]
+    fn a_tool_that_previews_nothing_keeps_the_dialog_exactly_as_it_was() {
+        // The default is `None`, so nothing is added to the ask's detail and the front end
+        // renders the same six-row dialog it rendered before. A defaulted method is the only
+        // shape that can promise this: every implementor inherits it without being edited.
+        let tool = Undeclared;
+        assert_eq!(
+            tool.preview(
+                &serde_json::json!({ "path": "a.rs", "content": "x" }),
+                std::path::Path::new("/ws")
+            ),
+            None,
+            "the seam must be opt-in: a tool that does not preview must not change the ask"
+        );
+    }
+
+    /// A tool that does preview — the shape `write` and `edit` take.
+    struct Previewing;
+    #[async_trait::async_trait]
+    impl Tool for Previewing {
+        fn descriptor(&self) -> &ToolDescriptor {
+            static D: std::sync::OnceLock<ToolDescriptor> = std::sync::OnceLock::new();
+            D.get_or_init(|| ToolDescriptor {
+                name: "write".into(),
+                label: "Write".into(),
+                description: "previews".into(),
+                parameters_schema: serde_json::json!({"type": "object"}),
+                execution_mode: ExecutionMode::Sequential,
+            })
+        }
+        fn preview(
+            &self,
+            arguments: &serde_json::Value,
+            _base: &std::path::Path,
+        ) -> Option<String> {
+            // The real tools read the file; this one only shows that the seam carries the
+            // diff text through to whoever merged it into the ask.
+            arguments
+                .get("content")
+                .and_then(|v| v.as_str())
+                .map(|c| format!("@@ -0,0 +1,1 @@\n+{c}\n"))
+        }
+        async fn execute(
+            &self,
+            _call: ToolInvocation,
+            _ctx: ToolContext,
+            _on_update: ToolUpdateSink,
+        ) -> Result<ToolOutput, ToolFailure> {
+            Err(ToolFailure::msg("never executed"))
+        }
+    }
+
+    #[test]
+    fn a_tool_that_previews_names_the_change_it_would_make() {
+        let tool = Previewing;
+        let preview = tool
+            .preview(
+                &serde_json::json!({ "path": "a.rs", "content": "let x = 1;" }),
+                std::path::Path::new("/ws"),
+            )
+            .expect("a previewing tool previews");
+        assert!(
+            preview.contains("+let x = 1;"),
+            "the added line is in it: {preview}"
+        );
     }
 
     #[test]

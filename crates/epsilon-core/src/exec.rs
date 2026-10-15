@@ -17,8 +17,8 @@ use epsilon_contracts::ids::new_id;
 use epsilon_contracts::message::{AssistantMessage, ToolResultMessage};
 use epsilon_contracts::tool::ExecutionMode;
 use epsilon_contracts::tool::{
-    AfterToolCallContext, AfterToolCallResult, BeforeToolCallContext, ToolContext, ToolFailure,
-    ToolInvocation, ToolOutput,
+    AfterToolCallContext, AfterToolCallResult, BeforeToolCallContext, Tool, ToolContext,
+    ToolFailure, ToolInvocation, ToolOutput,
 };
 
 use crate::{Agent, RunError};
@@ -248,6 +248,36 @@ pub(crate) fn plan_batch(calls: &[CallShape]) -> BatchPlan {
     BatchPlan::Segments(groups.into_iter().map(|(_, members)| members).collect())
 }
 
+/// The `detail` one ask carries: the arguments, plus the tool's preview of the change.
+///
+/// **The merge lives here, in the core, so every front end inherits it** (AGENTS.md §2.1).
+/// The terminal dialog, the HTTP/SSE `/approvals` list and the stdio-RPC mode all read
+/// `PermissionRequest::detail`, and a preview merged at one draw site would be a capability
+/// that front end has and the others do not — the shape this repository keeps finding under
+/// other names.
+///
+/// One new key, `preview`, holding the diff text as the tool produced it. The existing keys
+/// are untouched, so the one-line `what` a dialog derives from `path` or `command` is
+/// byte-identical to what it was, and an ask with no preview (a shell command, a read, a
+/// search) carries exactly the arguments it always did.
+///
+/// It is computed at **ask** time, which is the honest reading of the file for the decision
+/// being made: what the approver is shown is the state of the file *then*. `execute` re-reads
+/// under the mutation queue and its own `read_log` guard still refuses a stale write.
+fn ask_detail(
+    tool: &dyn Tool,
+    args: &serde_json::Value,
+    base: &std::path::Path,
+) -> serde_json::Value {
+    let mut detail = args.clone();
+    if let Some(preview) = tool.preview(args, base)
+        && let Some(object) = detail.as_object_mut()
+    {
+        object.insert("preview".to_string(), serde_json::Value::String(preview));
+    }
+    detail
+}
+
 /// Do two calls touch the same resource in a way that needs ordering?
 fn conflicts(a: &CallShape, b: &CallShape) -> bool {
     let (Some(pa), Some(pb)) = (a.resource.as_deref(), b.resource.as_deref()) else {
@@ -300,7 +330,7 @@ pub async fn run_local(
             request_id: new_id("perm"),
             capability,
             pattern: pattern.clone(),
-            detail: args.clone(),
+            detail: ask_detail(tool.as_ref(), &args, &agent.workspace_root),
         };
         auth = agent.gate.authorize(req.clone()).await;
         if auth.asked {
@@ -447,7 +477,7 @@ pub(super) async fn execute_batch(
                     request_id: new_id("perm"),
                     capability,
                     pattern: pattern.clone(),
-                    detail: args.clone(),
+                    detail: ask_detail(tool.as_ref(), args, &agent.workspace_root),
                 };
                 auth = gate.authorize(req.clone()).await;
                 if auth.asked {
@@ -1049,6 +1079,7 @@ fn aborted_result(call_id: &str, name: &str) -> ToolResultMessage {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use epsilon_contracts::tool::{ToolDescriptor, ToolUpdateSink};
     use std::path::PathBuf;
 
     fn reader(path: &str) -> CallShape {
@@ -1192,5 +1223,100 @@ mod tests {
     #[test]
     fn an_empty_batch_plans_to_nothing() {
         assert_eq!(plan_batch(&[]), BatchPlan::Segments(vec![]));
+    }
+
+    // ---- the ask's detail carries the preview -------------------------------------
+    //
+    // The merge is the whole feature seen from the core's side, and the control on it is
+    // that a tool which previews nothing leaves the detail byte-identical: the TUI's
+    // golden frame for a `bash` ask pins the dialog's six rows, and it only passes while
+    // this stays true.
+
+    struct Silent;
+    #[async_trait::async_trait]
+    impl Tool for Silent {
+        fn descriptor(&self) -> &ToolDescriptor {
+            static D: std::sync::OnceLock<ToolDescriptor> = std::sync::OnceLock::new();
+            D.get_or_init(|| ToolDescriptor {
+                name: "bash".into(),
+                label: "Bash".into(),
+                description: "previews nothing".into(),
+                parameters_schema: serde_json::json!({"type": "object"}),
+                execution_mode: ExecutionMode::Sequential,
+            })
+        }
+        async fn execute(
+            &self,
+            _call: ToolInvocation,
+            _ctx: ToolContext,
+            _on_update: ToolUpdateSink,
+        ) -> Result<ToolOutput, ToolFailure> {
+            Err(ToolFailure::msg("never executed"))
+        }
+    }
+
+    #[test]
+    fn a_tool_that_previews_nothing_leaves_the_detail_exactly_as_it_was() {
+        let args = serde_json::json!({ "command": "rm -rf build" });
+        let detail = ask_detail(&Silent, &args, std::path::Path::new("/ws"));
+        assert_eq!(
+            detail, args,
+            "no preview means no new key — the dialog for this ask is the one it always was"
+        );
+    }
+
+    /// A tool whose preview the real `write` matches in shape.
+    struct Diffing;
+    #[async_trait::async_trait]
+    impl Tool for Diffing {
+        fn descriptor(&self) -> &ToolDescriptor {
+            static D: std::sync::OnceLock<ToolDescriptor> = std::sync::OnceLock::new();
+            D.get_or_init(|| ToolDescriptor {
+                name: "write".into(),
+                label: "Write".into(),
+                description: "previews".into(),
+                parameters_schema: serde_json::json!({"type": "object"}),
+                execution_mode: ExecutionMode::Sequential,
+            })
+        }
+        fn preview(
+            &self,
+            arguments: &serde_json::Value,
+            _base: &std::path::Path,
+        ) -> Option<String> {
+            arguments
+                .get("content")
+                .and_then(|v| v.as_str())
+                .map(|c| format!("@@ -0,0 +1,1 @@\n+{c}\n"))
+        }
+        async fn execute(
+            &self,
+            _call: ToolInvocation,
+            _ctx: ToolContext,
+            _on_update: ToolUpdateSink,
+        ) -> Result<ToolOutput, ToolFailure> {
+            Err(ToolFailure::msg("never executed"))
+        }
+    }
+
+    #[test]
+    fn the_preview_is_merged_in_and_the_args_are_not_disturbed() {
+        let args = serde_json::json!({ "path": "src/lib.rs", "content": "let x = 1;" });
+        let detail = ask_detail(&Diffing, &args, std::path::Path::new("/ws"));
+        // The new key, carrying the diff verbatim.
+        assert_eq!(
+            detail["preview"].as_str(),
+            Some("@@ -0,0 +1,1 @@\n+let x = 1;\n"),
+            "the dialog needs the diff text, not a summary of it"
+        );
+        // The existing keys are untouched, which is what keeps the one-line `what`
+        // reading `src/lib.rs` rather than the diff's first line.
+        assert_eq!(detail["path"], serde_json::json!("src/lib.rs"));
+        assert_eq!(detail["content"], serde_json::json!("let x = 1;"));
+        assert_eq!(
+            detail.as_object().map(|o| o.len()),
+            Some(3),
+            "one key added and nothing else moved: {detail}"
+        );
     }
 }

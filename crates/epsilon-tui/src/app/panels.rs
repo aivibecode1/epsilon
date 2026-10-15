@@ -1224,13 +1224,23 @@ pub(super) fn draw_slash_autocomplete(f: &mut Frame<'_>, app: &App, transcript_a
 /// ([`crate::ui::overlay::Panel::border`]) instead of being inherited from
 /// `focused: true`, which yielded the same accent every other overlay uses.
 ///
-/// **Six rows, not eleven.** The dialog is a yes/no with one line of detail, and
-/// a tall box for a small question reads as more consequential than it is —
-/// which is the opposite of what the danger colour is for. The skill's own rule
-/// is 5–7 rows for a confirm prompt (`references/layout.md`); the body keeps the
-/// capability, the one line that says what will actually happen, and the four
-/// decision keys, and drops the blank separator and the `pattern` field, which
-/// restated what the detail line already shows.
+/// **Six rows, not eleven** — for an ask with nothing to preview. The dialog is
+/// a yes/no with one line of detail, and a tall box for a small question reads
+/// as more consequential than it is — which is the opposite of what the danger
+/// colour is for. The skill's own rule is 5–7 rows for a confirm prompt
+/// (`references/layout.md`); the body keeps the capability, the one line that
+/// says what will actually happen, and the four decision keys, and drops the
+/// blank separator and the `pattern` field, which restated what the detail line
+/// already shows.
+///
+/// **An ask that carries a preview grows, and only then.** `write` and `edit`
+/// merge a diff of the change into the ask's detail (epsilon-core's `ask_detail`),
+/// and a reader approving a write having seen neither the old nor the new bytes
+/// is the gap that was carrying. So the `what` line keeps its place, a `diff`
+/// summary row joins it, and the diff follows — as many rows as the terminal
+/// can give, with a count for the rest, which is opencode's expanded permission
+/// prompt (`references/opencode-1.18.34/packages/tui/src/routes/session/permission.tsx:47-87`:
+/// a scrollbox for the diff, and `No diff provided` rather than omitting it).
 pub(super) fn draw_dialog(f: &mut Frame<'_>, app: &App, outer: Rect) {
     use crate::ui::overlay::{self, Panel, Width};
 
@@ -1241,9 +1251,56 @@ pub(super) fn draw_dialog(f: &mut Frame<'_>, app: &App, outer: Rect) {
     /// happened.
     const BODY_ROWS: u16 = 4;
     const CHROME_ROWS: u16 = 2;
+    /// Interior rows the diff costs before its own: the `diff +3 -1` summary row.
+    const DIFF_SUMMARY_ROWS: u16 = 1;
 
+    let theme = &app.theme;
     let width = Width::PROMPT.resolve(outer);
-    let height = (BODY_ROWS + CHROME_ROWS).min(outer.height);
+    // The change this call would make, when the tool previewed one. `None` for a
+    // shell command, a read, a search — every ask that existed before the preview
+    // seam — and the body drawn for those is the one it has always been.
+    let preview = app
+        .pending_ask
+        .as_ref()
+        .and_then(|ask| ask_preview(&ask.request));
+    // Measured against the panel's own interior, which is what the rows must fit.
+    let inner_width = width.saturating_sub(4) as usize;
+    let mut diff_rows: Vec<Line<'static>> = preview
+        .as_ref()
+        .map(|diff| diff_body_rows(diff, inner_width, theme))
+        .unwrap_or_default();
+    // How many of them fit. The dialog may grow to the whole screen, and does —
+    // that is the only way a large change is fully visible — but it may not pass
+    // it: `centered` clamps, and a clipped edge is the frame's own bottom rule.
+    let room = outer
+        .height
+        .saturating_sub(CHROME_ROWS + BODY_ROWS + DIFF_SUMMARY_ROWS);
+    let shown = if diff_rows.is_empty() || room == 0 {
+        diff_rows.clear();
+        Vec::new()
+    } else if diff_rows.len() as u16 <= room {
+        diff_rows
+    } else {
+        // A head-kept cut with a count, which is the affordance a transcript card
+        // prints for the same situation: the reader is told there is more of the
+        // change than is on the screen rather than being left to assume this is all
+        // of it. A diff reads from its first hunk down, so the head is the half
+        // worth keeping (`ui::card::body_keeps_tail`).
+        let keep = room.saturating_sub(1) as usize;
+        let hidden = diff_rows.len() - keep;
+        let mut shown: Vec<Line<'static>> = diff_rows.into_iter().take(keep).collect();
+        shown.push(Line::from(Span::styled(
+            crate::ui::card::more_lines(hidden, None, true),
+            theme.faint(),
+        )));
+        shown
+    };
+    let diff_needed = if preview.is_some() && !shown.is_empty() {
+        DIFF_SUMMARY_ROWS + shown.len() as u16
+    } else {
+        0
+    };
+    let height = (BODY_ROWS + CHROME_ROWS + diff_needed).min(outer.height);
     let panel = Panel {
         theme: &app.theme,
         area: overlay::centered(outer, width, height),
@@ -1253,7 +1310,6 @@ pub(super) fn draw_dialog(f: &mut Frame<'_>, app: &App, outer: Rect) {
         border: Some(app.theme.danger()),
     };
     let inner = panel.open(f);
-    let theme = &app.theme;
 
     // The permission dialog is the worst place in this product for a command to be
     // displayed as something it is not: it is the one screen where a reader decides
@@ -1284,6 +1340,17 @@ pub(super) fn draw_dialog(f: &mut Frame<'_>, app: &App, outer: Rect) {
                 field("cap", cap.into_owned()),
                 field("what", what.into_owned()),
             ];
+            // The change itself, between the one-line answer and the decision keys.
+            //
+            // **The `what` line comes first and is unchanged.** A reader skimming still
+            // gets the path; the diff is what a reader who wants the bytes reads. The
+            // label carries `+a -b` because that is the size of the change, which is the
+            // first question after "what file".
+            if preview.is_some() && !shown.is_empty() {
+                let (added, removed) = preview.as_ref().map(|d| d.counts()).unwrap_or((0, 0));
+                lines.push(field("diff", format!("{added} added, {removed} removed")));
+                lines.extend(shown);
+            }
             // **The mode replaces the answer keys; it does not join them (A42).**
             //
             // `guidance_mode` was set at `keys.rs` and read nowhere, so this block kept
@@ -1352,6 +1419,83 @@ pub(super) fn draw_dialog(f: &mut Frame<'_>, app: &App, outer: Rect) {
     };
 
     f.render_widget(Paragraph::new(body), inner);
+}
+
+/// The diff an ask carries, when it carries one that can be shown.
+///
+/// `None` for a shell command, a read, a search — every ask that existed before the preview
+/// seam — which is why the dialog for those is the one it always was.
+///
+/// **A preview that is not display-safe is withheld, not stripped.** The refusal rule for an
+/// ask whose own text carries display-steering characters is
+/// `epsilon_runtime::ask_is_display_honest` (M261), and it reads the capability and the
+/// one-line `what`. A diff is a surface that predicate does not cover, so the same rule is
+/// applied here in the half that applies: a diff whose lines were quietly rewritten would have
+/// a reader approving bytes they never saw, which is exactly what M261 refuses. So it is not
+/// drawn, and the dialog keeps the body it had. (It is *not* folded into the refusal row
+/// either: that row's keys are refused by `handle_approval_key` from M261's own predicate, and
+/// advertising a refusal the keyboard does not honour is the defect M261 was.)
+fn ask_preview(
+    request: &epsilon_contracts::agent_event::PermissionRequest,
+) -> Option<crate::state::Diff> {
+    let text = request.detail.get("preview")?.as_str()?;
+    let (safe, stripped) = crate::text_safety::display_safe(text);
+    if stripped.any() {
+        return None;
+    }
+    let diff = crate::state::parse_diff(&safe);
+    (!diff.lines.is_empty()).then_some(diff)
+}
+
+/// The diff's rows for the dialog: sign, line number, then the text cut to fit.
+///
+/// The shape a tool result's diff already uses — the same signs, the same number column, the
+/// same dim context, the same success/danger pair (`ui::card`'s unified view) — because a
+/// reader must not have to learn a second notation for the screen that authorises the change.
+/// This is the same *shape* in the dialog's own types, not a call into that renderer: the
+/// card's row builder is private to it and returns `CardRow`, while this is a `Paragraph` of
+/// `Line`s. If a second panel needs these rows, the move is to widen that one, not to copy
+/// this a third time.
+fn diff_body_rows(
+    diff: &crate::state::Diff,
+    width: usize,
+    theme: &crate::ui::theme::Theme,
+) -> Vec<Line<'static>> {
+    // The numbers are the first thing to go when the box is narrow: the sign is what colour
+    // stands in for, and a clipped number is worse than none (`Diff::unified_numbers_fit`).
+    let numbers = diff.unified_numbers_fit(width);
+    diff.lines
+        .iter()
+        .map(|line| {
+            use crate::state::DiffKind;
+            let base = match line.kind {
+                DiffKind::Add => theme.success(),
+                DiffKind::Remove => theme.danger(),
+                DiffKind::Hunk => theme.accent(),
+                _ => theme.dim_strong(),
+            };
+            let sign = match line.kind {
+                DiffKind::Add => theme.glyphs.plus,
+                DiffKind::Remove => theme.glyphs.minus,
+                _ => " ",
+            };
+            let number = match (numbers, line.number) {
+                (true, Some(n)) => format!("{n:>width$} ", width = diff.number_width),
+                _ => format!("{:width$} ", "", width = diff.number_width),
+            };
+            let head = format!("{sign} ");
+            let used =
+                crate::ui::layout::display_width(&head) + crate::ui::layout::display_width(&number);
+            Line::from(vec![
+                Span::styled(head, base),
+                Span::styled(number, theme.faint()),
+                Span::styled(
+                    crate::wrap::fit_width(&line.text, width.saturating_sub(used)),
+                    base,
+                ),
+            ])
+        })
+        .collect()
 }
 
 /// M32: masked API-key prompt (opencode DialogPrompt parity). The real key

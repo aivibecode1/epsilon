@@ -298,6 +298,133 @@ fn ensure_inside(ctx: &ToolContext, raw: &str) -> Result<std::path::PathBuf, Too
     util::resolve_or_refuse(&ctx.cwd, raw)
 }
 
+/// Read `value` as edit arguments, accepting the pi wire shape where `edits` arrives as a
+/// JSON string.
+///
+/// **One implementation, two callers.** `execute` parses it this way and so must the
+/// permission dialog's preview: a preview that parsed the arguments differently from the
+/// tool would describe a different change from the one that lands, which is worse than
+/// describing none.
+fn parse_edit_args(value: serde_json::Value) -> Result<EditArgs, ToolFailure> {
+    let mut value = value;
+    // Pi parity (`prepareEditArguments`): some models send `edits` as a JSON string instead of
+    // an array. Parse it in place; on failure leave it and let schema validation report the
+    // shape error.
+    if let Some(edits_str) = value.get("edits").and_then(|v| v.as_str())
+        && let Ok(parsed) = serde_json::from_str::<serde_json::Value>(edits_str)
+    {
+        value["edits"] = parsed;
+    }
+    serde_json::from_value(value)
+        .map_err(|e| ToolFailure::msg(format!("invalid arguments for 'edit': {e}")))
+}
+
+/// Normalise the two accepted argument shapes into one batch of `(old, new)` pairs.
+///
+/// The same validation `execute` performs, so a preview can only describe a call that would
+/// actually be attempted.
+fn edit_batch(args: &EditArgs) -> Result<Vec<(String, String)>, ToolFailure> {
+    let mut batch: Vec<(String, String)> = Vec::new();
+    if !args.edits.is_empty() {
+        for e in &args.edits {
+            if e.old_string.is_empty() {
+                return Err(ToolFailure::msg("edits[].old_string must not be empty"));
+            }
+            batch.push((e.old_string.clone(), e.new_string.clone()));
+        }
+        if args.replace_all {
+            return Err(ToolFailure::msg(
+                "replace_all is not supported with batch edits[]; send one edit per call or split the batch",
+            ));
+        }
+    } else if let (Some(o), Some(n)) = (args.old_string.clone(), args.new_string.clone()) {
+        if o.is_empty() {
+            return Err(ToolFailure::msg("old_string must not be empty"));
+        }
+        batch.push((o, n));
+    } else {
+        return Err(ToolFailure::msg(
+            "edit requires either edits:[{old_string,new_string}...] (pi wire names oldText/newText also accepted) or old_string+new_string",
+        ));
+    }
+    Ok(batch)
+}
+
+/// Apply a multi-edit batch to `content_lf`, or say why it cannot be applied.
+///
+/// **One implementation, two callers** — `execute`'s batch path and the preview a permission
+/// dialog shows. They must agree byte for byte: a preview describing a different change from
+/// the one that would land is worse than no preview, because the approver read it. So the
+/// matching lives here rather than being copied, and both callers run this.
+///
+/// Exact-only, matched against the ORIGINAL content, applied reverse-order so offsets stay
+/// stable. That is the batch rule the tool already enforces: a batch matches exactly, and a
+/// call that needs the fuzzy stages goes on its own, where [`crate::edit_match::plan`] owns
+/// them.
+fn apply_batch_exact(
+    content_lf: &str,
+    batch: &[(String, String)],
+    args_path: &str,
+) -> Result<String, ToolFailure> {
+    let mut spans: Vec<(usize, usize, String)> = Vec::with_capacity(batch.len());
+    let mut seen_old: std::collections::HashSet<String> = std::collections::HashSet::new();
+    for (idx, (old_s, new_s)) in batch.iter().enumerate() {
+        if !seen_old.insert(old_s.clone()) {
+            return Err(ToolFailure::msg(format!(
+                "edits[{idx}].old_string duplicates an earlier edit: merge overlapping edits"
+            )));
+        }
+        let old_lf = crate::edit_match::normalize_to_lf(old_s);
+        let (count, first) = crate::edit_match::find_exact_occurrences(content_lf, &old_lf);
+        if count == 0 {
+            let first_line = old_lf.lines().next().unwrap_or("");
+            let hint = content_lf
+                .lines()
+                .find(|l| !first_line.is_empty() && l.contains(first_line.trim()))
+                .unwrap_or("");
+            return Err(ToolFailure::msg(format!(
+                "edits[{idx}].old_string not found in {args_path}{}. A batch matches exactly — \
+                 send this one on its own to use the fuzzy-match stages.",
+                if hint.is_empty() {
+                    String::new()
+                } else {
+                    format!(" (closest line: {hint})")
+                }
+            )));
+        }
+        if count != 1 {
+            return Err(ToolFailure::msg(format!(
+                "edits[{idx}].old_string matches {count} locations in {args_path}; widen the context"
+            )));
+        }
+        let start = first.unwrap();
+        let end = start + old_lf.len();
+        spans.push((start, end, crate::edit_match::normalize_to_lf(new_s)));
+    }
+    // Order by start ascending, reject overlap.
+    spans.sort_by_key(|(s, _, _)| *s);
+    for w in spans.windows(2) {
+        let (_, e0, _) = w[0];
+        let (s1, _, _) = w[1];
+        if s1 < e0 {
+            return Err(ToolFailure::msg(
+                "edits overlap: two old_string regions intersect in the original file — merge them into one edit",
+            ));
+        }
+    }
+    // Apply reverse so later offsets don't shift earlier ones.
+    let mut new_content = content_lf.to_string();
+    for (s, e, repl) in spans.into_iter().rev() {
+        new_content.replace_range(s..e, &repl);
+    }
+    if new_content == content_lf {
+        return Err(ToolFailure::msg(format!(
+            "No changes made to {args_path}; the replacements produced identical content"
+        )));
+    }
+    Ok(new_content)
+}
+
 /// Turn the `path` argument into a planner key (M72).
 ///
 /// Lexical normalisation against the same base the tool will execute with, so two calls that
@@ -324,6 +451,29 @@ impl Tool for WriteTool {
         base: &std::path::Path,
     ) -> Option<std::path::PathBuf> {
         path_key(arguments, base)
+    }
+
+    fn preview(&self, arguments: &serde_json::Value, base: &std::path::Path) -> Option<String> {
+        let args: WriteArgs = serde_json::from_value(arguments.clone()).ok()?;
+        let path = util::resolve_or_refuse(base, &args.path).ok()?;
+        // A file that is not there yet has no current bytes, and the honest diff for it is
+        // every line added — which is exactly what `unified_diff` produces from an empty old
+        // side, so a new file needs no special case and no invented "(new file)" marker.
+        //
+        // A file that **is** there but cannot be read — binary, a permission failure, over
+        // the edit byte cap — has no honest preview at all. Returning `None` keeps the
+        // dialog on the one-line `what` it has always shown rather than claiming "(new file)"
+        // for a file that plainly exists and would be overwritten. A reader who sees no diff
+        // is in no worse a position than before this seam existed; a reader who sees a lie is.
+        let current = match std::fs::read_to_string(&path) {
+            Ok(text) => text,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => String::new(),
+            Err(_) => return None,
+        };
+        let diff = util::unified_diff(&current, &args.content);
+        // Content identical to what is already there is not a change, and a diff of nothing
+        // would be an empty frame where the reader expects the bytes they are approving.
+        (!diff.is_empty()).then_some(diff)
     }
 
     async fn execute(
@@ -473,48 +623,54 @@ impl Tool for EditTool {
         path_key(arguments, base)
     }
 
+    fn preview(&self, arguments: &serde_json::Value, base: &std::path::Path) -> Option<String> {
+        let args: EditArgs = parse_edit_args(arguments.clone()).ok()?;
+        let batch: Vec<(String, String)> = edit_batch(&args).ok()?;
+        let path = util::resolve_or_refuse(base, &args.path).ok()?;
+        // The same read `execute` makes, for the same reason: a preview built on a buffer
+        // the tool itself would refuse (truncated, lossy, binary) would describe a change
+        // that cannot land.
+        let raw = util::read_text_for_edit(&path).ok()?;
+        let eol = crate::edit_match::detect_eol(&raw);
+        let content_lf = crate::edit_match::normalize_to_lf(&raw);
+        // **The preview runs the matching the tool runs.** One edit — whether it arrived as
+        // `edits:[one]` or as the legacy `old_string`/`new_string` — goes through
+        // `edit_match::plan`, exactly as `execute` does, so the fuzzy stages are represented
+        // rather than guessed at. A batch of more than one goes through `apply_batch_exact`,
+        // which is the same function `execute`'s batch path calls.
+        //
+        // Every refusal returns `None`, not an approximation: "not found", "ambiguous", and
+        // "suspicious" all mean the change that would land is not the one being described, so
+        // the dialog falls back to the one-line `what` instead of showing a diff that will not
+        // come true. A call the tool would refuse outright (missing file, unreadable text)
+        // is the same answer.
+        let updated_lf = if batch.len() == 1 {
+            let (old, new) = &batch[0];
+            match crate::edit_match::plan(
+                &content_lf,
+                &crate::edit_match::normalize_to_lf(old),
+                &crate::edit_match::normalize_to_lf(new),
+                args.replace_all,
+            ) {
+                crate::edit_match::EditOutcome::Applied { output, .. } => output,
+                _ => return None,
+            }
+        } else {
+            apply_batch_exact(&content_lf, &batch, &args.path).ok()?
+        };
+        let updated = crate::edit_match::restore_eol(&updated_lf, eol);
+        let diff = util::unified_diff(&raw, &updated);
+        (!diff.is_empty()).then_some(diff)
+    }
+
     async fn execute(
         &self,
         call: ToolInvocation,
         ctx: ToolContext,
         _on_update: ToolUpdateSink,
     ) -> Result<ToolOutput, ToolFailure> {
-        let mut args_value = call.args;
-        // Pi parity (`prepareEditArguments`): some models send `edits` as a JSON
-        // string instead of an array. Parse it in place; on failure leave it and
-        // let schema validation report the shape error.
-        if let Some(edits_str) = args_value.get("edits").and_then(|v| v.as_str())
-            && let Ok(parsed) = serde_json::from_str::<serde_json::Value>(edits_str)
-        {
-            args_value["edits"] = parsed;
-        }
-        let args: EditArgs = serde_json::from_value(args_value)
-            .map_err(|e| ToolFailure::msg(format!("invalid arguments for 'edit': {e}")))?;
-        // Normalize to a batch: prefer `edits` when present, else single old/new.
-        let mut batch: Vec<(String, String)> = Vec::new();
-        if !args.edits.is_empty() {
-            for e in &args.edits {
-                if e.old_string.is_empty() {
-                    return Err(ToolFailure::msg("edits[].old_string must not be empty"));
-                }
-                batch.push((e.old_string.clone(), e.new_string.clone()));
-            }
-            if args.replace_all {
-                return Err(ToolFailure::msg(
-                    "replace_all is not supported with batch edits[]; send one edit per call or split the batch",
-                ));
-            }
-        } else if let (Some(o), Some(n)) = (args.old_string.clone(), args.new_string.clone()) {
-            if o.is_empty() {
-                return Err(ToolFailure::msg("old_string must not be empty"));
-            }
-            batch.push((o, n));
-        } else {
-            return Err(ToolFailure::msg(
-                "edit requires either edits:[{old_string,new_string}...] (pi wire names oldText/newText also accepted) or old_string+new_string",
-            ));
-        }
-
+        let args: EditArgs = parse_edit_args(call.args)?;
+        let batch: Vec<(String, String)> = edit_batch(&args)?;
         let path = ensure_inside(&ctx, &args.path)?;
         let queue_path = path.clone();
         let args_path = args.path.clone();
@@ -627,69 +783,7 @@ impl Tool for EditTool {
                 // applied reverse-order so offsets stay stable. Reuses the same mutation
                 // queue that serializes competing writes — no new concurrency surface.
                 // Each old_string must be unique (exactly-once) or the batch fails.
-                let mut spans: Vec<(usize, usize, String)> = Vec::with_capacity(batch.len());
-                let mut seen_old: std::collections::HashSet<String> = std::collections::HashSet::new();
-                for (idx, (old_s, new_s)) in batch.iter().enumerate() {
-                    if !seen_old.insert(old_s.clone()) {
-                        return Err(ToolFailure::msg(format!(
-                            "edits[{}].old_string duplicates an earlier edit: merge overlapping edits",
-                            idx
-                        )));
-                    }
-                    let old_lf = crate::edit_match::normalize_to_lf(old_s);
-                    let (count, first) =
-                        crate::edit_match::find_exact_occurrences(&content_lf, &old_lf);
-                    if count == 0 {
-                        let first_line = old_lf.lines().next().unwrap_or("");
-                        let hint = content_lf
-                            .lines()
-                            .find(|l| !first_line.is_empty() && l.contains(first_line.trim()))
-                            .unwrap_or("");
-                        return Err(ToolFailure::msg(format!(
-                            "edits[{}].old_string not found in {}{}. A batch matches exactly — \
-                             send this one on its own to use the fuzzy-match stages.",
-                            idx,
-                            args_path,
-                            if hint.is_empty() {
-                                String::new()
-                            } else {
-                                format!(" (closest line: {hint})")
-                            }
-                        )));
-                    }
-                    if count != 1 {
-                        return Err(ToolFailure::msg(format!(
-                            "edits[{}].old_string matches {count} locations in {}; widen the context",
-                            idx, args_path
-                        )));
-                    }
-                    let start = first.unwrap();
-                    let end = start + old_lf.len();
-                    let new_lf = crate::edit_match::normalize_to_lf(new_s);
-                    spans.push((start, end, new_lf));
-                }
-                // Order by start ascending, reject overlap.
-                spans.sort_by_key(|(s, _, _)| *s);
-                for w in spans.windows(2) {
-                    let (_, e0, _) = w[0];
-                    let (s1, _, _) = w[1];
-                    if s1 < e0 {
-                        return Err(ToolFailure::msg(
-                            "edits overlap: two old_string regions intersect in the original file — merge them into one edit",
-                        ));
-                    }
-                }
-                // Apply reverse so later offsets don't shift earlier ones.
-                let mut new_content = content_lf.clone();
-                for (s, e, repl) in spans.into_iter().rev() {
-                    new_content.replace_range(s..e, &repl);
-                }
-                if new_content == content_lf {
-                    return Err(ToolFailure::msg(format!(
-                        "No changes made to {}; the replacements produced identical content",
-                        args_path
-                    )));
-                }
+                let new_content = apply_batch_exact(&content_lf, &batch, &args_path)?;
                 let updated = crate::edit_match::restore_eol(&new_content, eol);
                 let diff = crate::util::unified_diff(&raw, &updated);
                 std::fs::write(&path, &updated)
