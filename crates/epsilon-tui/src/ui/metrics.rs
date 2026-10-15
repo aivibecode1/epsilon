@@ -380,6 +380,27 @@ impl Metrics {
     }
 }
 
+/// An output figure with its reasoning split as a subset note.
+///
+/// Pi's presentation (`references/pi-1.0.0/packages/ai/src/types.ts:427-448`,
+/// `packages/coding-agent/docs/message-types.md:90`): reasoning is *already
+/// included in* `output` — "do not add it again". So this annotates the
+/// figure rather than adding a second total, and cost stays on `output` only
+/// (ADR-042).
+///
+/// `None` is the K1 silent wire — the provider sent no reasoning key — and
+/// renders the bare figure, byte-identical to today. `Some(0)` is a measured
+/// zero and renders the note, because collapsing it into `None` would turn
+/// every silent provider into a measured "no thinking happened".
+pub fn output_with_reasoning(output: u64, reasoning: Option<u64>) -> String {
+    match reasoning {
+        // The split annotates the figure it is part of; the figure itself is
+        // untouched, so totals never move.
+        Some(r) => format!("{output} (incl. {r} reasoning)"),
+        None => output.to_string(),
+    }
+}
+
 /// One piece of the header: the text, and how it should be drawn.
 #[derive(Debug, Clone, PartialEq)]
 pub struct MetricPart {
@@ -1130,5 +1151,43 @@ mod tests {
         };
         let parts = m.parts();
         assert!(parts.iter().any(|p| p.text == "offline"));
+    }
+
+    /// Reasoning renders as a subset note on the output figure, never as a
+    /// second total (ADR-042 deferred display; pi `Usage.reasoning`).
+    ///
+    /// RED-first: output 500 with `Some(200)` must show the split while the
+    /// output figure itself stays 500 — added to totals it would read 700.
+    #[test]
+    fn reasoning_renders_as_a_subset_note_on_output() {
+        assert_eq!(
+            output_with_reasoning(500, Some(200)),
+            "500 (incl. 200 reasoning)"
+        );
+    }
+
+    /// K1 applies to display too: a silent wire must not gain a "reasoning 0"
+    /// line. Exact equality, so ANY extra text fails this test.
+    #[test]
+    fn a_silent_wire_gains_no_reasoning_line() {
+        assert_eq!(output_with_reasoning(500, None), "500");
+        assert!(
+            !output_with_reasoning(500, None).contains("reasoning"),
+            "None must render byte-identical to today"
+        );
+    }
+
+    /// A measured zero is a measurement, not a silence: `Some(0)` renders the
+    /// note while `None` renders the bare figure.
+    #[test]
+    fn a_measured_zero_is_not_a_silence() {
+        assert_eq!(
+            output_with_reasoning(500, Some(0)),
+            "500 (incl. 0 reasoning)"
+        );
+        assert_ne!(
+            output_with_reasoning(500, Some(0)),
+            output_with_reasoning(500, None),
+        );
     }
 }

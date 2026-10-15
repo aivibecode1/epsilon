@@ -1315,6 +1315,49 @@ impl App {
         ));
     }
 
+    /// Reasoning tokens reported on this branch, for the `/session` tokens line.
+    ///
+    /// Sums `Usage::reasoning` with OR-presence (one measured call carries the
+    /// split, like `Usage::combine`): assistant turns, tool-burned model calls,
+    /// and summarization bills. `None` when no entry reported the split — the
+    /// K1 silent wire — or the branch is empty, so the line renders exactly as
+    /// today. Never added to any total: the split is a subset of output
+    /// (ADR-042; pi `message-types.md`: "already included in `output`; do not
+    /// add it again"), and cost stays on `output` only.
+    fn branch_reasoning(entries: &[epsilon_contracts::session_entry::SessionEntry]) -> Option<u64> {
+        let mut total: Option<u64> = None;
+        let mut fold = |reported: Option<u64>| match (total, reported) {
+            (Some(a), Some(b)) => total = Some(a + b),
+            (None, Some(b)) => total = Some(b),
+            _ => {}
+        };
+        for entry in entries {
+            match &entry.kind {
+                epsilon_contracts::session_entry::EntryKind::Message { message, .. } => {
+                    match message {
+                        epsilon_contracts::message::Message::Assistant(a) => {
+                            fold(a.usage.reasoning);
+                        }
+                        epsilon_contracts::message::Message::ToolResult(t) => {
+                            if let Some(u) = t.usage {
+                                fold(u.reasoning);
+                            }
+                        }
+                        _ => {}
+                    }
+                }
+                epsilon_contracts::session_entry::EntryKind::Compaction { usage, .. }
+                | epsilon_contracts::session_entry::EntryKind::BranchSummary { usage, .. } => {
+                    if let Some(u) = usage {
+                        fold(u.reasoning);
+                    }
+                }
+                _ => {}
+            }
+        }
+        total
+    }
+
     fn run_navigate_command(
         &mut self,
         agent: &Arc<Agent>,
@@ -1331,13 +1374,20 @@ impl App {
                 // panics on exactly this state — `/tree`, `/timeline`, `/fork`, `/clone`,
                 // `/name`, `/export` and `/share` all took the TUI down. `session_store` is
                 // the accessor for this; the test-only one is `#[doc(hidden)]` for a reason.
-                let (path, leaf, count) = match agent.session_store() {
+                let (path, leaf, count, reasoning) = match agent.session_store() {
                     Some(store) => match store.lock() {
-                        Ok(st) => (
-                            st.path().to_path_buf(),
-                            st.leaf_id().unwrap_or_else(|| "(none)".into()),
-                            st.branch_entries().map(|v| v.len()).unwrap_or(0),
-                        ),
+                        Ok(st) => {
+                            // Same branch the count beside it names, so the
+                            // note and the entries line cannot disagree.
+                            let entries = st.branch_entries().unwrap_or_default();
+                            let reasoning = Self::branch_reasoning(&entries);
+                            (
+                                st.path().to_path_buf(),
+                                st.leaf_id().unwrap_or_else(|| "(none)".into()),
+                                entries.len(),
+                                reasoning,
+                            )
+                        }
                         Err(_) => {
                             self.ui.push_notice("session: store unavailable");
                             return false;
@@ -1345,8 +1395,14 @@ impl App {
                     },
                     None => {
                         let (tin, tout) = self.ui.usage();
+                        // The live accumulator is the only truth without a
+                        // file; `None` renders the bare figure (K1 silent wire).
+                        let out = crate::ui::metrics::output_with_reasoning(
+                            tout,
+                            agent.session_usage().reasoning,
+                        );
                         self.ui.push_notice(format!(
-                            "session: no durable session file attached \u{b7} tokens {tin}/{tout} \u{b7} model {}",
+                            "session: no durable session file attached \u{b7} tokens {tin}/{out} \u{b7} model {}",
                             self.model_id
                         ));
                         // Cost, broken down (M143). The header shows one number; this says where
@@ -1363,9 +1419,12 @@ impl App {
                     }
                 };
                 let (tin, tout) = self.ui.usage();
+                // Subset note on the output half only; `None` keeps the exact
+                // shape the line always had.
+                let out = crate::ui::metrics::output_with_reasoning(tout, reasoning);
                 if let Some(n) = self.session_name.as_deref() {
                     self.ui.push_notice(format!(
-                        "session: '{n}' · {} · leaf {} · {} entries · tokens {tin}/{tout} · model {}",
+                        "session: '{n}' · {} · leaf {} · {} entries · tokens {tin}/{out} · model {}",
                         path.display(),
                         leaf,
                         count,
@@ -1373,7 +1432,7 @@ impl App {
                     ));
                 } else {
                     self.ui.push_notice(format!(
-                        "session: {} · leaf {} · {} entries · tokens {tin}/{tout} · model {}",
+                        "session: {} · leaf {} · {} entries · tokens {tin}/{out} · model {}",
                         path.display(),
                         leaf,
                         count,
@@ -2948,7 +3007,7 @@ impl App {
 #[cfg(test)]
 mod tests {
     use super::super::keys::handle_key;
-    use super::super::tests_support::{render_rows, test_app};
+    use super::super::tests_support::{render_rows, test_app, test_app_with_store};
     use super::*;
 
     fn key(code: KeyCode) -> KeyEvent {
@@ -3622,5 +3681,86 @@ mod tests {
                 "the listing's own summary line must render at {w}x{h}: {screen}"
             );
         }
+    }
+
+    /// `/session` on a silent wire renders exactly as today: no "reasoning"
+    /// text anywhere on the frame.
+    ///
+    /// The K1 display control. A fresh agent reported no reasoning split, so
+    /// the tokens line must keep today's shape (`tokens 0/0`) and no notice
+    /// may gain a "reasoning 0" line — this fails if any extra text appears.
+    #[tokio::test]
+    async fn a_session_without_a_reasoning_split_reports_no_reasoning_line() {
+        let (mut app, agent, (_f, _n)) = test_app();
+        assert!(!type_and_enter(&mut app, &agent, "/session"));
+        let screen = frame(&mut app, 80, 24);
+        assert!(
+            screen.contains("tokens0/0"),
+            "today's tokens line keeps its shape: {screen}"
+        );
+        assert!(
+            !screen.contains("reasoning"),
+            "a silent wire must not gain a line: {screen}"
+        );
+    }
+
+    /// `/session` with a reported split shows it as a subset note on output.
+    ///
+    /// One assistant turn (output 500, incl. 200 reasoning) is seeded through
+    /// the store and the hydration path, then read off the real frame: the
+    /// split must appear and the output total must not move (500, never 700).
+    #[tokio::test]
+    async fn a_session_with_a_reasoning_split_notes_it_on_output() {
+        use epsilon_contracts::content::ContentBlock;
+        use epsilon_contracts::message::{AssistantMessage, Message, StopReason, Usage};
+        use epsilon_contracts::session_entry::EntryKind;
+
+        let (mut app, agent, (_f, _n), _dir) = test_app_with_store();
+        let usage = Usage {
+            input: 100,
+            output: 500,
+            reasoning: Some(200),
+            cache_read: 0,
+            cache_write: 0,
+            total_tokens: 600,
+            cache_reported: false,
+        };
+        let message = Message::Assistant(AssistantMessage {
+            id: "m-reason".into(),
+            timestamp_ms: 0,
+            provider: "faux".into(),
+            model_id: "faux-1".into(),
+            content: vec![ContentBlock::Text {
+                text: "done".into(),
+            }],
+            stop_reason: StopReason::EndTurn,
+            error_message: None,
+            usage,
+        });
+        {
+            let store = agent.session_store().expect("test store attached");
+            let mut st = store.lock().expect("store lock");
+            st.append(EntryKind::Message {
+                message: message.clone(),
+                api_request_sha256: None,
+            })
+            .expect("append");
+        }
+        app.ui.hydrate_from_history(&[message]);
+
+        assert!(!type_and_enter(&mut app, &agent, "/session"));
+        let screen = frame(&mut app, 80, 24);
+        assert!(
+            screen.contains("tokens100/500"),
+            "the output total is unmoved by the split: {screen}"
+        );
+        assert!(
+            screen.contains("incl.200reasoning"),
+            "the split reads as a subset note on output: {screen}"
+        );
+        assert!(
+            !screen.contains("tokens100/700"),
+            "the split is never added to the total: {screen}"
+        );
     }
 }

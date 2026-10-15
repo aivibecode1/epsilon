@@ -1200,4 +1200,49 @@ mod tests {
             "the portable alias must be last in the project tier: {roots:?}"
         );
     }
+
+    /// The user-tier root table, pinned the way the project tier is above.
+    ///
+    /// This table had no test: every other roots list has one, and an
+    /// unlisted global convention is a skill directory the user filled for
+    /// another harness that this one silently never reads. Expected values
+    /// are derived from [`crate::config::home_dir`] at runtime rather than
+    /// hardcoded, so the test holds under a hermetic `HOME` as well as on a
+    /// developer machine — and with no home at all the list is empty.
+    #[test]
+    fn the_user_roots_are_the_conventions_they_claim_to_be() {
+        let roots = user_roots();
+        match crate::config::home_dir() {
+            None => assert!(
+                roots.is_empty(),
+                "with no home directory there are no user roots: {roots:?}"
+            ),
+            Some(home) => {
+                let expected = [
+                    home.join(".config").join("epsilon").join("skills"),
+                    home.join(".claude").join("skills"),
+                    home.join(".codex").join("skills"),
+                    home.join(".gemini").join("skills"),
+                    home.join(".agents").join("skills"),
+                ];
+                assert_eq!(
+                    roots, expected,
+                    "the user tier is exactly its documented table, in precedence order"
+                );
+                // Epsilon's own root first (a deliberate configuration is never
+                // outranked by another harness's directory), the portable alias
+                // last (it wins the tier, per Gemini CLI's documented rule).
+                assert_eq!(
+                    roots.first().unwrap(),
+                    &expected[0],
+                    "epsilon's own root leads the user tier: {roots:?}"
+                );
+                assert_eq!(
+                    roots.last().unwrap(),
+                    &home.join(".agents").join("skills"),
+                    "the portable alias must be last in the user tier: {roots:?}"
+                );
+            }
+        }
+    }
 }
