@@ -1676,12 +1676,21 @@ async fn tui_mode(
             if let Some(waited) = lease_wait_summary(lease_wait_millis()) {
                 startup_notices.push(waited);
             }
+            // The frontend names the model this run is ACTUALLY on.
+            // `build_runtime` applies a resumed session's model to the agent
+            // (through `apply_resumed_context`), so `shared.model_id` — the
+            // launch-time resolution — is the wrong answer for a resume: the
+            // header, the picker's current row, `/session` and `/settings`
+            // would all name one model while the turn ran on another. The
+            // agent is the single source of truth the session record already
+            // made authoritative.
+            let model_id = agent.model_id();
             let code = epsilon_tui::run(epsilon_tui::TuiConfig {
                 agent,
                 gate_runner,
                 approvals,
                 initial_task,
-                model_id: shared.model_id.clone(),
+                model_id,
                 live: live_fetcher(),
                 startup_notices,
                 trust_review_pending: shared.trust_review_pending,

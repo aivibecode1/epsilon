@@ -94,6 +94,10 @@ pub fn diagnostics_for(
 pub struct ProjectConfig {
     /// `[model] id` — overrides the global saved model, under the `--model` flag.
     pub model_id: Option<String>,
+    /// `[thinking] level` — the workspace's own default reasoning effort. Over
+    /// the global default, under an explicit session record; see
+    /// [`resolve_default_thinking_level`] for the whole chain.
+    pub thinking_level: Option<String>,
     /// `[[rules]]` entries stacked over the defaults as a `"project"` layer
     /// (last-match-wins; any deny still wins immediately per ADR-006 semantics).
     pub rules: Vec<ProjectRule>,
@@ -225,6 +229,12 @@ pub fn load_project_config(workspace: &Path) -> (ProjectConfig, TrustDecision, V
         .and_then(|v| v.as_str())
         .map(str::to_string);
 
+    cfg.thinking_level = parsed
+        .get("thinking")
+        .and_then(|t| t.get("level"))
+        .and_then(|v| v.as_str())
+        .map(str::to_string);
+
     if let Some(rules) = parsed.get("rules").and_then(|r| r.as_array()) {
         for r in rules {
             let cap = r.get("capability").and_then(|v| v.as_str());
@@ -348,6 +358,61 @@ mod project_hash_tests {
         assert_eq!(
             epsilon_core::config::current_project_config_hash_in(tmp.path()),
             None
+        );
+    }
+
+    /// **Criterion 7: `[thinking] level` is a project setting, read beside
+    /// `[model] id` in the one function that reads the project file.**
+    ///
+    /// The project's own value must come through, a workspace without one must
+    /// answer `None` (the cross-contamination control — the global dir is the
+    /// shared fallback, and a project that never chose must not inherit one),
+    /// and a malformed value must not break the config's other settings.
+    #[test]
+    fn a_projects_thinking_level_is_read_from_its_own_config() {
+        let tmp = tempfile::tempdir().unwrap();
+        let ws = tmp.path();
+        std::fs::create_dir_all(ws.join(".epsilon")).unwrap();
+        std::fs::write(
+            ws.join(".epsilon").join("config.toml"),
+            "[model]\nid = \"faux-9\"\n\n[thinking]\nlevel = \"high\"\n",
+        )
+        .unwrap();
+
+        let (cfg, _decision, notices) = load_project_config(ws);
+        assert!(
+            !notices
+                .iter()
+                .any(|n| n.contains("invalid") || n.contains("ignoring")),
+            "a valid config produces no complaints: {notices:?}"
+        );
+        assert_eq!(
+            cfg.thinking_level.as_deref(),
+            Some("high"),
+            "the project's own effort must reach the composition"
+        );
+        assert_eq!(
+            cfg.model_id.as_deref(),
+            Some("faux-9"),
+            "and the model key beside it is undisturbed"
+        );
+
+        // The control: a workspace with no project config has no value, and a
+        // malformed one is ignored rather than fatal (fail-open reads).
+        let empty = tempfile::tempdir().unwrap();
+        let (none_cfg, _d, _n) = load_project_config(empty.path());
+        assert_eq!(none_cfg.thinking_level, None);
+        std::fs::create_dir_all(empty.path().join(".epsilon")).unwrap();
+        std::fs::write(
+            empty.path().join(".epsilon").join("config.toml"),
+            "[thinking]\nlevel = 7\n",
+        )
+        .unwrap();
+        let (bad_cfg, _d, bad_notices) = load_project_config(empty.path());
+        assert_eq!(bad_cfg.thinking_level, None, "a non-string is not our key");
+        assert!(
+            bad_notices.iter().all(|n| !n.contains("invalid")),
+            "and it is not an error either: {bad_notices:?}"
         );
     }
 
@@ -5034,6 +5099,15 @@ pub async fn build_runtime_and_gate_runner(
         }
     }
     agent.set_model_id(model_id);
+    // Criterion 7: `[thinking] level` is a persisted default, so a launch starts
+    // on it instead of at `Off` — project beats global, and an explicit session
+    // record still beats both (applied in the resume block below, through
+    // `apply_resumed_context`). Called before the store is attached, so a
+    // default alone writes no entry: only a level the user chose is recorded.
+    agent.set_thinking_level(resolve_default_thinking_level(
+        project.thinking_level.as_deref(),
+        epsilon_core::config::load_thinking_level(),
+    ));
     agent.set_skills(skills);
     // Identity tier: `.epsilon/SYSTEM.md` replaces the built-in contract and
     // `.epsilon/APPEND_SYSTEM.md` extends it (pi `discoverSystemPromptFile`). The same trust
@@ -5091,7 +5165,7 @@ pub async fn build_runtime_and_gate_runner(
         // subject is resuming a session, which is the one path that holds the guard. The guard is
         // therefore bound *inside* this block and everything it protects is finished before the
         // block closes.
-        let (msgs, count, resumed) = {
+        let (msgs, count) = {
             let mut restored_guard = attached.lock().map_err(|_| "session store lock poisoned")?;
             let restored: &mut epsilon_session::SessionStore = &mut restored_guard;
             // M41: a resumed file may predate headers — migrate before repair reads
@@ -5133,38 +5207,37 @@ pub async fn build_runtime_and_gate_runner(
                 .map(|v| v.into_message())
                 .collect();
             let count = msgs.len();
-            // M139: a model switch recorded in the session used to be read by nobody, so a
-            // resumed conversation silently came back on the launch model. Read it here while
-            // the store is already open — and act on it after the block, because acting on it
-            // here is what deadlocked.
-            //
-            // Precedence, and it is not arbitrary: an explicit `--model` on THIS invocation
-            // is a deliberate instruction for this run, while the session's model is a
-            // remembered default. So flag > session > project/config, which is exactly the
-            // order `candidate_raw` already builds above — the session slots in only when the
-            // user expressed no preference of their own.
-            let resumed = resumed_model_to_use(model_explicit, &*restored, model_id);
-            (msgs, count, resumed)
+            (msgs, count)
         };
         agent.restore_history(msgs);
         notices.push(format!("resumed {} entries from {}", count, rp.display()));
-        // A let-chain rather than a nested `if`: clippy's `collapsible_if` is denied
-        // workspace-wide, and this is the shape it asks for — the same shape 77 other
-        // sites in the workspace already use.
+        // The session's own records — its model and its thinking level — applied
+        // through `apply_resumed_context`, the ONE body the live `/resume` path
+        // also runs, so the two cannot drift (and so a resumed session comes
+        // back on the effort it was left at). It reads under the store's lock
+        // and applies after the lock is released, because both setters append to
+        // this same store.
         //
-        // The `!=` half is **not** redundant with the early return inside
-        // `resumed_model_to_use`. That one compares the *raw* recorded id against the
-        // launch model; this one compares the *resolved* id, which can come back equal
-        // after catalog resolution of an alias. Dropping either guard silently re-notices
-        // a launch that changed nothing.
-        if let Some((provider, session_model)) = resumed
-            && session_model != model_id
-        {
+        // Precedence, and it is not arbitrary: an explicit `--model` on THIS
+        // invocation is a deliberate instruction for this run, while the
+        // session's model is a remembered default. So flag > session >
+        // project/config, which is exactly the order `candidate_raw` already
+        // builds above — the session slots in only when the user expressed no
+        // preference of their own. The same holds for the level: the config
+        // default applied above is what a session with no record of its own
+        // keeps.
+        let applied = apply_resumed_context(&agent, &attached, model_id, model_explicit);
+        if let Some((provider, session_model)) = applied.model {
             notices.push(format!(
                 "resumed session was last used on {provider}/{session_model}; continuing \
                  there (pass --model to override)"
             ));
-            agent.set_model_id(session_model);
+        }
+        if let Some(level) = applied.thinking {
+            notices.push(format!(
+                "resumed session's thinking level: {}",
+                level.as_str()
+            ));
         }
     }
     Ok((agent, gate_runner))
@@ -5423,6 +5496,119 @@ mod composition_notice_tests {
         );
     }
 }
+/// The thinking level a launch with no session record starts on.
+///
+/// Precedence, in the order the code reads it: the project's own
+/// `[thinking] level`, then the global one, then [`ThinkingLevel::default`].
+/// This is a *default*, not the last word — an explicit per-favourite memory
+/// still wins over it on F2 cycling, and an explicit session record still wins
+/// over it at resume (see [`resumed_thinking_level`]).
+///
+/// Both inputs arrive as parameters rather than being read here so the rule is
+/// testable without a home directory: a test that read the real global config
+/// would answer for whoever ran it.
+pub fn resolve_default_thinking_level(
+    project_level: Option<&str>,
+    global_level: Option<epsilon_contracts::ThinkingLevel>,
+) -> epsilon_contracts::ThinkingLevel {
+    project_level
+        .and_then(epsilon_contracts::ThinkingLevel::parse)
+        .or(global_level)
+        .unwrap_or_default()
+}
+
+/// The thinking level a resumed session recorded, if it recorded one.
+///
+/// **`None` is not "off".** A session that never said is on the config default;
+/// a session that said `off` comes back off. The store's `context_settings`
+/// cannot make that distinction — pi initialises its walk to `"off"` and only
+/// overwrites on an entry, so `thinking_level` is `Some("off")` either way —
+/// which is why this reads the selected branch directly. Collapsing the two is
+/// the "silent default where a session record exists" failure this wave exists
+/// to remove.
+///
+/// The last entry on the path wins, the same rule `context_settings` documents
+/// for the model. An entry whose level this build does not know stops the search
+/// and answers `None`: the legacy v1 healer keeps such a level verbatim so it
+/// stays visible, and guessing at it here would be worse than ignoring it.
+pub fn resumed_thinking_level(
+    store: &epsilon_session::SessionStore,
+) -> Option<epsilon_contracts::ThinkingLevel> {
+    let branch = store.branch_entries().ok()?;
+    branch
+        .iter()
+        .rev()
+        .find_map(|e| match &e.kind {
+            epsilon_contracts::session_entry::EntryKind::ThinkingLevelChange { level } => {
+                Some(epsilon_contracts::ThinkingLevel::parse(level))
+            }
+            _ => None,
+        })
+        // The search stops at the last `thinking_level_change` on the path,
+        // including one whose level this build cannot parse — that answer is
+        // `None`, never the previous entry's.
+        .flatten()
+}
+
+/// What a resumed session's own records said, once applied to a live agent.
+#[derive(Debug, Default, Clone, PartialEq, Eq)]
+pub struct ResumedContext {
+    /// `(provider, model_id)` when the session's model was adopted.
+    pub model: Option<(String, String)>,
+    /// The level, when the session recorded one.
+    pub thinking: Option<epsilon_contracts::ThinkingLevel>,
+}
+
+/// Apply what a resumed session recorded — its model and its thinking level —
+/// to `agent`, through the two setters every front end already calls.
+///
+/// **One body for both resume paths (ADR-021's one-composition-point rule, at
+/// the third call site).** `build_runtime` calls it for a launch-time resume;
+/// `App::switch_session_file` calls it after `Agent::live_resume` succeeds.
+/// Before this existed the launch path restored the session's model while the
+/// in-TUI switch left the frontend on the launch model — the header, the picker
+/// and `/session` naming one model while the run used another.
+///
+/// `model_explicit` is the `--model` flag: a deliberate instruction for THIS
+/// invocation outranks a remembered default. A live switch has no such flag
+/// (the launch already happened), so the TUI passes `false`.
+///
+/// The store is read under its lock and the lock is **released before the
+/// setters run**: both append to this same store, and a non-reentrant mutex
+/// locked twice on one thread deadlocks rather than failing — the hang
+/// `build_runtime`'s resume block documents.
+pub fn apply_resumed_context(
+    agent: &epsilon_core::Agent,
+    store: &std::sync::Arc<std::sync::Mutex<epsilon_session::SessionStore>>,
+    launch_model: &str,
+    model_explicit: bool,
+) -> ResumedContext {
+    let (model, thinking) = {
+        let Ok(guard) = store.lock() else {
+            return ResumedContext::default();
+        };
+        (
+            resumed_model_to_use(model_explicit, &guard, launch_model),
+            resumed_thinking_level(&guard),
+        )
+    };
+    let mut applied = ResumedContext::default();
+    // The resolved id, compared against what the agent is on now: the raw-id
+    // check inside `resumed_model_to_use` and this one are not redundant —
+    // catalog resolution of an alias can make them agree.
+    if let Some((provider, session_model)) = model
+        && session_model != agent.model_id()
+    {
+        agent.set_model_id(session_model.clone());
+        applied.model = Some((provider, session_model));
+    }
+    if let Some(level) = thinking {
+        agent.set_thinking_level(level);
+        applied.thinking = Some(level);
+    }
+    applied
+}
+
 /// Which model a resumed run should continue on, and why. `None` means "keep the launch
 /// model" — the caller then changes nothing.
 ///
@@ -5723,6 +5909,218 @@ mod resume_model_precedence_tests {
             resumed_model_to_use(false, &store, "faux-1"),
             None,
             "no change means no change, and no confusing announcement"
+        );
+    }
+}
+
+/// **Criterion 7: the thinking level survives a resume, through the same
+/// applier both resume paths run.** They assert the rules `build_runtime` and
+/// `App::switch_session_file` share, so they belong beside those rules.
+#[cfg(test)]
+mod thinking_resume_tests {
+    use super::*;
+
+    /// A store whose selected branch ends with `level` recorded, reopened so
+    /// the caller can hand it to an agent. `None` records nothing — the
+    /// "an older session that never said" case.
+    fn store_with_thinking_change(
+        dir: &std::path::Path,
+        level: Option<&str>,
+    ) -> std::sync::Arc<std::sync::Mutex<epsilon_session::SessionStore>> {
+        let path = dir.join("resume.jsonl");
+        {
+            let mut store = epsilon_session::SessionStore::open_in(&path, dir).expect("store");
+            if let Some(level) = level {
+                store
+                    .append(
+                        epsilon_contracts::session_entry::EntryKind::ThinkingLevelChange {
+                            level: level.to_string(),
+                        },
+                    )
+                    .expect("append thinking_level_change");
+            }
+        }
+        std::sync::Arc::new(std::sync::Mutex::new(
+            epsilon_session::SessionStore::open_in(&path, dir).expect("reopen"),
+        ))
+    }
+
+    /// A bare agent (no store attached), the fixture the applier is applied to.
+    fn bare_agent(dir: &std::path::Path) -> Arc<epsilon_core::Agent> {
+        let approvals = Arc::new(epsilon_safety::ChannelApprovalUi::new());
+        let gate = Arc::new(epsilon_safety::RulesetGate::new(
+            approvals as Arc<dyn epsilon_safety::ApprovalUi>,
+        ));
+        epsilon_core::Agent::new(
+            epsilon_core::LoopLimits::default(),
+            Arc::new(epsilon_llm::PanicGuard(epsilon_llm::FauxProvider::new(
+                vec![],
+            ))),
+            Arc::new(epsilon_core::ToolRegistry::new()),
+            gate,
+            dir.to_path_buf(),
+        )
+    }
+
+    /// The project's own value beats the global one; a project value this build
+    /// cannot parse is not a setting and falls through; nothing set anywhere
+    /// is `Off`. Pure, so no home directory is read.
+    #[test]
+    fn a_projects_thinking_level_beats_the_global_one_and_a_typo_falls_through() {
+        let high = Some(epsilon_contracts::ThinkingLevel::High);
+        assert_eq!(
+            resolve_default_thinking_level(Some("low"), high),
+            epsilon_contracts::ThinkingLevel::Low,
+            "the project's own file wins — it is the more specific answer"
+        );
+        assert_eq!(
+            resolve_default_thinking_level(Some("ludicrous"), high),
+            epsilon_contracts::ThinkingLevel::High,
+            "a project value this build does not know is not a setting: fail open to global"
+        );
+        assert_eq!(
+            resolve_default_thinking_level(None, high),
+            epsilon_contracts::ThinkingLevel::High,
+            "no project value: the global default stands"
+        );
+        assert_eq!(
+            resolve_default_thinking_level(None, None),
+            epsilon_contracts::ThinkingLevel::default(),
+            "and with neither, the compile-time default"
+        );
+    }
+
+    /// **`None` is not "off".** A session that recorded a level comes back on
+    /// it; one that never said is left alone, so the composition default (the
+    /// caller's business) survives; an unknown level is not guessed at.
+    #[test]
+    fn a_recorded_level_is_restored_and_a_silent_session_is_left_alone() {
+        let dir = tempfile::tempdir().unwrap();
+        let recorded = store_with_thinking_change(dir.path(), Some("high"));
+        assert_eq!(
+            resumed_thinking_level(&recorded.lock().unwrap()),
+            Some(epsilon_contracts::ThinkingLevel::High),
+            "a resume must come back on the level it was left at"
+        );
+
+        let other = tempfile::tempdir().unwrap();
+        let silent = store_with_thinking_change(other.path(), None);
+        assert_eq!(
+            resumed_thinking_level(&silent.lock().unwrap()),
+            None,
+            "a session that never recorded a level is NOT a session that recorded off — \
+             collapsing the two would silently override the config default"
+        );
+
+        // A third workspace, because a session file is leased: the two stores
+        // above hold theirs, and reusing the path would wait out the lease.
+        let unknown_ws = tempfile::tempdir().unwrap();
+        let unknown = store_with_thinking_change(unknown_ws.path(), Some("ludicrous"));
+        assert_eq!(
+            resumed_thinking_level(&unknown.lock().unwrap()),
+            None,
+            "a level this build cannot parse is left for the reader, not guessed at"
+        );
+    }
+
+    /// The applier moves the agent onto the session's model AND its level, and
+    /// reports both so a frontend can say so. This is the body the launch path
+    /// and the live `/resume` path share.
+    #[test]
+    fn apply_resumed_context_moves_the_agent_onto_the_sessions_model_and_level() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("resume.jsonl");
+        {
+            let mut store =
+                epsilon_session::SessionStore::open_in(&path, dir.path()).expect("store");
+            store
+                .append(epsilon_contracts::session_entry::EntryKind::ModelChange {
+                    provider: "deepseek".into(),
+                    model_id: "deepseek/deepseek-chat-v3.1".into(),
+                })
+                .expect("append model_change");
+            store
+                .append(
+                    epsilon_contracts::session_entry::EntryKind::ThinkingLevelChange {
+                        level: "high".to_string(),
+                    },
+                )
+                .expect("append thinking_level_change");
+        }
+        let store = std::sync::Arc::new(std::sync::Mutex::new(
+            epsilon_session::SessionStore::open_in(&path, dir.path()).expect("reopen"),
+        ));
+        let agent = bare_agent(dir.path());
+        agent.set_model_id("faux-1");
+        agent.set_thinking_level(epsilon_contracts::ThinkingLevel::Off);
+
+        let applied = apply_resumed_context(&agent, &store, "faux-1", false);
+
+        assert_eq!(
+            agent.model_id(),
+            "deepseek/deepseek-chat-v3.1",
+            "the run must be on the session's model — and `applied` is what the \
+             frontend reads to update what it shows"
+        );
+        assert_eq!(
+            agent.thinking_level(),
+            epsilon_contracts::ThinkingLevel::High,
+            "and on the level it was left at"
+        );
+        assert_eq!(
+            applied.model,
+            Some((
+                "deepseek".to_string(),
+                "deepseek/deepseek-chat-v3.1".to_string()
+            ))
+        );
+        assert_eq!(
+            applied.thinking,
+            Some(epsilon_contracts::ThinkingLevel::High)
+        );
+    }
+
+    /// The `--model` flag still outranks the session on the launch path — the
+    /// applier takes the flag rather than deciding it.
+    #[test]
+    fn an_explicit_flag_keeps_the_launch_model_but_the_level_still_applies() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("resume.jsonl");
+        {
+            let mut store =
+                epsilon_session::SessionStore::open_in(&path, dir.path()).expect("store");
+            store
+                .append(epsilon_contracts::session_entry::EntryKind::ModelChange {
+                    provider: "deepseek".into(),
+                    model_id: "deepseek/deepseek-chat-v3.1".into(),
+                })
+                .expect("append model_change");
+            store
+                .append(
+                    epsilon_contracts::session_entry::EntryKind::ThinkingLevelChange {
+                        level: "medium".to_string(),
+                    },
+                )
+                .expect("append thinking_level_change");
+        }
+        let store = std::sync::Arc::new(std::sync::Mutex::new(
+            epsilon_session::SessionStore::open_in(&path, dir.path()).expect("reopen"),
+        ));
+        let agent = bare_agent(dir.path());
+        agent.set_model_id("faux-1");
+
+        let applied = apply_resumed_context(&agent, &store, "faux-1", true);
+
+        assert_eq!(
+            agent.model_id(),
+            "faux-1",
+            "--model is a deliberate instruction"
+        );
+        assert_eq!(applied.model, None);
+        assert_eq!(
+            agent.thinking_level(),
+            epsilon_contracts::ThinkingLevel::Medium,
+            "the level has no flag of its own, so the session's record stands"
         );
     }
 }

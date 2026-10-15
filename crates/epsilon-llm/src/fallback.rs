@@ -81,6 +81,17 @@ impl StreamFn for FallbackProvider {
 
         let mut last_error = String::new();
         for id in &ids {
+            // Criterion 7: the SAME pre-flight the direct path runs, hoisted to
+            // where keys are resolved. `try_stream_direct` has no refresh hook,
+            // so an OAuth credential on a `--fallback` candidate used to never
+            // rotate: the pair expired, `resolve_api_key` answered `None`, and
+            // the chain reported "no API key" for a user who was logged in.
+            let customs = crate::custom::custom_providers();
+            let provider = crate::custom::lookup_custom(&customs, id)
+                .map(|c| c.name.as_str())
+                .or_else(|| crate::catalog::lookup_model(id).map(|m| m.provider))
+                .unwrap_or("");
+            crate::providers::ensure_oauth_fresh(provider).await;
             let cand = self.chain.iter().find(|c| &c.model_id == id);
             let key = match cand {
                 Some(c) => c.api_key.clone(),
@@ -89,11 +100,6 @@ impl StreamFn for FallbackProvider {
                     // auth resolves on the spot like DirectProvider does.
                     // M28: custom ids (`lmstudio/foo`) resolve under the custom
                     // provider's name (stored key first, then its env_key).
-                    let customs = crate::custom::custom_providers();
-                    let provider = crate::custom::lookup_custom(&customs, id)
-                        .map(|c| c.name.as_str())
-                        .or_else(|| crate::catalog::lookup_model(id).map(|m| m.provider))
-                        .unwrap_or("");
                     crate::catalog::resolve_api_key(provider)
                 }
             };

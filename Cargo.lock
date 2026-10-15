@@ -596,7 +596,6 @@ version = "0.1.0"
 dependencies = [
  "epsilon-contracts",
  "epsilon-core",
- "epsilon-ext",
  "epsilon-llm",
  "epsilon-lsp",
  "epsilon-mcp",
@@ -635,7 +634,6 @@ dependencies = [
  "epsilon-contracts",
  "epsilon-llm",
  "epsilon-session",
- "serde",
  "serde_json",
  "sha2 0.11.0",
  "tempfile",
@@ -682,7 +680,6 @@ version = "0.1.0"
 dependencies = [
  "async-trait",
  "epsilon-contracts",
- "serde",
  "serde_json",
  "tempfile",
  "tokio",
@@ -716,7 +713,6 @@ dependencies = [
  "epsilon-safety",
  "epsilon-session",
  "epsilon-tools",
- "serde",
  "serde_json",
  "sha2 0.11.0",
  "tempfile",
@@ -738,7 +734,6 @@ dependencies = [
  "serde_json",
  "tempfile",
  "tokio",
- "tokio-util",
  "winapi",
 ]
 

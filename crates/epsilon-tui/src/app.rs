@@ -807,16 +807,41 @@ impl App {
         }
     }
 
+    /// Where a model default is written: the workspace's own `<ws>/.epsilon`,
+    /// when the workspace has one, else the global config dir.
+    ///
+    /// **One resolver, decided here rather than at each call site** (audit §1b).
+    /// Every write used to resolve `override.or(global)`, so "switching
+    /// projects restores each project's own configuration" only ever worked
+    /// for values a user typed into the file by hand — no production path
+    /// wrote a project's own `[model] id` at all. The project dir wins when it
+    /// exists: every workspace this harness has run in has one, because the
+    /// sessions tree lives there, so a choice made in a workspace is remembered
+    /// for THAT workspace and a workspace with no `.epsilon` still writes
+    /// global, exactly as before.
+    ///
+    /// A test override beats both — a test must never write the developer's
+    /// own config, which is why the field exists. Recents and favourites stay
+    /// global on purpose (audit §3: a favourite list is about this user's
+    /// models, not this repo's).
+    fn project_dir_or_global(&self) -> Option<std::path::PathBuf> {
+        if let Some(dir) = &self.config_dir_override {
+            return Some(dir.clone());
+        }
+        let project = self.workspace_root.join(".epsilon");
+        if project.is_dir() {
+            return Some(project);
+        }
+        epsilon_core::config::global_dir()
+    }
+
     /// Save a model id as the default (P-254): persisted immediately and
     /// reflected in memory, so the picker orders and marks it without a
-    /// restart. Writes to the override dir in tests, else the global dir —
-    /// a global write the tests must never make, hence the override.
+    /// restart. Writes to the resolver's dir — the project's own file when the
+    /// workspace has one — and a test override in tests, which is what keeps a
+    /// global write a thing tests never do.
     fn save_default_model(&mut self, id: &str) {
-        let dir = self
-            .config_dir_override
-            .clone()
-            .or_else(epsilon_core::config::global_dir);
-        let Some(dir) = dir else {
+        let Some(dir) = self.project_dir_or_global() else {
             self.ui
                 .push_notice("default not saved: no home directory resolved");
             return;
@@ -921,13 +946,19 @@ impl App {
         // per-favorite level overrides the session level; no memory inherits it.
         // Read from the in-memory mirror (loaded at startup, refreshed on star
         // toggle) so cycling stays a pure keypress operation.
+        //
+        // **Adopted, not set** (`adopt_thinking`, not `set_thinking`): a
+        // favourite's remembered effort is a per-model memory, and writing it
+        // to the standing `[thinking] level` default would leave the global on
+        // whichever favourite was cycled to last — the favourite beats the
+        // default on cycling, it does not become it.
         if let Some(level) = self
             .favorite_thinking
             .iter()
             .find(|(id, _)| id == &next)
             .and_then(|(_, lvl)| epsilon_contracts::ThinkingLevel::parse(lvl))
         {
-            self.set_thinking(agent, level);
+            self.adopt_thinking(agent, level);
         }
         self.apply_model(agent, next);
     }
@@ -1199,10 +1230,44 @@ impl App {
 
     /// Apply a thinking level (shared by /think and Ctrl+T; pi's
     /// cycleThinkingLevel + status line).
+    ///
+    /// **And persists it as the standing default** (criterion 7: the level used
+    /// to be re-set by hand every launch, because nothing wrote it down). One
+    /// choke point, so every surface that changes the level persists it.
     fn set_thinking(&mut self, agent: &Arc<Agent>, level: epsilon_contracts::ThinkingLevel) {
+        self.adopt_thinking(agent, level);
+        // **Global, deliberately — the same dir every other TUI write uses and
+        // the same one `App::new` reads.** The project override goes the other
+        // way and is not offered a write path here: `<ws>/.epsilon/config.toml`
+        // is trust-gated composition input, and this mirror cannot see the
+        // project's value at all, so writing there would leave the footer
+        // naming the global while the run used the project's. A repo opting
+        // into its own effort still edits the file by hand, exactly as it does
+        // for `[model] id` today.
+        let dir = self
+            .config_dir_override
+            .clone()
+            .or_else(epsilon_core::config::global_dir);
+        let Some(dir) = dir else {
+            self.ui
+                .push_notice("thinking level not saved: no home directory resolved");
+            return;
+        };
+        if let Err(e) = epsilon_core::config::save_thinking_level_in(&dir, level) {
+            self.ui
+                .push_notice(format!("thinking level not saved: {e}"));
+        }
+    }
+
+    /// The three writes every thinking change makes, minus the disk: the agent,
+    /// the mirror field, a notice. Split from [`Self::set_thinking`] so a
+    /// per-favourite level can be applied without overwriting the standing
+    /// default — a favourite's remembered effort is not the user's default.
+    fn adopt_thinking(&mut self, agent: &Arc<Agent>, level: epsilon_contracts::ThinkingLevel) {
         agent.set_thinking_level(level);
-        // M25: mirror for the footer; this is the ONLY writer of `self.thinking`,
-        // so what the footer shows is exactly what the agent will use.
+        // M25: mirror for the footer; `set_thinking` and this are the ONLY
+        // writers of `self.thinking`, so what the footer shows is exactly what
+        // the agent will use.
         self.thinking = level;
         // Direct push: slash replies render this frame (see run_command docs).
         self.ui
@@ -1352,8 +1417,12 @@ impl App {
         if auth_ready {
             let _ = agent.try_hot_swap_to_real();
         }
-        match epsilon_core::config::save_model_id(&id) {
-            Ok(path) => {
+        // The project's own file when the workspace has one (audit §1b): the
+        // save used to go to the global dir unconditionally, which is why a
+        // project's model choice could only ever arrive by hand-editing it.
+        let dir = self.project_dir_or_global();
+        match dir.map(|d| epsilon_core::config::save_model_id_in(&d, &id)) {
+            Some(Ok(path)) => {
                 self.model_id = id.clone();
                 let mut msg = format!("model switched to {id} — saved to {}", path.display());
                 if !auth_ready {
@@ -1361,13 +1430,21 @@ impl App {
                 }
                 self.ui.push_notice(msg);
             }
-            Err(e) => {
+            // No dir resolved at all (no home, no project) is its own sentence;
+            // a resolved dir that refused the write names the reason.
+            Some(Err(e)) => {
                 self.model_id = id.clone();
                 let mut msg = format!("model switched to {id} (not saved: {e})");
                 if !auth_ready {
                     msg.push_str("  (no key yet — /login <provider>)");
                 }
                 self.ui.push_notice(msg);
+            }
+            None => {
+                self.model_id = id.clone();
+                self.ui.push_notice(format!(
+                    "model switched to {id} (not saved: no config directory resolved)"
+                ));
             }
         }
         // Persisting to the shared config is best-effort; **the in-memory mirror is

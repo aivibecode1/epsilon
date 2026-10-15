@@ -198,15 +198,61 @@ impl Agent {
 
     /// Set the thinking/reasoning effort for subsequent runs (pi's per-session
     /// `thinkingLevel`; provider wires map it to native parameters).
+    ///
+    /// **And records the change in the session, so a resume comes back on it** —
+    /// the one-writer pattern [`Self::set_model_id`] uses, for the same reason:
+    /// a session file is shared by every front end, so the write belongs where
+    /// all of them already call. The reader (`SessionStore::context_settings`)
+    /// has existed since the port; until now nothing in production fed it, so a
+    /// level set in one run was re-set by hand in the next, every launch.
+    ///
+    /// A store is optional — a bare `--tui` launch has none, and a subagent
+    /// never attaches one — so its absence is `Ok(())`, not an error, exactly as
+    /// in [`Self::set_model_id`]. A store that cannot be locked or appended is
+    /// reported rather than discarded (M311): the level is already applied and
+    /// visible in the status bar, so refusing would undo a choice the reader can
+    /// see take effect, while saying nothing would leave the next resume
+    /// silently on the previous level.
     pub fn set_thinking_level(&self, level: epsilon_contracts::ThinkingLevel) {
         if let Ok(mut slot) = self.thinking_level.lock() {
             *slot = level;
         }
+        self.record_thinking_level_change(level);
     }
 
     /// Current thinking level (session state, like the model id).
     pub fn thinking_level(&self) -> epsilon_contracts::ThinkingLevel {
         self.thinking_level.lock().map(|l| *l).unwrap_or_default()
+    }
+
+    /// Append a `thinking_level_change` entry to the attached session, if there is one.
+    ///
+    /// Called by [`Agent::set_thinking_level`]; separate only so a front end's
+    /// switch test can drive the record without reaching through a lock, which
+    /// is the whole reason [`Self::record_model_change`] is separate too.
+    fn record_thinking_level_change(&self, level: epsilon_contracts::ThinkingLevel) {
+        let Some(store) = self.store() else { return };
+        let outcome: Result<(), String> = match store.lock() {
+            Ok(mut guard) => guard
+                .append(
+                    epsilon_contracts::session_entry::EntryKind::ThinkingLevelChange {
+                        level: level.as_str().to_string(),
+                    },
+                )
+                .map(|_| ())
+                .map_err(|e| e.to_string()),
+            // A poisoned lock is the same failure seen from the other side: the
+            // session's memory of this level did not get written.
+            Err(_) => Err("the session store's lock is poisoned".to_string()),
+        };
+        if let Err(e) = outcome {
+            self.emit(AgentEvent::Notice {
+                text: format!(
+                    "thinking level set, but this session could not record it ({e}) — resuming \
+                     this session may come back on its previous level"
+                ),
+            });
+        }
     }
 
     /// Attach discovered skills for the CONTEXT-tier catalog (M11 wiring).

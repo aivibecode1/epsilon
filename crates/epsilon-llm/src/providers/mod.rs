@@ -1304,55 +1304,46 @@ impl Default for DirectProvider {
     }
 }
 
-/// Attempt one direct-HTTP stream for `model_id` with an explicit key.
+/// Refresh the stored OAuth pair for `provider` when it expires inside pi's
+/// pre-emptive window, so the key resolved next is fresh.
 ///
-/// Returns the live event stream on success, or a classified failure detail
-/// when the attempt failed BEFORE streaming started (bad model, auth, HTTP
-/// error). This is the seam [`crate::fallback::FallbackProvider`] uses to
-/// decide whether to try the next candidate in its chain.
+/// **This is the ONE gate** (criterion 7). It asks
+/// [`crate::auth::oauth_needs_refresh_in`] with pi's 5-minute window
+/// ([`crate::oauth::OAUTH_MIN_VALIDITY_MS`]) and nothing else. Two predicates
+/// used to gate the same exchange: the call site's opened the door ~6 minutes
+/// before expiry, and a second one inside [`refresh_oauth_before_use`] closed it
+/// again unless the token was already inside the last ~60 seconds — so between
+/// the two, the pre-emptive refresh pi exists to guarantee was dead code, and a
+/// long request in that window could be interrupted mid-flight. The inner
+/// predicate is gone; the call site's question is the only one asked.
 ///
-/// M51: OAuth refresh-before-use (pi `resolveStoredOAuth` composition).
-/// Reads the stored refresh token (lock-free), exchanges it OFF the auth
-/// lock via [`crate::oauth::exchange_refresh_token`], then persists the
-/// rotated pair through [`crate::auth::store_refreshed_oauth_in`] (locked
-/// re-check: a concurrent rotation wins). Every failure is swallowed — the
-/// caller's key resolution falls back to the stored/env key path, and a
-/// telling error surfaces there, never a stale token on the wire.
-/// Does the stored OAuth credential for `provider` need a refresh exchange?
-///
-/// Split out from [`refresh_oauth_before_use`] so the decision is testable without a
-/// network: the caller's behaviour is "refresh when this says so", and this function
-/// is the whole of that behaviour. It defers to [`crate::auth::oauth_access_token_in`],
-/// which applies pi's 60s clock-skew margin, so the expiry rule lives in one place
-/// rather than being restated here.
-///
-/// **`Expired` only, deliberately.** A provider with no stored credential is `Missing`,
-/// and refreshing it would be pointless — there is no token to exchange — so the
-/// answer there is `false` and the caller's key resolution reports the missing
-/// credential. My first version answered `!Live`, which reported `true` for `Missing`
-/// and spent a doomed refresh attempt on every stream from a provider that has never
-/// logged in. The test's third assertion is what caught it.
+/// A live token — or no stored credential — still costs nothing here
+/// ([`crate::auth::oauth_needs_refresh_in`] answers `false` for both), so this
+/// is a cheap read on every stream, not a round-trip.
 #[cfg(feature = "real")]
-fn needs_oauth_refresh(dir: &std::path::Path, provider: &str) -> bool {
-    matches!(
-        crate::auth::oauth_access_token_in(dir, provider),
-        crate::auth::OauthToken::Expired
-    )
+pub(crate) async fn ensure_oauth_fresh(provider: &str) {
+    if let Some(dir) = crate::auth::global_dir()
+        && crate::auth::oauth_needs_refresh_in(&dir, provider, crate::oauth::OAUTH_MIN_VALIDITY_MS)
+    {
+        refresh_oauth_before_use(&dir, provider).await;
+    }
 }
 
+/// Exchange a stored refresh token for a rotated pair and persist it (M51; pi
+/// `resolveStoredOAuth` composition).
+///
+/// Reads the stored refresh token (lock-free), exchanges it OFF the auth lock
+/// via [`crate::oauth::exchange_refresh_token`], then persists the rotated pair
+/// through [`crate::auth::store_refreshed_oauth_in`] (locked re-check: a
+/// concurrent rotation wins). Every failure is swallowed — the caller's key
+/// resolution falls back to the stored/env key path, and a telling error
+/// surfaces there, never a stale token on the wire.
+///
+/// **No expiry decision is made here.** The caller gates on pi's 5-minute
+/// window ([`ensure_oauth_fresh`]); a second threshold here is what made the
+/// window dead.
 #[cfg(feature = "real")]
 async fn refresh_oauth_before_use(dir: &std::path::Path, provider: &str) {
-    // **Only refresh when the stored access token is actually spent.**
-    //
-    // This used to exchange the refresh token on every stream attempt: the pattern
-    // match below took `refresh` and discarded `expires` with `..`, so the decision
-    // ignored whether the access token was still live. The cost was one network
-    // round-trip per call on a token that may be valid for hours — and
-    // `auth.rs` already stores `expires` with pi's skew precisely so this call can
-    // make that decision, so the field was being carried for nothing.
-    if !needs_oauth_refresh(dir, provider) {
-        return;
-    }
     let endpoint = match crate::oauth::refresh_endpoint(provider) {
         Some(e) => e,
         None => return,
@@ -1361,7 +1352,10 @@ async fn refresh_oauth_before_use(dir: &std::path::Path, provider: &str) {
         Some(crate::auth::StoredCredential::Oauth { refresh, .. }) => refresh.clone(),
         _ => return,
     };
-    let Ok(client_id) = std::env::var(endpoint.client_id_env) else {
+    // `client_id_for` skips the read for an endpoint that names no var, which
+    // is what unblocks Copilot: its mint needs no client id, and
+    // `std::env::var("")` is always an error.
+    let Ok(client_id) = crate::oauth::client_id_for(&endpoint) else {
         return;
     };
     let Ok(mut fresh) =
@@ -1377,6 +1371,13 @@ async fn refresh_oauth_before_use(dir: &std::path::Path, provider: &str) {
 
 /// M49: like [`DirectProvider::stream`], Bedrock with an empty key signs
 /// SigV4 from the ambient chain instead of failing.
+///
+/// Attempt one direct-HTTP stream for `model_id` with an explicit key.
+///
+/// Returns the live event stream on success, or a classified failure detail
+/// when the attempt failed BEFORE streaming started (bad model, auth, HTTP
+/// error). This is the seam [`crate::fallback::FallbackProvider`] uses to
+/// decide whether to try the next candidate in its chain.
 #[cfg(feature = "real")]
 pub async fn try_stream_direct(
     model_id: &str,
@@ -1474,18 +1475,11 @@ impl StreamFn for DirectProvider {
             .or_else(|| crate::catalog::lookup_model(&model.id).map(|m| m.provider))
             .unwrap_or("");
         // M51: OAuth refresh-before-use (pi `resolveStoredOAuth`). When the
-        // stored pair expires soon, exchange off-lock and persist the rotated
-        // pair so the key below is fresh. Failure falls through to the normal
-        // path (stored/env key) — never a stale token, never a hard fail.
-        if let Some(dir) = crate::auth::global_dir()
-            && crate::auth::oauth_needs_refresh_in(
-                &dir,
-                provider,
-                crate::oauth::OAUTH_MIN_VALIDITY_MS,
-            )
-        {
-            refresh_oauth_before_use(&dir, provider).await;
-        }
+        // stored pair expires inside pi's 5-minute window, exchange off-lock
+        // and persist the rotated pair so the key below is fresh. Failure
+        // falls through to the normal path (stored/env key) — never a stale
+        // token, never a hard fail. One gate, shared with the fallback chain.
+        ensure_oauth_fresh(provider).await;
         let key = match crate::catalog::resolve_api_key(provider) {
             Some(k) => k,
             // M49: Bedrock resolves NO bearer token unless one is stored —
@@ -1725,47 +1719,60 @@ mod http_stream_tests {
     /// because the call it wraps never returned — which is the entire point of
     /// the retry policy that exists for exactly this case.
     ///
-    /// **Criterion 7/8: a live token is not refreshed.**
+    /// **Criterion 7: the one gate is the call site's five-minute window.**
     ///
-    /// Before this guard existed, `refresh_oauth_before_use` exchanged the refresh
-    /// token on *every* stream attempt — the pattern match took `refresh` and threw
-    /// `expires` away with `..`, so the decision never asked whether the access token
-    /// was still live. `auth.rs` stores `expires` (with pi's skew) precisely so this
-    /// call can ask, and it was being carried for nothing.
+    /// Before the fix, two predicates gated the same exchange: this one opened
+    /// the door ~6 minutes before expiry, and a second inside
+    /// `refresh_oauth_before_use` closed it again unless the access token was
+    /// already inside the last ~60 seconds (`OauthToken::Expired`). Between the
+    /// two thresholds the pre-emptive refresh pi exists to guarantee never
+    /// fired, so a long request in that window could be interrupted mid-flight.
+    /// The inner predicate is deleted; this pins the survivor's arms — the
+    /// 4-minute one is the case that was dead before.
     ///
-    /// The assertion is on the predicate the caller obeys, not on the caller: the
-    /// network exchange is not something a unit test can observe, and "no round-trip
-    /// when the token is live" IS this function's whole behaviour.
+    /// The assertion is on the predicate the caller obeys, not on the caller:
+    /// the network exchange is not something a unit test can observe, and "no
+    /// round-trip when the token is live" is that predicate's whole behaviour.
     #[test]
     #[cfg(feature = "real")]
-    fn a_live_oauth_token_is_not_refreshed_but_an_expired_one_is() {
+    fn only_a_token_inside_pis_five_minute_window_asks_for_a_refresh() {
         let tmp = tempfile::tempdir().expect("tmp");
         let dir = tmp.path();
         let now = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .map(|d| d.as_millis() as u64)
             .unwrap_or(0);
+        let gate = |dir: &std::path::Path, provider: &str| {
+            crate::auth::oauth_needs_refresh_in(dir, provider, crate::oauth::OAUTH_MIN_VALIDITY_MS)
+        };
 
         // Live: an hour of validity left, so no exchange is warranted.
         crate::auth::save_oauth_in(dir, "anthropic", "rt-1", "at-live", now + 3_600_000).unwrap();
         assert!(
-            !needs_oauth_refresh(dir, "anthropic"),
-            "a live access token must not cost a refresh round-trip"
+            !gate(dir, "anthropic"),
+            "a live access token must not cost a round-trip"
         );
 
-        // Expired: the access token is spent, so the exchange is warranted.
-        crate::auth::save_oauth_in(dir, "anthropic", "rt-2", "at-old", now.saturating_sub(1))
-            .unwrap();
+        // Comfortably outside the window: ten minutes left, still no exchange.
+        crate::auth::save_oauth_in(dir, "anthropic", "rt-1b", "at-ok", now + 600_000).unwrap();
         assert!(
-            needs_oauth_refresh(dir, "anthropic"),
-            "an expired access token must be refreshed"
+            !gate(dir, "anthropic"),
+            "ten minutes of validity is outside pi's window"
         );
 
-        // No credential at all: nothing to refresh, and the caller's key resolution
-        // is what reports it. `true` here would send the exchange down a path with
-        // no token to exchange.
+        // Inside the window: four minutes left. This is the arm the inner
+        // 60-second predicate refused — the dead 5-minute pre-emptive refresh.
+        crate::auth::save_oauth_in(dir, "anthropic", "rt-2", "at-soon", now + 240_000).unwrap();
         assert!(
-            !needs_oauth_refresh(dir, "never-stored"),
+            gate(dir, "anthropic"),
+            "a token expiring inside pi's window must be refreshed BEFORE use"
+        );
+
+        // No credential at all: nothing to refresh, and the caller's key
+        // resolution is what reports it. `true` here would send the exchange
+        // down a path with no token to exchange.
+        assert!(
+            !gate(dir, "never-stored"),
             "no stored credential means nothing to refresh"
         );
     }

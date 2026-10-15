@@ -96,6 +96,30 @@ pub fn refresh_endpoint(provider: &str) -> Option<RefreshEndpoint> {
         .copied()
 }
 
+/// The OAuth client id for `endpoint`: its env var's value, or `""` when the
+/// endpoint names none.
+///
+/// **The empty case is why this is a function rather than a bare
+/// `std::env::var`.** Copilot's mint re-spends the long-lived GitHub token and
+/// needs no client id, so its row carries `client_id_env: ""` — and
+/// `std::env::var("")` is *always* an error. Reading it anyway is what made
+/// `refresh_oauth_before_use` return early every time for the one provider
+/// whose refresh is a plain re-mint (`oauth.rs:83-88` is the row; the old call
+/// site read the var before branching on style).
+///
+/// A named var that is not set stays a telling error — never an empty id.
+pub fn client_id_for(endpoint: &RefreshEndpoint) -> Result<String, String> {
+    if endpoint.client_id_env.is_empty() {
+        return Ok(String::new());
+    }
+    std::env::var(endpoint.client_id_env).map_err(|_| {
+        format!(
+            "OAuth refresh for '{}' needs {} (pi embeds its own client id; Epsilon never will)",
+            endpoint.provider, endpoint.client_id_env
+        )
+    })
+}
+
 /// Parse a token endpoint's JSON body into a rotated pair (pi's
 /// `readTokenResponse` / `refreshAnthropicToken` response half).
 /// `now_millis` is injected so tests pin time. Applies pi's 5-min skew.
@@ -367,6 +391,38 @@ mod tests {
         assert_eq!(
             copilot.token_url,
             "https://api.github.com/copilot_internal/v2/token"
+        );
+    }
+
+    /// **Criterion 7: the provider whose refresh needs no client id can reach
+    /// its exchange.** Copilot's row carries `client_id_env: ""`, and
+    /// `std::env::var("")` is always an error — so reading the var before
+    /// branching on style returned early for every copilot refresh, and the one
+    /// provider whose refresh is a plain re-mint was unreachable. `Ok("")` can
+    /// only come from the empty-env branch, so this test fails against the old
+    /// code.
+    #[test]
+    fn an_endpoint_with_no_client_id_env_is_not_an_error() {
+        let copilot = refresh_endpoint("github-copilot").expect("the copilot row");
+        assert_eq!(
+            client_id_for(&copilot).as_deref(),
+            Ok(""),
+            "a mint needs no client id, so the read must not be attempted at all"
+        );
+
+        // The other arm: a NAMED var that nothing sets is still a telling
+        // error. A literal row rather than a real one, so the assertion cannot
+        // depend on this machine's environment.
+        let named = RefreshEndpoint {
+            provider: "test-provider",
+            token_url: "https://example.invalid/token",
+            client_id_env: "EPSILON_UNSET_CLIENT_ID_FOR_TEST",
+            style: RefreshStyle::FormBody,
+        };
+        let err = client_id_for(&named).expect_err("an unset var must refuse");
+        assert!(
+            err.contains("EPSILON_UNSET_CLIENT_ID_FOR_TEST"),
+            "and it must name the var so the reader can set it: {err}"
         );
     }
 

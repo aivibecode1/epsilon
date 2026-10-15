@@ -2542,6 +2542,10 @@ async fn typing_a_query_resets_the_picker_selection_to_row_zero() {
 #[tokio::test]
 async fn think_command_sets_levels_and_reports_unknown() {
     let (mut app, agent, (_f, _n)) = test_app();
+    // The level is persisted now (criterion 7), so the config dir is pinned:
+    // a test must never write the developer's own `~/.config/epsilon`.
+    let cfg = tempfile::tempdir().expect("a config dir");
+    app.config_dir_override = Some(cfg.path().to_path_buf());
     assert!(!type_and_enter(&mut app, &agent, "/think high"));
     assert_eq!(
         agent.thinking_level(),
@@ -2596,6 +2600,10 @@ async fn bare_think_opens_a_level_picker_listing_all_levels() {
 async fn think_picker_enter_applies_and_esc_keeps_the_level() {
     use epsilon_contracts::ThinkingLevel::High;
     let (mut app, agent, (_f, _n)) = test_app();
+    // Pinned for the same reason as `think_command_sets_levels_and_reports_unknown`:
+    // applying a level persists it, and a test writes nowhere near a real config.
+    let cfg = tempfile::tempdir().expect("a config dir");
+    app.config_dir_override = Some(cfg.path().to_path_buf());
     assert!(!type_and_enter(&mut app, &agent, "/think"));
     let high_at = epsilon_contracts::ThinkingLevel::ALL
         .iter()
@@ -2618,6 +2626,10 @@ async fn think_picker_enter_applies_and_esc_keeps_the_level() {
 #[tokio::test]
 async fn ctrl_t_cycles_the_thinking_ladder() {
     let (mut app, agent, (_f, _n)) = test_app();
+    // Pinned for the same reason as the `/think` tests: cycling persists the
+    // new level, and a test writes nowhere near a real config.
+    let cfg = tempfile::tempdir().expect("a config dir");
+    app.config_dir_override = Some(cfg.path().to_path_buf());
     assert_eq!(
         agent.thinking_level(),
         epsilon_contracts::ThinkingLevel::Off
@@ -8588,6 +8600,276 @@ async fn a_model_switch_is_recorded_where_a_resume_will_find_it() {
         Some(("deepseek".to_string(), "deepseek-flash".to_string())),
         "a resume reads the session's model first, so the switch has to be recorded there \
          or it is outranked by whatever the previous run used"
+    );
+}
+
+/// **Criterion 7: a `/think` switch is recorded where a resume will find it.**
+///
+/// `context_settings` has walked `thinking_level_change` entries since the
+/// port, but nothing in production ever appended one — the field was correct,
+/// unit-tested, and unreachable, so every launch restarted at `Off` and the
+/// level was re-set by hand. Same assertion surface as the model's test above:
+/// what the resume path reads, not what the switch reported about itself.
+#[tokio::test]
+async fn a_thinking_switch_is_recorded_where_a_resume_will_find_it() {
+    let (mut app, agent, _receivers) = test_app();
+    let tmp = tempfile::tempdir().expect("a temporary workspace");
+    let store = std::sync::Arc::new(std::sync::Mutex::new(
+        epsilon_core::SessionStore::open(tmp.path().join("s.jsonl")).unwrap(),
+    ));
+    agent.attach_session_store(std::sync::Arc::clone(&store));
+
+    app.set_thinking(&agent, epsilon_contracts::ThinkingLevel::High);
+
+    let settings = store
+        .lock()
+        .unwrap()
+        .context_settings()
+        .expect("the session is readable");
+    assert_eq!(
+        settings.thinking_level.as_deref(),
+        Some("high"),
+        "a resume applies the session's own level, so the switch has to be recorded there"
+    );
+}
+
+/// **Criterion 7: the thinking default survives a restart through the UI.**
+///
+/// The write is the whole fix on the frontend half: `/think` used to touch the
+/// agent, the mirror field and the notice, and nothing on disk. The read-back
+/// is through the same loader the next launch uses.
+#[tokio::test]
+async fn a_thinking_default_survives_a_restart_through_the_ui() {
+    let (mut app, agent, _receivers) = test_app();
+    let cfg = tempfile::tempdir().expect("a config dir");
+    app.config_dir_override = Some(cfg.path().to_path_buf());
+
+    app.set_thinking(&agent, epsilon_contracts::ThinkingLevel::XHigh);
+
+    assert_eq!(
+        epsilon_core::config::load_thinking_level_in(cfg.path()),
+        Some(epsilon_contracts::ThinkingLevel::XHigh),
+        "the level must be on disk, or every launch re-sets it by hand"
+    );
+    assert_eq!(
+        app.thinking,
+        epsilon_contracts::ThinkingLevel::XHigh,
+        "and the mirror the footer reads is the same answer (M25)"
+    );
+    assert_eq!(agent.thinking_level(), app.thinking);
+}
+
+/// **Favourite cycling applies the remembered level for this run only.**
+///
+/// A per-favourite memory is a per-model memory, not the user's default: if
+/// cycling wrote it to `[thinking] level`, the standing default would end up on
+/// whichever favourite was cycled to last, and the next launch would start
+/// there. This is the control that catches the favourite becoming the default.
+#[tokio::test]
+async fn a_favourites_remembered_level_does_not_become_the_default() {
+    let (mut app, agent, _receivers) = test_app();
+    let cfg = tempfile::tempdir().expect("a config dir");
+    app.config_dir_override = Some(cfg.path().to_path_buf());
+    app.favorites.clear();
+    app.recents.clear();
+    // A standing default already on disk, and a favourite that remembers a
+    // different level — exactly the situation F2 must not let leak.
+    epsilon_core::config::save_thinking_level_in(
+        cfg.path(),
+        epsilon_contracts::ThinkingLevel::Medium,
+    )
+    .unwrap();
+    app.favorites = vec!["faux-1".into(), "deepseek-chat".into()];
+    app.favorite_thinking = vec![("deepseek-chat".into(), "max".into())];
+
+    handle_key(&mut app, &agent, key(KeyCode::F(2)));
+
+    assert_eq!(app.model_id, "deepseek-chat", "the cycle switched model");
+    assert_eq!(
+        agent.thinking_level(),
+        epsilon_contracts::ThinkingLevel::Max,
+        "the favourite's remembered level applies to this run"
+    );
+    assert_eq!(
+        epsilon_core::config::load_thinking_level_in(cfg.path()),
+        Some(epsilon_contracts::ThinkingLevel::Medium),
+        "but it must NOT overwrite the standing default"
+    );
+}
+
+/// **Criterion 7, the live half: a live `/resume` moves the frontend onto the
+/// session's model, on a real frame.**
+///
+/// `Agent::live_resume` restored the history and never the model, so the
+/// in-TUI switch left the header, the picker's current row and `/session`
+/// naming the launch model while the run used the old one. The assertion is on
+/// the drawn row — the same evidence discipline the `/catalog` frame test uses
+/// — because a mirror asserted on state is exactly what shipped this defect.
+#[tokio::test]
+async fn a_live_resume_draws_the_sessions_model_not_the_launch_one() {
+    let (mut app, agent, _receivers) = test_app();
+    let tmp = tempfile::tempdir().expect("a temporary workspace");
+    let ws = tmp.path();
+    let resumed = ws.join("resume.jsonl");
+    {
+        let mut store = epsilon_core::SessionStore::open(&resumed).unwrap();
+        store
+            .append(epsilon_contracts::session_entry::EntryKind::ModelChange {
+                provider: "openrouter".into(),
+                model_id: "deepseek/deepseek-chat-v3.1".into(),
+            })
+            .unwrap();
+        store
+            .append(
+                epsilon_contracts::session_entry::EntryKind::ThinkingLevelChange {
+                    level: "high".to_string(),
+                },
+            )
+            .unwrap();
+    }
+    agent.attach_session_store(std::sync::Arc::new(std::sync::Mutex::new(
+        epsilon_core::SessionStore::open(&resumed).unwrap(),
+    )));
+    app.model_id = "faux-1".to_string();
+
+    // Entries, not messages, are what this session holds, so the restored
+    // message count is zero — the model and the level are what it carries.
+    let switched = app
+        .switch_session_file(&agent, &resumed, None)
+        .expect("the switch opens the file");
+    assert_eq!(
+        switched, 0,
+        "an entry-only session restores no messages, and the switch still succeeded"
+    );
+
+    assert_eq!(
+        agent.model_id(),
+        "deepseek/deepseek-chat-v3.1",
+        "the run is on the session's model"
+    );
+    assert_eq!(
+        app.model_id, "deepseek/deepseek-chat-v3.1",
+        "and the frontend follows it — one source of truth, not two"
+    );
+    assert_eq!(
+        agent.thinking_level(),
+        epsilon_contracts::ThinkingLevel::High,
+        "the session's recorded level is restored too"
+    );
+    assert_eq!(app.thinking, agent.thinking_level(), "mirror stays exact");
+
+    // The frame. Two viewports, because a needle that fits at 100 can wrap
+    // away at 80, and both are sizes a user actually runs.
+    for (w, h) in [(100, 30), (80, 24)] {
+        let rows = render_rows(&mut app, w, h);
+        assert!(
+            rows[0].contains("DeepSeek V3.1"),
+            "the header must name the model the run is on at {w}x{h}: {:?}",
+            rows[0]
+        );
+        assert!(
+            !rows[0].contains("Faux (offline scripted)"),
+            "and must not still name the launch model: {:?}",
+            rows[0]
+        );
+    }
+}
+
+/// **Criterion 7, the launch half: the frame a resumed launch draws names the
+/// composed model.**
+///
+/// `tui_mode` now seeds `TuiConfig` with `agent.model_id()` — the value AFTER
+/// composition applied the session's model — instead of the launch resolution.
+/// `drive` hands that to `App::new`, so the frame below is what that launch
+/// draws. The composition itself is pinned by the runtime's
+/// `apply_resumed_context` tests; this pins the seam between them and the
+/// screen, which is where the "header names one model while the run uses
+/// another" defect lived.
+#[tokio::test]
+async fn a_resumed_launch_draws_the_composed_model_not_the_launch_one() {
+    let (_app, agent, _receivers) = test_app();
+    let tmp = tempfile::tempdir().expect("a temporary workspace");
+    let path = tmp.path().join("resume.jsonl");
+    {
+        let mut store = epsilon_core::SessionStore::open(&path).unwrap();
+        store
+            .append(epsilon_contracts::session_entry::EntryKind::ModelChange {
+                provider: "openrouter".into(),
+                model_id: "deepseek/deepseek-chat-v3.1".into(),
+            })
+            .unwrap();
+    }
+    let store = std::sync::Arc::new(std::sync::Mutex::new(
+        epsilon_core::SessionStore::open(&path).unwrap(),
+    ));
+
+    // What composition does, through the shared applier.
+    let applied = epsilon_runtime::apply_resumed_context(&agent, &store, "faux-1", false);
+    assert!(
+        applied.model.is_some(),
+        "the precondition: composition adopted the session's model"
+    );
+
+    // What `tui_mode` now passes, and `drive` hands to `App::new`.
+    let (ftx, _frx) = tokio::sync::mpsc::unbounded_channel();
+    let (ntx, _nrx) = tokio::sync::mpsc::unbounded_channel();
+    let (otx, _orx) = tokio::sync::mpsc::unbounded_channel();
+    let mut app = App::new(agent.model_id(), ftx, ntx, otx);
+    app.default_model = None;
+
+    let rows = render_rows(&mut app, 100, 30);
+    assert!(
+        rows[0].contains("DeepSeek V3.1"),
+        "the frame must name the composed model: {:?}",
+        rows[0]
+    );
+    assert!(
+        !rows[0].contains("Faux (offline scripted)"),
+        "and not the launch model the session overrode: {:?}",
+        rows[0]
+    );
+}
+
+/// **Criterion 7: a model choice is remembered for the workspace that made it.**
+///
+/// Both write sites used to resolve `override.or(global)`, so the only way a
+/// project got its own `[model] id` was hand-editing the file. The project dir
+/// wins when the workspace has one; a workspace with none still writes global,
+/// which is the behaviour every earlier launch had.
+#[tokio::test]
+async fn a_model_choice_is_remembered_for_the_workspace_that_made_it() {
+    let (mut app, _agent, _receivers) = test_app();
+    let ws = tempfile::tempdir().expect("a workspace");
+    app.workspace_root = ws.path().to_path_buf();
+    let project = ws.path().join(".epsilon");
+    std::fs::create_dir_all(&project).unwrap();
+    // A stale value from an earlier session must be replaced, not appended to.
+    epsilon_core::config::save_model_id_in(&project, "faux-1").unwrap();
+
+    app.save_default_model("deepseek/deepseek-chat-v3.1");
+
+    assert_eq!(
+        epsilon_core::config::load_model_id_in(&project).as_deref(),
+        Some("deepseek/deepseek-chat-v3.1"),
+        "the project's own config.toml is the write target when the workspace has one"
+    );
+    assert_eq!(
+        app.default_model.as_deref(),
+        Some("deepseek/deepseek-chat-v3.1"),
+        "and the mirror the picker orders by moves with it"
+    );
+
+    // The control: a workspace with no `.epsilon` of its own resolves elsewhere
+    // — the override, which is the only hermetic answer to that question.
+    let bare = tempfile::tempdir().expect("a bare workspace");
+    let override_dir = tempfile::tempdir().expect("an override dir");
+    app.workspace_root = bare.path().to_path_buf();
+    app.config_dir_override = Some(override_dir.path().to_path_buf());
+    app.save_default_model("kimi-k2.6");
+    assert_eq!(
+        epsilon_core::config::load_model_id_in(override_dir.path()).as_deref(),
+        Some("kimi-k2.6"),
+        "with no project dir to write, the override is where it lands"
     );
 }
 

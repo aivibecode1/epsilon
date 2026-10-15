@@ -639,6 +639,65 @@ pub fn save_hide_thinking(hide: bool) -> Result<PathBuf, String> {
     save_hide_thinking_in(&dir, hide)
 }
 
+// ---- reasoning effort default (criterion 7) -------------------------------------
+
+/// Default reasoning effort (`[thinking] level`) from `config_dir/config.toml`.
+///
+/// The standing default a launch starts from — **not** the per-favourite
+/// memories in `[picker.favorite_thinking]`, which apply on F2 cycling and stay
+/// exactly as they are. Same fail-open contract as every reader here: a missing
+/// file, table or key, or a value this build does not know, is `None` — never an
+/// error, and never a silent clamp, because a typo must not change how hard the
+/// model thinks.
+pub fn load_thinking_level_in(config_dir: &Path) -> Option<epsilon_contracts::ThinkingLevel> {
+    let raw = load_config_string_in(config_dir, "thinking", "level")?;
+    epsilon_contracts::ThinkingLevel::parse(&raw)
+}
+
+/// [`load_thinking_level_in`] against the resolved global directory.
+pub fn load_thinking_level() -> Option<epsilon_contracts::ThinkingLevel> {
+    global_dir().and_then(|d| load_thinking_level_in(&d))
+}
+
+/// Set `[thinking] level`, preserving every other key. Persists immediately;
+/// returns the file written.
+///
+/// Same read-modify-write idiom as [`save_hide_thinking_in`]: a second way of
+/// editing `config.toml` is a second way of losing a setting.
+pub fn save_thinking_level_in(
+    config_dir: &Path,
+    level: epsilon_contracts::ThinkingLevel,
+) -> Result<PathBuf, String> {
+    std::fs::create_dir_all(config_dir)
+        .map_err(|e| format!("create {}: {e}", config_dir.display()))?;
+    let path = config_dir.join("config.toml");
+    let mut table: toml::Table = std::fs::read_to_string(&path)
+        .ok()
+        .and_then(|raw| toml::from_str(&raw).ok())
+        .unwrap_or_default();
+
+    table
+        .entry("thinking")
+        .or_insert(toml::Value::Table(toml::map::Map::new()))
+        .as_table_mut()
+        .ok_or_else(|| "[thinking] exists but is not a table".to_string())?
+        .insert(
+            "level".into(),
+            toml::Value::String(level.as_str().to_string()),
+        );
+
+    let serialized =
+        toml::to_string_pretty(&table).map_err(|e| format!("serialize config: {e}"))?;
+    std::fs::write(&path, serialized).map_err(|e| format!("write {}: {e}", path.display()))?;
+    Ok(path)
+}
+
+/// [`save_thinking_level_in`] against the resolved global directory.
+pub fn save_thinking_level(level: epsilon_contracts::ThinkingLevel) -> Result<PathBuf, String> {
+    let dir = global_dir().ok_or_else(|| "no home directory resolved".to_string())?;
+    save_thinking_level_in(&dir, level)
+}
+
 /// Recently used model ids from `config_dir/config.toml` (newest first, capped).
 pub fn load_recent_models_in(config_dir: &Path) -> Vec<String> {
     let raw = match std::fs::read_to_string(config_dir.join("config.toml")) {
@@ -987,6 +1046,75 @@ mod tests {
         assert_eq!(
             load_favorite_models_in(dir),
             vec!["b-model".to_string(), "a-model".to_string()]
+        );
+    }
+
+    /// **Criterion 7: the thinking default survives a restart, and a write
+    /// leaves every other key alone.**
+    ///
+    /// `/think` used to write three things — the agent, the mirror field, the
+    /// notice — and nothing to disk, so every launch started at `Off` and a user
+    /// re-set the level by hand every time. The round trip is the whole fix on
+    /// the config side, and the coexistence assertion is what keeps it from
+    /// becoming a second way of losing a setting.
+    #[test]
+    fn a_thinking_default_round_trips_and_leaves_other_keys_alone() {
+        let tmp = tempfile::tempdir().expect("tmp");
+        let dir = tmp.path();
+
+        // Unset reads None; a value this build does not know is None too — a
+        // typo must not silently change how hard the model thinks.
+        assert_eq!(load_thinking_level_in(dir), None);
+        std::fs::write(dir.join("config.toml"), "[thinking]\nlevel = \"banana\"\n").unwrap();
+        assert_eq!(load_thinking_level_in(dir), None);
+
+        // Set, read back; then re-set beside another key and read both.
+        save_thinking_level_in(dir, epsilon_contracts::ThinkingLevel::XHigh).unwrap();
+        assert_eq!(
+            load_thinking_level_in(dir),
+            Some(epsilon_contracts::ThinkingLevel::XHigh)
+        );
+        toggle_favorite_model_in(dir, "deepseek-chat").unwrap();
+        save_thinking_level_in(dir, epsilon_contracts::ThinkingLevel::High).unwrap();
+        assert_eq!(
+            load_thinking_level_in(dir),
+            Some(epsilon_contracts::ThinkingLevel::High)
+        );
+        assert_eq!(
+            load_favorite_models_in(dir),
+            vec!["deepseek-chat".to_string()],
+            "the [picker] table survives a thinking write"
+        );
+    }
+
+    /// **Criterion 7: a project's own thinking choice is read from its own
+    /// directory, and does not leak into a workspace that has none.**
+    ///
+    /// Same control shape as `a_projects_model_choice_survives_a_restart`: the
+    /// fix is only correct if the second workspace still answers `None`.
+    #[test]
+    fn a_projects_thinking_choice_does_not_leak_into_another_workspace() {
+        let workspace = tempfile::tempdir().unwrap();
+        let project_dir = workspace.path().join(".epsilon");
+        std::fs::create_dir_all(&project_dir).unwrap();
+        save_thinking_level_in(&project_dir, epsilon_contracts::ThinkingLevel::High).unwrap();
+
+        assert_eq!(
+            load_thinking_level_in(&project_dir),
+            Some(epsilon_contracts::ThinkingLevel::High),
+            "the project's choice must be readable back from its own directory"
+        );
+
+        let other = tempfile::tempdir().unwrap();
+        assert_eq!(
+            load_thinking_level_in(other.path()),
+            None,
+            "one workspace's default must not leak into another's"
+        );
+        assert_eq!(
+            load_thinking_level_in(workspace.path()),
+            None,
+            "...not even into the workspace root that owns the .epsilon directory"
         );
     }
 

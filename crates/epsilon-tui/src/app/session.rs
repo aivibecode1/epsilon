@@ -177,7 +177,14 @@ impl App {
             // Populated at startup and on `/reload`; see `refresh_skills`.
             skills_cache: Vec::new(),
             keybindings: crate::keybindings::KeybindingsManager::create(),
-            thinking: epsilon_contracts::ThinkingLevel::default(),
+            // The persisted `[thinking] level` is the default a launch starts
+            // from — `Off` before this key existed, because nothing was ever
+            // written and nothing was ever read. `set_thinking` is the writer
+            // that keeps this mirror and the agent equal (M25), so what the
+            // footer shows is what the run uses. A project's own value, when a
+            // workspace has one, reaches the agent through composition
+            // (`resolve_default_thinking_level`) and outranks this global read.
+            thinking: epsilon_core::config::load_thinking_level().unwrap_or_default(),
             session_name: None,
             steer_queue_len: 0,
             auth_prompt_open: false,
@@ -431,6 +438,15 @@ impl App {
         typed: Option<&str>,
     ) -> Result<usize, String> {
         let count = agent.live_resume(path)?;
+        // The session's own records — model and thinking level — applied
+        // through the ONE applier the launch path runs (`apply_resumed_context`,
+        // ADR-021), so a live switch and a `--resume` launch cannot drift apart.
+        // Read here, applied before hydration clears the rows so the notices
+        // below survive it. `model_explicit` has no meaning on a live switch —
+        // the launch already happened — so it is `false`.
+        let resumed = agent.session_store().map(|store| {
+            epsilon_runtime::apply_resumed_context(agent, &store, &self.model_id, false)
+        });
         // Read now, push after hydration below clears the rows: a recorded
         // directory the run does not share silently reinterprets relative
         // paths, and a recorded directory that no longer exists makes it
@@ -507,6 +523,25 @@ impl App {
             self.hydrate_session_name(agent);
             // The title tracks what just attached (P-017).
             self.refresh_title();
+        }
+        // The frontend follows the composed agent (audit §1a/§5): the model the
+        // session was last used on moves the mirror the header, the picker and
+        // `/session` read, and the recorded level moves the footer's. Without
+        // this the two halves of the resume disagree — the switch restored the
+        // run's model and left the screen naming the old one.
+        if let Some(applied) = resumed {
+            if let Some((provider, model)) = &applied.model {
+                self.model_id = model.clone();
+                self.invalidate_picker();
+                self.ui.push_notice(format!(
+                    "session was last used on {provider}/{model}; continuing there"
+                ));
+            }
+            if let Some(level) = applied.thinking {
+                self.thinking = level;
+                self.ui
+                    .push_notice(format!("thinking level: {}", level.as_str()));
+            }
         }
         Ok(count)
     }
