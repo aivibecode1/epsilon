@@ -3992,7 +3992,7 @@ An audit of the whole accounting pipeline against criterion 6, rather than again
 assertion that errors must exist. What was found:
 
 - **The wire boundary is correct and tested.**
-  `crates/epsilon-llm/tests/usage_arithmetic.rs` (M140) holds eleven tests, and its
+  `crates/epsilon-llm/tests/usage_arithmetic.rs` (M140) holds nine tests — the count is measured (2026-10-15: `grep -c "#\[test]"` = 9; the audit that checked it found the "eleven" claim had been wrong since M194 and the file byte-identical to it), and its
   header cites pi's own rule at `openai-completions.ts:1534` and
   `openai-responses-shared.ts:567`: cached and cache-write tokens are *inside*
   `input_tokens` and must be subtracted. That is the double-count that would have
