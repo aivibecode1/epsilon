@@ -177,6 +177,18 @@ impl ThemeMode {
             Self::Light => Self::Dark,
         }
     }
+
+    /// The next palette in the settings cycle: dark, light, high-contrast, dark.
+    ///
+    /// Distinct from [`Self::flipped`], which is the brightness toggle and must
+    /// not grow a third stop. The settings row is a chooser, so it walks all three.
+    pub fn next(self) -> Self {
+        match self {
+            Self::Dark => Self::Light,
+            Self::Light => Self::HighContrast,
+            Self::HighContrast => Self::Dark,
+        }
+    }
 }
 
 /// Character repertoire. A console with a legacy code page renders `╭` as

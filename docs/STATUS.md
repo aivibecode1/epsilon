@@ -108,6 +108,20 @@ filed with provenance headers, audit/history/15-17), and the fourth was verified
   **2,157 passed / 0 failed** across 73 binaries; the one failure in the first full run was
   the documented load-sensitive `epsilon-tools` wall-clock test (0.52 s in isolation), with
   that log kept beside the green one.
+- **`wave-19 (2026-10-15)`** — the evidence-audit wave: five parallel read-only
+  audits (settings, commands, frames, references, quality; filed with provenance
+  as `audit/history/19a-e.md` under integration note `19-...`) found the
+  11-file `/changes`+`/settings` stack RED (`E0432` + 2×`E0425`, four symbols
+  called with zero definitions). Completed it instead of reverting:
+  `draw_settings`+`draw_changes`, both key arms, `App::next_preset` +
+  `App::session_since_unix`, six named tests; plus four honesty one-liners
+  (`/skill` typo no longer quits, `/theme` error names all three palettes,
+  bare-`/theme` notice says this-run). Frames looked at at 100×30, 80×24,
+  60×20 (one real find: 60-char panel title broke `titled_top` at 60 cols —
+  shortened). Battery green (`gate-settings-changes-20261015`, 15/15 legs,
+  **2,163 passed / 0 failed / 15 ignored** across 73 binaries: +13 from the
+  committed Wave E since the last battery, +6 from this wave, reconciled
+  per-binary from both logs). Log: `audit/evidence/gate-settings-changes-20261015.log`.
 - **In flight:** Wave C (criterion 6 — the Gemini `thoughtsTokenCount` under-count: pi maps
   output as candidates + thoughts and we dropped every thought token; the fix adds a
   `reasoning_tokens` bucket to the `Usage` contract, key-presence driven like

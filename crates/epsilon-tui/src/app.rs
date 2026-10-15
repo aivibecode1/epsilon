@@ -496,6 +496,24 @@ pub(crate) struct App {
     auth_pick_index: usize,
     think_pick_open: bool,
     think_pick_index: usize,
+    /// `/changes`: the checkpoint list for this session (or the workspace, on `all`).
+    ///
+    /// Rows are `(path, tool)`. The panel owns the keyboard while open, the same way
+    /// the think picker does — a key that reached the composer would type into a
+    /// field the user is not looking at.
+    changes_open: bool,
+    changes_index: usize,
+    changes_rows: Vec<(String, String)>,
+    /// What the panel title names the cutoff as: `this session` or `this workspace`.
+    changes_scope: String,
+    /// `/settings`: the in-TUI chooser. Rows are computed, not stored, so the
+    /// value a row shows is the value the next Enter will change.
+    settings_open: bool,
+    settings_index: usize,
+    /// Preset name captured when the panel opened, refreshed when Enter changes it.
+    /// `draw` has no agent, and the panel owns the keyboard, so this cannot go stale
+    /// under the user.
+    settings_preset: String,
     /// P-047: `/scoped-models` checklist over the F2 cycle scope. Staged ==
     /// `favorites` (the cycle list reads it, so Space rescopes live); the
     /// file moves only on Ctrl+S. `scope_snapshot` is the pre-open list Esc
@@ -1908,9 +1926,9 @@ mod panels;
 // The panel surface, named rather than glob-imported: `draw()` is the only caller, and a list
 // keeps the set of things drawn over the transcript readable in one place.
 use panels::{
-    draw_at_file, draw_auth_picker, draw_auth_prompt, draw_dialog, draw_label_prompt, draw_palette,
-    draw_picker, draw_scope_picker, draw_session_browser, draw_slash_autocomplete,
-    draw_think_picker, draw_timeline, draw_transcript,
+    draw_at_file, draw_auth_picker, draw_auth_prompt, draw_changes, draw_dialog, draw_label_prompt,
+    draw_palette, draw_picker, draw_scope_picker, draw_session_browser, draw_settings,
+    draw_slash_autocomplete, draw_think_picker, draw_timeline, draw_transcript,
 };
 
 mod keys;
@@ -2103,6 +2121,12 @@ fn draw(f: &mut Frame<'_>, app: &mut App) {
     }
     if app.think_pick_open {
         draw_think_picker(f, app, f.area());
+    }
+    if app.changes_open {
+        draw_changes(f, app, f.area());
+    }
+    if app.settings_open {
+        draw_settings(f, app, f.area());
     }
     if app.scope_open {
         draw_scope_picker(f, app, f.area());

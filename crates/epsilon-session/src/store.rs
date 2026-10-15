@@ -2969,6 +2969,17 @@ pub(crate) fn parse_iso8601_ms(s: &str) -> Option<u64> {
     u64::try_from(secs * 1000 + millis).ok()
 }
 
+/// Unix seconds of a session-header timestamp, for comparison with a checkpoint's
+/// `at` (also unix seconds).
+///
+/// `None` when `iso` is not a timestamp this crate writes, so a caller falls back
+/// to "every checkpoint" instead of inventing 1970. The division is exact for the
+/// comparison: checkpoints store seconds, headers store milliseconds.
+#[must_use]
+pub fn timestamp_unix_secs(iso: &str) -> Option<u64> {
+    parse_iso8601_ms(iso).map(|ms| ms / 1000)
+}
+
 /// Days since 1970-01-01 for a Gregorian date (Howard Hinnant's `days_from_civil`).
 ///
 /// Exact for every date a session file can hold; 719_468 is the day count from year 0 to

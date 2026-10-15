@@ -1250,6 +1250,70 @@ pub(crate) fn handle_key(app: &mut App, agent: &Arc<Agent>, key: KeyEvent) -> bo
         }
         return false;
     }
+    // `/settings`: the in-TUI chooser — Up/Down move, Enter changes the
+    // highlighted row through `apply_setting`, Esc closes. Toggles stay in
+    // the panel so the new value is visible; rows that open another chooser
+    // (model, thinking) close this one first — two overlays owning the
+    // keyboard is how a key answers the one the user cannot see.
+    if app.settings_open {
+        let rows = app.setting_rows();
+        let last = rows.len().saturating_sub(1);
+        match key.code {
+            KeyCode::Esc => {
+                app.settings_open = false;
+                app.settings_index = 0;
+            }
+            KeyCode::Up => {
+                app.settings_index = app.settings_index.saturating_sub(1).min(last);
+            }
+            KeyCode::Down => {
+                if !rows.is_empty() {
+                    app.settings_index = (app.settings_index + 1).min(last);
+                }
+            }
+            KeyCode::Enter => {
+                app.apply_setting(agent, app.settings_index);
+            }
+            _ => {}
+        }
+        return false;
+    }
+    // `/changes`: the checkpoint list — Up/Down move, Enter previews the
+    // highlighted file in the viewer, Esc closes. A file that can no longer
+    // be read names why instead of opening an empty viewer.
+    if app.changes_open {
+        let last = app.changes_rows.len().saturating_sub(1);
+        match key.code {
+            KeyCode::Esc => {
+                app.changes_open = false;
+                app.changes_index = 0;
+                app.changes_rows.clear();
+            }
+            KeyCode::Up => {
+                app.changes_index = app.changes_index.saturating_sub(1).min(last);
+            }
+            KeyCode::Down => {
+                if !app.changes_rows.is_empty() {
+                    app.changes_index = (app.changes_index + 1).min(last);
+                }
+            }
+            KeyCode::Enter => {
+                if let Some((path, _)) = app.changes_rows.get(app.changes_index).cloned() {
+                    let root = app.workspace_root.clone();
+                    match crate::tree::open_viewer(&root, &path) {
+                        Ok(viewer) => {
+                            app.changes_open = false;
+                            app.changes_index = 0;
+                            app.open_viewer_tab(viewer);
+                        }
+                        Err(e) => app.ui.push_notice(format!("cannot preview {path}: {e}")),
+                    }
+                }
+            }
+            _ => {}
+        }
+        return false;
+    }
     // `app.clear` is checked FIRST, and that ordering is the whole fix. Both
     // `app.clear` and `app.exit` were bound to ctrl+c; `app.exit` was matched here,
     // so Ctrl+C quit the process and discarded the draft while `/hotkeys` advertised

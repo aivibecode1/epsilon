@@ -189,6 +189,10 @@ pub const SLASH_ITEMS: &[SlashItem] = &[
         description: "put a file back to its checkpoint — preview, then `/restore <path> yes`",
     },
     SlashItem {
+        value: "/changes",
+        description: "files this session changed — enter previews; `/changes all` is the workspace",
+    },
+    SlashItem {
         value: "/share",
         description: "share session as a secret GitHub gist",
     },
@@ -210,7 +214,7 @@ pub const SLASH_ITEMS: &[SlashItem] = &[
     },
     SlashItem {
         value: "/settings",
-        description: "open settings menu",
+        description: "change model, thinking, theme, and permissions here",
     },
     SlashItem {
         value: "/scoped-models",
@@ -383,6 +387,12 @@ pub enum Command {
     /// `epsilon-tools`) had no production caller at all: the write half ran on every
     /// `write` and `edit` and the revert half was reachable only from its own tests.
     Restore(String),
+    /// List the files this session's checkpoints cover (`/changes`, `/changes all`).
+    ///
+    /// The tail is a scope word, carried whole like `/restore`. Empty means this
+    /// session; `all` means every checkpoint in the workspace. Anything else is
+    /// refused by name rather than treated as a path — a path belongs to `/restore`.
+    Changes(String),
     /// Share session as a gist.
     Share,
     /// Copy last agent message to clipboard.
@@ -450,6 +460,7 @@ pub const COMMAND_HEADS: &[&str] = &[
     // command is real, and because a command the desktop refuses by name must still be a
     // head this list carries — that is what the reverse drift check below enforces.
     "restore",
+    "changes",
     "share",
     "copy",
     "name",
@@ -574,6 +585,7 @@ pub fn parse_command(input: &str) -> Option<Command> {
         "import" => Some(Command::Import(tail.to_string())),
         "open" => Some(Command::Open(tail.to_string())),
         "restore" => Some(Command::Restore(tail.to_string())),
+        "changes" => Some(Command::Changes(tail.to_string())),
         "share" => Some(Command::Share),
         "copy" => Some(Command::Copy),
         "name" => Some(Command::Name(if tail.is_empty() {

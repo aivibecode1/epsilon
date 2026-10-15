@@ -1764,6 +1764,35 @@ pub fn restore_checkpoint(workspace: &Path, argument: &str) -> Result<String, St
     Ok(format!("restored {restored} bytes to {path}"))
 }
 
+/// One file the harness has a checkpoint for, as a front end may list it.
+///
+/// The store type stays in `epsilon-tools`. A terminal that opened one itself would
+/// break the rule [`describe_checkpoint`] exists to keep.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ChangeRow {
+    /// Workspace-relative path, `/`-separated.
+    pub path: String,
+    /// Which tool recorded the newest checkpoint (`write`, `edit`).
+    pub tool: String,
+}
+
+/// Files with a checkpoint at or after `since_unix` (0 = every one).
+///
+/// Newest entry per path, newest first — the same selection [`describe_checkpoint`]
+/// would resolve. A session passes its header timestamp in unix seconds; a caller
+/// with no session passes 0 and says so, rather than pretending a missing clock
+/// is a filter.
+pub fn list_changes(workspace: &Path, since_unix: u64) -> Vec<ChangeRow> {
+    epsilon_tools::checkpoint::CheckpointStore::open(workspace)
+        .changed_since(since_unix)
+        .into_iter()
+        .map(|entry| ChangeRow {
+            path: entry.path,
+            tool: entry.tool,
+        })
+        .collect()
+}
+
 /// Save `bytes` to `path` with checkpoint undo, for front ends that cannot name
 /// the tool crate (the shipped TUI names `epsilon-tools` in tests only, by design).
 ///

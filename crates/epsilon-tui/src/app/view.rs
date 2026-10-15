@@ -579,6 +579,9 @@ impl App {
             || self.auth_prompt_open
             || self.label_prompt_open
             || self.auth_pick_open
+            || self.think_pick_open
+            || self.changes_open
+            || self.settings_open
             || self.timeline_open
             || self.tree_open
             || !self.viewer_tabs.is_empty()

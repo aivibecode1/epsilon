@@ -4237,7 +4237,7 @@ async fn theme_command_toggles_and_names_the_palette() {
         "a named palette sets; it does not toggle"
     );
 
-    // A typo is refused, with the two valid names, and changes nothing.
+    // A typo is refused, naming all three palettes, and changes nothing.
     let before = app.theme.palette();
     assert!(!type_and_enter(&mut app, &agent, "/theme solarized"));
     assert_eq!(
@@ -4999,6 +4999,8 @@ async fn no_slash_command_panics_when_typed() {
             || app.auth_pick_open
             || app.think_pick_open
             || app.scope_open
+            || app.changes_open
+            || app.settings_open
             || app.auth_prompt_open
             || app.palette_open
             || app.trust_review_pending;
@@ -9358,6 +9360,136 @@ fn preset_full_access_asks_and_only_yes_switches() {
     app.input = "yes".to_string();
     app.submit_editor(&agent, false);
     assert_eq!(agent.current_preset(), "danger-full-access");
+}
+
+/// `next_preset` walks auto, workspace-write, read-only, danger-full-access,
+/// and restarts. Empty (what the panel shows when no preset was ever named)
+/// and unknown names both mean auto, so Enter always moves forward.
+#[test]
+fn next_preset_walks_all_four_presets_and_restarts() {
+    assert_eq!(App::next_preset(""), "workspace-write");
+    assert_eq!(App::next_preset("auto"), "workspace-write");
+    assert_eq!(App::next_preset("workspace-write"), "read-only");
+    assert_eq!(App::next_preset("read-only"), "danger-full-access");
+    assert_eq!(App::next_preset("danger-full-access"), "auto");
+    assert_eq!(
+        App::next_preset("Auto"),
+        "workspace-write",
+        "case is not a preset"
+    );
+    assert_eq!(
+        App::next_preset("yolo"),
+        "auto",
+        "unknown restarts rather than spinning"
+    );
+}
+
+/// With no session attached there is no header timestamp, so `/changes`
+/// lists every checkpoint instead of filtering on an invented cutoff.
+#[test]
+fn session_since_unix_is_none_without_a_session() {
+    let (_app, agent, _rx) = test_app();
+    assert_eq!(App::session_since_unix(&agent), None);
+}
+
+/// `/skill` with a typo or no name reports usage and stays — it must not
+/// quit the session (the error arms once returned `true`, which is quit).
+#[test]
+fn skill_typo_leaves_the_session_open() {
+    let (mut app, agent, _rx) = test_app();
+    let quit = app.run_command(
+        &agent,
+        crate::picker::parse_command("/skill bogus off").expect("/skill parses"),
+    );
+    assert!(!quit, "a typo must not end the session");
+    assert!(
+        app.ui
+            .lines()
+            .iter()
+            .any(|l| l.text.contains("no skill named 'bogus'")),
+        "and it must say what was wrong: {:?}",
+        app.ui.lines().iter().map(|l| &l.text).collect::<Vec<_>>()
+    );
+
+    let quit = app.run_command(
+        &agent,
+        crate::picker::parse_command("/skill").expect("bare /skill parses"),
+    );
+    assert!(!quit, "bare /skill must not end the session either");
+}
+
+/// `/settings` draws all five rows with their live values and the keys that
+/// work — a drawn control with no key behind it is the no-op AGENTS.md
+/// forbids, and a live key with no hint is one the user cannot find.
+#[test]
+fn settings_panel_lists_every_row_with_its_live_value_and_keys() {
+    let (mut app, _agent, _rx) = test_app();
+    app.settings_open = true;
+    app.settings_index = 0;
+    let rows = render_rows(&mut app, 100, 30);
+    let screen: String = rows
+        .iter()
+        .map(|r| r.as_str())
+        .collect::<Vec<_>>()
+        .join("\n");
+    for row in [
+        "model",
+        "thinking",
+        "theme",
+        "thinking blocks",
+        "permission",
+    ] {
+        assert!(screen.contains(row), "the {row} row is drawn: {screen}");
+    }
+    for hint in ["enter", "esc"] {
+        assert!(screen.contains(hint), "the {hint} key is named: {screen}");
+    }
+}
+
+/// `/changes` with no checkpoints opens with its reason, not a blank panel.
+#[test]
+fn changes_panel_says_so_when_nothing_changed() {
+    let (mut app, _agent, _rx) = test_app();
+    app.changes_open = true;
+    app.changes_scope = "this session".to_string();
+    let rows = render_rows(&mut app, 100, 30);
+    let screen: String = rows
+        .iter()
+        .map(|r| r.as_str())
+        .collect::<Vec<_>>()
+        .join("\n");
+    assert!(
+        screen.contains("no checkpoints this session"),
+        "the empty state names its scope: {screen}"
+    );
+    assert!(screen.contains("preview"), "and the preview key: {screen}");
+}
+
+/// Enter on a `/changes` row previews that file in the viewer — the panel's
+/// advertised action, driven through the real key path.
+#[test]
+fn changes_enter_previews_the_highlighted_file() {
+    let (mut app, agent, _rx) = test_app();
+    let dir = tempfile::tempdir().expect("tmp");
+    std::fs::write(dir.path().join("changed.rs"), "fn main() {}\n").expect("seed");
+    app.workspace_root = dir.path().to_path_buf();
+    app.changes_open = true;
+    app.changes_scope = "this session".to_string();
+    app.changes_rows = vec![("changed.rs".to_string(), "write".to_string())];
+    app.changes_index = 0;
+
+    assert!(!handle_key(&mut app, &agent, key(KeyCode::Enter)));
+    assert!(!app.changes_open, "preview closes the panel");
+    assert_eq!(app.viewer_tabs.len(), 1, "and opens exactly one viewer tab");
+    assert_eq!(app.viewer_tabs[0].rel, "changed.rs");
+    assert!(
+        app.viewer_tabs[0]
+            .lines
+            .iter()
+            .any(|l| l.contains("fn main()")),
+        "showing the file's bytes: {:?}",
+        app.viewer_tabs[0].lines
+    );
 }
 
 /// **Streaming tool output reaches the screen, not only the record.**

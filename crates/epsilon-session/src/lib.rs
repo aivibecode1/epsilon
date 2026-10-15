@@ -40,5 +40,5 @@ pub use lease::{LeaseOutcome, SessionLease, sweep_stale_locks};
 pub use search::{SearchOptions, SessionSearchHit, search_session};
 pub use store::{
     CompactionDigest, FaultOp, LineDiagnosis, ModelViewEntry, SessionStore, StoreError,
-    build_forest_from_entries, original_backup_path,
+    build_forest_from_entries, original_backup_path, timestamp_unix_secs,
 };

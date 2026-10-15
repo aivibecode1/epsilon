@@ -698,6 +698,32 @@ pub fn save_thinking_level(level: epsilon_contracts::ThinkingLevel) -> Result<Pa
     save_thinking_level_in(&dir, level)
 }
 
+/// Persist `[tui] theme`, preserving every other key.
+///
+/// The settings panel writes this. Bare `/theme` still does not: that key is a
+/// brightness toggle for the current run, and a toggle that rewrites a file on
+/// every press is a different action. `name` is the spelling the theme already
+/// uses (`dark`, `light`, `high-contrast`).
+pub fn save_tui_theme_in(config_dir: &Path, name: &str) -> Result<PathBuf, String> {
+    std::fs::create_dir_all(config_dir)
+        .map_err(|e| format!("create {}: {e}", config_dir.display()))?;
+    let path = config_dir.join("config.toml");
+    let mut table: toml::Table = std::fs::read_to_string(&path)
+        .ok()
+        .and_then(|raw| toml::from_str(&raw).ok())
+        .unwrap_or_default();
+    table
+        .entry("tui")
+        .or_insert(toml::Value::Table(toml::map::Map::new()))
+        .as_table_mut()
+        .ok_or_else(|| "[tui] exists but is not a table".to_string())?
+        .insert("theme".into(), toml::Value::String(name.to_string()));
+    let serialized =
+        toml::to_string_pretty(&table).map_err(|e| format!("serialize config: {e}"))?;
+    std::fs::write(&path, serialized).map_err(|e| format!("write {}: {e}", path.display()))?;
+    Ok(path)
+}
+
 /// Recently used model ids from `config_dir/config.toml` (newest first, capped).
 pub fn load_recent_models_in(config_dir: &Path) -> Vec<String> {
     let raw = match std::fs::read_to_string(config_dir.join("config.toml")) {

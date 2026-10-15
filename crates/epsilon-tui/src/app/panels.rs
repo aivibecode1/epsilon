@@ -1863,6 +1863,112 @@ pub(super) fn draw_auth_picker(f: &mut Frame<'_>, app: &App, outer: Rect) {
     f.render_widget(Paragraph::new(lines), inner);
 }
 
+/// `/settings`: the in-TUI chooser over the five live rows.
+///
+/// Rows are computed per frame from [`App::setting_rows`], never stored, so
+/// the value a row shows is the value the next Enter will change. The panel
+/// owns the keyboard while open (see the `settings_open` arm in `keys.rs`);
+/// the hint row names exactly the keys that arm handles.
+pub(super) fn draw_settings(f: &mut Frame<'_>, app: &App, outer: Rect) {
+    use crate::ui::overlay::{self, Panel, Width};
+    let rows = app.setting_rows();
+    let width = Width::PANEL.resolve(outer);
+    let height = 12u16.min(outer.height.saturating_sub(2));
+    let panel = Panel {
+        theme: &app.theme,
+        // Top-aligned like the model picker: the two are the same list at
+        // different moments, and a panel that moves between them is disorienting.
+        area: Rect {
+            y: outer.y + 1,
+            ..overlay::centered(outer, width, height)
+        },
+        title: "settings",
+        focused: true,
+        border: None,
+    };
+    let inner = panel.open(f);
+    let theme = &app.theme;
+    let capacity = inner.height.saturating_sub(2).max(1) as usize;
+    let start = crate::scroll::scroll_start(rows.len(), app.settings_index, capacity);
+    let end = (start + capacity).min(rows.len());
+    let mut lines: Vec<Line<'static>> = Vec::new();
+    for (index, (name, value)) in rows.iter().enumerate().skip(start).take(end - start) {
+        lines.push(overlay::list_row(
+            theme,
+            index == app.settings_index,
+            name,
+            Some(value.as_str()),
+            inner.width as usize,
+        ));
+    }
+    lines.push(Line::from(""));
+    let arrows = crate::ui::overlay::up_down(theme.glyphs.up, theme.glyphs.down);
+    lines.push(overlay::hint_row(
+        theme,
+        &[(&arrows, "move"), ("enter", "change"), ("esc", "close")],
+    ));
+    f.render_widget(Paragraph::new(lines), inner);
+}
+
+/// `/changes`: the checkpoint list for this session (or the workspace, on `all`).
+///
+/// Rows are `(path, tool)` pairs the command captured when the panel opened;
+/// Enter previews the highlighted file in the viewer, Esc closes. An empty
+/// list OPENS with its reason, the way the session browser does (P-243): a
+/// refusal would hide exactly the message that teaches it.
+pub(super) fn draw_changes(f: &mut Frame<'_>, app: &App, outer: Rect) {
+    use crate::ui::overlay::{self, Panel, Width};
+    let width = Width::PANEL.resolve(outer);
+    let height = 16u16.min(outer.height.saturating_sub(2));
+    let panel = Panel {
+        theme: &app.theme,
+        area: Rect {
+            y: outer.y + 1,
+            ..overlay::centered(outer, width, height)
+        },
+        title: &format!("changes — {}", app.changes_scope),
+        focused: true,
+        border: None,
+    };
+    let inner = panel.open(f);
+    let theme = &app.theme;
+    let capacity = inner.height.saturating_sub(2).max(1) as usize;
+    let start = crate::scroll::scroll_start(app.changes_rows.len(), app.changes_index, capacity);
+    let end = (start + capacity).min(app.changes_rows.len());
+    let mut lines: Vec<Line<'static>> = Vec::new();
+    if app.changes_rows.is_empty() {
+        lines.push(Line::from(Span::styled(
+            format!(
+                "no checkpoints {} — files the agent writes appear here",
+                app.changes_scope
+            ),
+            theme.dim(),
+        )));
+    }
+    for (index, (path, tool)) in app
+        .changes_rows
+        .iter()
+        .enumerate()
+        .skip(start)
+        .take(end - start)
+    {
+        lines.push(overlay::list_row(
+            theme,
+            index == app.changes_index,
+            &safe_to_show(path),
+            Some(tool.as_str()),
+            inner.width as usize,
+        ));
+    }
+    lines.push(Line::from(""));
+    let arrows = crate::ui::overlay::up_down(theme.glyphs.up, theme.glyphs.down);
+    lines.push(overlay::hint_row(
+        theme,
+        &[(&arrows, "move"), ("enter", "preview"), ("esc", "close")],
+    ));
+    f.render_widget(Paragraph::new(lines), inner);
+}
+
 #[cfg(test)]
 mod safe_to_show_tests {
     use super::safe_to_show;

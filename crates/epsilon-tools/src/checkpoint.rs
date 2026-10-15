@@ -420,6 +420,24 @@ impl CheckpointStore {
         out
     }
 
+    /// Newest checkpoint per path whose `at` is at least `since_unix` (inclusive).
+    ///
+    /// `0` is every path, which is what [`Self::paths`] returns. A session passes its
+    /// header timestamp in unix seconds so a file last touched in an earlier session
+    /// does not appear as this session's change. The ledger has no session id — `at`
+    /// is the only field both sides share — so the cutoff is the filter, not a join.
+    ///
+    /// The comparison is on the **newest** entry for the path, which is what
+    /// [`Self::paths`] already selects. A file edited again this session stays; a
+    /// file whose last harness edit was earlier does not, even if an older entry
+    /// for it would have fallen inside the window.
+    pub fn changed_since(&self, since_unix: u64) -> Vec<Entry> {
+        self.paths()
+            .into_iter()
+            .filter(|entry| entry.at >= since_unix)
+            .collect()
+    }
+
     /// Restore `path` to the state recorded in `entry`.
     ///
     /// Returns the number of bytes written, or `0` when the entry means the file

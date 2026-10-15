@@ -967,7 +967,7 @@ impl App {
                 };
                 if name.is_empty() {
                     self.ui.push_notice("usage: /skill <name> on|off");
-                    return true;
+                    return false;
                 }
                 // **The name must be one that EXISTS.** Writing a disable for a
                 // skill nothing provides would produce a setting that does
@@ -979,7 +979,7 @@ impl App {
                     self.ui.push_notice(format!(
                         "no skill named '{name}' — `/skills` lists what is available"
                     ));
-                    return true;
+                    return false;
                 }
                 match epsilon_core::config::set_skill_disabled(name, want_off) {
                     Ok(_) => self.ui.push_notice(format!(
@@ -1831,7 +1831,7 @@ impl App {
                         Some(mode) => mode,
                         None => {
                             self.ui.push_notice(format!(
-                                "unknown palette '{name}' \u{2014} use `light` or `dark`, or bare `/theme` to toggle"
+                                "unknown palette '{name}' — use `light`, `dark`, or `high-contrast`, or bare `/theme` to toggle"
                             ));
                             return false;
                         }
@@ -1846,8 +1846,11 @@ impl App {
                 // immediately while cached rows kept the old palette \u{2014} half a theme change,
                 // which is worse than none because it looks deliberate.
                 self.render_cache.clear();
-                self.ui
-                    .push_notice(format!("palette: {} \u{2192} {}", was.name(), next.name()));
+                self.ui.push_notice(format!(
+                    "palette: {} \u{2192} {} (this run — `/settings` keeps it)",
+                    was.name(),
+                    next.name()
+                ));
             }
             crate::picker::Command::Compact => {
                 if self
@@ -1916,6 +1919,9 @@ impl App {
             crate::picker::Command::Restore(argument) => {
                 self.run_restore_file(agent, argument);
             }
+            crate::picker::Command::Changes(argument) => {
+                self.open_changes(agent, argument);
+            }
             // A variant that reached the catch-all without an arm of its own.
             //
             // `run_command` sends everything it does not route by name to *this*
@@ -1944,6 +1950,159 @@ impl App {
             }
         }
         false
+    }
+
+    /// `/changes` — the files this session (or the workspace) has a checkpoint for.
+    ///
+    /// Enter previews through [`epsilon_runtime::describe_checkpoint`] and changes
+    /// nothing. Applying the revert stays `/restore <path> yes`, which already
+    /// confirms. A panel that restored on Enter would overwrite on one keystroke.
+    fn open_changes(&mut self, agent: &Agent, argument: String) {
+        let word = argument.trim();
+        if !word.is_empty() && !word.eq_ignore_ascii_case("all") {
+            self.ui.push_notice(format!(
+                "changes: '{word}' is not a scope — bare /changes is this session, /changes all is the workspace"
+            ));
+            return;
+        }
+        let since = if word.eq_ignore_ascii_case("all") {
+            None
+        } else {
+            Self::session_since_unix(agent)
+        };
+        self.changes_scope = if since.is_some() {
+            "this session".to_string()
+        } else {
+            "this workspace".to_string()
+        };
+        self.changes_rows = epsilon_runtime::list_changes(&self.workspace_root, since.unwrap_or(0))
+            .into_iter()
+            .map(|row| (row.path, row.tool))
+            .collect();
+        self.changes_index = 0;
+        self.changes_open = true;
+    }
+
+    /// Next permission preset in the settings cycle: auto, workspace-write,
+    /// read-only, danger-full-access, auto.
+    ///
+    /// Empty (or unknown) means auto, which is what the panel shows when no
+    /// preset was ever named — so the first Enter always moves forward to
+    /// workspace-write rather than spinning on the unknown. The raising
+    /// direction still gates: `apply_setting` holds the question open for
+    /// `danger-full-access` through the same `run_preset_command` path the
+    /// `/preset` command uses.
+    pub(super) fn next_preset(current: &str) -> &'static str {
+        match current.trim().to_ascii_lowercase().as_str() {
+            "" | "auto" => "workspace-write",
+            "workspace-write" => "read-only",
+            "read-only" => "danger-full-access",
+            "danger-full-access" => "auto",
+            _ => "auto",
+        }
+    }
+
+    /// Cutoff for `/changes` (this session): the current session file's header
+    /// timestamp in unix seconds.
+    ///
+    /// `None` when there is no session yet or the header is unreadable — the
+    /// caller passes 0 then, listing every checkpoint rather than inventing
+    /// 1970 as a filter. Reads the header only, never the whole session.
+    pub(super) fn session_since_unix(agent: &epsilon_core::Agent) -> Option<u64> {
+        let path = agent.session_path()?;
+        let header = epsilon_session::discover::read_session_header(&path)?;
+        epsilon_session::timestamp_unix_secs(&header.timestamp)
+    }
+
+    /// The settings rows, in the order the panel draws them.
+    pub(super) fn setting_rows(&self) -> [(&'static str, String); 5] {
+        [
+            ("model", self.model_id.clone()),
+            ("thinking", self.thinking.as_str().to_string()),
+            ("theme", self.theme.palette().name().to_string()),
+            (
+                "thinking blocks",
+                if self.ui.hide_thinking {
+                    "hidden".to_string()
+                } else {
+                    "shown".to_string()
+                },
+            ),
+            (
+                "permission",
+                if self.settings_preset.is_empty() {
+                    "auto".to_string()
+                } else {
+                    self.settings_preset.clone()
+                },
+            ),
+        ]
+    }
+
+    /// Enter on a settings row. Toggles stay in the panel so the new value is
+    /// visible. A row that opens another chooser closes this one first — two
+    /// overlays owning the keyboard is how a key answers the one the user cannot see.
+    pub(super) fn apply_setting(&mut self, agent: &Arc<Agent>, index: usize) {
+        match index {
+            0 => {
+                self.settings_open = false;
+                self.picker_open = true;
+                self.picker_index = 0;
+                self.input.clear();
+                self.cursor_chars = 0;
+                self.request_live(false);
+            }
+            1 => {
+                self.settings_open = false;
+                self.think_pick_open = true;
+                self.think_pick_index = 0;
+                self.input.clear();
+                self.cursor_chars = 0;
+            }
+            2 => {
+                let next = self.theme.palette().next();
+                self.theme.set_palette(next);
+                self.render_cache.clear();
+                let dir = self
+                    .config_dir_override
+                    .clone()
+                    .or_else(epsilon_core::config::global_dir);
+                if let Some(dir) = dir
+                    && let Err(e) = epsilon_core::config::save_tui_theme_in(&dir, next.name())
+                {
+                    self.settings_open = false;
+                    self.ui
+                        .push_notice(format!("theme is {}, not saved: {e}", next.name()));
+                }
+            }
+            3 => {
+                self.ui.hide_thinking = !self.ui.hide_thinking;
+                let dir = self
+                    .config_dir_override
+                    .clone()
+                    .or_else(epsilon_core::config::global_dir);
+                if let Some(dir) = dir
+                    && let Err(e) =
+                        epsilon_core::config::save_hide_thinking_in(&dir, self.ui.hide_thinking)
+                {
+                    self.settings_open = false;
+                    self.ui.push_notice(format!(
+                        "thinking blocks changed for this run, not saved: {e}"
+                    ));
+                }
+            }
+            4 => {
+                let next = Self::next_preset(&self.settings_preset);
+                if epsilon_safety::Preset::parse(next).is_ok_and(|p| p.raises_privilege()) {
+                    self.settings_open = false;
+                }
+                self.run_preset_command(agent, Some(next.to_string()));
+                if self.settings_open {
+                    self.settings_preset = agent.current_preset();
+                }
+            }
+            _ => {}
+        }
     }
 
     /// `/restore <path>` — put a file back to the bytes captured before the agent's last
@@ -2387,35 +2546,9 @@ impl App {
                 }
             }
             crate::picker::Command::Settings => {
-                // Ponytail: no overlay form at v1 (pi SettingsSelectorComponent is ~30 toggles).
-                // Instead show actionable guidance: what exists + where it lives + how to change it.
-                let global = epsilon_core::config::global_config_path()
-                    .map(|p| p.display().to_string())
-                    .unwrap_or_else(|| "~/.config/epsilon/config.toml".to_string());
-                let project = self.workspace_root.join(".epsilon").join("config.toml");
-                self.ui.push_notice(format!(
-                    "settings: global {global} · project {}",
-                    project.display()
-                ));
-                self.ui.push_notice(format!(
-                    "  current model: {} · think: {}",
-                    self.model_id,
-                    self.thinking.as_str()
-                ));
-                let rec = if self.recents.is_empty() {
-                    "(none yet)".to_string()
-                } else {
-                    self.recents[..self.recents.len().min(5)].join(", ")
-                };
-                let fav = if self.favorites.is_empty() {
-                    "(none — Ctrl+F to star)".to_string()
-                } else {
-                    self.favorites[..self.favorites.len().min(5)].join(", ")
-                };
-                self.ui.push_notice(format!("  recents: {rec}"));
-                self.ui.push_notice(format!("  favorites: {fav}"));
-                self.ui
-                    .push_notice("edit the toml directly (model: [model] id, favorites: [picker] favorite), then /reload to apply without restart");
+                self.settings_preset = agent.current_preset();
+                self.settings_index = 0;
+                self.settings_open = true;
             }
             crate::picker::Command::Changelog => {
                 // Ponytail: read workspace CHANGELOG.md (pi parseChangelog parity, first section)
