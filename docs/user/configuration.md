@@ -86,3 +86,16 @@ whole run regardless of what the model asks for.
 | `<workspace>/.epsilon/sessions/<workspace>/*.jsonl` | session transcripts, one file per launch (older sessions may sit directly in `.epsilon/sessions/`) |
 | `<workspace>/.epsilon/skills/`, `<workspace>/.agents/skills/`, `<workspace>/.claude/skills/`, `<workspace>/.codex/skills/`, `<workspace>/.gemini/skills/`, `<workspace>/.cursor/skills/`, `<workspace>/.windsurf/skills/`, `<workspace>/.opencode/skills/`, `<workspace>/.dsh/skills/`, `<workspace>/.pi/skills/` | project skills (trust-gated) |
 | `<workspace>/AGENTS.md`, `CLAUDE.md`, `MEMORY.md` | project instructions and memory, injected into the prompt's CONTEXT tier |
+
+## Extra skill directories
+
+```toml
+[skills]
+extra_dirs = ["C:/team/skills", "shared/skills"]   # scanned last, so they win name collisions
+```
+
+Directories of your own, beyond the convention tables above: team-shared skills,
+a second checkout's skills, anything with `SKILL.md` folders or `<name>.md` files
+in it. Relative entries resolve against the global config directory. These roots
+are yours, so they skip the project trust gate — and there is no project-level
+twin: a repository cannot declare skill roots outside itself.

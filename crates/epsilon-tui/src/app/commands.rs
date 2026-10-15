@@ -1815,18 +1815,6 @@ impl App {
                 }
             }
             crate::picker::Command::Reload => {
-                // The root list is `epsilon_core::skills::all_roots`, not a copy written
-                // here: the composition path builds the running agent from the same call,
-                // and the second list was the defect `AGENTS.md` §2.2 names. The trust bit
-                // is the TUI's spelling of the runtime's `project_trusted`
-                // (`trust_review_pending` means untrusted), exactly as the agent-defs
-                // reload below already passes it — skills used to skip that gate, so a
-                // repository that had not been trusted yet had its `.epsilon/skills`
-                // loaded by `/reload` even though startup had refused them.
-                let roots = epsilon_core::skills::all_roots(
-                    &self.workspace_root,
-                    !self.trust_review_pending,
-                );
                 // `discover_with_notices`, not `discover`: the wrapper throws away everything
                 // discovery could not do, and `/reload` is the one command whose whole promise
                 // is "read what is on disk now". An unreadable root, a `SKILL.md` that will not
@@ -1835,6 +1823,27 @@ impl App {
                 // composition path already routes the same lines into the startup notices the
                 // terminal reads, so this call site was the last place a skill could fail to
                 // load with nobody told.
+                // The root list is `epsilon_core::skills::all_roots`, not a copy written
+                // here: the composition path builds the running agent from the same call,
+                // and the second list was the defect `AGENTS.md` §2.2 names. The trust bit
+                // is the TUI's spelling of the runtime's `project_trusted`
+                // (`trust_review_pending` means untrusted), exactly as the agent-defs
+                // reload below already passes it — skills used to skip that gate, so a
+                // repository that had not been trusted yet had its `.epsilon/skills`
+                // loaded by `/reload` even though startup had refused them.
+                // Extras come from the override-or-global dir (the hermeticity rule:
+                // a test override diverts every TUI config read, not just writes).
+                let extra_dir = self
+                    .config_dir_override
+                    .clone()
+                    .or_else(epsilon_core::config::global_dir);
+                let roots = epsilon_core::skills::all_roots_with_extra(
+                    &self.workspace_root,
+                    !self.trust_review_pending,
+                    &extra_dir
+                        .map(|d| epsilon_core::config::load_extra_skill_dirs_in(&d))
+                        .unwrap_or_default(),
+                );
                 let found = epsilon_core::skills::discover_with_notices(&roots);
                 let n = found.skills.len();
                 agent.set_skills(found.skills);

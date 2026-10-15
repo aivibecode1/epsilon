@@ -409,6 +409,55 @@ pub fn load_disabled_skills() -> Vec<String> {
         .unwrap_or_default()
 }
 
+/// Extra skill directories from `[skills] extra_dirs`, global config only.
+///
+/// DSH's `customSkillDirs` and Pi's `skillPaths`, as a config key rather than
+/// a CLI flag (both references configure it, neither passes it per-run).
+/// Relative entries resolve against the config dir holding them; blank entries
+/// are dropped. Missing or malformed values read as empty (fail-open reads):
+/// an absent directory is already silent-empty at discovery, so inventing an
+/// error here would refuse startups over a typo the scanner tolerates.
+///
+/// Global-only by design: these roots skip the project trust gate because the
+/// user wrote them into their own file. A repository cannot declare skill
+/// roots outside itself through this key (there is no project-level twin).
+pub fn load_extra_skill_dirs_in(config_dir: &Path) -> Vec<PathBuf> {
+    let path = config_dir.join("config.toml");
+    let Ok(raw) = std::fs::read_to_string(&path) else {
+        return Vec::new();
+    };
+    let Ok(table) = toml::from_str::<toml::Table>(&raw) else {
+        return Vec::new();
+    };
+    table
+        .get("skills")
+        .and_then(|s| s.get("extra_dirs"))
+        .and_then(|d| d.as_array())
+        .map(|a| {
+            a.iter()
+                .filter_map(|v| v.as_str())
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+                .map(|s| {
+                    let p = PathBuf::from(s);
+                    if p.is_absolute() {
+                        p
+                    } else {
+                        config_dir.join(p)
+                    }
+                })
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+/// [`load_extra_skill_dirs_in`] against the resolved global directory.
+pub fn load_extra_skill_dirs() -> Vec<PathBuf> {
+    global_dir()
+        .map(|d| load_extra_skill_dirs_in(&d))
+        .unwrap_or_default()
+}
+
 /// Switch a skill on or off, and report the NEW state.
 ///
 /// Mirrors [`toggle_favorite_model_in`] exactly -- read the file into a table,
@@ -1785,6 +1834,32 @@ fn an_oauth_value_is_trimmed() {
     let cfg = oauth_config_in(dir.path(), "anthropic");
     assert_eq!(cfg.client_id.as_deref(), Some("cid"));
     assert_eq!(cfg.enterprise_domain.as_deref(), Some("ghe.example.com"));
+}
+
+/// `[skills] extra_dirs`: absolute kept, relative joined to the config dir,
+/// blanks dropped, missing/malformed reads as empty (fail-open, like every
+/// reader here — discovery already treats an absent root as empty).
+#[test]
+fn extra_skill_dirs_read_absolute_relative_and_blank_shapes() {
+    let dir = tempfile::tempdir().unwrap();
+    // Absolute on every platform (a `/opt/...` literal is absolute on POSIX
+    // but root-relative on Windows, so the absolute case is built, not written).
+    let absolute = dir.path().join("abs-skills");
+    let toml = format!(
+        "[skills]\nextra_dirs = [{}, \"team/skills\", \"   \", 7]\n",
+        toml::Value::String(absolute.to_string_lossy().into_owned())
+    );
+    std::fs::write(dir.path().join("config.toml"), toml).unwrap();
+    assert_eq!(
+        load_extra_skill_dirs_in(dir.path()),
+        vec![absolute, dir.path().join("team/skills")],
+        "absolute kept, relative joined, blank and non-string dropped"
+    );
+
+    let empty = tempfile::tempdir().unwrap();
+    assert!(load_extra_skill_dirs_in(empty.path()).is_empty());
+    std::fs::write(dir.path().join("config.toml"), "not [ valid toml {{{{").unwrap();
+    assert!(load_extra_skill_dirs_in(dir.path()).is_empty());
 }
 
 /// Every `.rs` under `dir`, skipping build output.

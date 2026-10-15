@@ -991,7 +991,11 @@ pub fn skill_roots(workspace: &Path) -> Vec<PathBuf> {
 
 /// [`skill_roots`] with an explicit trust gate.
 pub fn skill_roots_trusted(workspace: &Path, project_trusted: bool) -> Vec<PathBuf> {
-    epsilon_core::skills::all_roots(workspace, project_trusted)
+    epsilon_core::skills::all_roots_with_extra(
+        workspace,
+        project_trusted,
+        &epsilon_core::config::load_extra_skill_dirs(),
+    )
 }
 
 /// Project skill roots this launch would scan, for the trust prompt to name.

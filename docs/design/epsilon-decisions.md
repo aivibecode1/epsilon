@@ -3486,3 +3486,30 @@ the agent (persist the flag beside the preset file), the plan layer grows
 non-deny rules (revisit the check-first order against the baked semantics
 it replaced), or the command registry gains a `Plan` variant (route
 through it and delete the pre-registry intercept).
+
+---
+
+## ADR-046: User-configured extra skill directories
+
+**Decided (round 52).** `[skills] extra_dirs` in the global config lists
+skill directories of the user's own, beyond the convention tables —
+DSH's `customSkillDirs` and Pi's `skillPaths`, as a config key rather than
+a CLI flag (both references configure it; neither passes it per-run, and a
+flag would make a standing preference an every-launch incantation).
+
+Scanned last, so explicit beats conventional in name collisions (DSH ranks
+custom dirs above both tiers for the same reason). Global-only: extras skip
+the project trust gate because the user wrote them into their own file, and
+there is deliberately no project-level twin — a repository must not declare
+skill roots outside itself. Relative entries resolve against the config dir;
+blank/malformed reads as empty (discovery already treats an absent root as
+empty, so erroring here would refuse startups over what the scanner tolerates).
+
+**Rejected.** A `--skill-dir` CLI flag (ephemeral; wrong shape for a standing
+list), and project-level `extra_dirs` (a repo pointing at arbitrary local
+paths is a trust hole dressed as a feature).
+
+**Revisit trigger.** A second harness convention needs covering that the
+family tables plus extras cannot express (revisit the tables first), or
+per-project skill scoping becomes a real request (revisit global-only with
+a trust story, not by copying the key).

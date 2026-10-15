@@ -196,6 +196,25 @@ pub fn all_roots(workspace: &Path, project_trusted: bool) -> Vec<PathBuf> {
     dedupe_roots(roots)
 }
 
+/// [`all_roots`] plus caller-supplied extra directories, appended last so they
+/// win name collisions (DSH ranks `customSkillDirs` above both tiers for the
+/// same reason: an explicitly configured directory outranks a convention).
+///
+/// The extras arrive as values, not as a config read, because only the caller
+/// knows which config file is in force — and in tests, no file at all. Pass
+/// [`crate::config::load_extra_skill_dirs`] (or the `_in` variant under test)
+/// in production. Extras skip the project trust gate like the user tier:
+/// they were written into the user's own config, not shipped by a repo.
+pub fn all_roots_with_extra(
+    workspace: &Path,
+    project_trusted: bool,
+    extra: &[PathBuf],
+) -> Vec<PathBuf> {
+    let mut roots = all_roots(workspace, project_trusted);
+    roots.extend(extra.iter().cloned());
+    dedupe_roots(roots)
+}
+
 /// One discovered skill.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Skill {
@@ -1487,6 +1506,45 @@ mod tests {
             &ws.join(".agents").join("skills"),
             "the portable alias must be last in the project tier: {roots:?}"
         );
+    }
+
+    /// Extra directories append last (so they win) and skip the trust gate.
+    ///
+    /// RED-first: extras are the user's own config, not a repo's — holding
+    /// them back for trust would ask permission to read what the user just
+    /// told this harness to read. And last place is the precedence DSH gives
+    /// `customSkillDirs`: explicit beats conventional.
+    #[test]
+    fn extra_skill_dirs_append_last_and_need_no_trust() {
+        let ws = Path::new("/work/repo");
+        let extra = PathBuf::from("/opt/shared/skills");
+        let trusted = all_roots_with_extra(ws, true, std::slice::from_ref(&extra));
+        let plain = all_roots(ws, true);
+        assert_eq!(
+            trusted.last().unwrap(),
+            &extra,
+            "an explicit directory outranks conventions: {trusted:?}"
+        );
+        assert_eq!(
+            trusted.len(),
+            plain.len() + 1,
+            "extras add, never replace: {trusted:?}"
+        );
+        // Untrusted: the project tier drops out, the extras stay — they came
+        // from the user's own file, not from the workspace under review.
+        let untrusted = all_roots_with_extra(ws, false, std::slice::from_ref(&extra));
+        assert!(
+            !untrusted.iter().any(|r| r.starts_with(ws)),
+            "no workspace root without trust: {untrusted:?}"
+        );
+        assert_eq!(
+            untrusted.last().unwrap(),
+            &extra,
+            "the user's own extra survives distrust: {untrusted:?}"
+        );
+        // A duplicate of a listed root dedupes instead of doubling.
+        let dup = all_roots_with_extra(ws, true, &plain[..1]);
+        assert_eq!(dup, plain, "an extra naming a known root changes nothing");
     }
 
     /// The user-tier root table, pinned the way the project tier is above.
