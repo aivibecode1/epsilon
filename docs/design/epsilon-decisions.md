@@ -3270,3 +3270,75 @@ reasoned heavily still shows one output number. Rendering it (header split,
 **Revisit trigger.** A provider bills thinking at a distinct rate (cost-on-output
 stops being true), or a wire reports the split OUTSIDE its output count (subset
 stops being true).
+
+## ADR-043: Reasoning-request shaping reads a catalog capability field, not model-id substrings
+
+**Status: accepted (Wave D, criterion 5, 2026-10-15).**
+
+**The problem.** `catalog.rs` states the M3 binding property — behavior selection
+reads capability fields, never id substrings — but reasoning-effort request shaping
+branched on id substrings in two wires: `openai_compat.rs` (`openrouter/`,
+`deepseek*`, `glm`/`zai/`, `kimi`, `o1`/`o3`/`o4`/`gpt-5`) and `mistral.rs`
+(`magistral-`, `mistral-small`/`mistral-medium`, `devstral-`). The OpenRouter branch
+was worse than a violation: it keyed on an `openrouter/` id prefix that no catalog
+row carries (OpenRouter rows are vendor-prefixed, e.g. `openai/gpt-5-mini`), so every
+OpenRouter row silently took the default branch and shipped the flat
+`reasoning_effort` knob instead of the nested `reasoning: { effort }` object pi
+sends. The other two flagged areas were assessed and left alone: `bedrock.rs`'s `eu.`
+prefix/ARN parse reads the id's region qualification (region routing, which canonical
+catalog rows cannot carry), and `github_copilot.rs`'s `/v1/messages` check probes the
+inner wire's endpoint (a capability), not the model id.
+
+**Decision: `pub reasoning_shape: ReasoningShape` on `ModelInfo`, assigned by a
+curated family table in the generator.**
+
+- *Enum, seven variants.* The branches differ in BODY SHAPE (`reasoning{effort}`,
+  `thinking`+`reasoning_effort`, `thinking`+`clear_thinking`+`reasoning_effort`,
+  conditional kimi, `reasoning_effort`, `prompt_mode`, `reasoning_effort`-on-Mistral),
+  so a bool cannot carry them. Variants: `StandardEffort`, `OpenRouterReasoning`,
+  `DeepSeekThinking`, `GlmThinking`, `MagistralPromptMode`, `MistralEffort`, `None`.
+- *Generator owns the data.* `reasoning_shape(prov, row_id)` in
+  `scripts/regen_catalog.py` is families-only (models.dev publishes no request shapes;
+  nothing per-model is invented): `openrouter` → `OpenRouterReasoning` keyed on
+  provider (the dead-branch fix); `deepseek` → `DeepSeekThinking` (keeping the
+  retired-`deepseek-chat` exception for fidelity); `zai` glm rows → `GlmThinking`;
+  `moonshot` `thinking`-named rows → `StandardEffort`, the rest → `None`; `mistral`
+  → prompt-mode/effort/`None` by prefix (keeping `None` for `labs-devstral-*`, which
+  the old `devstral-` prefix never matched). Everything unlisted → `StandardEffort`,
+  today's compat default branch byte for byte. The Mistral wire's miss fallback is
+  `None` (today it sends nothing for unknown ids there either).
+- *Wires match exhaustively.* Both mappers (`apply_thinking_for_shape`,
+  `apply_mistral_reasoning`) list every variant with no wildcard arm, so a new shape
+  fails to compile until both wires decide what it means on their protocol.
+- *Proven field-driven, RED-first.* `tests/reasoning_routing.rs` pins the M3 invariant
+  by source scan (fails on any new id-substring behavior branch in the four files;
+  Bedrock's two region lines are an explicit allowlist) and pins each family's bytes on
+  real catalog ids; unit tests route fixture rows whose field disagrees with their id's
+  history and watch the bytes follow the field.
+
+**Rejected.** (a) Bool flag — the shapes differ in body bytes, not in on/off; one bit
+routes Magistral to the wrong protocol. (b) Per-model table in code — the generator
+owns catalog data (DIRECTION-05 closure), so the table lives in `regen_catalog.py` and
+the committed rows carry the value; code never re-derives it from strings.
+
+**The behaviour change this records** (AGENTS.md §5): OpenRouter rows with thinking
+enabled now send the nested `reasoning: { effort }` object (were flat
+`reasoning_effort` via the never-firing prefix branch). All other families keep
+today's bytes, including unknown/custom ids (compat default branch) and unlisted
+Mistral ids (silence). Bedrock/Copilot request bytes are unchanged.
+
+**Deferred, priced rather than hidden:** the live models.dev refresh is deferred —
+the fetch fails from this environment (SSL verification error; a 403 happened before,
+and the script already fails clean without touching the committed file) — so the field
+was backfilled onto the current 2026-09-21 rows with the generator's own mapping
+(557/557 recompute-clean) and no row set, date, or pin moved. Deprecation marker:
+models.dev rows carry no usable deprecation signal in what the generator parses, and
+the picker has no deprecation surface (no `deprecat*` anywhere in the crates) —
+recorded, no UI built. Long-context prices: models.dev publishes no per-row
+long-context price keys consumed anywhere in the pipeline — recorded as unavailable,
+not invented.
+
+**Revisit trigger.** models.dev publishes request shapes per row (replace the family
+table with registry data), a provider changes a family's shape, or a third wire needs
+family-dependent request bytes (extend the enum — the exhaustive matches point at both
+call sites).

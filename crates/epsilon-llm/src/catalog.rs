@@ -13,7 +13,8 @@
 //!
 //! Binding property since M3: behavior selection reads *capability fields*, never id
 //! substrings (anti-pattern from opencode, see comparative-analysis §4). Routing reads
-//! `wire`; nothing string-matches model families.
+//! `wire`; reasoning-request shaping reads `reasoning_shape` (Wave D); nothing
+//! string-matches model families.
 
 mod catalog_data;
 
@@ -144,6 +145,40 @@ const fn mistral_conversations(base_url: &'static str, env_key: Option<&'static 
     WireApi::MistralConversations { base_url, env_key }
 }
 
+/// Which reasoning-request body shape a model takes (Wave D capability field).
+///
+/// models.dev does not publish request shapes, so the generator assigns these
+/// from a curated, reviewed family table
+/// (`scripts/regen_catalog.py::reasoning_shape`) — families only, never
+/// per-model invention. The OpenAI-compat and Mistral wires match on this
+/// field exhaustively (no wildcard arm), so adding a variant fails to compile
+/// until both wires decide what it means on their protocol.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ReasoningShape {
+    /// Plain `reasoning_effort`. Also the fallback for unlisted rows and for
+    /// unknown/custom ids: today's compat default branch, byte for byte.
+    /// Wires that never read this field ignore it.
+    StandardEffort,
+    /// OpenRouter's nested `reasoning: { effort }`.
+    OpenRouterReasoning,
+    /// DeepSeek reasoning rows: `thinking: { type: "enabled" }` plus effort.
+    DeepSeekThinking,
+    /// Z.ai GLM rows: `thinking: { type: "enabled", clear_thinking: false }`
+    /// plus effort.
+    GlmThinking,
+    /// Magistral rows (Mistral wire only): `prompt_mode: "reasoning"`. The
+    /// compat wire sends no knob for this shape — the Mistral wire owns it.
+    MagistralPromptMode,
+    /// Mistral small/medium/devstral rows: `reasoning_effort` (the same key
+    /// the compat wire uses; the Mistral wire re-emits it through its own
+    /// ladder mapping).
+    MistralEffort,
+    /// No reasoning knob even when thinking is enabled (chat-only rows such
+    /// as non-thinking Kimi and Mistral large). Also the Mistral wire's
+    /// fallback for unknown ids — today it sends nothing there either.
+    None,
+}
+
 /// Static description of one model.
 #[derive(Debug, Clone)]
 pub struct ModelInfo {
@@ -176,6 +211,11 @@ pub struct ModelInfo {
     pub env_key: &'static str,
     /// Wire format + endpoint family this model speaks (pi's `model.api`).
     pub wire: WireApi,
+    /// Reasoning-request body shape for this row (Wave D capability field).
+    /// Read by the OpenAI-compat and Mistral wires instead of
+    /// string-matching the model id (M3 binding property); every other wire
+    /// ignores it.
+    pub reasoning_shape: ReasoningShape,
 }
 
 use catalog_data::CATALOG_ROWS as MODELS;
@@ -217,6 +257,16 @@ fn by_id() -> &'static std::collections::HashMap<&'static str, &'static ModelInf
 /// Look up a model by exact catalog id.
 pub fn lookup_model(id: &str) -> Option<&'static ModelInfo> {
     by_id().get(id).copied()
+}
+
+/// The reasoning-request shape for a request-time model id: the row's
+/// capability field when the id is catalogued, `None` otherwise. Each wire
+/// substitutes its own default for the miss — compat keeps today's default
+/// branch (`StandardEffort`), Mistral keeps today's silence (`None`) — so
+/// unknown/custom models behave exactly as they did before this field
+/// existed (documented, not silently changed).
+pub fn reasoning_shape_for(model_id: &str) -> Option<ReasoningShape> {
+    lookup_model(model_id).map(|m| m.reasoning_shape)
 }
 
 /// First bundled row for `provider` (P-063: the model a fresh login selects).
@@ -1429,5 +1479,88 @@ mod tests {
             None,
             "the marker selects the ambient chain; it is not a key"
         );
+    }
+
+    /// Wave D: every row carries the reasoning-request shape its wire reads,
+    /// assigned by the generator's family table (`scripts/regen_catalog.py::
+    /// reasoning_shape`). Spot-checks pin each family; the structural guard
+    /// below means a refresh cannot silently widen a provider's shape set
+    /// (the generator and the data are reviewed together or not at all).
+    #[test]
+    fn reasoning_shapes_follow_the_family_table() {
+        use ReasoningShape as S;
+        assert_eq!(
+            lookup_model("openai/gpt-5-mini").map(|m| m.reasoning_shape),
+            Some(S::OpenRouterReasoning),
+            "openrouter rows nest the effort, keyed on provider"
+        );
+        assert_eq!(
+            lookup_model("deepseek-v4-pro").map(|m| m.reasoning_shape),
+            Some(S::DeepSeekThinking)
+        );
+        assert_eq!(
+            lookup_model("glm-5.2").map(|m| m.reasoning_shape),
+            Some(S::GlmThinking)
+        );
+        assert_eq!(
+            lookup_model("kimi-k2.6").map(|m| m.reasoning_shape),
+            Some(S::None),
+            "non-thinking kimi sends no knob"
+        );
+        assert_eq!(
+            lookup_model("magistral-medium-latest").map(|m| m.reasoning_shape),
+            Some(S::MagistralPromptMode)
+        );
+        assert_eq!(
+            lookup_model("mistral-small-2603").map(|m| m.reasoning_shape),
+            Some(S::MistralEffort)
+        );
+        assert_eq!(
+            lookup_model("mistral-large-latest").map(|m| m.reasoning_shape),
+            Some(S::None)
+        );
+        assert_eq!(
+            lookup_model("github-copilot/gpt-5.4").map(|m| m.reasoning_shape),
+            Some(S::StandardEffort)
+        );
+        assert_eq!(
+            lookup_model("faux-1").map(|m| m.reasoning_shape),
+            Some(S::StandardEffort)
+        );
+        assert_eq!(
+            lookup_model("llama3.1:8b").map(|m| m.reasoning_shape),
+            Some(S::StandardEffort),
+            "local rows ride the compat wire's default branch"
+        );
+        for m in MODELS {
+            match m.provider {
+                "openrouter" => assert_eq!(m.reasoning_shape, S::OpenRouterReasoning, "{}", m.id),
+                "mistral" => assert!(
+                    matches!(
+                        m.reasoning_shape,
+                        S::MagistralPromptMode | S::MistralEffort | S::None
+                    ),
+                    "{}",
+                    m.id
+                ),
+                "moonshot" => assert!(
+                    matches!(m.reasoning_shape, S::StandardEffort | S::None),
+                    "{}",
+                    m.id
+                ),
+                "deepseek" => assert!(
+                    matches!(m.reasoning_shape, S::DeepSeekThinking | S::StandardEffort),
+                    "{}",
+                    m.id
+                ),
+                "zai" => assert!(
+                    matches!(m.reasoning_shape, S::GlmThinking | S::StandardEffort),
+                    "{}",
+                    m.id
+                ),
+                _ => assert_eq!(m.reasoning_shape, S::StandardEffort, "{}", m.id),
+            }
+        }
+        assert_eq!(reasoning_shape_for("definitely-not-a-model-id"), None);
     }
 }

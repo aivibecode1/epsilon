@@ -186,7 +186,9 @@ impl ProviderWire for CopilotWire {
             out.push(("Authorization".to_string(), format!("Bearer {key}")));
         }
         // Anthropic rows still speak the Messages protocol, which requires the
-        // version header even behind the proxy.
+        // version header even behind the proxy. Wave D note: this probes the
+        // INNER WIRE's endpoint (a capability), never the model id — there is
+        // no id-substring branch in this file for the scan test to flag.
         if self.path("<model>").starts_with("/v1/messages") {
             out.push(("anthropic-version".to_string(), "2023-06-01".to_string()));
         }

@@ -14,9 +14,9 @@ Last updated: 2026-10-12 (revised goal: desktop removed, TUI-as-IDE; Phase 1 in 
 
 **Scoreboard at 2026-10-15:** Pi matrix `docs/parity/pi-tui.md` — **339 rows: 91 done / 110 partial / 0 missing / 138 deliberately different** (`check-parity-counts` green). Every `missing` row is gone; the partials are half-built behaviours with their live halves named. Dated "Counts now …" rows in the phase log below are historical records of their day, not the current total.
 
-**Verification verdict, 2026-10-15: `gate-round5-20261015` GATE PASS — 14/14 legs, 2,191 passed / 0 failed / 15 ignored across 73 test binaries** (`audit/evidence/gate-round5-20261015.log`; debug info off, `CARGO_BUILD_JOBS=1`; hermetic: fake `HOME=%TEMP%\epsilon-fakehome-20261015`). Count unchanged from round4 (2,191): behavior-preserving change, zero new tests. The previous verdict line (`gate-production-20261015-c`, 15 legs, 2,144) is kept as history below; legs are 14 since the unlock removed the lock leg.
+**Verification verdict, 2026-10-15: `gate-round6-20261015` GATE PASS — 14/14 legs, 2,208 passed / 0 failed / 15 ignored across 74 test binaries** (`audit/evidence/gate-round6-20261015.log`; debug info off, `CARGO_BUILD_JOBS=1`; hermetic: fake `HOME=%TEMP%\epsilon-fakehome-20261015`). Reconciled against `gate-round5-20261015` (2,191 across 73): +17 = the Wave-D routing tests (11 in the new `reasoning_routing` binary + 6 wire/catalog unit tests). The previous verdict line (`gate-production-20261015-c`, 15 legs, 2,144) is kept as history below; legs are 14 since the unlock removed the lock leg.
 
-**Attempt history for this round, kept because a failed attempt is evidence too.** `gate-production-20261015-c` GATE PASS — 15/15 legs, 2,144 passed / 0 failed / 15 ignored across 73 test binaries (`audit/evidence/gate-production-20261015-c.log`, sha `fc65c89e895b214a`; debug info off, `CARGO_BUILD_JOBS=1`). The shipped binary was reinstalled from the proved bytes and driven in a real console (`scripts/console-probe.py`): the window does not shrink (80×24 before and after), the frame renders with today's polish, and typed keys land in the composer (`❯ explain the layout module`). Probe JSON preserved at `audit/evidence/console-probe-{,-typed-}production-20261015.json`. `gate-production-20261015` was killed by the harness's 420 s foreground cap at the demo leg (partial log kept). `gate-production-20261015-b` GATE FAIL on exactly the two `epsilon-tools` wall-clock tests the repo's own notes call load-sensitive (`a_normal_command_reports_complete_output_immediately` at 6.6 s against a 4 s bound, `a_descendant_holding_the_pipe_does_not_hang_the_call`) — both pass in isolation on an idle machine (1.5 s and 16 s), the disk was at 30 GB free after ten hours of builds, and after clearing the build cache (target 13 GB → 6 MB, disk 42 GB free) the same suite passed inside the battery. The disposition is environmental load, and the logs for both attempts are kept rather than only the green one. `gate-wave20-20261015` FAIL discarded as poisoned evidence (ran concurrent with edits; E0425 on a tree that never existed whole). `gate-round1-20261015` FAIL discarded as machine fault (transient fingerprint `os error 3` on two legs + wedged demo, killed to free the machine). `gate-round1b-20261015` FAIL kept as the diagnostic: `test` 761+9 in `epsilon-tui --lib`, all 9 frame tests asserting Unicode widths under an ASCII-yielding runner env — the finding that produced the glyph pins below. `gate-round2-20261015` GATE PASS (14/14, 2,176/0/15, hermetic fake-HOME) covering Wave 20 + D4/D5 + doc drifts + glyph pins. `gate-round3-20261015` GATE PASS (14/14, 2,178/0/15, hermetic) covering the audit-backlog honesty batch. `gate-round4-20261015` GATE PASS (14/14, 2,191/0/15, hermetic) covering Wave C — superseded by round5 below.
+**Attempt history for this round, kept because a failed attempt is evidence too.** `gate-production-20261015-c` GATE PASS — 15/15 legs, 2,144 passed / 0 failed / 15 ignored across 73 test binaries (`audit/evidence/gate-production-20261015-c.log`, sha `fc65c89e895b214a`; debug info off, `CARGO_BUILD_JOBS=1`). The shipped binary was reinstalled from the proved bytes and driven in a real console (`scripts/console-probe.py`): the window does not shrink (80×24 before and after), the frame renders with today's polish, and typed keys land in the composer (`❯ explain the layout module`). Probe JSON preserved at `audit/evidence/console-probe-{,-typed-}production-20261015.json`. `gate-production-20261015` was killed by the harness's 420 s foreground cap at the demo leg (partial log kept). `gate-production-20261015-b` GATE FAIL on exactly the two `epsilon-tools` wall-clock tests the repo's own notes call load-sensitive (`a_normal_command_reports_complete_output_immediately` at 6.6 s against a 4 s bound, `a_descendant_holding_the_pipe_does_not_hang_the_call`) — both pass in isolation on an idle machine (1.5 s and 16 s), the disk was at 30 GB free after ten hours of builds, and after clearing the build cache (target 13 GB → 6 MB, disk 42 GB free) the same suite passed inside the battery. The disposition is environmental load, and the logs for both attempts are kept rather than only the green one. `gate-wave20-20261015` FAIL discarded as poisoned evidence (ran concurrent with edits; E0425 on a tree that never existed whole). `gate-round1-20261015` FAIL discarded as machine fault (transient fingerprint `os error 3` on two legs + wedged demo, killed to free the machine). `gate-round1b-20261015` FAIL kept as the diagnostic: `test` 761+9 in `epsilon-tui --lib`, all 9 frame tests asserting Unicode widths under an ASCII-yielding runner env — the finding that produced the glyph pins below. `gate-round2-20261015` GATE PASS (14/14, 2,176/0/15, hermetic fake-HOME) covering Wave 20 + D4/D5 + doc drifts + glyph pins. `gate-round3-20261015` GATE PASS (14/14, 2,178/0/15, hermetic) covering the audit-backlog honesty batch. `gate-round4-20261015` GATE PASS (14/14, 2,191/0/15, hermetic) covering Wave C. `gate-round5-20261015` GATE PASS (14/14, 2,191/0/15, hermetic) covering test hermeticity — superseded by round6 below.
 
 ### 2026-10-14 production-readiness session — landed so far
 
@@ -179,6 +179,18 @@ filed with provenance headers, audit/history/15-17), and the fourth was verified
   as runs — the pre-battery focused suites re-polluted ambient favorites the hermetic
   battery then could not have touched, and the file was restored byte-identical from
   the hash-verified backup a second time.
+- **`round6 (2026-10-15)`** — LANDED, green battery above (14/14, 2,208/0/15, hermetic
+  fake-HOME; +17 over round5: 11 in the new `reasoning_routing` binary + 6 wire/catalog
+  unit tests): Wave D capability routing (`ModelInfo.reasoning_shape` enum, 7 variants,
+  curated family table in the generator, all 557 rows backfilled insertions-only); the 4
+  id-substring branches are gone, replaced by exhaustive shape matches (a new variant
+  fails to compile until both wires decide); bedrock/copilot assessed as non-violations
+  with pinning comments. One intended behavior change, recorded in ADR-043: OpenRouter
+  rows now nest `reasoning:{effort}` (the old prefix branch never fired — no real row
+  carries it); uncatalogued ids keep the old default branch. Delegated with the
+  violation sites evidenced; integrator verified the generator table against old
+  behavior family-by-family, the magistral-wire routing, the `openai/gpt-5-mini`
+  fixture row (a real openrouter-registry id), and the `short_model` removal.
 - **`round5 (2026-10-15)`** — LANDED, green battery above (14/14, 2,191/0/15, hermetic
   fake-HOME; count unchanged — behavior-preserving by construction). Closes the
   ambient-writer hunt: every TUI write path now respects `config_dir_override`
@@ -226,16 +238,12 @@ filed with provenance headers, audit/history/15-17), and the fourth was verified
   `audit/evidence/gate-round2-20261015.log`. Real user config never touched by the
   battery (hash-verified before and after); the pre-battery suite runs that did touch
   it were restored byte-identical from a hash-verified backup.
-  Still queued behind Wave 20: Wave C (criterion 6 — the Gemini
-  `thoughtsTokenCount` under-count: pi maps output as candidates + thoughts and we
-  dropped every thought token; the fix adds a `reasoning_tokens` bucket to the `Usage`
-  contract, key-presence driven like `cache_reported`, mapped across the
-  Gemini/completions/Responses/Anthropic parsers and rendered only when a provider
-  reported it). Queued behind it: Wave D (criterion 5 — `ModelInfo`
-  capability/deprecation/long-context price fields against the module's own violated
-  invariant), then the `changes` panel (audit/history/18 ranked it first). The G1 skills
-  test (the untested user-tier root table) lands with the first crate-touching change
-  after Wave C.
+  Still queued: Wave D in flight (criterion 5 — `ModelInfo` capability fields against
+  the module's own violated M3 invariant; delegated with the four substring sites
+  evidenced). Behind it: the question tool + plan-mode discoverability (audit 18's
+  `changes`-panel item is done — `/changes` command, panel, and tests landed in
+  wave-19, so the queue reference is retired here, not carried). The G1 skills test
+  (the untested user-tier root table) lands with the next crate-touching change.
 
 Revised goal (2026-10-12): remove the desktop frontend and focus on core solidity,
 docs/navigability, and an opencode-style full-screen TUI (tree + editor + agent, mouse,

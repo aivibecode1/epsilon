@@ -212,19 +212,19 @@ fn openai_compat_reasoning_effort_by_family() {
         base_url: "https://api.openai.com/v1".to_string(),
         env_key: None,
     };
-    // OpenAI-style family.
+    // OpenAI-style family (catalog row, standard knob).
     let gpt = w
         .request_body("gpt-5.6", &thinking_ctx(ThinkingLevel::XHigh))
         .unwrap();
     assert_eq!(gpt["reasoning_effort"], "xhigh");
-    // OpenRouter nested object.
+    // OpenRouter rows nest the effort — keyed on the row's provider, not an
+    // `openrouter/` id prefix (Wave D: no catalog row carries that prefix,
+    // so the old substring branch never fired for real traffic).
     let or = w
-        .request_body(
-            "openrouter/anthropic/claude-opus-5",
-            &thinking_ctx(ThinkingLevel::Medium),
-        )
+        .request_body("openai/gpt-5-mini", &thinking_ctx(ThinkingLevel::Medium))
         .unwrap();
     assert_eq!(or["reasoning"]["effort"], "medium");
+    assert!(or.get("reasoning_effort").is_none(), "{or}");
     // Off omits everything.
     let off = w
         .request_body("gpt-5.6", &thinking_ctx(ThinkingLevel::Off))
@@ -232,18 +232,21 @@ fn openai_compat_reasoning_effort_by_family() {
     assert!(off.get("reasoning_effort").is_none());
     assert!(off.get("reasoning").is_none());
 
-    // DeepSeek reasoning rows: switch + effort; plain deepseek-chat stays clean.
+    // DeepSeek reasoning rows: switch + effort. Uncatalogued ids (the old
+    // bare `deepseek-chat` included — the registry retired that row) take
+    // the default branch: the flat knob, no switch.
     let ds = w
-        .request_body("deepseek-reasoner", &thinking_ctx(ThinkingLevel::High))
+        .request_body("deepseek-v4-pro", &thinking_ctx(ThinkingLevel::High))
         .unwrap();
     assert_eq!(ds["thinking"]["type"], "enabled");
     assert_eq!(ds["reasoning_effort"], "high");
     let ds_chat = w
         .request_body("deepseek-chat", &thinking_ctx(ThinkingLevel::High))
         .unwrap();
+    assert_eq!(ds_chat["reasoning_effort"], "high");
     assert!(
         ds_chat.get("thinking").is_none(),
-        "deepseek-chat must not take the thinking switch"
+        "uncatalogued ids must not take the thinking switch"
     );
 
     // Z.ai GLM family: enable + clear_thinking=false + effort.
@@ -254,11 +257,15 @@ fn openai_compat_reasoning_effort_by_family() {
     assert_eq!(glm["thinking"]["clear_thinking"], false);
     assert_eq!(glm["reasoning_effort"], "medium");
 
-    // kimi-thinking rows take effort; plain kimi rows ignore it harmlessly.
+    // Kimi thinking rows arm the knob (nested, via their OpenRouter row);
+    // plain native kimi rows stay clean.
     let kimi_t = w
-        .request_body("kimi-thinking", &thinking_ctx(ThinkingLevel::Low))
+        .request_body(
+            "moonshotai/kimi-k2-thinking",
+            &thinking_ctx(ThinkingLevel::Low),
+        )
         .unwrap();
-    assert_eq!(kimi_t["reasoning_effort"], "low");
+    assert_eq!(kimi_t["reasoning"]["effort"], "low");
     let kimi_plain = w
         .request_body("kimi-k3", &thinking_ctx(ThinkingLevel::Low))
         .unwrap();
@@ -266,6 +273,7 @@ fn openai_compat_reasoning_effort_by_family() {
         kimi_plain.get("reasoning_effort").is_none(),
         "non-thinking kimi rows must not carry the knob"
     );
+    assert!(kimi_plain.get("reasoning").is_none(), "{kimi_plain}");
 }
 
 #[test]

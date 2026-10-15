@@ -63,6 +63,12 @@ impl BedrockConverseWire {
     /// Region for a model id: `eu.` prefix → eu-central-1, else us-east-1
     /// (pi `getBedrockBaseUrl`; ARN regions are extracted by the caller —
     /// see `region_from_arn`).
+    ///
+    /// Wave D note: this reads the id's region QUALIFICATION, not its model
+    /// family — region routing, which catalog rows (canonical, unqualified
+    /// ids) cannot carry. It is deliberately not a `reasoning_shape`-style
+    /// capability field, and the reasoning-routing scan test allowlists these
+    /// two lines so a new family branch cannot hide beside them.
     pub fn default_region_for(model_id: &str) -> &'static str {
         if model_id.starts_with("eu.") {
             "eu-central-1"

@@ -256,10 +256,9 @@ impl ProviderWire for OpenAiCompatWire {
 
 /// Apply the shared thinking ladder to an OpenAI-compatible request body
 /// (pi openai-completions.ts:747-840, reduced to the families our catalog
-/// actually routes): OpenAI-style `reasoning_effort` for gpt/o-series/xai,
-/// nested `reasoning.effort` for OpenRouter, `enable_thinking` for zai,
-/// `thinking.type` for deepseek. Unknown ids get plain `reasoning_effort`
-/// only when the level is on; `Off` sends nothing (API defaults are off).
+/// actually routes). Wave D: the shape comes from the catalog row's
+/// `reasoning_shape` capability field, never from id substrings. Unknown or
+/// custom ids take `StandardEffort` — today's default branch, byte for byte.
 fn apply_thinking(
     body: &mut serde_json::Value,
     model: &str,
@@ -268,30 +267,47 @@ fn apply_thinking(
     if !level.enabled() {
         return;
     }
+    let shape = crate::catalog::reasoning_shape_for(model)
+        .unwrap_or(crate::catalog::ReasoningShape::StandardEffort);
+    apply_thinking_for_shape(body, shape, level);
+}
+
+/// Shape → body bytes. Exhaustive on purpose (no wildcard arm): adding a
+/// `ReasoningShape` variant fails to compile until both this wire and the
+/// Mistral wire decide what it means on their protocol.
+fn apply_thinking_for_shape(
+    body: &mut serde_json::Value,
+    shape: crate::catalog::ReasoningShape,
+    level: epsilon_contracts::ThinkingLevel,
+) {
+    use crate::catalog::ReasoningShape as S;
+    if !level.enabled() {
+        return;
+    }
     let effort = effort_str(level);
-    if model.starts_with("openrouter/") || model.contains("/openrouter/") {
-        body["reasoning"] = json!({ "effort": effort });
-    } else if model.starts_with("deepseek") && model != "deepseek-chat" {
-        // deepseek-reasoner / v4 reasoning rows take a thinking switch + effort.
-        body["thinking"] = json!({"type": "enabled"});
-        body["reasoning_effort"] = json!(effort);
-    } else if model.starts_with("glm") || model.starts_with("zai/") {
-        // Z.ai GLM family: explicit enable + effort.
-        body["thinking"] = json!({"type": "enabled", "clear_thinking": false});
-        body["reasoning_effort"] = json!(effort);
-    } else if model.starts_with("kimi") {
-        // Moonshot kimi-thinking rows honor effort; others ignore it harmlessly.
-        if model.contains("thinking") {
+    match shape {
+        S::None => {}
+        S::StandardEffort | S::MistralEffort => {
             body["reasoning_effort"] = json!(effort);
         }
-    } else if ["o1", "o3", "o4"].iter().any(|p| model.starts_with(p)) || model.starts_with("gpt-5")
-    {
-        body["reasoning_effort"] = json!(effort);
-    } else {
-        // Unknown/other compat models: send the standard knob when enabled;
-        // providers that lack it reject loudly rather than silently misroute
-        // (same posture as pi's default branch).
-        body["reasoning_effort"] = json!(effort);
+        S::OpenRouterReasoning => {
+            body["reasoning"] = json!({ "effort": effort });
+        }
+        S::DeepSeekThinking => {
+            // deepseek-reasoner / v4 reasoning rows take a thinking switch + effort.
+            body["thinking"] = json!({"type": "enabled"});
+            body["reasoning_effort"] = json!(effort);
+        }
+        S::GlmThinking => {
+            // Z.ai GLM family: explicit enable + effort.
+            body["thinking"] = json!({"type": "enabled", "clear_thinking": false});
+            body["reasoning_effort"] = json!(effort);
+        }
+        // The Mistral wire owns this shape (`prompt_mode`); the compat
+        // protocol has no knob for it. Unreachable via `wire_for`
+        // (magistral rows ride the Mistral wire), so silence is the safe
+        // answer rather than a guessed knob.
+        S::MagistralPromptMode => {}
     }
 }
 
@@ -312,6 +328,7 @@ fn effort_str(level: epsilon_contracts::ThinkingLevel) -> &'static str {
 mod tests {
     use super::*;
     use crate::LlmContext;
+    use crate::catalog::ReasoningShape;
     use epsilon_contracts::content::{ContentBlock, UserContent};
     use epsilon_contracts::message::{Message, ToolResultMessage, UserMessage};
     use epsilon_contracts::new_id;
@@ -404,5 +421,109 @@ mod tests {
         // And the tool ids ride in order.
         assert_eq!(body["messages"][3]["tool_call_id"], "tc_1");
         assert_eq!(body["messages"][5]["tool_call_id"], "tc_2");
+    }
+
+    fn fixture_row(id: &'static str, shape: ReasoningShape) -> crate::catalog::ModelInfo {
+        crate::catalog::ModelInfo {
+            id,
+            provider: "fixture",
+            label: "fixture",
+            context_window: 1,
+            max_output_tokens: 1,
+            input_cost_micro_per_mtok: 0,
+            output_cost_micro_per_mtok: 0,
+            cache_read_cost_micro_per_mtok: 0,
+            cache_write_cost_micro_per_mtok: 0,
+            supports_tools: true,
+            env_key: "",
+            wire: crate::catalog::WireApi::AnthropicMessages,
+            reasoning_shape: shape,
+        }
+    }
+
+    fn shaped_body(
+        shape: ReasoningShape,
+        level: epsilon_contracts::ThinkingLevel,
+    ) -> serde_json::Value {
+        let mut body = serde_json::json!({});
+        apply_thinking_for_shape(&mut body, shape, level);
+        body
+    }
+
+    /// The bytes follow the FIELD, not the id: two fixture rows with
+    /// history-shaped ids but swapped fields route by field — including the
+    /// direction history never produced (a deepseek id sending the plain
+    /// knob, a magistral id sending deepseek bytes). The mapper never sees
+    /// the id at all; lookup-then-map composition is pinned by
+    /// `tests/reasoning_routing.rs` on real catalog ids.
+    #[test]
+    fn routing_follows_the_field_not_the_id() {
+        use epsilon_contracts::ThinkingLevel as T;
+        let row = fixture_row("deepseek-v4-pro", ReasoningShape::StandardEffort);
+        let mut body = serde_json::json!({});
+        apply_thinking_for_shape(&mut body, row.reasoning_shape, T::High);
+        assert_eq!(body["reasoning_effort"], "high");
+        assert!(body.get("thinking").is_none(), "{body}");
+
+        let row = fixture_row("magistral-medium-latest", ReasoningShape::DeepSeekThinking);
+        let mut body = serde_json::json!({});
+        apply_thinking_for_shape(&mut body, row.reasoning_shape, T::High);
+        assert_eq!(body["thinking"]["type"], "enabled");
+        assert_eq!(body["reasoning_effort"], "high");
+    }
+
+    /// Every variant maps to its documented bytes; `Off` silences all of them.
+    #[test]
+    fn every_shape_maps_to_its_documented_bytes() {
+        use epsilon_contracts::ThinkingLevel as T;
+        let std = shaped_body(ReasoningShape::StandardEffort, T::Medium);
+        assert_eq!(std["reasoning_effort"], "medium");
+        let mistral = shaped_body(ReasoningShape::MistralEffort, T::Medium);
+        assert_eq!(mistral["reasoning_effort"], "medium");
+        let or = shaped_body(ReasoningShape::OpenRouterReasoning, T::Medium);
+        assert_eq!(or["reasoning"]["effort"], "medium");
+        assert!(or.get("reasoning_effort").is_none(), "{or}");
+        let ds = shaped_body(ReasoningShape::DeepSeekThinking, T::Low);
+        assert_eq!(ds["thinking"]["type"], "enabled");
+        assert_eq!(ds["reasoning_effort"], "low");
+        let glm = shaped_body(ReasoningShape::GlmThinking, T::Low);
+        assert_eq!(glm["thinking"]["clear_thinking"], false);
+        assert_eq!(glm["reasoning_effort"], "low");
+        for shape in [ReasoningShape::None, ReasoningShape::MagistralPromptMode] {
+            let quiet = shaped_body(shape, T::High);
+            assert!(
+                quiet.as_object().is_some_and(|o| o.is_empty()),
+                "{shape:?}: {quiet}"
+            );
+        }
+        for shape in [
+            ReasoningShape::StandardEffort,
+            ReasoningShape::OpenRouterReasoning,
+            ReasoningShape::DeepSeekThinking,
+            ReasoningShape::GlmThinking,
+            ReasoningShape::MistralEffort,
+            ReasoningShape::MagistralPromptMode,
+            ReasoningShape::None,
+        ] {
+            let off = shaped_body(shape, T::Off);
+            assert!(
+                off.as_object().is_some_and(|o| o.is_empty()),
+                "{shape:?}: {off}"
+            );
+        }
+    }
+
+    /// Unknown/custom ids take the default branch (today's bytes, preserved).
+    #[test]
+    fn unknown_ids_take_the_default_branch() {
+        let mut body = serde_json::json!({});
+        apply_thinking(
+            &mut body,
+            "totally-unknown-model",
+            epsilon_contracts::ThinkingLevel::Medium,
+        );
+        assert_eq!(body["reasoning_effort"], "medium");
+        assert!(body.get("reasoning").is_none(), "{body}");
+        assert!(body.get("thinking").is_none(), "{body}");
     }
 }

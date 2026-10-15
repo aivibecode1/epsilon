@@ -102,6 +102,7 @@ FAUX_ROW = """\
         supports_tools: true,
         env_key: "",
         wire: super::FAUX_WIRE,
+        reasoning_shape: super::ReasoningShape::StandardEffort,
     },"""
 
 OLLAMA_ROWS = """\
@@ -119,6 +120,7 @@ OLLAMA_ROWS = """\
         supports_tools: false,
         env_key: "",
         wire: super::OLLAMA_WIRE,
+        reasoning_shape: super::ReasoningShape::StandardEffort,
     },
     ModelInfo {
         id: "qwen3:14b",
@@ -133,6 +135,7 @@ OLLAMA_ROWS = """\
         supports_tools: false,
         env_key: "",
         wire: super::OLLAMA_WIRE,
+        reasoning_shape: super::ReasoningShape::StandardEffort,
     },"""
 
 
@@ -272,6 +275,41 @@ def rust_int(n):
     return f"{n:_}"
 
 
+# Wave D (criterion 5): reasoning-request body shape per catalog row.
+#
+# models.dev does not publish request shapes, so this is a curated, reviewed
+# family table — families only, never per-model invention. It mirrors the
+# substring branches `apply_thinking` used to carry in
+# crates/epsilon-llm/src/providers/openai_compat.rs (openrouter/, deepseek*,
+# glm/zai/, kimi, o-series/gpt-5) and the Mistral wire (magistral-,
+# mistral-small/medium, devstral-), with two deliberate fixes decided in the
+# Wave D ADR amendment: the openrouter branch keyed on an `openrouter/` id
+# prefix that no catalog row carries (dead — every OpenRouter row silently
+# took the default branch), so the table keys on the provider instead; the
+# o-series/gpt-5 compat shape IS the default branch, so it needs no rule.
+# Unlisted providers fall through to StandardEffort (today's default branch,
+# byte for byte); unlisted Mistral rows fall to None (today the wire sends
+# nothing there either — including `labs-devstral-*`, which the old
+# `devstral-` prefix never matched).
+def reasoning_shape(prov, row_id):
+    bare = row_id.split("/", 1)[1] if "/" in row_id else row_id
+    if prov == "openrouter":
+        return "OpenRouterReasoning"
+    if prov == "deepseek":
+        return "StandardEffort" if bare == "deepseek-chat" else "DeepSeekThinking"
+    if prov == "zai":
+        return "GlmThinking" if bare.startswith("glm") else "StandardEffort"
+    if prov == "moonshot":
+        return "StandardEffort" if "thinking" in bare else "None"
+    if prov == "mistral":
+        if bare.startswith("magistral-"):
+            return "MagistralPromptMode"
+        if bare.startswith(("mistral-small", "mistral-medium", "devstral-")):
+            return "MistralEffort"
+        return "None"
+    return "StandardEffort"
+
+
 ENV_BY_PROVIDER = {pid: env for (_reg, (pid, env, _base)) in PROVIDERS.items()}
 PROVIDER_BY_PID = {pid: reg for (reg, (pid, _env, _base)) in PROVIDERS.items()}
 
@@ -339,6 +377,7 @@ def emit_row(r):
         "        supports_tools: true,\n"
         f"        env_key: \"{ENV_BY_PROVIDER[r['prov']]}\",\n"
         f"        wire: {wire_expr(r['prov'], r['id'])},\n"
+        f"        reasoning_shape: super::ReasoningShape::{reasoning_shape(r['prov'], r['id'])},\n"
         "    },"
     )
 

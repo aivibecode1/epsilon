@@ -82,22 +82,20 @@ impl ProviderWire for MistralConversationsWire {
         };
         let mut body = helper.request_body(model, ctx)?;
 
-        // Delta 3: reasoning routing. pi keys off the catalog row
-        // (`model.reasoning`, `thinkingLevelMap`, small/medium id list); here
-        // the row's capability is `ctx.thinking_level` plus the model id.
+        // Delta 3: reasoning routing. Wave D: the catalog row's
+        // `reasoning_shape` decides (M3 binding property) — pi keys off its
+        // row too (`model.reasoning`, `thinkingLevelMap`). Unlisted rows send
+        // nothing, like the old family branches' fallthrough.
         body.as_object_mut()
             .expect("compat builder returns an object")
             .remove("reasoning_effort");
         if ctx.thinking_level.enabled() {
-            let short = short_model(model);
-            if short.starts_with("magistral-") {
-                body["prompt_mode"] = json!("reasoning");
-            } else if short.starts_with("mistral-small")
-                || short.starts_with("mistral-medium")
-                || short.starts_with("devstral-")
-            {
-                body["reasoning_effort"] = json!(effort_str(ctx.thinking_level));
-            }
+            apply_mistral_reasoning(
+                &mut body,
+                crate::catalog::reasoning_shape_for(model)
+                    .unwrap_or(crate::catalog::ReasoningShape::None),
+                ctx.thinking_level,
+            );
         }
 
         // Delta 1 is structural (we never emit camelCase), delta 5 needs no
@@ -208,10 +206,33 @@ impl ProviderWire for MistralConversationsWire {
     }
 }
 
-/// Strip a provider prefix (`mistral/mistral-large-latest` →
-/// `mistral-large-latest`): the endpoint already identifies the provider.
-fn short_model(model: &str) -> &str {
-    model.split_once('/').map(|(_, rest)| rest).unwrap_or(model)
+/// Shape → Mistral body bytes. Exhaustive on purpose (no wildcard arm),
+/// mirroring the compat wire's mapper: a new `ReasoningShape` variant fails
+/// to compile until both wires decide what it means. Compat-only shapes are
+/// unreachable via `wire_for` (those rows ride the compat wire) and stay
+/// silent here — the old branches sent nothing for non-Mistral families too.
+fn apply_mistral_reasoning(
+    body: &mut serde_json::Value,
+    shape: crate::catalog::ReasoningShape,
+    level: epsilon_contracts::ThinkingLevel,
+) {
+    use crate::catalog::ReasoningShape as S;
+    if !level.enabled() {
+        return;
+    }
+    match shape {
+        S::MagistralPromptMode => {
+            body["prompt_mode"] = json!("reasoning");
+        }
+        S::MistralEffort => {
+            body["reasoning_effort"] = json!(effort_str(level));
+        }
+        S::None
+        | S::StandardEffort
+        | S::OpenRouterReasoning
+        | S::DeepSeekThinking
+        | S::GlmThinking => {}
+    }
 }
 
 /// Ladder -> Mistral effort string. The small/medium rows take pi's default
@@ -494,5 +515,50 @@ mod tests {
         }));
         let events = w.on_event(&ev, &mut st).expect("text event");
         assert!(matches!(events[0], StreamEvent::TextDelta { .. }));
+    }
+
+    /// The mapper never sees the id: a magistral-shaped request carrying the
+    /// effort field gets effort (not prompt_mode), and compat-only shapes
+    /// stay silent on this wire.
+    #[test]
+    fn mistral_routing_follows_the_field_not_the_id() {
+        use crate::catalog::ReasoningShape as S;
+        use epsilon_contracts::ThinkingLevel as T;
+        let mut body = serde_json::json!({});
+        apply_mistral_reasoning(&mut body, S::MistralEffort, T::Medium);
+        assert_eq!(body["reasoning_effort"], "medium");
+        assert!(body.get("prompt_mode").is_none(), "{body}");
+
+        let mut body = serde_json::json!({});
+        apply_mistral_reasoning(&mut body, S::MagistralPromptMode, T::Medium);
+        assert_eq!(body["prompt_mode"], "reasoning");
+
+        for shape in [
+            S::None,
+            S::StandardEffort,
+            S::OpenRouterReasoning,
+            S::DeepSeekThinking,
+            S::GlmThinking,
+        ] {
+            let mut body = serde_json::json!({});
+            apply_mistral_reasoning(&mut body, shape, T::Medium);
+            assert!(
+                body.as_object().is_some_and(|o| o.is_empty()),
+                "{shape:?}: {body}"
+            );
+        }
+    }
+
+    /// Lookup miss stays silent end to end: the compat builder's default
+    /// knob is stripped and the Mistral fallback sends nothing.
+    #[test]
+    fn mistral_unknown_ids_stay_silent() {
+        let mut ctx = ctx_with("hi");
+        ctx.thinking_level = epsilon_contracts::ThinkingLevel::Medium;
+        let body = wire()
+            .request_body("totally-unknown-model", &ctx)
+            .expect("body");
+        assert!(body.get("prompt_mode").is_none(), "{body}");
+        assert!(body.get("reasoning_effort").is_none(), "{body}");
     }
 }

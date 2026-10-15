@@ -24,6 +24,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 0,
         supports_tools: true,
         env_key: "",
+        reasoning_shape: super::ReasoningShape::StandardEffort,
         wire: super::FAUX_WIRE,
     },
     // ---- anthropic -------------------------------------------------------------
@@ -39,6 +40,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 12_500_000,
         supports_tools: true,
         env_key: "ANTHROPIC_API_KEY",
+        reasoning_shape: super::ReasoningShape::StandardEffort,
         wire: super::ANTHROPIC_WIRE,
     },
     ModelInfo {
@@ -53,6 +55,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 12_500_000,
         supports_tools: true,
         env_key: "ANTHROPIC_API_KEY",
+        reasoning_shape: super::ReasoningShape::StandardEffort,
         wire: super::ANTHROPIC_WIRE,
     },
     ModelInfo {
@@ -67,6 +70,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 1_250_000,
         supports_tools: true,
         env_key: "ANTHROPIC_API_KEY",
+        reasoning_shape: super::ReasoningShape::StandardEffort,
         wire: super::ANTHROPIC_WIRE,
     },
     ModelInfo {
@@ -81,6 +85,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 6_250_000,
         supports_tools: true,
         env_key: "ANTHROPIC_API_KEY",
+        reasoning_shape: super::ReasoningShape::StandardEffort,
         wire: super::ANTHROPIC_WIRE,
     },
     ModelInfo {
@@ -95,6 +100,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 6_250_000,
         supports_tools: true,
         env_key: "ANTHROPIC_API_KEY",
+        reasoning_shape: super::ReasoningShape::StandardEffort,
         wire: super::ANTHROPIC_WIRE,
     },
     ModelInfo {
@@ -109,6 +115,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 6_250_000,
         supports_tools: true,
         env_key: "ANTHROPIC_API_KEY",
+        reasoning_shape: super::ReasoningShape::StandardEffort,
         wire: super::ANTHROPIC_WIRE,
     },
     ModelInfo {
@@ -123,6 +130,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 6_250_000,
         supports_tools: true,
         env_key: "ANTHROPIC_API_KEY",
+        reasoning_shape: super::ReasoningShape::StandardEffort,
         wire: super::ANTHROPIC_WIRE,
     },
     ModelInfo {
@@ -137,6 +145,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 6_250_000,
         supports_tools: true,
         env_key: "ANTHROPIC_API_KEY",
+        reasoning_shape: super::ReasoningShape::StandardEffort,
         wire: super::ANTHROPIC_WIRE,
     },
     ModelInfo {
@@ -151,6 +160,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 3_750_000,
         supports_tools: true,
         env_key: "ANTHROPIC_API_KEY",
+        reasoning_shape: super::ReasoningShape::StandardEffort,
         wire: super::ANTHROPIC_WIRE,
     },
     ModelInfo {
@@ -165,6 +175,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 3_750_000,
         supports_tools: true,
         env_key: "ANTHROPIC_API_KEY",
+        reasoning_shape: super::ReasoningShape::StandardEffort,
         wire: super::ANTHROPIC_WIRE,
     },
     ModelInfo {
@@ -179,6 +190,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 2_500_000,
         supports_tools: true,
         env_key: "ANTHROPIC_API_KEY",
+        reasoning_shape: super::ReasoningShape::StandardEffort,
         wire: super::ANTHROPIC_WIRE,
     },
     // ---- openai ----------------------------------------------------------------
@@ -194,6 +206,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 0,
         supports_tools: true,
         env_key: "OPENAI_API_KEY",
+        reasoning_shape: super::ReasoningShape::StandardEffort,
         wire: super::openai_responses("https://api.openai.com/v1", Some("OPENAI_API_KEY")),
     },
     ModelInfo {
@@ -208,6 +221,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 0,
         supports_tools: true,
         env_key: "OPENAI_API_KEY",
+        reasoning_shape: super::ReasoningShape::StandardEffort,
         wire: super::openai_responses("https://api.openai.com/v1", Some("OPENAI_API_KEY")),
     },
     ModelInfo {
@@ -222,6 +236,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 0,
         supports_tools: true,
         env_key: "OPENAI_API_KEY",
+        reasoning_shape: super::ReasoningShape::StandardEffort,
         wire: super::openai_responses("https://api.openai.com/v1", Some("OPENAI_API_KEY")),
     },
     ModelInfo {
@@ -236,6 +251,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 0,
         supports_tools: true,
         env_key: "OPENAI_API_KEY",
+        reasoning_shape: super::ReasoningShape::StandardEffort,
         wire: super::openai_responses("https://api.openai.com/v1", Some("OPENAI_API_KEY")),
     },
     ModelInfo {
@@ -250,6 +266,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 0,
         supports_tools: true,
         env_key: "OPENAI_API_KEY",
+        reasoning_shape: super::ReasoningShape::StandardEffort,
         wire: super::openai_responses("https://api.openai.com/v1", Some("OPENAI_API_KEY")),
     },
     ModelInfo {
@@ -264,6 +281,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 0,
         supports_tools: true,
         env_key: "OPENAI_API_KEY",
+        reasoning_shape: super::ReasoningShape::StandardEffort,
         wire: super::openai_responses("https://api.openai.com/v1", Some("OPENAI_API_KEY")),
     },
     ModelInfo {
@@ -278,6 +296,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 0,
         supports_tools: true,
         env_key: "OPENAI_API_KEY",
+        reasoning_shape: super::ReasoningShape::StandardEffort,
         wire: super::openai_responses("https://api.openai.com/v1", Some("OPENAI_API_KEY")),
     },
     ModelInfo {
@@ -292,6 +311,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 0,
         supports_tools: true,
         env_key: "OPENAI_API_KEY",
+        reasoning_shape: super::ReasoningShape::StandardEffort,
         wire: super::openai_responses("https://api.openai.com/v1", Some("OPENAI_API_KEY")),
     },
     ModelInfo {
@@ -306,6 +326,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 0,
         supports_tools: true,
         env_key: "OPENAI_API_KEY",
+        reasoning_shape: super::ReasoningShape::StandardEffort,
         wire: super::openai_responses("https://api.openai.com/v1", Some("OPENAI_API_KEY")),
     },
     ModelInfo {
@@ -320,6 +341,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 0,
         supports_tools: true,
         env_key: "OPENAI_API_KEY",
+        reasoning_shape: super::ReasoningShape::StandardEffort,
         wire: super::openai_responses("https://api.openai.com/v1", Some("OPENAI_API_KEY")),
     },
     ModelInfo {
@@ -334,6 +356,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 0,
         supports_tools: true,
         env_key: "OPENAI_API_KEY",
+        reasoning_shape: super::ReasoningShape::StandardEffort,
         wire: super::openai_responses("https://api.openai.com/v1", Some("OPENAI_API_KEY")),
     },
     ModelInfo {
@@ -348,6 +371,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 0,
         supports_tools: true,
         env_key: "OPENAI_API_KEY",
+        reasoning_shape: super::ReasoningShape::StandardEffort,
         wire: super::openai_responses("https://api.openai.com/v1", Some("OPENAI_API_KEY")),
     },
     ModelInfo {
@@ -362,6 +386,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 0,
         supports_tools: true,
         env_key: "OPENAI_API_KEY",
+        reasoning_shape: super::ReasoningShape::StandardEffort,
         wire: super::openai_responses("https://api.openai.com/v1", Some("OPENAI_API_KEY")),
     },
     ModelInfo {
@@ -376,6 +401,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 0,
         supports_tools: true,
         env_key: "OPENAI_API_KEY",
+        reasoning_shape: super::ReasoningShape::StandardEffort,
         wire: super::openai_responses("https://api.openai.com/v1", Some("OPENAI_API_KEY")),
     },
     ModelInfo {
@@ -390,6 +416,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 0,
         supports_tools: true,
         env_key: "OPENAI_API_KEY",
+        reasoning_shape: super::ReasoningShape::StandardEffort,
         wire: super::openai_responses("https://api.openai.com/v1", Some("OPENAI_API_KEY")),
     },
     ModelInfo {
@@ -404,6 +431,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 0,
         supports_tools: true,
         env_key: "OPENAI_API_KEY",
+        reasoning_shape: super::ReasoningShape::StandardEffort,
         wire: super::openai_responses("https://api.openai.com/v1", Some("OPENAI_API_KEY")),
     },
     ModelInfo {
@@ -418,6 +446,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 0,
         supports_tools: true,
         env_key: "OPENAI_API_KEY",
+        reasoning_shape: super::ReasoningShape::StandardEffort,
         wire: super::openai_responses("https://api.openai.com/v1", Some("OPENAI_API_KEY")),
     },
     ModelInfo {
@@ -432,6 +461,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 0,
         supports_tools: true,
         env_key: "OPENAI_API_KEY",
+        reasoning_shape: super::ReasoningShape::StandardEffort,
         wire: super::openai_responses("https://api.openai.com/v1", Some("OPENAI_API_KEY")),
     },
     ModelInfo {
@@ -446,6 +476,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 0,
         supports_tools: true,
         env_key: "OPENAI_API_KEY",
+        reasoning_shape: super::ReasoningShape::StandardEffort,
         wire: super::openai_responses("https://api.openai.com/v1", Some("OPENAI_API_KEY")),
     },
     ModelInfo {
@@ -460,6 +491,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 0,
         supports_tools: true,
         env_key: "OPENAI_API_KEY",
+        reasoning_shape: super::ReasoningShape::StandardEffort,
         wire: super::openai_responses("https://api.openai.com/v1", Some("OPENAI_API_KEY")),
     },
     ModelInfo {
@@ -474,6 +506,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 0,
         supports_tools: true,
         env_key: "OPENAI_API_KEY",
+        reasoning_shape: super::ReasoningShape::StandardEffort,
         wire: super::openai_responses("https://api.openai.com/v1", Some("OPENAI_API_KEY")),
     },
     ModelInfo {
@@ -488,6 +521,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 0,
         supports_tools: true,
         env_key: "OPENAI_API_KEY",
+        reasoning_shape: super::ReasoningShape::StandardEffort,
         wire: super::openai_responses("https://api.openai.com/v1", Some("OPENAI_API_KEY")),
     },
     ModelInfo {
@@ -502,6 +536,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 0,
         supports_tools: true,
         env_key: "OPENAI_API_KEY",
+        reasoning_shape: super::ReasoningShape::StandardEffort,
         wire: super::openai_responses("https://api.openai.com/v1", Some("OPENAI_API_KEY")),
     },
     ModelInfo {
@@ -516,6 +551,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 0,
         supports_tools: true,
         env_key: "OPENAI_API_KEY",
+        reasoning_shape: super::ReasoningShape::StandardEffort,
         wire: super::openai_responses("https://api.openai.com/v1", Some("OPENAI_API_KEY")),
     },
     ModelInfo {
@@ -530,6 +566,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 0,
         supports_tools: true,
         env_key: "OPENAI_API_KEY",
+        reasoning_shape: super::ReasoningShape::StandardEffort,
         wire: super::openai_responses("https://api.openai.com/v1", Some("OPENAI_API_KEY")),
     },
     ModelInfo {
@@ -544,6 +581,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 0,
         supports_tools: true,
         env_key: "OPENAI_API_KEY",
+        reasoning_shape: super::ReasoningShape::StandardEffort,
         wire: super::openai_responses("https://api.openai.com/v1", Some("OPENAI_API_KEY")),
     },
     ModelInfo {
@@ -558,6 +596,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 0,
         supports_tools: true,
         env_key: "OPENAI_API_KEY",
+        reasoning_shape: super::ReasoningShape::StandardEffort,
         wire: super::openai_responses("https://api.openai.com/v1", Some("OPENAI_API_KEY")),
     },
     ModelInfo {
@@ -572,6 +611,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 5_000_000,
         supports_tools: true,
         env_key: "OPENAI_API_KEY",
+        reasoning_shape: super::ReasoningShape::StandardEffort,
         wire: super::openai_responses("https://api.openai.com/v1", Some("OPENAI_API_KEY")),
     },
     ModelInfo {
@@ -586,6 +626,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 250_000,
         supports_tools: true,
         env_key: "OPENAI_API_KEY",
+        reasoning_shape: super::ReasoningShape::StandardEffort,
         wire: super::openai_responses("https://api.openai.com/v1", Some("OPENAI_API_KEY")),
     },
     ModelInfo {
@@ -600,6 +641,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 5_000_000,
         supports_tools: true,
         env_key: "OPENAI_API_KEY",
+        reasoning_shape: super::ReasoningShape::StandardEffort,
         wire: super::openai_responses("https://api.openai.com/v1", Some("OPENAI_API_KEY")),
     },
     ModelInfo {
@@ -614,6 +656,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 2_500_000,
         supports_tools: true,
         env_key: "OPENAI_API_KEY",
+        reasoning_shape: super::ReasoningShape::StandardEffort,
         wire: super::openai_responses("https://api.openai.com/v1", Some("OPENAI_API_KEY")),
     },
     ModelInfo {
@@ -628,6 +671,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 12_500_000,
         supports_tools: true,
         env_key: "OPENAI_API_KEY",
+        reasoning_shape: super::ReasoningShape::StandardEffort,
         wire: super::openai_responses("https://api.openai.com/v1", Some("OPENAI_API_KEY")),
     },
     ModelInfo {
@@ -642,6 +686,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 0,
         supports_tools: true,
         env_key: "OPENAI_API_KEY",
+        reasoning_shape: super::ReasoningShape::StandardEffort,
         wire: super::openai_responses("https://api.openai.com/v1", Some("OPENAI_API_KEY")),
     },
     ModelInfo {
@@ -656,6 +701,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 0,
         supports_tools: true,
         env_key: "OPENAI_API_KEY",
+        reasoning_shape: super::ReasoningShape::StandardEffort,
         wire: super::openai_responses("https://api.openai.com/v1", Some("OPENAI_API_KEY")),
     },
     ModelInfo {
@@ -670,6 +716,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 0,
         supports_tools: true,
         env_key: "OPENAI_API_KEY",
+        reasoning_shape: super::ReasoningShape::StandardEffort,
         wire: super::openai_responses("https://api.openai.com/v1", Some("OPENAI_API_KEY")),
     },
     ModelInfo {
@@ -684,6 +731,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 0,
         supports_tools: true,
         env_key: "OPENAI_API_KEY",
+        reasoning_shape: super::ReasoningShape::StandardEffort,
         wire: super::openai_responses("https://api.openai.com/v1", Some("OPENAI_API_KEY")),
     },
     ModelInfo {
@@ -698,6 +746,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 0,
         supports_tools: true,
         env_key: "OPENAI_API_KEY",
+        reasoning_shape: super::ReasoningShape::StandardEffort,
         wire: super::openai_responses("https://api.openai.com/v1", Some("OPENAI_API_KEY")),
     },
     ModelInfo {
@@ -712,6 +761,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 0,
         supports_tools: true,
         env_key: "OPENAI_API_KEY",
+        reasoning_shape: super::ReasoningShape::StandardEffort,
         wire: super::openai_responses("https://api.openai.com/v1", Some("OPENAI_API_KEY")),
     },
     // ---- deepseek --------------------------------------------------------------
@@ -727,6 +777,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 0,
         supports_tools: true,
         env_key: "DEEPSEEK_API_KEY",
+        reasoning_shape: super::ReasoningShape::DeepSeekThinking,
         wire: super::openai_compat("https://api.deepseek.com/v1", Some("DEEPSEEK_API_KEY")),
     },
     ModelInfo {
@@ -741,6 +792,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 0,
         supports_tools: true,
         env_key: "DEEPSEEK_API_KEY",
+        reasoning_shape: super::ReasoningShape::DeepSeekThinking,
         wire: super::openai_compat("https://api.deepseek.com/v1", Some("DEEPSEEK_API_KEY")),
     },
     ModelInfo {
@@ -755,6 +807,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 0,
         supports_tools: true,
         env_key: "DEEPSEEK_API_KEY",
+        reasoning_shape: super::ReasoningShape::DeepSeekThinking,
         wire: super::openai_compat("https://api.deepseek.com/v1", Some("DEEPSEEK_API_KEY")),
     },
     ModelInfo {
@@ -769,6 +822,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 0,
         supports_tools: true,
         env_key: "DEEPSEEK_API_KEY",
+        reasoning_shape: super::ReasoningShape::DeepSeekThinking,
         wire: super::openai_compat("https://api.deepseek.com/v1", Some("DEEPSEEK_API_KEY")),
     },
     // ---- google ----------------------------------------------------------------
@@ -784,6 +838,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 0,
         supports_tools: true,
         env_key: "GEMINI_API_KEY",
+        reasoning_shape: super::ReasoningShape::StandardEffort,
         wire: super::GOOGLE_WIRE,
     },
     ModelInfo {
@@ -798,6 +853,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 0,
         supports_tools: true,
         env_key: "GEMINI_API_KEY",
+        reasoning_shape: super::ReasoningShape::StandardEffort,
         wire: super::GOOGLE_WIRE,
     },
     ModelInfo {
@@ -812,6 +868,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 0,
         supports_tools: true,
         env_key: "GEMINI_API_KEY",
+        reasoning_shape: super::ReasoningShape::StandardEffort,
         wire: super::GOOGLE_WIRE,
     },
     ModelInfo {
@@ -826,6 +883,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 0,
         supports_tools: true,
         env_key: "GEMINI_API_KEY",
+        reasoning_shape: super::ReasoningShape::StandardEffort,
         wire: super::GOOGLE_WIRE,
     },
     ModelInfo {
@@ -840,6 +898,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 0,
         supports_tools: true,
         env_key: "GEMINI_API_KEY",
+        reasoning_shape: super::ReasoningShape::StandardEffort,
         wire: super::GOOGLE_WIRE,
     },
     ModelInfo {
@@ -854,6 +913,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 0,
         supports_tools: true,
         env_key: "GEMINI_API_KEY",
+        reasoning_shape: super::ReasoningShape::StandardEffort,
         wire: super::GOOGLE_WIRE,
     },
     ModelInfo {
@@ -868,6 +928,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 0,
         supports_tools: true,
         env_key: "GEMINI_API_KEY",
+        reasoning_shape: super::ReasoningShape::StandardEffort,
         wire: super::GOOGLE_WIRE,
     },
     ModelInfo {
@@ -882,6 +943,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 0,
         supports_tools: true,
         env_key: "GEMINI_API_KEY",
+        reasoning_shape: super::ReasoningShape::StandardEffort,
         wire: super::GOOGLE_WIRE,
     },
     ModelInfo {
@@ -896,6 +958,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 0,
         supports_tools: true,
         env_key: "GEMINI_API_KEY",
+        reasoning_shape: super::ReasoningShape::StandardEffort,
         wire: super::GOOGLE_WIRE,
     },
     ModelInfo {
@@ -910,6 +973,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 0,
         supports_tools: true,
         env_key: "GEMINI_API_KEY",
+        reasoning_shape: super::ReasoningShape::StandardEffort,
         wire: super::GOOGLE_WIRE,
     },
     ModelInfo {
@@ -924,6 +988,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 0,
         supports_tools: true,
         env_key: "GEMINI_API_KEY",
+        reasoning_shape: super::ReasoningShape::StandardEffort,
         wire: super::GOOGLE_WIRE,
     },
     ModelInfo {
@@ -938,6 +1003,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 0,
         supports_tools: true,
         env_key: "GEMINI_API_KEY",
+        reasoning_shape: super::ReasoningShape::StandardEffort,
         wire: super::GOOGLE_WIRE,
     },
     ModelInfo {
@@ -952,6 +1018,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 0,
         supports_tools: true,
         env_key: "GEMINI_API_KEY",
+        reasoning_shape: super::ReasoningShape::StandardEffort,
         wire: super::GOOGLE_WIRE,
     },
     ModelInfo {
@@ -966,6 +1033,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 0,
         supports_tools: true,
         env_key: "GEMINI_API_KEY",
+        reasoning_shape: super::ReasoningShape::StandardEffort,
         wire: super::GOOGLE_WIRE,
     },
     ModelInfo {
@@ -980,6 +1048,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 0,
         supports_tools: true,
         env_key: "GEMINI_API_KEY",
+        reasoning_shape: super::ReasoningShape::StandardEffort,
         wire: super::GOOGLE_WIRE,
     },
     ModelInfo {
@@ -994,6 +1063,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 0,
         supports_tools: true,
         env_key: "GEMINI_API_KEY",
+        reasoning_shape: super::ReasoningShape::StandardEffort,
         wire: super::GOOGLE_WIRE,
     },
     ModelInfo {
@@ -1008,6 +1078,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 0,
         supports_tools: true,
         env_key: "GEMINI_API_KEY",
+        reasoning_shape: super::ReasoningShape::StandardEffort,
         wire: super::GOOGLE_WIRE,
     },
     ModelInfo {
@@ -1022,6 +1093,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 0,
         supports_tools: true,
         env_key: "GEMINI_API_KEY",
+        reasoning_shape: super::ReasoningShape::StandardEffort,
         wire: super::GOOGLE_WIRE,
     },
     // ---- x.ai ------------------------------------------------------------------
@@ -1037,6 +1109,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 0,
         supports_tools: true,
         env_key: "XAI_API_KEY",
+        reasoning_shape: super::ReasoningShape::StandardEffort,
         wire: super::openai_compat("https://api.x.ai/v1", Some("XAI_API_KEY")),
     },
     ModelInfo {
@@ -1051,6 +1124,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 0,
         supports_tools: true,
         env_key: "XAI_API_KEY",
+        reasoning_shape: super::ReasoningShape::StandardEffort,
         wire: super::openai_compat("https://api.x.ai/v1", Some("XAI_API_KEY")),
     },
     ModelInfo {
@@ -1065,6 +1139,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 0,
         supports_tools: true,
         env_key: "XAI_API_KEY",
+        reasoning_shape: super::ReasoningShape::StandardEffort,
         wire: super::openai_compat("https://api.x.ai/v1", Some("XAI_API_KEY")),
     },
     ModelInfo {
@@ -1079,6 +1154,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 0,
         supports_tools: true,
         env_key: "XAI_API_KEY",
+        reasoning_shape: super::ReasoningShape::StandardEffort,
         wire: super::openai_compat("https://api.x.ai/v1", Some("XAI_API_KEY")),
     },
     ModelInfo {
@@ -1093,6 +1169,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 0,
         supports_tools: true,
         env_key: "XAI_API_KEY",
+        reasoning_shape: super::ReasoningShape::StandardEffort,
         wire: super::openai_compat("https://api.x.ai/v1", Some("XAI_API_KEY")),
     },
     ModelInfo {
@@ -1107,6 +1184,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 0,
         supports_tools: true,
         env_key: "XAI_API_KEY",
+        reasoning_shape: super::ReasoningShape::StandardEffort,
         wire: super::openai_compat("https://api.x.ai/v1", Some("XAI_API_KEY")),
     },
     ModelInfo {
@@ -1121,6 +1199,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 0,
         supports_tools: true,
         env_key: "XAI_API_KEY",
+        reasoning_shape: super::ReasoningShape::StandardEffort,
         wire: super::openai_compat("https://api.x.ai/v1", Some("XAI_API_KEY")),
     },
     // ---- groq ------------------------------------------------------------------
@@ -1136,6 +1215,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 0,
         supports_tools: true,
         env_key: "GROQ_API_KEY",
+        reasoning_shape: super::ReasoningShape::StandardEffort,
         wire: super::openai_compat("https://api.groq.com/openai/v1", Some("GROQ_API_KEY")),
     },
     ModelInfo {
@@ -1150,6 +1230,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 0,
         supports_tools: true,
         env_key: "GROQ_API_KEY",
+        reasoning_shape: super::ReasoningShape::StandardEffort,
         wire: super::openai_compat("https://api.groq.com/openai/v1", Some("GROQ_API_KEY")),
     },
     ModelInfo {
@@ -1164,6 +1245,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 0,
         supports_tools: true,
         env_key: "GROQ_API_KEY",
+        reasoning_shape: super::ReasoningShape::StandardEffort,
         wire: super::openai_compat("https://api.groq.com/openai/v1", Some("GROQ_API_KEY")),
     },
     ModelInfo {
@@ -1178,6 +1260,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 0,
         supports_tools: true,
         env_key: "GROQ_API_KEY",
+        reasoning_shape: super::ReasoningShape::StandardEffort,
         wire: super::openai_compat("https://api.groq.com/openai/v1", Some("GROQ_API_KEY")),
     },
     ModelInfo {
@@ -1192,6 +1275,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 0,
         supports_tools: true,
         env_key: "GROQ_API_KEY",
+        reasoning_shape: super::ReasoningShape::StandardEffort,
         wire: super::openai_compat("https://api.groq.com/openai/v1", Some("GROQ_API_KEY")),
     },
     ModelInfo {
@@ -1206,6 +1290,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 0,
         supports_tools: true,
         env_key: "GROQ_API_KEY",
+        reasoning_shape: super::ReasoningShape::StandardEffort,
         wire: super::openai_compat("https://api.groq.com/openai/v1", Some("GROQ_API_KEY")),
     },
     ModelInfo {
@@ -1220,6 +1305,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 0,
         supports_tools: true,
         env_key: "GROQ_API_KEY",
+        reasoning_shape: super::ReasoningShape::StandardEffort,
         wire: super::openai_compat("https://api.groq.com/openai/v1", Some("GROQ_API_KEY")),
     },
     // ---- moonshot --------------------------------------------------------------
@@ -1235,6 +1321,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 0,
         supports_tools: true,
         env_key: "MOONSHOT_API_KEY",
+        reasoning_shape: super::ReasoningShape::None,
         wire: super::openai_compat("https://api.moonshot.ai/v1", Some("MOONSHOT_API_KEY")),
     },
     ModelInfo {
@@ -1249,6 +1336,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 0,
         supports_tools: true,
         env_key: "MOONSHOT_API_KEY",
+        reasoning_shape: super::ReasoningShape::None,
         wire: super::openai_compat("https://api.moonshot.ai/v1", Some("MOONSHOT_API_KEY")),
     },
     ModelInfo {
@@ -1263,6 +1351,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 0,
         supports_tools: true,
         env_key: "MOONSHOT_API_KEY",
+        reasoning_shape: super::ReasoningShape::None,
         wire: super::openai_compat("https://api.moonshot.ai/v1", Some("MOONSHOT_API_KEY")),
     },
     ModelInfo {
@@ -1277,6 +1366,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 0,
         supports_tools: true,
         env_key: "MOONSHOT_API_KEY",
+        reasoning_shape: super::ReasoningShape::None,
         wire: super::openai_compat("https://api.moonshot.ai/v1", Some("MOONSHOT_API_KEY")),
     },
     // ---- z.ai ------------------------------------------------------------------
@@ -1292,6 +1382,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 0,
         supports_tools: true,
         env_key: "ZAI_API_KEY",
+        reasoning_shape: super::ReasoningShape::GlmThinking,
         wire: super::openai_compat("https://api.z.ai/api/paas/v4", Some("ZAI_API_KEY")),
     },
     ModelInfo {
@@ -1306,6 +1397,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 0,
         supports_tools: true,
         env_key: "ZAI_API_KEY",
+        reasoning_shape: super::ReasoningShape::GlmThinking,
         wire: super::openai_compat("https://api.z.ai/api/paas/v4", Some("ZAI_API_KEY")),
     },
     ModelInfo {
@@ -1320,6 +1412,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 0,
         supports_tools: true,
         env_key: "ZAI_API_KEY",
+        reasoning_shape: super::ReasoningShape::GlmThinking,
         wire: super::openai_compat("https://api.z.ai/api/paas/v4", Some("ZAI_API_KEY")),
     },
     ModelInfo {
@@ -1334,6 +1427,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 0,
         supports_tools: true,
         env_key: "ZAI_API_KEY",
+        reasoning_shape: super::ReasoningShape::GlmThinking,
         wire: super::openai_compat("https://api.z.ai/api/paas/v4", Some("ZAI_API_KEY")),
     },
     ModelInfo {
@@ -1348,6 +1442,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 0,
         supports_tools: true,
         env_key: "ZAI_API_KEY",
+        reasoning_shape: super::ReasoningShape::GlmThinking,
         wire: super::openai_compat("https://api.z.ai/api/paas/v4", Some("ZAI_API_KEY")),
     },
     ModelInfo {
@@ -1362,6 +1457,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 0,
         supports_tools: true,
         env_key: "ZAI_API_KEY",
+        reasoning_shape: super::ReasoningShape::GlmThinking,
         wire: super::openai_compat("https://api.z.ai/api/paas/v4", Some("ZAI_API_KEY")),
     },
     ModelInfo {
@@ -1376,6 +1472,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 0,
         supports_tools: true,
         env_key: "ZAI_API_KEY",
+        reasoning_shape: super::ReasoningShape::GlmThinking,
         wire: super::openai_compat("https://api.z.ai/api/paas/v4", Some("ZAI_API_KEY")),
     },
     ModelInfo {
@@ -1390,6 +1487,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 0,
         supports_tools: true,
         env_key: "ZAI_API_KEY",
+        reasoning_shape: super::ReasoningShape::GlmThinking,
         wire: super::openai_compat("https://api.z.ai/api/paas/v4", Some("ZAI_API_KEY")),
     },
     ModelInfo {
@@ -1404,6 +1502,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 0,
         supports_tools: true,
         env_key: "ZAI_API_KEY",
+        reasoning_shape: super::ReasoningShape::GlmThinking,
         wire: super::openai_compat("https://api.z.ai/api/paas/v4", Some("ZAI_API_KEY")),
     },
     ModelInfo {
@@ -1418,6 +1517,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 0,
         supports_tools: true,
         env_key: "ZAI_API_KEY",
+        reasoning_shape: super::ReasoningShape::GlmThinking,
         wire: super::openai_compat("https://api.z.ai/api/paas/v4", Some("ZAI_API_KEY")),
     },
     ModelInfo {
@@ -1432,6 +1532,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 0,
         supports_tools: true,
         env_key: "ZAI_API_KEY",
+        reasoning_shape: super::ReasoningShape::GlmThinking,
         wire: super::openai_compat("https://api.z.ai/api/paas/v4", Some("ZAI_API_KEY")),
     },
     ModelInfo {
@@ -1446,6 +1547,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 0,
         supports_tools: true,
         env_key: "ZAI_API_KEY",
+        reasoning_shape: super::ReasoningShape::GlmThinking,
         wire: super::openai_compat("https://api.z.ai/api/paas/v4", Some("ZAI_API_KEY")),
     },
     ModelInfo {
@@ -1460,6 +1562,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 0,
         supports_tools: true,
         env_key: "ZAI_API_KEY",
+        reasoning_shape: super::ReasoningShape::GlmThinking,
         wire: super::openai_compat("https://api.z.ai/api/paas/v4", Some("ZAI_API_KEY")),
     },
     ModelInfo {
@@ -1474,6 +1577,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 0,
         supports_tools: true,
         env_key: "ZAI_API_KEY",
+        reasoning_shape: super::ReasoningShape::GlmThinking,
         wire: super::openai_compat("https://api.z.ai/api/paas/v4", Some("ZAI_API_KEY")),
     },
     ModelInfo {
@@ -1488,6 +1592,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 0,
         supports_tools: true,
         env_key: "ZAI_API_KEY",
+        reasoning_shape: super::ReasoningShape::GlmThinking,
         wire: super::openai_compat("https://api.z.ai/api/paas/v4", Some("ZAI_API_KEY")),
     },
     ModelInfo {
@@ -1502,6 +1607,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 0,
         supports_tools: true,
         env_key: "ZAI_API_KEY",
+        reasoning_shape: super::ReasoningShape::GlmThinking,
         wire: super::openai_compat("https://api.z.ai/api/paas/v4", Some("ZAI_API_KEY")),
     },
     ModelInfo {
@@ -1516,6 +1622,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 0,
         supports_tools: true,
         env_key: "ZAI_API_KEY",
+        reasoning_shape: super::ReasoningShape::GlmThinking,
         wire: super::openai_compat("https://api.z.ai/api/paas/v4", Some("ZAI_API_KEY")),
     },
     ModelInfo {
@@ -1530,6 +1637,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 0,
         supports_tools: true,
         env_key: "ZAI_API_KEY",
+        reasoning_shape: super::ReasoningShape::GlmThinking,
         wire: super::openai_compat("https://api.z.ai/api/paas/v4", Some("ZAI_API_KEY")),
     },
     // ---- openrouter ------------------------------------------------------------
@@ -1545,6 +1653,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 0,
         supports_tools: true,
         env_key: "OPENROUTER_API_KEY",
+        reasoning_shape: super::ReasoningShape::OpenRouterReasoning,
         wire: super::openai_compat("https://openrouter.ai/api/v1", Some("OPENROUTER_API_KEY")),
     },
     ModelInfo {
@@ -1559,6 +1668,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 0,
         supports_tools: true,
         env_key: "OPENROUTER_API_KEY",
+        reasoning_shape: super::ReasoningShape::OpenRouterReasoning,
         wire: super::openai_compat("https://openrouter.ai/api/v1", Some("OPENROUTER_API_KEY")),
     },
     ModelInfo {
@@ -1573,6 +1683,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 0,
         supports_tools: true,
         env_key: "OPENROUTER_API_KEY",
+        reasoning_shape: super::ReasoningShape::OpenRouterReasoning,
         wire: super::openai_compat("https://openrouter.ai/api/v1", Some("OPENROUTER_API_KEY")),
     },
     ModelInfo {
@@ -1587,6 +1698,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 0,
         supports_tools: true,
         env_key: "OPENROUTER_API_KEY",
+        reasoning_shape: super::ReasoningShape::OpenRouterReasoning,
         wire: super::openai_compat("https://openrouter.ai/api/v1", Some("OPENROUTER_API_KEY")),
     },
     ModelInfo {
@@ -1601,6 +1713,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 0,
         supports_tools: true,
         env_key: "OPENROUTER_API_KEY",
+        reasoning_shape: super::ReasoningShape::OpenRouterReasoning,
         wire: super::openai_compat("https://openrouter.ai/api/v1", Some("OPENROUTER_API_KEY")),
     },
     ModelInfo {
@@ -1615,6 +1728,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 0,
         supports_tools: true,
         env_key: "OPENROUTER_API_KEY",
+        reasoning_shape: super::ReasoningShape::OpenRouterReasoning,
         wire: super::openai_compat("https://openrouter.ai/api/v1", Some("OPENROUTER_API_KEY")),
     },
     ModelInfo {
@@ -1629,6 +1743,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 0,
         supports_tools: true,
         env_key: "OPENROUTER_API_KEY",
+        reasoning_shape: super::ReasoningShape::OpenRouterReasoning,
         wire: super::openai_compat("https://openrouter.ai/api/v1", Some("OPENROUTER_API_KEY")),
     },
     ModelInfo {
@@ -1643,6 +1758,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 0,
         supports_tools: true,
         env_key: "OPENROUTER_API_KEY",
+        reasoning_shape: super::ReasoningShape::OpenRouterReasoning,
         wire: super::openai_compat("https://openrouter.ai/api/v1", Some("OPENROUTER_API_KEY")),
     },
     ModelInfo {
@@ -1657,6 +1773,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 300_000,
         supports_tools: true,
         env_key: "OPENROUTER_API_KEY",
+        reasoning_shape: super::ReasoningShape::OpenRouterReasoning,
         wire: super::openai_compat("https://openrouter.ai/api/v1", Some("OPENROUTER_API_KEY")),
     },
     ModelInfo {
@@ -1671,6 +1788,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 12_500_000,
         supports_tools: true,
         env_key: "OPENROUTER_API_KEY",
+        reasoning_shape: super::ReasoningShape::OpenRouterReasoning,
         wire: super::openai_compat("https://openrouter.ai/api/v1", Some("OPENROUTER_API_KEY")),
     },
     ModelInfo {
@@ -1685,6 +1803,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 12_500_000,
         supports_tools: true,
         env_key: "OPENROUTER_API_KEY",
+        reasoning_shape: super::ReasoningShape::OpenRouterReasoning,
         wire: super::openai_compat("https://openrouter.ai/api/v1", Some("OPENROUTER_API_KEY")),
     },
     ModelInfo {
@@ -1699,6 +1818,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 1_250_000,
         supports_tools: true,
         env_key: "OPENROUTER_API_KEY",
+        reasoning_shape: super::ReasoningShape::OpenRouterReasoning,
         wire: super::openai_compat("https://openrouter.ai/api/v1", Some("OPENROUTER_API_KEY")),
     },
     ModelInfo {
@@ -1713,6 +1833,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 18_750_000,
         supports_tools: true,
         env_key: "OPENROUTER_API_KEY",
+        reasoning_shape: super::ReasoningShape::OpenRouterReasoning,
         wire: super::openai_compat("https://openrouter.ai/api/v1", Some("OPENROUTER_API_KEY")),
     },
     ModelInfo {
@@ -1727,6 +1848,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 6_250_000,
         supports_tools: true,
         env_key: "OPENROUTER_API_KEY",
+        reasoning_shape: super::ReasoningShape::OpenRouterReasoning,
         wire: super::openai_compat("https://openrouter.ai/api/v1", Some("OPENROUTER_API_KEY")),
     },
     ModelInfo {
@@ -1741,6 +1863,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 6_250_000,
         supports_tools: true,
         env_key: "OPENROUTER_API_KEY",
+        reasoning_shape: super::ReasoningShape::OpenRouterReasoning,
         wire: super::openai_compat("https://openrouter.ai/api/v1", Some("OPENROUTER_API_KEY")),
     },
     ModelInfo {
@@ -1755,6 +1878,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 6_250_000,
         supports_tools: true,
         env_key: "OPENROUTER_API_KEY",
+        reasoning_shape: super::ReasoningShape::OpenRouterReasoning,
         wire: super::openai_compat("https://openrouter.ai/api/v1", Some("OPENROUTER_API_KEY")),
     },
     ModelInfo {
@@ -1769,6 +1893,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 6_250_000,
         supports_tools: true,
         env_key: "OPENROUTER_API_KEY",
+        reasoning_shape: super::ReasoningShape::OpenRouterReasoning,
         wire: super::openai_compat("https://openrouter.ai/api/v1", Some("OPENROUTER_API_KEY")),
     },
     ModelInfo {
@@ -1783,6 +1908,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 6_250_000,
         supports_tools: true,
         env_key: "OPENROUTER_API_KEY",
+        reasoning_shape: super::ReasoningShape::OpenRouterReasoning,
         wire: super::openai_compat("https://openrouter.ai/api/v1", Some("OPENROUTER_API_KEY")),
     },
     ModelInfo {
@@ -1797,6 +1923,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 3_750_000,
         supports_tools: true,
         env_key: "OPENROUTER_API_KEY",
+        reasoning_shape: super::ReasoningShape::OpenRouterReasoning,
         wire: super::openai_compat("https://openrouter.ai/api/v1", Some("OPENROUTER_API_KEY")),
     },
     ModelInfo {
@@ -1811,6 +1938,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 3_750_000,
         supports_tools: true,
         env_key: "OPENROUTER_API_KEY",
+        reasoning_shape: super::ReasoningShape::OpenRouterReasoning,
         wire: super::openai_compat("https://openrouter.ai/api/v1", Some("OPENROUTER_API_KEY")),
     },
     ModelInfo {
@@ -1825,6 +1953,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 3_750_000,
         supports_tools: true,
         env_key: "OPENROUTER_API_KEY",
+        reasoning_shape: super::ReasoningShape::OpenRouterReasoning,
         wire: super::openai_compat("https://openrouter.ai/api/v1", Some("OPENROUTER_API_KEY")),
     },
     ModelInfo {
@@ -1839,6 +1968,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 2_500_000,
         supports_tools: true,
         env_key: "OPENROUTER_API_KEY",
+        reasoning_shape: super::ReasoningShape::OpenRouterReasoning,
         wire: super::openai_compat("https://openrouter.ai/api/v1", Some("OPENROUTER_API_KEY")),
     },
     ModelInfo {
@@ -1853,6 +1983,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 0,
         supports_tools: true,
         env_key: "OPENROUTER_API_KEY",
+        reasoning_shape: super::ReasoningShape::OpenRouterReasoning,
         wire: super::openai_compat("https://openrouter.ai/api/v1", Some("OPENROUTER_API_KEY")),
     },
     ModelInfo {
@@ -1867,6 +1998,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 0,
         supports_tools: true,
         env_key: "OPENROUTER_API_KEY",
+        reasoning_shape: super::ReasoningShape::OpenRouterReasoning,
         wire: super::openai_compat("https://openrouter.ai/api/v1", Some("OPENROUTER_API_KEY")),
     },
     ModelInfo {
@@ -1881,6 +2013,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 0,
         supports_tools: true,
         env_key: "OPENROUTER_API_KEY",
+        reasoning_shape: super::ReasoningShape::OpenRouterReasoning,
         wire: super::openai_compat("https://openrouter.ai/api/v1", Some("OPENROUTER_API_KEY")),
     },
     ModelInfo {
@@ -1895,6 +2028,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 0,
         supports_tools: true,
         env_key: "OPENROUTER_API_KEY",
+        reasoning_shape: super::ReasoningShape::OpenRouterReasoning,
         wire: super::openai_compat("https://openrouter.ai/api/v1", Some("OPENROUTER_API_KEY")),
     },
     ModelInfo {
@@ -1909,6 +2043,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 0,
         supports_tools: true,
         env_key: "OPENROUTER_API_KEY",
+        reasoning_shape: super::ReasoningShape::OpenRouterReasoning,
         wire: super::openai_compat("https://openrouter.ai/api/v1", Some("OPENROUTER_API_KEY")),
     },
     ModelInfo {
@@ -1923,6 +2058,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 0,
         supports_tools: true,
         env_key: "OPENROUTER_API_KEY",
+        reasoning_shape: super::ReasoningShape::OpenRouterReasoning,
         wire: super::openai_compat("https://openrouter.ai/api/v1", Some("OPENROUTER_API_KEY")),
     },
     ModelInfo {
@@ -1937,6 +2073,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 0,
         supports_tools: true,
         env_key: "OPENROUTER_API_KEY",
+        reasoning_shape: super::ReasoningShape::OpenRouterReasoning,
         wire: super::openai_compat("https://openrouter.ai/api/v1", Some("OPENROUTER_API_KEY")),
     },
     ModelInfo {
@@ -1951,6 +2088,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 0,
         supports_tools: true,
         env_key: "OPENROUTER_API_KEY",
+        reasoning_shape: super::ReasoningShape::OpenRouterReasoning,
         wire: super::openai_compat("https://openrouter.ai/api/v1", Some("OPENROUTER_API_KEY")),
     },
     ModelInfo {
@@ -1965,6 +2103,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 0,
         supports_tools: true,
         env_key: "OPENROUTER_API_KEY",
+        reasoning_shape: super::ReasoningShape::OpenRouterReasoning,
         wire: super::openai_compat("https://openrouter.ai/api/v1", Some("OPENROUTER_API_KEY")),
     },
     ModelInfo {
@@ -1979,6 +2118,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 0,
         supports_tools: true,
         env_key: "OPENROUTER_API_KEY",
+        reasoning_shape: super::ReasoningShape::OpenRouterReasoning,
         wire: super::openai_compat("https://openrouter.ai/api/v1", Some("OPENROUTER_API_KEY")),
     },
     ModelInfo {
@@ -1993,6 +2133,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 0,
         supports_tools: true,
         env_key: "OPENROUTER_API_KEY",
+        reasoning_shape: super::ReasoningShape::OpenRouterReasoning,
         wire: super::openai_compat("https://openrouter.ai/api/v1", Some("OPENROUTER_API_KEY")),
     },
     ModelInfo {
@@ -2007,6 +2148,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 0,
         supports_tools: true,
         env_key: "OPENROUTER_API_KEY",
+        reasoning_shape: super::ReasoningShape::OpenRouterReasoning,
         wire: super::openai_compat("https://openrouter.ai/api/v1", Some("OPENROUTER_API_KEY")),
     },
     ModelInfo {
@@ -2021,6 +2163,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 0,
         supports_tools: true,
         env_key: "OPENROUTER_API_KEY",
+        reasoning_shape: super::ReasoningShape::OpenRouterReasoning,
         wire: super::openai_compat("https://openrouter.ai/api/v1", Some("OPENROUTER_API_KEY")),
     },
     ModelInfo {
@@ -2035,6 +2178,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 0,
         supports_tools: true,
         env_key: "OPENROUTER_API_KEY",
+        reasoning_shape: super::ReasoningShape::OpenRouterReasoning,
         wire: super::openai_compat("https://openrouter.ai/api/v1", Some("OPENROUTER_API_KEY")),
     },
     ModelInfo {
@@ -2049,6 +2193,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 0,
         supports_tools: true,
         env_key: "OPENROUTER_API_KEY",
+        reasoning_shape: super::ReasoningShape::OpenRouterReasoning,
         wire: super::openai_compat("https://openrouter.ai/api/v1", Some("OPENROUTER_API_KEY")),
     },
     ModelInfo {
@@ -2063,6 +2208,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 0,
         supports_tools: true,
         env_key: "OPENROUTER_API_KEY",
+        reasoning_shape: super::ReasoningShape::OpenRouterReasoning,
         wire: super::openai_compat("https://openrouter.ai/api/v1", Some("OPENROUTER_API_KEY")),
     },
     ModelInfo {
@@ -2077,6 +2223,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 0,
         supports_tools: true,
         env_key: "OPENROUTER_API_KEY",
+        reasoning_shape: super::ReasoningShape::OpenRouterReasoning,
         wire: super::openai_compat("https://openrouter.ai/api/v1", Some("OPENROUTER_API_KEY")),
     },
     ModelInfo {
@@ -2091,6 +2238,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 0,
         supports_tools: true,
         env_key: "OPENROUTER_API_KEY",
+        reasoning_shape: super::ReasoningShape::OpenRouterReasoning,
         wire: super::openai_compat("https://openrouter.ai/api/v1", Some("OPENROUTER_API_KEY")),
     },
     ModelInfo {
@@ -2105,6 +2253,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 0,
         supports_tools: true,
         env_key: "OPENROUTER_API_KEY",
+        reasoning_shape: super::ReasoningShape::OpenRouterReasoning,
         wire: super::openai_compat("https://openrouter.ai/api/v1", Some("OPENROUTER_API_KEY")),
     },
     ModelInfo {
@@ -2119,6 +2268,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 0,
         supports_tools: true,
         env_key: "OPENROUTER_API_KEY",
+        reasoning_shape: super::ReasoningShape::OpenRouterReasoning,
         wire: super::openai_compat("https://openrouter.ai/api/v1", Some("OPENROUTER_API_KEY")),
     },
     ModelInfo {
@@ -2133,6 +2283,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 0,
         supports_tools: true,
         env_key: "OPENROUTER_API_KEY",
+        reasoning_shape: super::ReasoningShape::OpenRouterReasoning,
         wire: super::openai_compat("https://openrouter.ai/api/v1", Some("OPENROUTER_API_KEY")),
     },
     ModelInfo {
@@ -2147,6 +2298,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 0,
         supports_tools: true,
         env_key: "OPENROUTER_API_KEY",
+        reasoning_shape: super::ReasoningShape::OpenRouterReasoning,
         wire: super::openai_compat("https://openrouter.ai/api/v1", Some("OPENROUTER_API_KEY")),
     },
     ModelInfo {
@@ -2161,6 +2313,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 0,
         supports_tools: true,
         env_key: "OPENROUTER_API_KEY",
+        reasoning_shape: super::ReasoningShape::OpenRouterReasoning,
         wire: super::openai_compat("https://openrouter.ai/api/v1", Some("OPENROUTER_API_KEY")),
     },
     ModelInfo {
@@ -2175,6 +2328,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 0,
         supports_tools: true,
         env_key: "OPENROUTER_API_KEY",
+        reasoning_shape: super::ReasoningShape::OpenRouterReasoning,
         wire: super::openai_compat("https://openrouter.ai/api/v1", Some("OPENROUTER_API_KEY")),
     },
     ModelInfo {
@@ -2189,6 +2343,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 0,
         supports_tools: true,
         env_key: "OPENROUTER_API_KEY",
+        reasoning_shape: super::ReasoningShape::OpenRouterReasoning,
         wire: super::openai_compat("https://openrouter.ai/api/v1", Some("OPENROUTER_API_KEY")),
     },
     ModelInfo {
@@ -2203,6 +2358,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 83_333,
         supports_tools: true,
         env_key: "OPENROUTER_API_KEY",
+        reasoning_shape: super::ReasoningShape::OpenRouterReasoning,
         wire: super::openai_compat("https://openrouter.ai/api/v1", Some("OPENROUTER_API_KEY")),
     },
     ModelInfo {
@@ -2217,6 +2373,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 83_333,
         supports_tools: true,
         env_key: "OPENROUTER_API_KEY",
+        reasoning_shape: super::ReasoningShape::OpenRouterReasoning,
         wire: super::openai_compat("https://openrouter.ai/api/v1", Some("OPENROUTER_API_KEY")),
     },
     ModelInfo {
@@ -2231,6 +2388,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 375_000,
         supports_tools: true,
         env_key: "OPENROUTER_API_KEY",
+        reasoning_shape: super::ReasoningShape::OpenRouterReasoning,
         wire: super::openai_compat("https://openrouter.ai/api/v1", Some("OPENROUTER_API_KEY")),
     },
     ModelInfo {
@@ -2245,6 +2403,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 375_000,
         supports_tools: true,
         env_key: "OPENROUTER_API_KEY",
+        reasoning_shape: super::ReasoningShape::OpenRouterReasoning,
         wire: super::openai_compat("https://openrouter.ai/api/v1", Some("OPENROUTER_API_KEY")),
     },
     ModelInfo {
@@ -2259,6 +2418,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 83_333,
         supports_tools: true,
         env_key: "OPENROUTER_API_KEY",
+        reasoning_shape: super::ReasoningShape::OpenRouterReasoning,
         wire: super::openai_compat("https://openrouter.ai/api/v1", Some("OPENROUTER_API_KEY")),
     },
     ModelInfo {
@@ -2273,6 +2433,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 83_333,
         supports_tools: true,
         env_key: "OPENROUTER_API_KEY",
+        reasoning_shape: super::ReasoningShape::OpenRouterReasoning,
         wire: super::openai_compat("https://openrouter.ai/api/v1", Some("OPENROUTER_API_KEY")),
     },
     ModelInfo {
@@ -2287,6 +2448,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 83_333,
         supports_tools: true,
         env_key: "OPENROUTER_API_KEY",
+        reasoning_shape: super::ReasoningShape::OpenRouterReasoning,
         wire: super::openai_compat("https://openrouter.ai/api/v1", Some("OPENROUTER_API_KEY")),
     },
     ModelInfo {
@@ -2301,6 +2463,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 375_000,
         supports_tools: true,
         env_key: "OPENROUTER_API_KEY",
+        reasoning_shape: super::ReasoningShape::OpenRouterReasoning,
         wire: super::openai_compat("https://openrouter.ai/api/v1", Some("OPENROUTER_API_KEY")),
     },
     ModelInfo {
@@ -2315,6 +2478,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 375_000,
         supports_tools: true,
         env_key: "OPENROUTER_API_KEY",
+        reasoning_shape: super::ReasoningShape::OpenRouterReasoning,
         wire: super::openai_compat("https://openrouter.ai/api/v1", Some("OPENROUTER_API_KEY")),
     },
     ModelInfo {
@@ -2329,6 +2493,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 83_333,
         supports_tools: true,
         env_key: "OPENROUTER_API_KEY",
+        reasoning_shape: super::ReasoningShape::OpenRouterReasoning,
         wire: super::openai_compat("https://openrouter.ai/api/v1", Some("OPENROUTER_API_KEY")),
     },
     ModelInfo {
@@ -2343,6 +2508,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 83_333,
         supports_tools: true,
         env_key: "OPENROUTER_API_KEY",
+        reasoning_shape: super::ReasoningShape::OpenRouterReasoning,
         wire: super::openai_compat("https://openrouter.ai/api/v1", Some("OPENROUTER_API_KEY")),
     },
     ModelInfo {
@@ -2357,6 +2523,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 41_667,
         supports_tools: true,
         env_key: "OPENROUTER_API_KEY",
+        reasoning_shape: super::ReasoningShape::OpenRouterReasoning,
         wire: super::openai_compat("https://openrouter.ai/api/v1", Some("OPENROUTER_API_KEY")),
     },
     ModelInfo {
@@ -2371,6 +2538,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 41_667,
         supports_tools: true,
         env_key: "OPENROUTER_API_KEY",
+        reasoning_shape: super::ReasoningShape::OpenRouterReasoning,
         wire: super::openai_compat("https://openrouter.ai/api/v1", Some("OPENROUTER_API_KEY")),
     },
     ModelInfo {
@@ -2385,6 +2553,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 41_667,
         supports_tools: true,
         env_key: "OPENROUTER_API_KEY",
+        reasoning_shape: super::ReasoningShape::OpenRouterReasoning,
         wire: super::openai_compat("https://openrouter.ai/api/v1", Some("OPENROUTER_API_KEY")),
     },
     ModelInfo {
@@ -2399,6 +2568,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 0,
         supports_tools: true,
         env_key: "OPENROUTER_API_KEY",
+        reasoning_shape: super::ReasoningShape::OpenRouterReasoning,
         wire: super::openai_compat("https://openrouter.ai/api/v1", Some("OPENROUTER_API_KEY")),
     },
     ModelInfo {
@@ -2413,6 +2583,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 0,
         supports_tools: true,
         env_key: "OPENROUTER_API_KEY",
+        reasoning_shape: super::ReasoningShape::OpenRouterReasoning,
         wire: super::openai_compat("https://openrouter.ai/api/v1", Some("OPENROUTER_API_KEY")),
     },
     ModelInfo {
@@ -2427,6 +2598,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 0,
         supports_tools: true,
         env_key: "OPENROUTER_API_KEY",
+        reasoning_shape: super::ReasoningShape::OpenRouterReasoning,
         wire: super::openai_compat("https://openrouter.ai/api/v1", Some("OPENROUTER_API_KEY")),
     },
     ModelInfo {
@@ -2441,6 +2613,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 0,
         supports_tools: true,
         env_key: "OPENROUTER_API_KEY",
+        reasoning_shape: super::ReasoningShape::OpenRouterReasoning,
         wire: super::openai_compat("https://openrouter.ai/api/v1", Some("OPENROUTER_API_KEY")),
     },
     ModelInfo {
@@ -2455,6 +2628,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 0,
         supports_tools: true,
         env_key: "OPENROUTER_API_KEY",
+        reasoning_shape: super::ReasoningShape::OpenRouterReasoning,
         wire: super::openai_compat("https://openrouter.ai/api/v1", Some("OPENROUTER_API_KEY")),
     },
     ModelInfo {
@@ -2469,6 +2643,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 0,
         supports_tools: true,
         env_key: "OPENROUTER_API_KEY",
+        reasoning_shape: super::ReasoningShape::OpenRouterReasoning,
         wire: super::openai_compat("https://openrouter.ai/api/v1", Some("OPENROUTER_API_KEY")),
     },
     ModelInfo {
@@ -2483,6 +2658,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 0,
         supports_tools: true,
         env_key: "OPENROUTER_API_KEY",
+        reasoning_shape: super::ReasoningShape::OpenRouterReasoning,
         wire: super::openai_compat("https://openrouter.ai/api/v1", Some("OPENROUTER_API_KEY")),
     },
     ModelInfo {
@@ -2497,6 +2673,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 0,
         supports_tools: true,
         env_key: "OPENROUTER_API_KEY",
+        reasoning_shape: super::ReasoningShape::OpenRouterReasoning,
         wire: super::openai_compat("https://openrouter.ai/api/v1", Some("OPENROUTER_API_KEY")),
     },
     ModelInfo {
@@ -2511,6 +2688,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 0,
         supports_tools: true,
         env_key: "OPENROUTER_API_KEY",
+        reasoning_shape: super::ReasoningShape::OpenRouterReasoning,
         wire: super::openai_compat("https://openrouter.ai/api/v1", Some("OPENROUTER_API_KEY")),
     },
     ModelInfo {
@@ -2525,6 +2703,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 0,
         supports_tools: true,
         env_key: "OPENROUTER_API_KEY",
+        reasoning_shape: super::ReasoningShape::OpenRouterReasoning,
         wire: super::openai_compat("https://openrouter.ai/api/v1", Some("OPENROUTER_API_KEY")),
     },
     ModelInfo {
@@ -2539,6 +2718,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 0,
         supports_tools: true,
         env_key: "OPENROUTER_API_KEY",
+        reasoning_shape: super::ReasoningShape::OpenRouterReasoning,
         wire: super::openai_compat("https://openrouter.ai/api/v1", Some("OPENROUTER_API_KEY")),
     },
     ModelInfo {
@@ -2553,6 +2733,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 0,
         supports_tools: true,
         env_key: "OPENROUTER_API_KEY",
+        reasoning_shape: super::ReasoningShape::OpenRouterReasoning,
         wire: super::openai_compat("https://openrouter.ai/api/v1", Some("OPENROUTER_API_KEY")),
     },
     ModelInfo {
@@ -2567,6 +2748,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 0,
         supports_tools: true,
         env_key: "OPENROUTER_API_KEY",
+        reasoning_shape: super::ReasoningShape::OpenRouterReasoning,
         wire: super::openai_compat("https://openrouter.ai/api/v1", Some("OPENROUTER_API_KEY")),
     },
     ModelInfo {
@@ -2581,6 +2763,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 0,
         supports_tools: true,
         env_key: "OPENROUTER_API_KEY",
+        reasoning_shape: super::ReasoningShape::OpenRouterReasoning,
         wire: super::openai_compat("https://openrouter.ai/api/v1", Some("OPENROUTER_API_KEY")),
     },
     ModelInfo {
@@ -2595,6 +2778,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 0,
         supports_tools: true,
         env_key: "OPENROUTER_API_KEY",
+        reasoning_shape: super::ReasoningShape::OpenRouterReasoning,
         wire: super::openai_compat("https://openrouter.ai/api/v1", Some("OPENROUTER_API_KEY")),
     },
     ModelInfo {
@@ -2609,6 +2793,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 0,
         supports_tools: true,
         env_key: "OPENROUTER_API_KEY",
+        reasoning_shape: super::ReasoningShape::OpenRouterReasoning,
         wire: super::openai_compat("https://openrouter.ai/api/v1", Some("OPENROUTER_API_KEY")),
     },
     ModelInfo {
@@ -2623,6 +2808,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 0,
         supports_tools: true,
         env_key: "OPENROUTER_API_KEY",
+        reasoning_shape: super::ReasoningShape::OpenRouterReasoning,
         wire: super::openai_compat("https://openrouter.ai/api/v1", Some("OPENROUTER_API_KEY")),
     },
     ModelInfo {
@@ -2637,6 +2823,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 0,
         supports_tools: true,
         env_key: "OPENROUTER_API_KEY",
+        reasoning_shape: super::ReasoningShape::OpenRouterReasoning,
         wire: super::openai_compat("https://openrouter.ai/api/v1", Some("OPENROUTER_API_KEY")),
     },
     ModelInfo {
@@ -2651,6 +2838,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 0,
         supports_tools: true,
         env_key: "OPENROUTER_API_KEY",
+        reasoning_shape: super::ReasoningShape::OpenRouterReasoning,
         wire: super::openai_compat("https://openrouter.ai/api/v1", Some("OPENROUTER_API_KEY")),
     },
     ModelInfo {
@@ -2665,6 +2853,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 0,
         supports_tools: true,
         env_key: "OPENROUTER_API_KEY",
+        reasoning_shape: super::ReasoningShape::OpenRouterReasoning,
         wire: super::openai_compat("https://openrouter.ai/api/v1", Some("OPENROUTER_API_KEY")),
     },
     ModelInfo {
@@ -2679,6 +2868,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 0,
         supports_tools: true,
         env_key: "OPENROUTER_API_KEY",
+        reasoning_shape: super::ReasoningShape::OpenRouterReasoning,
         wire: super::openai_compat("https://openrouter.ai/api/v1", Some("OPENROUTER_API_KEY")),
     },
     ModelInfo {
@@ -2693,6 +2883,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 0,
         supports_tools: true,
         env_key: "OPENROUTER_API_KEY",
+        reasoning_shape: super::ReasoningShape::OpenRouterReasoning,
         wire: super::openai_compat("https://openrouter.ai/api/v1", Some("OPENROUTER_API_KEY")),
     },
     ModelInfo {
@@ -2707,6 +2898,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 0,
         supports_tools: true,
         env_key: "OPENROUTER_API_KEY",
+        reasoning_shape: super::ReasoningShape::OpenRouterReasoning,
         wire: super::openai_compat("https://openrouter.ai/api/v1", Some("OPENROUTER_API_KEY")),
     },
     ModelInfo {
@@ -2721,6 +2913,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 0,
         supports_tools: true,
         env_key: "OPENROUTER_API_KEY",
+        reasoning_shape: super::ReasoningShape::OpenRouterReasoning,
         wire: super::openai_compat("https://openrouter.ai/api/v1", Some("OPENROUTER_API_KEY")),
     },
     ModelInfo {
@@ -2735,6 +2928,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 0,
         supports_tools: true,
         env_key: "OPENROUTER_API_KEY",
+        reasoning_shape: super::ReasoningShape::OpenRouterReasoning,
         wire: super::openai_compat("https://openrouter.ai/api/v1", Some("OPENROUTER_API_KEY")),
     },
     ModelInfo {
@@ -2749,6 +2943,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 0,
         supports_tools: true,
         env_key: "OPENROUTER_API_KEY",
+        reasoning_shape: super::ReasoningShape::OpenRouterReasoning,
         wire: super::openai_compat("https://openrouter.ai/api/v1", Some("OPENROUTER_API_KEY")),
     },
     ModelInfo {
@@ -2763,6 +2958,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 0,
         supports_tools: true,
         env_key: "OPENROUTER_API_KEY",
+        reasoning_shape: super::ReasoningShape::OpenRouterReasoning,
         wire: super::openai_compat("https://openrouter.ai/api/v1", Some("OPENROUTER_API_KEY")),
     },
     ModelInfo {
@@ -2777,6 +2973,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 0,
         supports_tools: true,
         env_key: "OPENROUTER_API_KEY",
+        reasoning_shape: super::ReasoningShape::OpenRouterReasoning,
         wire: super::openai_compat("https://openrouter.ai/api/v1", Some("OPENROUTER_API_KEY")),
     },
     ModelInfo {
@@ -2791,6 +2988,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 0,
         supports_tools: true,
         env_key: "OPENROUTER_API_KEY",
+        reasoning_shape: super::ReasoningShape::OpenRouterReasoning,
         wire: super::openai_compat("https://openrouter.ai/api/v1", Some("OPENROUTER_API_KEY")),
     },
     ModelInfo {
@@ -2805,6 +3003,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 0,
         supports_tools: true,
         env_key: "OPENROUTER_API_KEY",
+        reasoning_shape: super::ReasoningShape::OpenRouterReasoning,
         wire: super::openai_compat("https://openrouter.ai/api/v1", Some("OPENROUTER_API_KEY")),
     },
     ModelInfo {
@@ -2819,6 +3018,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 0,
         supports_tools: true,
         env_key: "OPENROUTER_API_KEY",
+        reasoning_shape: super::ReasoningShape::OpenRouterReasoning,
         wire: super::openai_compat("https://openrouter.ai/api/v1", Some("OPENROUTER_API_KEY")),
     },
     ModelInfo {
@@ -2833,6 +3033,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 0,
         supports_tools: true,
         env_key: "OPENROUTER_API_KEY",
+        reasoning_shape: super::ReasoningShape::OpenRouterReasoning,
         wire: super::openai_compat("https://openrouter.ai/api/v1", Some("OPENROUTER_API_KEY")),
     },
     ModelInfo {
@@ -2847,6 +3048,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 0,
         supports_tools: true,
         env_key: "OPENROUTER_API_KEY",
+        reasoning_shape: super::ReasoningShape::OpenRouterReasoning,
         wire: super::openai_compat("https://openrouter.ai/api/v1", Some("OPENROUTER_API_KEY")),
     },
     ModelInfo {
@@ -2861,6 +3063,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 0,
         supports_tools: true,
         env_key: "OPENROUTER_API_KEY",
+        reasoning_shape: super::ReasoningShape::OpenRouterReasoning,
         wire: super::openai_compat("https://openrouter.ai/api/v1", Some("OPENROUTER_API_KEY")),
     },
     ModelInfo {
@@ -2875,6 +3078,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 0,
         supports_tools: true,
         env_key: "OPENROUTER_API_KEY",
+        reasoning_shape: super::ReasoningShape::OpenRouterReasoning,
         wire: super::openai_compat("https://openrouter.ai/api/v1", Some("OPENROUTER_API_KEY")),
     },
     ModelInfo {
@@ -2889,6 +3093,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 0,
         supports_tools: true,
         env_key: "OPENROUTER_API_KEY",
+        reasoning_shape: super::ReasoningShape::OpenRouterReasoning,
         wire: super::openai_compat("https://openrouter.ai/api/v1", Some("OPENROUTER_API_KEY")),
     },
     ModelInfo {
@@ -2903,6 +3108,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 0,
         supports_tools: true,
         env_key: "OPENROUTER_API_KEY",
+        reasoning_shape: super::ReasoningShape::OpenRouterReasoning,
         wire: super::openai_compat("https://openrouter.ai/api/v1", Some("OPENROUTER_API_KEY")),
     },
     ModelInfo {
@@ -2917,6 +3123,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 0,
         supports_tools: true,
         env_key: "OPENROUTER_API_KEY",
+        reasoning_shape: super::ReasoningShape::OpenRouterReasoning,
         wire: super::openai_compat("https://openrouter.ai/api/v1", Some("OPENROUTER_API_KEY")),
     },
     ModelInfo {
@@ -2931,6 +3138,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 0,
         supports_tools: true,
         env_key: "OPENROUTER_API_KEY",
+        reasoning_shape: super::ReasoningShape::OpenRouterReasoning,
         wire: super::openai_compat("https://openrouter.ai/api/v1", Some("OPENROUTER_API_KEY")),
     },
     ModelInfo {
@@ -2945,6 +3153,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 0,
         supports_tools: true,
         env_key: "OPENROUTER_API_KEY",
+        reasoning_shape: super::ReasoningShape::OpenRouterReasoning,
         wire: super::openai_compat("https://openrouter.ai/api/v1", Some("OPENROUTER_API_KEY")),
     },
     ModelInfo {
@@ -2959,6 +3168,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 0,
         supports_tools: true,
         env_key: "OPENROUTER_API_KEY",
+        reasoning_shape: super::ReasoningShape::OpenRouterReasoning,
         wire: super::openai_compat("https://openrouter.ai/api/v1", Some("OPENROUTER_API_KEY")),
     },
     ModelInfo {
@@ -2973,6 +3183,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 0,
         supports_tools: true,
         env_key: "OPENROUTER_API_KEY",
+        reasoning_shape: super::ReasoningShape::OpenRouterReasoning,
         wire: super::openai_compat("https://openrouter.ai/api/v1", Some("OPENROUTER_API_KEY")),
     },
     ModelInfo {
@@ -2987,6 +3198,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 0,
         supports_tools: true,
         env_key: "OPENROUTER_API_KEY",
+        reasoning_shape: super::ReasoningShape::OpenRouterReasoning,
         wire: super::openai_compat("https://openrouter.ai/api/v1", Some("OPENROUTER_API_KEY")),
     },
     ModelInfo {
@@ -3001,6 +3213,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 0,
         supports_tools: true,
         env_key: "OPENROUTER_API_KEY",
+        reasoning_shape: super::ReasoningShape::OpenRouterReasoning,
         wire: super::openai_compat("https://openrouter.ai/api/v1", Some("OPENROUTER_API_KEY")),
     },
     ModelInfo {
@@ -3015,6 +3228,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 0,
         supports_tools: true,
         env_key: "OPENROUTER_API_KEY",
+        reasoning_shape: super::ReasoningShape::OpenRouterReasoning,
         wire: super::openai_compat("https://openrouter.ai/api/v1", Some("OPENROUTER_API_KEY")),
     },
     ModelInfo {
@@ -3029,6 +3243,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 0,
         supports_tools: true,
         env_key: "OPENROUTER_API_KEY",
+        reasoning_shape: super::ReasoningShape::OpenRouterReasoning,
         wire: super::openai_compat("https://openrouter.ai/api/v1", Some("OPENROUTER_API_KEY")),
     },
     ModelInfo {
@@ -3043,6 +3258,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 0,
         supports_tools: true,
         env_key: "OPENROUTER_API_KEY",
+        reasoning_shape: super::ReasoningShape::OpenRouterReasoning,
         wire: super::openai_compat("https://openrouter.ai/api/v1", Some("OPENROUTER_API_KEY")),
     },
     ModelInfo {
@@ -3057,6 +3273,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 0,
         supports_tools: true,
         env_key: "OPENROUTER_API_KEY",
+        reasoning_shape: super::ReasoningShape::OpenRouterReasoning,
         wire: super::openai_compat("https://openrouter.ai/api/v1", Some("OPENROUTER_API_KEY")),
     },
     ModelInfo {
@@ -3071,6 +3288,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 0,
         supports_tools: true,
         env_key: "OPENROUTER_API_KEY",
+        reasoning_shape: super::ReasoningShape::OpenRouterReasoning,
         wire: super::openai_compat("https://openrouter.ai/api/v1", Some("OPENROUTER_API_KEY")),
     },
     ModelInfo {
@@ -3085,6 +3303,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 0,
         supports_tools: true,
         env_key: "OPENROUTER_API_KEY",
+        reasoning_shape: super::ReasoningShape::OpenRouterReasoning,
         wire: super::openai_compat("https://openrouter.ai/api/v1", Some("OPENROUTER_API_KEY")),
     },
     ModelInfo {
@@ -3099,6 +3318,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 0,
         supports_tools: true,
         env_key: "OPENROUTER_API_KEY",
+        reasoning_shape: super::ReasoningShape::OpenRouterReasoning,
         wire: super::openai_compat("https://openrouter.ai/api/v1", Some("OPENROUTER_API_KEY")),
     },
     ModelInfo {
@@ -3113,6 +3333,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 0,
         supports_tools: true,
         env_key: "OPENROUTER_API_KEY",
+        reasoning_shape: super::ReasoningShape::OpenRouterReasoning,
         wire: super::openai_compat("https://openrouter.ai/api/v1", Some("OPENROUTER_API_KEY")),
     },
     ModelInfo {
@@ -3127,6 +3348,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 0,
         supports_tools: true,
         env_key: "OPENROUTER_API_KEY",
+        reasoning_shape: super::ReasoningShape::OpenRouterReasoning,
         wire: super::openai_compat("https://openrouter.ai/api/v1", Some("OPENROUTER_API_KEY")),
     },
     ModelInfo {
@@ -3141,6 +3363,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 0,
         supports_tools: true,
         env_key: "OPENROUTER_API_KEY",
+        reasoning_shape: super::ReasoningShape::OpenRouterReasoning,
         wire: super::openai_compat("https://openrouter.ai/api/v1", Some("OPENROUTER_API_KEY")),
     },
     ModelInfo {
@@ -3155,6 +3378,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 0,
         supports_tools: true,
         env_key: "OPENROUTER_API_KEY",
+        reasoning_shape: super::ReasoningShape::OpenRouterReasoning,
         wire: super::openai_compat("https://openrouter.ai/api/v1", Some("OPENROUTER_API_KEY")),
     },
     ModelInfo {
@@ -3169,6 +3393,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 0,
         supports_tools: true,
         env_key: "OPENROUTER_API_KEY",
+        reasoning_shape: super::ReasoningShape::OpenRouterReasoning,
         wire: super::openai_compat("https://openrouter.ai/api/v1", Some("OPENROUTER_API_KEY")),
     },
     ModelInfo {
@@ -3183,6 +3408,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 0,
         supports_tools: true,
         env_key: "OPENROUTER_API_KEY",
+        reasoning_shape: super::ReasoningShape::OpenRouterReasoning,
         wire: super::openai_compat("https://openrouter.ai/api/v1", Some("OPENROUTER_API_KEY")),
     },
     ModelInfo {
@@ -3197,6 +3423,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 0,
         supports_tools: true,
         env_key: "OPENROUTER_API_KEY",
+        reasoning_shape: super::ReasoningShape::OpenRouterReasoning,
         wire: super::openai_compat("https://openrouter.ai/api/v1", Some("OPENROUTER_API_KEY")),
     },
     ModelInfo {
@@ -3211,6 +3438,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 0,
         supports_tools: true,
         env_key: "OPENROUTER_API_KEY",
+        reasoning_shape: super::ReasoningShape::OpenRouterReasoning,
         wire: super::openai_compat("https://openrouter.ai/api/v1", Some("OPENROUTER_API_KEY")),
     },
     ModelInfo {
@@ -3225,6 +3453,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 0,
         supports_tools: true,
         env_key: "OPENROUTER_API_KEY",
+        reasoning_shape: super::ReasoningShape::OpenRouterReasoning,
         wire: super::openai_compat("https://openrouter.ai/api/v1", Some("OPENROUTER_API_KEY")),
     },
     ModelInfo {
@@ -3239,6 +3468,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 0,
         supports_tools: true,
         env_key: "OPENROUTER_API_KEY",
+        reasoning_shape: super::ReasoningShape::OpenRouterReasoning,
         wire: super::openai_compat("https://openrouter.ai/api/v1", Some("OPENROUTER_API_KEY")),
     },
     ModelInfo {
@@ -3253,6 +3483,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 0,
         supports_tools: true,
         env_key: "OPENROUTER_API_KEY",
+        reasoning_shape: super::ReasoningShape::OpenRouterReasoning,
         wire: super::openai_compat("https://openrouter.ai/api/v1", Some("OPENROUTER_API_KEY")),
     },
     ModelInfo {
@@ -3267,6 +3498,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 0,
         supports_tools: true,
         env_key: "OPENROUTER_API_KEY",
+        reasoning_shape: super::ReasoningShape::OpenRouterReasoning,
         wire: super::openai_compat("https://openrouter.ai/api/v1", Some("OPENROUTER_API_KEY")),
     },
     ModelInfo {
@@ -3281,6 +3513,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 0,
         supports_tools: true,
         env_key: "OPENROUTER_API_KEY",
+        reasoning_shape: super::ReasoningShape::OpenRouterReasoning,
         wire: super::openai_compat("https://openrouter.ai/api/v1", Some("OPENROUTER_API_KEY")),
     },
     ModelInfo {
@@ -3295,6 +3528,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 0,
         supports_tools: true,
         env_key: "OPENROUTER_API_KEY",
+        reasoning_shape: super::ReasoningShape::OpenRouterReasoning,
         wire: super::openai_compat("https://openrouter.ai/api/v1", Some("OPENROUTER_API_KEY")),
     },
     ModelInfo {
@@ -3309,6 +3543,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 0,
         supports_tools: true,
         env_key: "OPENROUTER_API_KEY",
+        reasoning_shape: super::ReasoningShape::OpenRouterReasoning,
         wire: super::openai_compat("https://openrouter.ai/api/v1", Some("OPENROUTER_API_KEY")),
     },
     ModelInfo {
@@ -3323,6 +3558,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 0,
         supports_tools: true,
         env_key: "OPENROUTER_API_KEY",
+        reasoning_shape: super::ReasoningShape::OpenRouterReasoning,
         wire: super::openai_compat("https://openrouter.ai/api/v1", Some("OPENROUTER_API_KEY")),
     },
     ModelInfo {
@@ -3337,6 +3573,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 0,
         supports_tools: true,
         env_key: "OPENROUTER_API_KEY",
+        reasoning_shape: super::ReasoningShape::OpenRouterReasoning,
         wire: super::openai_compat("https://openrouter.ai/api/v1", Some("OPENROUTER_API_KEY")),
     },
     ModelInfo {
@@ -3351,6 +3588,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 0,
         supports_tools: true,
         env_key: "OPENROUTER_API_KEY",
+        reasoning_shape: super::ReasoningShape::OpenRouterReasoning,
         wire: super::openai_compat("https://openrouter.ai/api/v1", Some("OPENROUTER_API_KEY")),
     },
     ModelInfo {
@@ -3365,6 +3603,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 0,
         supports_tools: true,
         env_key: "OPENROUTER_API_KEY",
+        reasoning_shape: super::ReasoningShape::OpenRouterReasoning,
         wire: super::openai_compat("https://openrouter.ai/api/v1", Some("OPENROUTER_API_KEY")),
     },
     ModelInfo {
@@ -3379,6 +3618,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 0,
         supports_tools: true,
         env_key: "OPENROUTER_API_KEY",
+        reasoning_shape: super::ReasoningShape::OpenRouterReasoning,
         wire: super::openai_compat("https://openrouter.ai/api/v1", Some("OPENROUTER_API_KEY")),
     },
     ModelInfo {
@@ -3393,6 +3633,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 0,
         supports_tools: true,
         env_key: "OPENROUTER_API_KEY",
+        reasoning_shape: super::ReasoningShape::OpenRouterReasoning,
         wire: super::openai_compat("https://openrouter.ai/api/v1", Some("OPENROUTER_API_KEY")),
     },
     ModelInfo {
@@ -3407,6 +3648,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 0,
         supports_tools: true,
         env_key: "OPENROUTER_API_KEY",
+        reasoning_shape: super::ReasoningShape::OpenRouterReasoning,
         wire: super::openai_compat("https://openrouter.ai/api/v1", Some("OPENROUTER_API_KEY")),
     },
     ModelInfo {
@@ -3421,6 +3663,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 0,
         supports_tools: true,
         env_key: "OPENROUTER_API_KEY",
+        reasoning_shape: super::ReasoningShape::OpenRouterReasoning,
         wire: super::openai_compat("https://openrouter.ai/api/v1", Some("OPENROUTER_API_KEY")),
     },
     ModelInfo {
@@ -3435,6 +3678,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 0,
         supports_tools: true,
         env_key: "OPENROUTER_API_KEY",
+        reasoning_shape: super::ReasoningShape::OpenRouterReasoning,
         wire: super::openai_compat("https://openrouter.ai/api/v1", Some("OPENROUTER_API_KEY")),
     },
     ModelInfo {
@@ -3449,6 +3693,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 0,
         supports_tools: true,
         env_key: "OPENROUTER_API_KEY",
+        reasoning_shape: super::ReasoningShape::OpenRouterReasoning,
         wire: super::openai_compat("https://openrouter.ai/api/v1", Some("OPENROUTER_API_KEY")),
     },
     ModelInfo {
@@ -3463,6 +3708,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 0,
         supports_tools: true,
         env_key: "OPENROUTER_API_KEY",
+        reasoning_shape: super::ReasoningShape::OpenRouterReasoning,
         wire: super::openai_compat("https://openrouter.ai/api/v1", Some("OPENROUTER_API_KEY")),
     },
     ModelInfo {
@@ -3477,6 +3723,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 0,
         supports_tools: true,
         env_key: "OPENROUTER_API_KEY",
+        reasoning_shape: super::ReasoningShape::OpenRouterReasoning,
         wire: super::openai_compat("https://openrouter.ai/api/v1", Some("OPENROUTER_API_KEY")),
     },
     ModelInfo {
@@ -3491,6 +3738,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 0,
         supports_tools: true,
         env_key: "OPENROUTER_API_KEY",
+        reasoning_shape: super::ReasoningShape::OpenRouterReasoning,
         wire: super::openai_compat("https://openrouter.ai/api/v1", Some("OPENROUTER_API_KEY")),
     },
     ModelInfo {
@@ -3505,6 +3753,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 0,
         supports_tools: true,
         env_key: "OPENROUTER_API_KEY",
+        reasoning_shape: super::ReasoningShape::OpenRouterReasoning,
         wire: super::openai_compat("https://openrouter.ai/api/v1", Some("OPENROUTER_API_KEY")),
     },
     ModelInfo {
@@ -3519,6 +3768,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 0,
         supports_tools: true,
         env_key: "OPENROUTER_API_KEY",
+        reasoning_shape: super::ReasoningShape::OpenRouterReasoning,
         wire: super::openai_compat("https://openrouter.ai/api/v1", Some("OPENROUTER_API_KEY")),
     },
     ModelInfo {
@@ -3533,6 +3783,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 0,
         supports_tools: true,
         env_key: "OPENROUTER_API_KEY",
+        reasoning_shape: super::ReasoningShape::OpenRouterReasoning,
         wire: super::openai_compat("https://openrouter.ai/api/v1", Some("OPENROUTER_API_KEY")),
     },
     ModelInfo {
@@ -3547,6 +3798,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 0,
         supports_tools: true,
         env_key: "OPENROUTER_API_KEY",
+        reasoning_shape: super::ReasoningShape::OpenRouterReasoning,
         wire: super::openai_compat("https://openrouter.ai/api/v1", Some("OPENROUTER_API_KEY")),
     },
     ModelInfo {
@@ -3561,6 +3813,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 0,
         supports_tools: true,
         env_key: "OPENROUTER_API_KEY",
+        reasoning_shape: super::ReasoningShape::OpenRouterReasoning,
         wire: super::openai_compat("https://openrouter.ai/api/v1", Some("OPENROUTER_API_KEY")),
     },
     ModelInfo {
@@ -3575,6 +3828,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 0,
         supports_tools: true,
         env_key: "OPENROUTER_API_KEY",
+        reasoning_shape: super::ReasoningShape::OpenRouterReasoning,
         wire: super::openai_compat("https://openrouter.ai/api/v1", Some("OPENROUTER_API_KEY")),
     },
     ModelInfo {
@@ -3589,6 +3843,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 0,
         supports_tools: true,
         env_key: "OPENROUTER_API_KEY",
+        reasoning_shape: super::ReasoningShape::OpenRouterReasoning,
         wire: super::openai_compat("https://openrouter.ai/api/v1", Some("OPENROUTER_API_KEY")),
     },
     ModelInfo {
@@ -3603,6 +3858,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 0,
         supports_tools: true,
         env_key: "OPENROUTER_API_KEY",
+        reasoning_shape: super::ReasoningShape::OpenRouterReasoning,
         wire: super::openai_compat("https://openrouter.ai/api/v1", Some("OPENROUTER_API_KEY")),
     },
     ModelInfo {
@@ -3617,6 +3873,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 0,
         supports_tools: true,
         env_key: "OPENROUTER_API_KEY",
+        reasoning_shape: super::ReasoningShape::OpenRouterReasoning,
         wire: super::openai_compat("https://openrouter.ai/api/v1", Some("OPENROUTER_API_KEY")),
     },
     ModelInfo {
@@ -3631,6 +3888,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 0,
         supports_tools: true,
         env_key: "OPENROUTER_API_KEY",
+        reasoning_shape: super::ReasoningShape::OpenRouterReasoning,
         wire: super::openai_compat("https://openrouter.ai/api/v1", Some("OPENROUTER_API_KEY")),
     },
     ModelInfo {
@@ -3645,6 +3903,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 0,
         supports_tools: true,
         env_key: "OPENROUTER_API_KEY",
+        reasoning_shape: super::ReasoningShape::OpenRouterReasoning,
         wire: super::openai_compat("https://openrouter.ai/api/v1", Some("OPENROUTER_API_KEY")),
     },
     ModelInfo {
@@ -3659,6 +3918,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 0,
         supports_tools: true,
         env_key: "OPENROUTER_API_KEY",
+        reasoning_shape: super::ReasoningShape::OpenRouterReasoning,
         wire: super::openai_compat("https://openrouter.ai/api/v1", Some("OPENROUTER_API_KEY")),
     },
     ModelInfo {
@@ -3673,6 +3933,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 0,
         supports_tools: true,
         env_key: "OPENROUTER_API_KEY",
+        reasoning_shape: super::ReasoningShape::OpenRouterReasoning,
         wire: super::openai_compat("https://openrouter.ai/api/v1", Some("OPENROUTER_API_KEY")),
     },
     ModelInfo {
@@ -3687,6 +3948,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 0,
         supports_tools: true,
         env_key: "OPENROUTER_API_KEY",
+        reasoning_shape: super::ReasoningShape::OpenRouterReasoning,
         wire: super::openai_compat("https://openrouter.ai/api/v1", Some("OPENROUTER_API_KEY")),
     },
     ModelInfo {
@@ -3701,6 +3963,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 0,
         supports_tools: true,
         env_key: "OPENROUTER_API_KEY",
+        reasoning_shape: super::ReasoningShape::OpenRouterReasoning,
         wire: super::openai_compat("https://openrouter.ai/api/v1", Some("OPENROUTER_API_KEY")),
     },
     ModelInfo {
@@ -3715,6 +3978,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 0,
         supports_tools: true,
         env_key: "OPENROUTER_API_KEY",
+        reasoning_shape: super::ReasoningShape::OpenRouterReasoning,
         wire: super::openai_compat("https://openrouter.ai/api/v1", Some("OPENROUTER_API_KEY")),
     },
     ModelInfo {
@@ -3729,6 +3993,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 0,
         supports_tools: true,
         env_key: "OPENROUTER_API_KEY",
+        reasoning_shape: super::ReasoningShape::OpenRouterReasoning,
         wire: super::openai_compat("https://openrouter.ai/api/v1", Some("OPENROUTER_API_KEY")),
     },
     ModelInfo {
@@ -3743,6 +4008,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 0,
         supports_tools: true,
         env_key: "OPENROUTER_API_KEY",
+        reasoning_shape: super::ReasoningShape::OpenRouterReasoning,
         wire: super::openai_compat("https://openrouter.ai/api/v1", Some("OPENROUTER_API_KEY")),
     },
     ModelInfo {
@@ -3757,6 +4023,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 0,
         supports_tools: true,
         env_key: "OPENROUTER_API_KEY",
+        reasoning_shape: super::ReasoningShape::OpenRouterReasoning,
         wire: super::openai_compat("https://openrouter.ai/api/v1", Some("OPENROUTER_API_KEY")),
     },
     ModelInfo {
@@ -3771,6 +4038,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 0,
         supports_tools: true,
         env_key: "OPENROUTER_API_KEY",
+        reasoning_shape: super::ReasoningShape::OpenRouterReasoning,
         wire: super::openai_compat("https://openrouter.ai/api/v1", Some("OPENROUTER_API_KEY")),
     },
     ModelInfo {
@@ -3785,6 +4053,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 0,
         supports_tools: true,
         env_key: "OPENROUTER_API_KEY",
+        reasoning_shape: super::ReasoningShape::OpenRouterReasoning,
         wire: super::openai_compat("https://openrouter.ai/api/v1", Some("OPENROUTER_API_KEY")),
     },
     ModelInfo {
@@ -3799,6 +4068,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 0,
         supports_tools: true,
         env_key: "OPENROUTER_API_KEY",
+        reasoning_shape: super::ReasoningShape::OpenRouterReasoning,
         wire: super::openai_compat("https://openrouter.ai/api/v1", Some("OPENROUTER_API_KEY")),
     },
     ModelInfo {
@@ -3813,6 +4083,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 0,
         supports_tools: true,
         env_key: "OPENROUTER_API_KEY",
+        reasoning_shape: super::ReasoningShape::OpenRouterReasoning,
         wire: super::openai_compat("https://openrouter.ai/api/v1", Some("OPENROUTER_API_KEY")),
     },
     ModelInfo {
@@ -3827,6 +4098,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 0,
         supports_tools: true,
         env_key: "OPENROUTER_API_KEY",
+        reasoning_shape: super::ReasoningShape::OpenRouterReasoning,
         wire: super::openai_compat("https://openrouter.ai/api/v1", Some("OPENROUTER_API_KEY")),
     },
     ModelInfo {
@@ -3841,6 +4113,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 250_000,
         supports_tools: true,
         env_key: "OPENROUTER_API_KEY",
+        reasoning_shape: super::ReasoningShape::OpenRouterReasoning,
         wire: super::openai_compat("https://openrouter.ai/api/v1", Some("OPENROUTER_API_KEY")),
     },
     ModelInfo {
@@ -3855,6 +4128,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 250_000,
         supports_tools: true,
         env_key: "OPENROUTER_API_KEY",
+        reasoning_shape: super::ReasoningShape::OpenRouterReasoning,
         wire: super::openai_compat("https://openrouter.ai/api/v1", Some("OPENROUTER_API_KEY")),
     },
     ModelInfo {
@@ -3869,6 +4143,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 2_500_000,
         supports_tools: true,
         env_key: "OPENROUTER_API_KEY",
+        reasoning_shape: super::ReasoningShape::OpenRouterReasoning,
         wire: super::openai_compat("https://openrouter.ai/api/v1", Some("OPENROUTER_API_KEY")),
     },
     ModelInfo {
@@ -3883,6 +4158,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 2_500_000,
         supports_tools: true,
         env_key: "OPENROUTER_API_KEY",
+        reasoning_shape: super::ReasoningShape::OpenRouterReasoning,
         wire: super::openai_compat("https://openrouter.ai/api/v1", Some("OPENROUTER_API_KEY")),
     },
     ModelInfo {
@@ -3897,6 +4173,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 2_500_000,
         supports_tools: true,
         env_key: "OPENROUTER_API_KEY",
+        reasoning_shape: super::ReasoningShape::OpenRouterReasoning,
         wire: super::openai_compat("https://openrouter.ai/api/v1", Some("OPENROUTER_API_KEY")),
     },
     ModelInfo {
@@ -3911,6 +4188,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 2_500_000,
         supports_tools: true,
         env_key: "OPENROUTER_API_KEY",
+        reasoning_shape: super::ReasoningShape::OpenRouterReasoning,
         wire: super::openai_compat("https://openrouter.ai/api/v1", Some("OPENROUTER_API_KEY")),
     },
     ModelInfo {
@@ -3925,6 +4203,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 12_500_000,
         supports_tools: true,
         env_key: "OPENROUTER_API_KEY",
+        reasoning_shape: super::ReasoningShape::OpenRouterReasoning,
         wire: super::openai_compat("https://openrouter.ai/api/v1", Some("OPENROUTER_API_KEY")),
     },
     ModelInfo {
@@ -3939,6 +4218,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 12_500_000,
         supports_tools: true,
         env_key: "OPENROUTER_API_KEY",
+        reasoning_shape: super::ReasoningShape::OpenRouterReasoning,
         wire: super::openai_compat("https://openrouter.ai/api/v1", Some("OPENROUTER_API_KEY")),
     },
     ModelInfo {
@@ -3953,6 +4233,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 0,
         supports_tools: true,
         env_key: "OPENROUTER_API_KEY",
+        reasoning_shape: super::ReasoningShape::OpenRouterReasoning,
         wire: super::openai_compat("https://openrouter.ai/api/v1", Some("OPENROUTER_API_KEY")),
     },
     ModelInfo {
@@ -3967,6 +4248,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 0,
         supports_tools: true,
         env_key: "OPENROUTER_API_KEY",
+        reasoning_shape: super::ReasoningShape::OpenRouterReasoning,
         wire: super::openai_compat("https://openrouter.ai/api/v1", Some("OPENROUTER_API_KEY")),
     },
     ModelInfo {
@@ -3981,6 +4263,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 0,
         supports_tools: true,
         env_key: "OPENROUTER_API_KEY",
+        reasoning_shape: super::ReasoningShape::OpenRouterReasoning,
         wire: super::openai_compat("https://openrouter.ai/api/v1", Some("OPENROUTER_API_KEY")),
     },
     ModelInfo {
@@ -3995,6 +4278,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 0,
         supports_tools: true,
         env_key: "OPENROUTER_API_KEY",
+        reasoning_shape: super::ReasoningShape::OpenRouterReasoning,
         wire: super::openai_compat("https://openrouter.ai/api/v1", Some("OPENROUTER_API_KEY")),
     },
     ModelInfo {
@@ -4009,6 +4293,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 0,
         supports_tools: true,
         env_key: "OPENROUTER_API_KEY",
+        reasoning_shape: super::ReasoningShape::OpenRouterReasoning,
         wire: super::openai_compat("https://openrouter.ai/api/v1", Some("OPENROUTER_API_KEY")),
     },
     ModelInfo {
@@ -4023,6 +4308,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 0,
         supports_tools: true,
         env_key: "OPENROUTER_API_KEY",
+        reasoning_shape: super::ReasoningShape::OpenRouterReasoning,
         wire: super::openai_compat("https://openrouter.ai/api/v1", Some("OPENROUTER_API_KEY")),
     },
     ModelInfo {
@@ -4037,6 +4323,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 0,
         supports_tools: true,
         env_key: "OPENROUTER_API_KEY",
+        reasoning_shape: super::ReasoningShape::OpenRouterReasoning,
         wire: super::openai_compat("https://openrouter.ai/api/v1", Some("OPENROUTER_API_KEY")),
     },
     ModelInfo {
@@ -4051,6 +4338,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 0,
         supports_tools: true,
         env_key: "OPENROUTER_API_KEY",
+        reasoning_shape: super::ReasoningShape::OpenRouterReasoning,
         wire: super::openai_compat("https://openrouter.ai/api/v1", Some("OPENROUTER_API_KEY")),
     },
     ModelInfo {
@@ -4065,6 +4353,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 0,
         supports_tools: true,
         env_key: "OPENROUTER_API_KEY",
+        reasoning_shape: super::ReasoningShape::OpenRouterReasoning,
         wire: super::openai_compat("https://openrouter.ai/api/v1", Some("OPENROUTER_API_KEY")),
     },
     ModelInfo {
@@ -4079,6 +4368,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 0,
         supports_tools: true,
         env_key: "OPENROUTER_API_KEY",
+        reasoning_shape: super::ReasoningShape::OpenRouterReasoning,
         wire: super::openai_compat("https://openrouter.ai/api/v1", Some("OPENROUTER_API_KEY")),
     },
     ModelInfo {
@@ -4093,6 +4383,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 0,
         supports_tools: true,
         env_key: "OPENROUTER_API_KEY",
+        reasoning_shape: super::ReasoningShape::OpenRouterReasoning,
         wire: super::openai_compat("https://openrouter.ai/api/v1", Some("OPENROUTER_API_KEY")),
     },
     ModelInfo {
@@ -4107,6 +4398,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 0,
         supports_tools: true,
         env_key: "OPENROUTER_API_KEY",
+        reasoning_shape: super::ReasoningShape::OpenRouterReasoning,
         wire: super::openai_compat("https://openrouter.ai/api/v1", Some("OPENROUTER_API_KEY")),
     },
     ModelInfo {
@@ -4121,6 +4413,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 0,
         supports_tools: true,
         env_key: "OPENROUTER_API_KEY",
+        reasoning_shape: super::ReasoningShape::OpenRouterReasoning,
         wire: super::openai_compat("https://openrouter.ai/api/v1", Some("OPENROUTER_API_KEY")),
     },
     ModelInfo {
@@ -4135,6 +4428,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 0,
         supports_tools: true,
         env_key: "OPENROUTER_API_KEY",
+        reasoning_shape: super::ReasoningShape::OpenRouterReasoning,
         wire: super::openai_compat("https://openrouter.ai/api/v1", Some("OPENROUTER_API_KEY")),
     },
     ModelInfo {
@@ -4149,6 +4443,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 0,
         supports_tools: true,
         env_key: "OPENROUTER_API_KEY",
+        reasoning_shape: super::ReasoningShape::OpenRouterReasoning,
         wire: super::openai_compat("https://openrouter.ai/api/v1", Some("OPENROUTER_API_KEY")),
     },
     ModelInfo {
@@ -4163,6 +4458,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 0,
         supports_tools: true,
         env_key: "OPENROUTER_API_KEY",
+        reasoning_shape: super::ReasoningShape::OpenRouterReasoning,
         wire: super::openai_compat("https://openrouter.ai/api/v1", Some("OPENROUTER_API_KEY")),
     },
     ModelInfo {
@@ -4177,6 +4473,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 325_000,
         supports_tools: true,
         env_key: "OPENROUTER_API_KEY",
+        reasoning_shape: super::ReasoningShape::OpenRouterReasoning,
         wire: super::openai_compat("https://openrouter.ai/api/v1", Some("OPENROUTER_API_KEY")),
     },
     ModelInfo {
@@ -4191,6 +4488,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 0,
         supports_tools: true,
         env_key: "OPENROUTER_API_KEY",
+        reasoning_shape: super::ReasoningShape::OpenRouterReasoning,
         wire: super::openai_compat("https://openrouter.ai/api/v1", Some("OPENROUTER_API_KEY")),
     },
     ModelInfo {
@@ -4205,6 +4503,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 0,
         supports_tools: true,
         env_key: "OPENROUTER_API_KEY",
+        reasoning_shape: super::ReasoningShape::OpenRouterReasoning,
         wire: super::openai_compat("https://openrouter.ai/api/v1", Some("OPENROUTER_API_KEY")),
     },
     ModelInfo {
@@ -4219,6 +4518,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 0,
         supports_tools: true,
         env_key: "OPENROUTER_API_KEY",
+        reasoning_shape: super::ReasoningShape::OpenRouterReasoning,
         wire: super::openai_compat("https://openrouter.ai/api/v1", Some("OPENROUTER_API_KEY")),
     },
     ModelInfo {
@@ -4233,6 +4533,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 0,
         supports_tools: true,
         env_key: "OPENROUTER_API_KEY",
+        reasoning_shape: super::ReasoningShape::OpenRouterReasoning,
         wire: super::openai_compat("https://openrouter.ai/api/v1", Some("OPENROUTER_API_KEY")),
     },
     ModelInfo {
@@ -4247,6 +4548,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 0,
         supports_tools: true,
         env_key: "OPENROUTER_API_KEY",
+        reasoning_shape: super::ReasoningShape::OpenRouterReasoning,
         wire: super::openai_compat("https://openrouter.ai/api/v1", Some("OPENROUTER_API_KEY")),
     },
     ModelInfo {
@@ -4261,6 +4563,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 0,
         supports_tools: true,
         env_key: "OPENROUTER_API_KEY",
+        reasoning_shape: super::ReasoningShape::OpenRouterReasoning,
         wire: super::openai_compat("https://openrouter.ai/api/v1", Some("OPENROUTER_API_KEY")),
     },
     ModelInfo {
@@ -4275,6 +4578,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 0,
         supports_tools: true,
         env_key: "OPENROUTER_API_KEY",
+        reasoning_shape: super::ReasoningShape::OpenRouterReasoning,
         wire: super::openai_compat("https://openrouter.ai/api/v1", Some("OPENROUTER_API_KEY")),
     },
     ModelInfo {
@@ -4289,6 +4593,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 0,
         supports_tools: true,
         env_key: "OPENROUTER_API_KEY",
+        reasoning_shape: super::ReasoningShape::OpenRouterReasoning,
         wire: super::openai_compat("https://openrouter.ai/api/v1", Some("OPENROUTER_API_KEY")),
     },
     ModelInfo {
@@ -4303,6 +4608,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 0,
         supports_tools: true,
         env_key: "OPENROUTER_API_KEY",
+        reasoning_shape: super::ReasoningShape::OpenRouterReasoning,
         wire: super::openai_compat("https://openrouter.ai/api/v1", Some("OPENROUTER_API_KEY")),
     },
     ModelInfo {
@@ -4317,6 +4623,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 0,
         supports_tools: true,
         env_key: "OPENROUTER_API_KEY",
+        reasoning_shape: super::ReasoningShape::OpenRouterReasoning,
         wire: super::openai_compat("https://openrouter.ai/api/v1", Some("OPENROUTER_API_KEY")),
     },
     ModelInfo {
@@ -4331,6 +4638,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 0,
         supports_tools: true,
         env_key: "OPENROUTER_API_KEY",
+        reasoning_shape: super::ReasoningShape::OpenRouterReasoning,
         wire: super::openai_compat("https://openrouter.ai/api/v1", Some("OPENROUTER_API_KEY")),
     },
     ModelInfo {
@@ -4345,6 +4653,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 0,
         supports_tools: true,
         env_key: "OPENROUTER_API_KEY",
+        reasoning_shape: super::ReasoningShape::OpenRouterReasoning,
         wire: super::openai_compat("https://openrouter.ai/api/v1", Some("OPENROUTER_API_KEY")),
     },
     ModelInfo {
@@ -4359,6 +4668,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 243_750,
         supports_tools: true,
         env_key: "OPENROUTER_API_KEY",
+        reasoning_shape: super::ReasoningShape::OpenRouterReasoning,
         wire: super::openai_compat("https://openrouter.ai/api/v1", Some("OPENROUTER_API_KEY")),
     },
     ModelInfo {
@@ -4373,6 +4683,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 0,
         supports_tools: true,
         env_key: "OPENROUTER_API_KEY",
+        reasoning_shape: super::ReasoningShape::OpenRouterReasoning,
         wire: super::openai_compat("https://openrouter.ai/api/v1", Some("OPENROUTER_API_KEY")),
     },
     ModelInfo {
@@ -4387,6 +4698,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 812_500,
         supports_tools: true,
         env_key: "OPENROUTER_API_KEY",
+        reasoning_shape: super::ReasoningShape::OpenRouterReasoning,
         wire: super::openai_compat("https://openrouter.ai/api/v1", Some("OPENROUTER_API_KEY")),
     },
     ModelInfo {
@@ -4401,6 +4713,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 975_000,
         supports_tools: true,
         env_key: "OPENROUTER_API_KEY",
+        reasoning_shape: super::ReasoningShape::OpenRouterReasoning,
         wire: super::openai_compat("https://openrouter.ai/api/v1", Some("OPENROUTER_API_KEY")),
     },
     ModelInfo {
@@ -4415,6 +4728,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 0,
         supports_tools: true,
         env_key: "OPENROUTER_API_KEY",
+        reasoning_shape: super::ReasoningShape::OpenRouterReasoning,
         wire: super::openai_compat("https://openrouter.ai/api/v1", Some("OPENROUTER_API_KEY")),
     },
     ModelInfo {
@@ -4429,6 +4743,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 0,
         supports_tools: true,
         env_key: "OPENROUTER_API_KEY",
+        reasoning_shape: super::ReasoningShape::OpenRouterReasoning,
         wire: super::openai_compat("https://openrouter.ai/api/v1", Some("OPENROUTER_API_KEY")),
     },
     ModelInfo {
@@ -4443,6 +4758,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 0,
         supports_tools: true,
         env_key: "OPENROUTER_API_KEY",
+        reasoning_shape: super::ReasoningShape::OpenRouterReasoning,
         wire: super::openai_compat("https://openrouter.ai/api/v1", Some("OPENROUTER_API_KEY")),
     },
     ModelInfo {
@@ -4457,6 +4773,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 0,
         supports_tools: true,
         env_key: "OPENROUTER_API_KEY",
+        reasoning_shape: super::ReasoningShape::OpenRouterReasoning,
         wire: super::openai_compat("https://openrouter.ai/api/v1", Some("OPENROUTER_API_KEY")),
     },
     ModelInfo {
@@ -4471,6 +4788,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 0,
         supports_tools: true,
         env_key: "OPENROUTER_API_KEY",
+        reasoning_shape: super::ReasoningShape::OpenRouterReasoning,
         wire: super::openai_compat("https://openrouter.ai/api/v1", Some("OPENROUTER_API_KEY")),
     },
     ModelInfo {
@@ -4485,6 +4803,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 0,
         supports_tools: true,
         env_key: "OPENROUTER_API_KEY",
+        reasoning_shape: super::ReasoningShape::OpenRouterReasoning,
         wire: super::openai_compat("https://openrouter.ai/api/v1", Some("OPENROUTER_API_KEY")),
     },
     ModelInfo {
@@ -4499,6 +4818,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 0,
         supports_tools: true,
         env_key: "OPENROUTER_API_KEY",
+        reasoning_shape: super::ReasoningShape::OpenRouterReasoning,
         wire: super::openai_compat("https://openrouter.ai/api/v1", Some("OPENROUTER_API_KEY")),
     },
     ModelInfo {
@@ -4513,6 +4833,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 0,
         supports_tools: true,
         env_key: "OPENROUTER_API_KEY",
+        reasoning_shape: super::ReasoningShape::OpenRouterReasoning,
         wire: super::openai_compat("https://openrouter.ai/api/v1", Some("OPENROUTER_API_KEY")),
     },
     ModelInfo {
@@ -4527,6 +4848,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 0,
         supports_tools: true,
         env_key: "OPENROUTER_API_KEY",
+        reasoning_shape: super::ReasoningShape::OpenRouterReasoning,
         wire: super::openai_compat("https://openrouter.ai/api/v1", Some("OPENROUTER_API_KEY")),
     },
     ModelInfo {
@@ -4541,6 +4863,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 0,
         supports_tools: true,
         env_key: "OPENROUTER_API_KEY",
+        reasoning_shape: super::ReasoningShape::OpenRouterReasoning,
         wire: super::openai_compat("https://openrouter.ai/api/v1", Some("OPENROUTER_API_KEY")),
     },
     ModelInfo {
@@ -4555,6 +4878,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 0,
         supports_tools: true,
         env_key: "OPENROUTER_API_KEY",
+        reasoning_shape: super::ReasoningShape::OpenRouterReasoning,
         wire: super::openai_compat("https://openrouter.ai/api/v1", Some("OPENROUTER_API_KEY")),
     },
     ModelInfo {
@@ -4569,6 +4893,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 0,
         supports_tools: true,
         env_key: "OPENROUTER_API_KEY",
+        reasoning_shape: super::ReasoningShape::OpenRouterReasoning,
         wire: super::openai_compat("https://openrouter.ai/api/v1", Some("OPENROUTER_API_KEY")),
     },
     ModelInfo {
@@ -4583,6 +4908,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 0,
         supports_tools: true,
         env_key: "OPENROUTER_API_KEY",
+        reasoning_shape: super::ReasoningShape::OpenRouterReasoning,
         wire: super::openai_compat("https://openrouter.ai/api/v1", Some("OPENROUTER_API_KEY")),
     },
     ModelInfo {
@@ -4597,6 +4923,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 0,
         supports_tools: true,
         env_key: "OPENROUTER_API_KEY",
+        reasoning_shape: super::ReasoningShape::OpenRouterReasoning,
         wire: super::openai_compat("https://openrouter.ai/api/v1", Some("OPENROUTER_API_KEY")),
     },
     ModelInfo {
@@ -4611,6 +4938,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 0,
         supports_tools: true,
         env_key: "OPENROUTER_API_KEY",
+        reasoning_shape: super::ReasoningShape::OpenRouterReasoning,
         wire: super::openai_compat("https://openrouter.ai/api/v1", Some("OPENROUTER_API_KEY")),
     },
     ModelInfo {
@@ -4625,6 +4953,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 0,
         supports_tools: true,
         env_key: "OPENROUTER_API_KEY",
+        reasoning_shape: super::ReasoningShape::OpenRouterReasoning,
         wire: super::openai_compat("https://openrouter.ai/api/v1", Some("OPENROUTER_API_KEY")),
     },
     ModelInfo {
@@ -4639,6 +4968,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 0,
         supports_tools: true,
         env_key: "OPENROUTER_API_KEY",
+        reasoning_shape: super::ReasoningShape::OpenRouterReasoning,
         wire: super::openai_compat("https://openrouter.ai/api/v1", Some("OPENROUTER_API_KEY")),
     },
     ModelInfo {
@@ -4653,6 +4983,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 0,
         supports_tools: true,
         env_key: "OPENROUTER_API_KEY",
+        reasoning_shape: super::ReasoningShape::OpenRouterReasoning,
         wire: super::openai_compat("https://openrouter.ai/api/v1", Some("OPENROUTER_API_KEY")),
     },
     ModelInfo {
@@ -4667,6 +4998,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 234_375,
         supports_tools: true,
         env_key: "OPENROUTER_API_KEY",
+        reasoning_shape: super::ReasoningShape::OpenRouterReasoning,
         wire: super::openai_compat("https://openrouter.ai/api/v1", Some("OPENROUTER_API_KEY")),
     },
     ModelInfo {
@@ -4681,6 +5013,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 1_283_750,
         supports_tools: true,
         env_key: "OPENROUTER_API_KEY",
+        reasoning_shape: super::ReasoningShape::OpenRouterReasoning,
         wire: super::openai_compat("https://openrouter.ai/api/v1", Some("OPENROUTER_API_KEY")),
     },
     ModelInfo {
@@ -4695,6 +5028,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 406_250,
         supports_tools: true,
         env_key: "OPENROUTER_API_KEY",
+        reasoning_shape: super::ReasoningShape::OpenRouterReasoning,
         wire: super::openai_compat("https://openrouter.ai/api/v1", Some("OPENROUTER_API_KEY")),
     },
     ModelInfo {
@@ -4709,6 +5043,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 38_000,
         supports_tools: true,
         env_key: "OPENROUTER_API_KEY",
+        reasoning_shape: super::ReasoningShape::OpenRouterReasoning,
         wire: super::openai_compat("https://openrouter.ai/api/v1", Some("OPENROUTER_API_KEY")),
     },
     ModelInfo {
@@ -4723,6 +5058,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 1_843_750,
         supports_tools: true,
         env_key: "OPENROUTER_API_KEY",
+        reasoning_shape: super::ReasoningShape::OpenRouterReasoning,
         wire: super::openai_compat("https://openrouter.ai/api/v1", Some("OPENROUTER_API_KEY")),
     },
     ModelInfo {
@@ -4737,6 +5073,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 400_000,
         supports_tools: true,
         env_key: "OPENROUTER_API_KEY",
+        reasoning_shape: super::ReasoningShape::OpenRouterReasoning,
         wire: super::openai_compat("https://openrouter.ai/api/v1", Some("OPENROUTER_API_KEY")),
     },
     ModelInfo {
@@ -4751,6 +5088,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 0,
         supports_tools: true,
         env_key: "OPENROUTER_API_KEY",
+        reasoning_shape: super::ReasoningShape::OpenRouterReasoning,
         wire: super::openai_compat("https://openrouter.ai/api/v1", Some("OPENROUTER_API_KEY")),
     },
     ModelInfo {
@@ -4765,6 +5103,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 0,
         supports_tools: true,
         env_key: "OPENROUTER_API_KEY",
+        reasoning_shape: super::ReasoningShape::OpenRouterReasoning,
         wire: super::openai_compat("https://openrouter.ai/api/v1", Some("OPENROUTER_API_KEY")),
     },
     ModelInfo {
@@ -4779,6 +5118,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 200_000,
         supports_tools: true,
         env_key: "OPENROUTER_API_KEY",
+        reasoning_shape: super::ReasoningShape::OpenRouterReasoning,
         wire: super::openai_compat("https://openrouter.ai/api/v1", Some("OPENROUTER_API_KEY")),
     },
     ModelInfo {
@@ -4793,6 +5133,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 2_500_000,
         supports_tools: true,
         env_key: "OPENROUTER_API_KEY",
+        reasoning_shape: super::ReasoningShape::OpenRouterReasoning,
         wire: super::openai_compat("https://openrouter.ai/api/v1", Some("OPENROUTER_API_KEY")),
     },
     ModelInfo {
@@ -4807,6 +5148,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 0,
         supports_tools: true,
         env_key: "OPENROUTER_API_KEY",
+        reasoning_shape: super::ReasoningShape::OpenRouterReasoning,
         wire: super::openai_compat("https://openrouter.ai/api/v1", Some("OPENROUTER_API_KEY")),
     },
     ModelInfo {
@@ -4821,6 +5163,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 0,
         supports_tools: true,
         env_key: "OPENROUTER_API_KEY",
+        reasoning_shape: super::ReasoningShape::OpenRouterReasoning,
         wire: super::openai_compat("https://openrouter.ai/api/v1", Some("OPENROUTER_API_KEY")),
     },
     ModelInfo {
@@ -4835,6 +5178,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 0,
         supports_tools: true,
         env_key: "OPENROUTER_API_KEY",
+        reasoning_shape: super::ReasoningShape::OpenRouterReasoning,
         wire: super::openai_compat("https://openrouter.ai/api/v1", Some("OPENROUTER_API_KEY")),
     },
     ModelInfo {
@@ -4849,6 +5193,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 0,
         supports_tools: true,
         env_key: "OPENROUTER_API_KEY",
+        reasoning_shape: super::ReasoningShape::OpenRouterReasoning,
         wire: super::openai_compat("https://openrouter.ai/api/v1", Some("OPENROUTER_API_KEY")),
     },
     ModelInfo {
@@ -4863,6 +5208,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 0,
         supports_tools: true,
         env_key: "OPENROUTER_API_KEY",
+        reasoning_shape: super::ReasoningShape::OpenRouterReasoning,
         wire: super::openai_compat("https://openrouter.ai/api/v1", Some("OPENROUTER_API_KEY")),
     },
     ModelInfo {
@@ -4877,6 +5223,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 0,
         supports_tools: true,
         env_key: "OPENROUTER_API_KEY",
+        reasoning_shape: super::ReasoningShape::OpenRouterReasoning,
         wire: super::openai_compat("https://openrouter.ai/api/v1", Some("OPENROUTER_API_KEY")),
     },
     ModelInfo {
@@ -4891,6 +5238,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 0,
         supports_tools: true,
         env_key: "OPENROUTER_API_KEY",
+        reasoning_shape: super::ReasoningShape::OpenRouterReasoning,
         wire: super::openai_compat("https://openrouter.ai/api/v1", Some("OPENROUTER_API_KEY")),
     },
     ModelInfo {
@@ -4905,6 +5253,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 0,
         supports_tools: true,
         env_key: "OPENROUTER_API_KEY",
+        reasoning_shape: super::ReasoningShape::OpenRouterReasoning,
         wire: super::openai_compat("https://openrouter.ai/api/v1", Some("OPENROUTER_API_KEY")),
     },
     ModelInfo {
@@ -4919,6 +5268,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 0,
         supports_tools: true,
         env_key: "OPENROUTER_API_KEY",
+        reasoning_shape: super::ReasoningShape::OpenRouterReasoning,
         wire: super::openai_compat("https://openrouter.ai/api/v1", Some("OPENROUTER_API_KEY")),
     },
     ModelInfo {
@@ -4933,6 +5283,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 0,
         supports_tools: true,
         env_key: "OPENROUTER_API_KEY",
+        reasoning_shape: super::ReasoningShape::OpenRouterReasoning,
         wire: super::openai_compat("https://openrouter.ai/api/v1", Some("OPENROUTER_API_KEY")),
     },
     ModelInfo {
@@ -4947,6 +5298,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 0,
         supports_tools: true,
         env_key: "OPENROUTER_API_KEY",
+        reasoning_shape: super::ReasoningShape::OpenRouterReasoning,
         wire: super::openai_compat("https://openrouter.ai/api/v1", Some("OPENROUTER_API_KEY")),
     },
     ModelInfo {
@@ -4961,6 +5313,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 0,
         supports_tools: true,
         env_key: "OPENROUTER_API_KEY",
+        reasoning_shape: super::ReasoningShape::OpenRouterReasoning,
         wire: super::openai_compat("https://openrouter.ai/api/v1", Some("OPENROUTER_API_KEY")),
     },
     ModelInfo {
@@ -4975,6 +5328,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 0,
         supports_tools: true,
         env_key: "OPENROUTER_API_KEY",
+        reasoning_shape: super::ReasoningShape::OpenRouterReasoning,
         wire: super::openai_compat("https://openrouter.ai/api/v1", Some("OPENROUTER_API_KEY")),
     },
     ModelInfo {
@@ -4989,6 +5343,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 0,
         supports_tools: true,
         env_key: "OPENROUTER_API_KEY",
+        reasoning_shape: super::ReasoningShape::OpenRouterReasoning,
         wire: super::openai_compat("https://openrouter.ai/api/v1", Some("OPENROUTER_API_KEY")),
     },
     ModelInfo {
@@ -5003,6 +5358,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 0,
         supports_tools: true,
         env_key: "OPENROUTER_API_KEY",
+        reasoning_shape: super::ReasoningShape::OpenRouterReasoning,
         wire: super::openai_compat("https://openrouter.ai/api/v1", Some("OPENROUTER_API_KEY")),
     },
     ModelInfo {
@@ -5017,6 +5373,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 0,
         supports_tools: true,
         env_key: "OPENROUTER_API_KEY",
+        reasoning_shape: super::ReasoningShape::OpenRouterReasoning,
         wire: super::openai_compat("https://openrouter.ai/api/v1", Some("OPENROUTER_API_KEY")),
     },
     ModelInfo {
@@ -5031,6 +5388,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 0,
         supports_tools: true,
         env_key: "OPENROUTER_API_KEY",
+        reasoning_shape: super::ReasoningShape::OpenRouterReasoning,
         wire: super::openai_compat("https://openrouter.ai/api/v1", Some("OPENROUTER_API_KEY")),
     },
     ModelInfo {
@@ -5045,6 +5403,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 0,
         supports_tools: true,
         env_key: "OPENROUTER_API_KEY",
+        reasoning_shape: super::ReasoningShape::OpenRouterReasoning,
         wire: super::openai_compat("https://openrouter.ai/api/v1", Some("OPENROUTER_API_KEY")),
     },
     ModelInfo {
@@ -5059,6 +5418,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 0,
         supports_tools: true,
         env_key: "OPENROUTER_API_KEY",
+        reasoning_shape: super::ReasoningShape::OpenRouterReasoning,
         wire: super::openai_compat("https://openrouter.ai/api/v1", Some("OPENROUTER_API_KEY")),
     },
     ModelInfo {
@@ -5073,6 +5433,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 0,
         supports_tools: true,
         env_key: "OPENROUTER_API_KEY",
+        reasoning_shape: super::ReasoningShape::OpenRouterReasoning,
         wire: super::openai_compat("https://openrouter.ai/api/v1", Some("OPENROUTER_API_KEY")),
     },
     ModelInfo {
@@ -5087,6 +5448,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 0,
         supports_tools: true,
         env_key: "OPENROUTER_API_KEY",
+        reasoning_shape: super::ReasoningShape::OpenRouterReasoning,
         wire: super::openai_compat("https://openrouter.ai/api/v1", Some("OPENROUTER_API_KEY")),
     },
     ModelInfo {
@@ -5101,6 +5463,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 0,
         supports_tools: true,
         env_key: "OPENROUTER_API_KEY",
+        reasoning_shape: super::ReasoningShape::OpenRouterReasoning,
         wire: super::openai_compat("https://openrouter.ai/api/v1", Some("OPENROUTER_API_KEY")),
     },
     ModelInfo {
@@ -5115,6 +5478,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 0,
         supports_tools: true,
         env_key: "OPENROUTER_API_KEY",
+        reasoning_shape: super::ReasoningShape::OpenRouterReasoning,
         wire: super::openai_compat("https://openrouter.ai/api/v1", Some("OPENROUTER_API_KEY")),
     },
     ModelInfo {
@@ -5129,6 +5493,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 0,
         supports_tools: true,
         env_key: "OPENROUTER_API_KEY",
+        reasoning_shape: super::ReasoningShape::OpenRouterReasoning,
         wire: super::openai_compat("https://openrouter.ai/api/v1", Some("OPENROUTER_API_KEY")),
     },
     ModelInfo {
@@ -5143,6 +5508,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 0,
         supports_tools: true,
         env_key: "OPENROUTER_API_KEY",
+        reasoning_shape: super::ReasoningShape::OpenRouterReasoning,
         wire: super::openai_compat("https://openrouter.ai/api/v1", Some("OPENROUTER_API_KEY")),
     },
     ModelInfo {
@@ -5157,6 +5523,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 0,
         supports_tools: true,
         env_key: "OPENROUTER_API_KEY",
+        reasoning_shape: super::ReasoningShape::OpenRouterReasoning,
         wire: super::openai_compat("https://openrouter.ai/api/v1", Some("OPENROUTER_API_KEY")),
     },
     ModelInfo {
@@ -5171,6 +5538,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 0,
         supports_tools: true,
         env_key: "OPENROUTER_API_KEY",
+        reasoning_shape: super::ReasoningShape::OpenRouterReasoning,
         wire: super::openai_compat("https://openrouter.ai/api/v1", Some("OPENROUTER_API_KEY")),
     },
     ModelInfo {
@@ -5185,6 +5553,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 0,
         supports_tools: true,
         env_key: "OPENROUTER_API_KEY",
+        reasoning_shape: super::ReasoningShape::OpenRouterReasoning,
         wire: super::openai_compat("https://openrouter.ai/api/v1", Some("OPENROUTER_API_KEY")),
     },
     ModelInfo {
@@ -5199,6 +5568,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 0,
         supports_tools: true,
         env_key: "OPENROUTER_API_KEY",
+        reasoning_shape: super::ReasoningShape::OpenRouterReasoning,
         wire: super::openai_compat("https://openrouter.ai/api/v1", Some("OPENROUTER_API_KEY")),
     },
     ModelInfo {
@@ -5213,6 +5583,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 0,
         supports_tools: true,
         env_key: "OPENROUTER_API_KEY",
+        reasoning_shape: super::ReasoningShape::OpenRouterReasoning,
         wire: super::openai_compat("https://openrouter.ai/api/v1", Some("OPENROUTER_API_KEY")),
     },
     ModelInfo {
@@ -5227,6 +5598,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 0,
         supports_tools: true,
         env_key: "OPENROUTER_API_KEY",
+        reasoning_shape: super::ReasoningShape::OpenRouterReasoning,
         wire: super::openai_compat("https://openrouter.ai/api/v1", Some("OPENROUTER_API_KEY")),
     },
     ModelInfo {
@@ -5241,6 +5613,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 0,
         supports_tools: true,
         env_key: "OPENROUTER_API_KEY",
+        reasoning_shape: super::ReasoningShape::OpenRouterReasoning,
         wire: super::openai_compat("https://openrouter.ai/api/v1", Some("OPENROUTER_API_KEY")),
     },
     ModelInfo {
@@ -5255,6 +5628,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 0,
         supports_tools: true,
         env_key: "OPENROUTER_API_KEY",
+        reasoning_shape: super::ReasoningShape::OpenRouterReasoning,
         wire: super::openai_compat("https://openrouter.ai/api/v1", Some("OPENROUTER_API_KEY")),
     },
     ModelInfo {
@@ -5269,6 +5643,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 0,
         supports_tools: true,
         env_key: "OPENROUTER_API_KEY",
+        reasoning_shape: super::ReasoningShape::OpenRouterReasoning,
         wire: super::openai_compat("https://openrouter.ai/api/v1", Some("OPENROUTER_API_KEY")),
     },
     ModelInfo {
@@ -5283,6 +5658,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 0,
         supports_tools: true,
         env_key: "OPENROUTER_API_KEY",
+        reasoning_shape: super::ReasoningShape::OpenRouterReasoning,
         wire: super::openai_compat("https://openrouter.ai/api/v1", Some("OPENROUTER_API_KEY")),
     },
     ModelInfo {
@@ -5297,6 +5673,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 0,
         supports_tools: true,
         env_key: "OPENROUTER_API_KEY",
+        reasoning_shape: super::ReasoningShape::OpenRouterReasoning,
         wire: super::openai_compat("https://openrouter.ai/api/v1", Some("OPENROUTER_API_KEY")),
     },
     ModelInfo {
@@ -5311,6 +5688,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 0,
         supports_tools: true,
         env_key: "OPENROUTER_API_KEY",
+        reasoning_shape: super::ReasoningShape::OpenRouterReasoning,
         wire: super::openai_compat("https://openrouter.ai/api/v1", Some("OPENROUTER_API_KEY")),
     },
     ModelInfo {
@@ -5325,6 +5703,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 0,
         supports_tools: true,
         env_key: "OPENROUTER_API_KEY",
+        reasoning_shape: super::ReasoningShape::OpenRouterReasoning,
         wire: super::openai_compat("https://openrouter.ai/api/v1", Some("OPENROUTER_API_KEY")),
     },
     ModelInfo {
@@ -5339,6 +5718,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 0,
         supports_tools: true,
         env_key: "OPENROUTER_API_KEY",
+        reasoning_shape: super::ReasoningShape::OpenRouterReasoning,
         wire: super::openai_compat("https://openrouter.ai/api/v1", Some("OPENROUTER_API_KEY")),
     },
     ModelInfo {
@@ -5353,6 +5733,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 0,
         supports_tools: true,
         env_key: "OPENROUTER_API_KEY",
+        reasoning_shape: super::ReasoningShape::OpenRouterReasoning,
         wire: super::openai_compat("https://openrouter.ai/api/v1", Some("OPENROUTER_API_KEY")),
     },
     ModelInfo {
@@ -5367,6 +5748,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 0,
         supports_tools: true,
         env_key: "OPENROUTER_API_KEY",
+        reasoning_shape: super::ReasoningShape::OpenRouterReasoning,
         wire: super::openai_compat("https://openrouter.ai/api/v1", Some("OPENROUTER_API_KEY")),
     },
     ModelInfo {
@@ -5381,6 +5763,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 0,
         supports_tools: true,
         env_key: "OPENROUTER_API_KEY",
+        reasoning_shape: super::ReasoningShape::OpenRouterReasoning,
         wire: super::openai_compat("https://openrouter.ai/api/v1", Some("OPENROUTER_API_KEY")),
     },
     ModelInfo {
@@ -5395,6 +5778,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 12_500_000,
         supports_tools: true,
         env_key: "OPENROUTER_API_KEY",
+        reasoning_shape: super::ReasoningShape::OpenRouterReasoning,
         wire: super::openai_compat("https://openrouter.ai/api/v1", Some("OPENROUTER_API_KEY")),
     },
     ModelInfo {
@@ -5409,6 +5793,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 1_250_000,
         supports_tools: true,
         env_key: "OPENROUTER_API_KEY",
+        reasoning_shape: super::ReasoningShape::OpenRouterReasoning,
         wire: super::openai_compat("https://openrouter.ai/api/v1", Some("OPENROUTER_API_KEY")),
     },
     ModelInfo {
@@ -5423,6 +5808,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 6_250_000,
         supports_tools: true,
         env_key: "OPENROUTER_API_KEY",
+        reasoning_shape: super::ReasoningShape::OpenRouterReasoning,
         wire: super::openai_compat("https://openrouter.ai/api/v1", Some("OPENROUTER_API_KEY")),
     },
     ModelInfo {
@@ -5437,6 +5823,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 2_500_000,
         supports_tools: true,
         env_key: "OPENROUTER_API_KEY",
+        reasoning_shape: super::ReasoningShape::OpenRouterReasoning,
         wire: super::openai_compat("https://openrouter.ai/api/v1", Some("OPENROUTER_API_KEY")),
     },
     ModelInfo {
@@ -5451,6 +5838,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 0,
         supports_tools: true,
         env_key: "OPENROUTER_API_KEY",
+        reasoning_shape: super::ReasoningShape::OpenRouterReasoning,
         wire: super::openai_compat("https://openrouter.ai/api/v1", Some("OPENROUTER_API_KEY")),
     },
     ModelInfo {
@@ -5465,6 +5853,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 0,
         supports_tools: true,
         env_key: "OPENROUTER_API_KEY",
+        reasoning_shape: super::ReasoningShape::OpenRouterReasoning,
         wire: super::openai_compat("https://openrouter.ai/api/v1", Some("OPENROUTER_API_KEY")),
     },
     ModelInfo {
@@ -5479,6 +5868,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 0,
         supports_tools: true,
         env_key: "OPENROUTER_API_KEY",
+        reasoning_shape: super::ReasoningShape::OpenRouterReasoning,
         wire: super::openai_compat("https://openrouter.ai/api/v1", Some("OPENROUTER_API_KEY")),
     },
     ModelInfo {
@@ -5493,6 +5883,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 41_667,
         supports_tools: true,
         env_key: "OPENROUTER_API_KEY",
+        reasoning_shape: super::ReasoningShape::OpenRouterReasoning,
         wire: super::openai_compat("https://openrouter.ai/api/v1", Some("OPENROUTER_API_KEY")),
     },
     ModelInfo {
@@ -5507,6 +5898,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 375_000,
         supports_tools: true,
         env_key: "OPENROUTER_API_KEY",
+        reasoning_shape: super::ReasoningShape::OpenRouterReasoning,
         wire: super::openai_compat("https://openrouter.ai/api/v1", Some("OPENROUTER_API_KEY")),
     },
     ModelInfo {
@@ -5521,6 +5913,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 0,
         supports_tools: true,
         env_key: "OPENROUTER_API_KEY",
+        reasoning_shape: super::ReasoningShape::OpenRouterReasoning,
         wire: super::openai_compat("https://openrouter.ai/api/v1", Some("OPENROUTER_API_KEY")),
     },
     ModelInfo {
@@ -5535,6 +5928,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 12_500_000,
         supports_tools: true,
         env_key: "OPENROUTER_API_KEY",
+        reasoning_shape: super::ReasoningShape::OpenRouterReasoning,
         wire: super::openai_compat("https://openrouter.ai/api/v1", Some("OPENROUTER_API_KEY")),
     },
     ModelInfo {
@@ -5549,6 +5943,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 250_000,
         supports_tools: true,
         env_key: "OPENROUTER_API_KEY",
+        reasoning_shape: super::ReasoningShape::OpenRouterReasoning,
         wire: super::openai_compat("https://openrouter.ai/api/v1", Some("OPENROUTER_API_KEY")),
     },
     ModelInfo {
@@ -5563,6 +5958,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 0,
         supports_tools: true,
         env_key: "OPENROUTER_API_KEY",
+        reasoning_shape: super::ReasoningShape::OpenRouterReasoning,
         wire: super::openai_compat("https://openrouter.ai/api/v1", Some("OPENROUTER_API_KEY")),
     },
     ModelInfo {
@@ -5577,6 +5973,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 2_500_000,
         supports_tools: true,
         env_key: "OPENROUTER_API_KEY",
+        reasoning_shape: super::ReasoningShape::OpenRouterReasoning,
         wire: super::openai_compat("https://openrouter.ai/api/v1", Some("OPENROUTER_API_KEY")),
     },
     ModelInfo {
@@ -5591,6 +5988,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 2_500_000,
         supports_tools: true,
         env_key: "OPENROUTER_API_KEY",
+        reasoning_shape: super::ReasoningShape::OpenRouterReasoning,
         wire: super::openai_compat("https://openrouter.ai/api/v1", Some("OPENROUTER_API_KEY")),
     },
     ModelInfo {
@@ -5605,6 +6003,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 0,
         supports_tools: true,
         env_key: "OPENROUTER_API_KEY",
+        reasoning_shape: super::ReasoningShape::OpenRouterReasoning,
         wire: super::openai_compat("https://openrouter.ai/api/v1", Some("OPENROUTER_API_KEY")),
     },
     ModelInfo {
@@ -5619,6 +6018,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 0,
         supports_tools: true,
         env_key: "OPENROUTER_API_KEY",
+        reasoning_shape: super::ReasoningShape::OpenRouterReasoning,
         wire: super::openai_compat("https://openrouter.ai/api/v1", Some("OPENROUTER_API_KEY")),
     },
     ModelInfo {
@@ -5633,6 +6033,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 0,
         supports_tools: true,
         env_key: "OPENROUTER_API_KEY",
+        reasoning_shape: super::ReasoningShape::OpenRouterReasoning,
         wire: super::openai_compat("https://openrouter.ai/api/v1", Some("OPENROUTER_API_KEY")),
     },
     // ---- mistral ---------------------------------------------------------------
@@ -5648,6 +6049,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 0,
         supports_tools: true,
         env_key: "MISTRAL_API_KEY",
+        reasoning_shape: super::ReasoningShape::None,
         wire: super::mistral_conversations("https://api.mistral.ai", Some("MISTRAL_API_KEY")),
     },
     ModelInfo {
@@ -5662,6 +6064,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 0,
         supports_tools: true,
         env_key: "MISTRAL_API_KEY",
+        reasoning_shape: super::ReasoningShape::MistralEffort,
         wire: super::mistral_conversations("https://api.mistral.ai", Some("MISTRAL_API_KEY")),
     },
     ModelInfo {
@@ -5676,6 +6079,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 0,
         supports_tools: true,
         env_key: "MISTRAL_API_KEY",
+        reasoning_shape: super::ReasoningShape::MistralEffort,
         wire: super::mistral_conversations("https://api.mistral.ai", Some("MISTRAL_API_KEY")),
     },
     ModelInfo {
@@ -5690,6 +6094,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 0,
         supports_tools: true,
         env_key: "MISTRAL_API_KEY",
+        reasoning_shape: super::ReasoningShape::MistralEffort,
         wire: super::mistral_conversations("https://api.mistral.ai", Some("MISTRAL_API_KEY")),
     },
     ModelInfo {
@@ -5704,6 +6109,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 0,
         supports_tools: true,
         env_key: "MISTRAL_API_KEY",
+        reasoning_shape: super::ReasoningShape::MistralEffort,
         wire: super::mistral_conversations("https://api.mistral.ai", Some("MISTRAL_API_KEY")),
     },
     ModelInfo {
@@ -5718,6 +6124,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 0,
         supports_tools: true,
         env_key: "MISTRAL_API_KEY",
+        reasoning_shape: super::ReasoningShape::MistralEffort,
         wire: super::mistral_conversations("https://api.mistral.ai", Some("MISTRAL_API_KEY")),
     },
     ModelInfo {
@@ -5732,6 +6139,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 0,
         supports_tools: true,
         env_key: "MISTRAL_API_KEY",
+        reasoning_shape: super::ReasoningShape::MistralEffort,
         wire: super::mistral_conversations("https://api.mistral.ai", Some("MISTRAL_API_KEY")),
     },
     ModelInfo {
@@ -5746,6 +6154,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 0,
         supports_tools: true,
         env_key: "MISTRAL_API_KEY",
+        reasoning_shape: super::ReasoningShape::None,
         wire: super::mistral_conversations("https://api.mistral.ai", Some("MISTRAL_API_KEY")),
     },
     ModelInfo {
@@ -5760,6 +6169,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 0,
         supports_tools: true,
         env_key: "MISTRAL_API_KEY",
+        reasoning_shape: super::ReasoningShape::MagistralPromptMode,
         wire: super::mistral_conversations("https://api.mistral.ai", Some("MISTRAL_API_KEY")),
     },
     ModelInfo {
@@ -5774,6 +6184,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 0,
         supports_tools: true,
         env_key: "MISTRAL_API_KEY",
+        reasoning_shape: super::ReasoningShape::MagistralPromptMode,
         wire: super::mistral_conversations("https://api.mistral.ai", Some("MISTRAL_API_KEY")),
     },
     ModelInfo {
@@ -5788,6 +6199,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 0,
         supports_tools: true,
         env_key: "MISTRAL_API_KEY",
+        reasoning_shape: super::ReasoningShape::None,
         wire: super::mistral_conversations("https://api.mistral.ai", Some("MISTRAL_API_KEY")),
     },
     ModelInfo {
@@ -5802,6 +6214,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 0,
         supports_tools: true,
         env_key: "MISTRAL_API_KEY",
+        reasoning_shape: super::ReasoningShape::None,
         wire: super::mistral_conversations("https://api.mistral.ai", Some("MISTRAL_API_KEY")),
     },
     ModelInfo {
@@ -5816,6 +6229,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 0,
         supports_tools: true,
         env_key: "MISTRAL_API_KEY",
+        reasoning_shape: super::ReasoningShape::None,
         wire: super::mistral_conversations("https://api.mistral.ai", Some("MISTRAL_API_KEY")),
     },
     ModelInfo {
@@ -5830,6 +6244,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 0,
         supports_tools: true,
         env_key: "MISTRAL_API_KEY",
+        reasoning_shape: super::ReasoningShape::None,
         wire: super::mistral_conversations("https://api.mistral.ai", Some("MISTRAL_API_KEY")),
     },
     ModelInfo {
@@ -5844,6 +6259,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 0,
         supports_tools: true,
         env_key: "MISTRAL_API_KEY",
+        reasoning_shape: super::ReasoningShape::None,
         wire: super::mistral_conversations("https://api.mistral.ai", Some("MISTRAL_API_KEY")),
     },
     ModelInfo {
@@ -5858,6 +6274,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 0,
         supports_tools: true,
         env_key: "MISTRAL_API_KEY",
+        reasoning_shape: super::ReasoningShape::MistralEffort,
         wire: super::mistral_conversations("https://api.mistral.ai", Some("MISTRAL_API_KEY")),
     },
     ModelInfo {
@@ -5872,6 +6289,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 0,
         supports_tools: true,
         env_key: "MISTRAL_API_KEY",
+        reasoning_shape: super::ReasoningShape::MistralEffort,
         wire: super::mistral_conversations("https://api.mistral.ai", Some("MISTRAL_API_KEY")),
     },
     ModelInfo {
@@ -5886,6 +6304,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 0,
         supports_tools: true,
         env_key: "MISTRAL_API_KEY",
+        reasoning_shape: super::ReasoningShape::MistralEffort,
         wire: super::mistral_conversations("https://api.mistral.ai", Some("MISTRAL_API_KEY")),
     },
     ModelInfo {
@@ -5900,6 +6319,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 0,
         supports_tools: true,
         env_key: "MISTRAL_API_KEY",
+        reasoning_shape: super::ReasoningShape::MistralEffort,
         wire: super::mistral_conversations("https://api.mistral.ai", Some("MISTRAL_API_KEY")),
     },
     ModelInfo {
@@ -5914,6 +6334,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 0,
         supports_tools: true,
         env_key: "MISTRAL_API_KEY",
+        reasoning_shape: super::ReasoningShape::None,
         wire: super::mistral_conversations("https://api.mistral.ai", Some("MISTRAL_API_KEY")),
     },
     ModelInfo {
@@ -5928,6 +6349,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 0,
         supports_tools: true,
         env_key: "MISTRAL_API_KEY",
+        reasoning_shape: super::ReasoningShape::MistralEffort,
         wire: super::mistral_conversations("https://api.mistral.ai", Some("MISTRAL_API_KEY")),
     },
     ModelInfo {
@@ -5942,6 +6364,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 0,
         supports_tools: true,
         env_key: "MISTRAL_API_KEY",
+        reasoning_shape: super::ReasoningShape::MistralEffort,
         wire: super::mistral_conversations("https://api.mistral.ai", Some("MISTRAL_API_KEY")),
     },
     ModelInfo {
@@ -5956,6 +6379,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 0,
         supports_tools: true,
         env_key: "MISTRAL_API_KEY",
+        reasoning_shape: super::ReasoningShape::MistralEffort,
         wire: super::mistral_conversations("https://api.mistral.ai", Some("MISTRAL_API_KEY")),
     },
     ModelInfo {
@@ -5970,6 +6394,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 0,
         supports_tools: true,
         env_key: "MISTRAL_API_KEY",
+        reasoning_shape: super::ReasoningShape::None,
         wire: super::mistral_conversations("https://api.mistral.ai", Some("MISTRAL_API_KEY")),
     },
     ModelInfo {
@@ -5984,6 +6409,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 0,
         supports_tools: true,
         env_key: "MISTRAL_API_KEY",
+        reasoning_shape: super::ReasoningShape::None,
         wire: super::mistral_conversations("https://api.mistral.ai", Some("MISTRAL_API_KEY")),
     },
     ModelInfo {
@@ -5998,6 +6424,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 0,
         supports_tools: true,
         env_key: "MISTRAL_API_KEY",
+        reasoning_shape: super::ReasoningShape::None,
         wire: super::mistral_conversations("https://api.mistral.ai", Some("MISTRAL_API_KEY")),
     },
     ModelInfo {
@@ -6012,6 +6439,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 0,
         supports_tools: true,
         env_key: "MISTRAL_API_KEY",
+        reasoning_shape: super::ReasoningShape::None,
         wire: super::mistral_conversations("https://api.mistral.ai", Some("MISTRAL_API_KEY")),
     },
     ModelInfo {
@@ -6026,6 +6454,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 0,
         supports_tools: true,
         env_key: "MISTRAL_API_KEY",
+        reasoning_shape: super::ReasoningShape::None,
         wire: super::mistral_conversations("https://api.mistral.ai", Some("MISTRAL_API_KEY")),
     },
     ModelInfo {
@@ -6040,6 +6469,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 0,
         supports_tools: true,
         env_key: "MISTRAL_API_KEY",
+        reasoning_shape: super::ReasoningShape::None,
         wire: super::mistral_conversations("https://api.mistral.ai", Some("MISTRAL_API_KEY")),
     },
     ModelInfo {
@@ -6054,6 +6484,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 0,
         supports_tools: true,
         env_key: "MISTRAL_API_KEY",
+        reasoning_shape: super::ReasoningShape::None,
         wire: super::mistral_conversations("https://api.mistral.ai", Some("MISTRAL_API_KEY")),
     },
     ModelInfo {
@@ -6068,6 +6499,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 0,
         supports_tools: true,
         env_key: "MISTRAL_API_KEY",
+        reasoning_shape: super::ReasoningShape::None,
         wire: super::mistral_conversations("https://api.mistral.ai", Some("MISTRAL_API_KEY")),
     },
     ModelInfo {
@@ -6082,6 +6514,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 0,
         supports_tools: true,
         env_key: "MISTRAL_API_KEY",
+        reasoning_shape: super::ReasoningShape::None,
         wire: super::mistral_conversations("https://api.mistral.ai", Some("MISTRAL_API_KEY")),
     },
     // ---- google-vertex ---------------------------------------------------------
@@ -6097,6 +6530,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 0,
         supports_tools: true,
         env_key: "GOOGLE_CLOUD_API_KEY",
+        reasoning_shape: super::ReasoningShape::StandardEffort,
         wire: super::GOOGLE_VERTEX_WIRE,
     },
     ModelInfo {
@@ -6111,6 +6545,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 0,
         supports_tools: true,
         env_key: "GOOGLE_CLOUD_API_KEY",
+        reasoning_shape: super::ReasoningShape::StandardEffort,
         wire: super::GOOGLE_VERTEX_WIRE,
     },
     ModelInfo {
@@ -6125,6 +6560,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 0,
         supports_tools: true,
         env_key: "GOOGLE_CLOUD_API_KEY",
+        reasoning_shape: super::ReasoningShape::StandardEffort,
         wire: super::GOOGLE_VERTEX_WIRE,
     },
     ModelInfo {
@@ -6139,6 +6575,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 0,
         supports_tools: true,
         env_key: "GOOGLE_CLOUD_API_KEY",
+        reasoning_shape: super::ReasoningShape::StandardEffort,
         wire: super::GOOGLE_VERTEX_WIRE,
     },
     ModelInfo {
@@ -6153,6 +6590,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 0,
         supports_tools: true,
         env_key: "GOOGLE_CLOUD_API_KEY",
+        reasoning_shape: super::ReasoningShape::StandardEffort,
         wire: super::GOOGLE_VERTEX_WIRE,
     },
     ModelInfo {
@@ -6167,6 +6605,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 0,
         supports_tools: true,
         env_key: "GOOGLE_CLOUD_API_KEY",
+        reasoning_shape: super::ReasoningShape::StandardEffort,
         wire: super::GOOGLE_VERTEX_WIRE,
     },
     ModelInfo {
@@ -6181,6 +6620,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 0,
         supports_tools: true,
         env_key: "GOOGLE_CLOUD_API_KEY",
+        reasoning_shape: super::ReasoningShape::StandardEffort,
         wire: super::GOOGLE_VERTEX_WIRE,
     },
     ModelInfo {
@@ -6195,6 +6635,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 0,
         supports_tools: true,
         env_key: "GOOGLE_CLOUD_API_KEY",
+        reasoning_shape: super::ReasoningShape::StandardEffort,
         wire: super::GOOGLE_VERTEX_WIRE,
     },
     ModelInfo {
@@ -6209,6 +6650,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 0,
         supports_tools: true,
         env_key: "GOOGLE_CLOUD_API_KEY",
+        reasoning_shape: super::ReasoningShape::StandardEffort,
         wire: super::GOOGLE_VERTEX_WIRE,
     },
     ModelInfo {
@@ -6223,6 +6665,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 0,
         supports_tools: true,
         env_key: "GOOGLE_CLOUD_API_KEY",
+        reasoning_shape: super::ReasoningShape::StandardEffort,
         wire: super::GOOGLE_VERTEX_WIRE,
     },
     ModelInfo {
@@ -6237,6 +6680,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 0,
         supports_tools: true,
         env_key: "GOOGLE_CLOUD_API_KEY",
+        reasoning_shape: super::ReasoningShape::StandardEffort,
         wire: super::GOOGLE_VERTEX_WIRE,
     },
     ModelInfo {
@@ -6251,6 +6695,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 0,
         supports_tools: true,
         env_key: "GOOGLE_CLOUD_API_KEY",
+        reasoning_shape: super::ReasoningShape::StandardEffort,
         wire: super::GOOGLE_VERTEX_WIRE,
     },
     ModelInfo {
@@ -6265,6 +6710,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 0,
         supports_tools: true,
         env_key: "GOOGLE_CLOUD_API_KEY",
+        reasoning_shape: super::ReasoningShape::StandardEffort,
         wire: super::GOOGLE_VERTEX_WIRE,
     },
     ModelInfo {
@@ -6279,6 +6725,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 0,
         supports_tools: true,
         env_key: "GOOGLE_CLOUD_API_KEY",
+        reasoning_shape: super::ReasoningShape::StandardEffort,
         wire: super::GOOGLE_VERTEX_WIRE,
     },
     // ---- amazon-bedrock --------------------------------------------------------
@@ -6294,6 +6741,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 330_000,
         supports_tools: true,
         env_key: "AWS_BEARER_TOKEN_BEDROCK",
+        reasoning_shape: super::ReasoningShape::StandardEffort,
         wire: super::BEDROCK_WIRE,
     },
     ModelInfo {
@@ -6308,6 +6756,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 60_000,
         supports_tools: true,
         env_key: "AWS_BEARER_TOKEN_BEDROCK",
+        reasoning_shape: super::ReasoningShape::StandardEffort,
         wire: super::BEDROCK_WIRE,
     },
     ModelInfo {
@@ -6322,6 +6771,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 35_000,
         supports_tools: true,
         env_key: "AWS_BEARER_TOKEN_BEDROCK",
+        reasoning_shape: super::ReasoningShape::StandardEffort,
         wire: super::BEDROCK_WIRE,
     },
     ModelInfo {
@@ -6336,6 +6786,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 800_000,
         supports_tools: true,
         env_key: "AWS_BEARER_TOKEN_BEDROCK",
+        reasoning_shape: super::ReasoningShape::StandardEffort,
         wire: super::BEDROCK_WIRE,
     },
     ModelInfo {
@@ -6350,6 +6801,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 12_500_000,
         supports_tools: true,
         env_key: "AWS_BEARER_TOKEN_BEDROCK",
+        reasoning_shape: super::ReasoningShape::StandardEffort,
         wire: super::BEDROCK_WIRE,
     },
     ModelInfo {
@@ -6364,6 +6816,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 12_500_000,
         supports_tools: true,
         env_key: "AWS_BEARER_TOKEN_BEDROCK",
+        reasoning_shape: super::ReasoningShape::StandardEffort,
         wire: super::BEDROCK_WIRE,
     },
     ModelInfo {
@@ -6378,6 +6831,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 1_250_000,
         supports_tools: true,
         env_key: "AWS_BEARER_TOKEN_BEDROCK",
+        reasoning_shape: super::ReasoningShape::StandardEffort,
         wire: super::BEDROCK_WIRE,
     },
     ModelInfo {
@@ -6392,6 +6846,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 18_750_000,
         supports_tools: true,
         env_key: "AWS_BEARER_TOKEN_BEDROCK",
+        reasoning_shape: super::ReasoningShape::StandardEffort,
         wire: super::BEDROCK_WIRE,
     },
     ModelInfo {
@@ -6406,6 +6861,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 6_250_000,
         supports_tools: true,
         env_key: "AWS_BEARER_TOKEN_BEDROCK",
+        reasoning_shape: super::ReasoningShape::StandardEffort,
         wire: super::BEDROCK_WIRE,
     },
     ModelInfo {
@@ -6420,6 +6876,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 6_875_000,
         supports_tools: true,
         env_key: "AWS_BEARER_TOKEN_BEDROCK",
+        reasoning_shape: super::ReasoningShape::StandardEffort,
         wire: super::BEDROCK_WIRE,
     },
     ModelInfo {
@@ -6434,6 +6891,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 6_250_000,
         supports_tools: true,
         env_key: "AWS_BEARER_TOKEN_BEDROCK",
+        reasoning_shape: super::ReasoningShape::StandardEffort,
         wire: super::BEDROCK_WIRE,
     },
     ModelInfo {
@@ -6448,6 +6906,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 6_250_000,
         supports_tools: true,
         env_key: "AWS_BEARER_TOKEN_BEDROCK",
+        reasoning_shape: super::ReasoningShape::StandardEffort,
         wire: super::BEDROCK_WIRE,
     },
     ModelInfo {
@@ -6462,6 +6921,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 3_750_000,
         supports_tools: true,
         env_key: "AWS_BEARER_TOKEN_BEDROCK",
+        reasoning_shape: super::ReasoningShape::StandardEffort,
         wire: super::BEDROCK_WIRE,
     },
     ModelInfo {
@@ -6476,6 +6936,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 4_125_000,
         supports_tools: true,
         env_key: "AWS_BEARER_TOKEN_BEDROCK",
+        reasoning_shape: super::ReasoningShape::StandardEffort,
         wire: super::BEDROCK_WIRE,
     },
     ModelInfo {
@@ -6490,6 +6951,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 2_500_000,
         supports_tools: true,
         env_key: "AWS_BEARER_TOKEN_BEDROCK",
+        reasoning_shape: super::ReasoningShape::StandardEffort,
         wire: super::BEDROCK_WIRE,
     },
     ModelInfo {
@@ -6504,6 +6966,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 63_000,
         supports_tools: true,
         env_key: "AWS_BEARER_TOKEN_BEDROCK",
+        reasoning_shape: super::ReasoningShape::StandardEffort,
         wire: super::BEDROCK_WIRE,
     },
     ModelInfo {
@@ -6518,6 +6981,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 37_000,
         supports_tools: true,
         env_key: "AWS_BEARER_TOKEN_BEDROCK",
+        reasoning_shape: super::ReasoningShape::StandardEffort,
         wire: super::BEDROCK_WIRE,
     },
     ModelInfo {
@@ -6532,6 +6996,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 840_000,
         supports_tools: true,
         env_key: "AWS_BEARER_TOKEN_BEDROCK",
+        reasoning_shape: super::ReasoningShape::StandardEffort,
         wire: super::BEDROCK_WIRE,
     },
     ModelInfo {
@@ -6546,6 +7011,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 3_750_000,
         supports_tools: true,
         env_key: "AWS_BEARER_TOKEN_BEDROCK",
+        reasoning_shape: super::ReasoningShape::StandardEffort,
         wire: super::BEDROCK_WIRE,
     },
     ModelInfo {
@@ -6560,6 +7026,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 6_875_000,
         supports_tools: true,
         env_key: "AWS_BEARER_TOKEN_BEDROCK",
+        reasoning_shape: super::ReasoningShape::StandardEffort,
         wire: super::BEDROCK_WIRE,
     },
     ModelInfo {
@@ -6574,6 +7041,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 0,
         supports_tools: true,
         env_key: "AWS_BEARER_TOKEN_BEDROCK",
+        reasoning_shape: super::ReasoningShape::StandardEffort,
         wire: super::BEDROCK_WIRE,
     },
     ModelInfo {
@@ -6588,6 +7056,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 0,
         supports_tools: true,
         env_key: "AWS_BEARER_TOKEN_BEDROCK",
+        reasoning_shape: super::ReasoningShape::StandardEffort,
         wire: super::BEDROCK_WIRE,
     },
     ModelInfo {
@@ -6602,6 +7071,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 3_750_000,
         supports_tools: true,
         env_key: "AWS_BEARER_TOKEN_BEDROCK",
+        reasoning_shape: super::ReasoningShape::StandardEffort,
         wire: super::BEDROCK_WIRE,
     },
     ModelInfo {
@@ -6616,6 +7086,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 0,
         supports_tools: true,
         env_key: "AWS_BEARER_TOKEN_BEDROCK",
+        reasoning_shape: super::ReasoningShape::StandardEffort,
         wire: super::BEDROCK_WIRE,
     },
     ModelInfo {
@@ -6630,6 +7101,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 250_000,
         supports_tools: true,
         env_key: "AWS_BEARER_TOKEN_BEDROCK",
+        reasoning_shape: super::ReasoningShape::StandardEffort,
         wire: super::BEDROCK_WIRE,
     },
     ModelInfo {
@@ -6644,6 +7116,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 5_000_000,
         supports_tools: true,
         env_key: "AWS_BEARER_TOKEN_BEDROCK",
+        reasoning_shape: super::ReasoningShape::StandardEffort,
         wire: super::BEDROCK_WIRE,
     },
     ModelInfo {
@@ -6658,6 +7131,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 2_500_000,
         supports_tools: true,
         env_key: "AWS_BEARER_TOKEN_BEDROCK",
+        reasoning_shape: super::ReasoningShape::StandardEffort,
         wire: super::BEDROCK_WIRE,
     },
     ModelInfo {
@@ -6672,6 +7146,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 12_500_000,
         supports_tools: true,
         env_key: "AWS_BEARER_TOKEN_BEDROCK",
+        reasoning_shape: super::ReasoningShape::StandardEffort,
         wire: super::BEDROCK_WIRE,
     },
     ModelInfo {
@@ -6686,6 +7161,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 0,
         supports_tools: true,
         env_key: "AWS_BEARER_TOKEN_BEDROCK",
+        reasoning_shape: super::ReasoningShape::StandardEffort,
         wire: super::BEDROCK_WIRE,
     },
     ModelInfo {
@@ -6700,6 +7176,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 0,
         supports_tools: true,
         env_key: "AWS_BEARER_TOKEN_BEDROCK",
+        reasoning_shape: super::ReasoningShape::StandardEffort,
         wire: super::BEDROCK_WIRE,
     },
     ModelInfo {
@@ -6714,6 +7191,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 0,
         supports_tools: true,
         env_key: "AWS_BEARER_TOKEN_BEDROCK",
+        reasoning_shape: super::ReasoningShape::StandardEffort,
         wire: super::BEDROCK_WIRE,
     },
     ModelInfo {
@@ -6728,6 +7206,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 0,
         supports_tools: true,
         env_key: "AWS_BEARER_TOKEN_BEDROCK",
+        reasoning_shape: super::ReasoningShape::StandardEffort,
         wire: super::BEDROCK_WIRE,
     },
     ModelInfo {
@@ -6742,6 +7221,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 275_000,
         supports_tools: true,
         env_key: "AWS_BEARER_TOKEN_BEDROCK",
+        reasoning_shape: super::ReasoningShape::StandardEffort,
         wire: super::BEDROCK_WIRE,
     },
     ModelInfo {
@@ -6756,6 +7236,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 2_750_000,
         supports_tools: true,
         env_key: "AWS_BEARER_TOKEN_BEDROCK",
+        reasoning_shape: super::ReasoningShape::StandardEffort,
         wire: super::BEDROCK_WIRE,
     },
     ModelInfo {
@@ -6770,6 +7251,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 0,
         supports_tools: true,
         env_key: "AWS_BEARER_TOKEN_BEDROCK",
+        reasoning_shape: super::ReasoningShape::StandardEffort,
         wire: super::BEDROCK_WIRE,
     },
     ModelInfo {
@@ -6784,6 +7266,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 0,
         supports_tools: true,
         env_key: "AWS_BEARER_TOKEN_BEDROCK",
+        reasoning_shape: super::ReasoningShape::StandardEffort,
         wire: super::BEDROCK_WIRE,
     },
     ModelInfo {
@@ -6798,6 +7281,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 0,
         supports_tools: true,
         env_key: "AWS_BEARER_TOKEN_BEDROCK",
+        reasoning_shape: super::ReasoningShape::StandardEffort,
         wire: super::BEDROCK_WIRE,
     },
     ModelInfo {
@@ -6812,6 +7296,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 0,
         supports_tools: true,
         env_key: "AWS_BEARER_TOKEN_BEDROCK",
+        reasoning_shape: super::ReasoningShape::StandardEffort,
         wire: super::BEDROCK_WIRE,
     },
     ModelInfo {
@@ -6826,6 +7311,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 0,
         supports_tools: true,
         env_key: "AWS_BEARER_TOKEN_BEDROCK",
+        reasoning_shape: super::ReasoningShape::StandardEffort,
         wire: super::BEDROCK_WIRE,
     },
     ModelInfo {
@@ -6840,6 +7326,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 0,
         supports_tools: true,
         env_key: "AWS_BEARER_TOKEN_BEDROCK",
+        reasoning_shape: super::ReasoningShape::StandardEffort,
         wire: super::BEDROCK_WIRE,
     },
     ModelInfo {
@@ -6854,6 +7341,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 0,
         supports_tools: true,
         env_key: "AWS_BEARER_TOKEN_BEDROCK",
+        reasoning_shape: super::ReasoningShape::StandardEffort,
         wire: super::BEDROCK_WIRE,
     },
     ModelInfo {
@@ -6868,6 +7356,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 0,
         supports_tools: true,
         env_key: "AWS_BEARER_TOKEN_BEDROCK",
+        reasoning_shape: super::ReasoningShape::StandardEffort,
         wire: super::BEDROCK_WIRE,
     },
     ModelInfo {
@@ -6882,6 +7371,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 0,
         supports_tools: true,
         env_key: "AWS_BEARER_TOKEN_BEDROCK",
+        reasoning_shape: super::ReasoningShape::StandardEffort,
         wire: super::BEDROCK_WIRE,
     },
     ModelInfo {
@@ -6896,6 +7386,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 0,
         supports_tools: true,
         env_key: "AWS_BEARER_TOKEN_BEDROCK",
+        reasoning_shape: super::ReasoningShape::StandardEffort,
         wire: super::BEDROCK_WIRE,
     },
     ModelInfo {
@@ -6910,6 +7401,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 0,
         supports_tools: true,
         env_key: "AWS_BEARER_TOKEN_BEDROCK",
+        reasoning_shape: super::ReasoningShape::StandardEffort,
         wire: super::BEDROCK_WIRE,
     },
     ModelInfo {
@@ -6924,6 +7416,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 0,
         supports_tools: true,
         env_key: "AWS_BEARER_TOKEN_BEDROCK",
+        reasoning_shape: super::ReasoningShape::StandardEffort,
         wire: super::BEDROCK_WIRE,
     },
     ModelInfo {
@@ -6938,6 +7431,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 0,
         supports_tools: true,
         env_key: "AWS_BEARER_TOKEN_BEDROCK",
+        reasoning_shape: super::ReasoningShape::StandardEffort,
         wire: super::BEDROCK_WIRE,
     },
     ModelInfo {
@@ -6952,6 +7446,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 0,
         supports_tools: true,
         env_key: "AWS_BEARER_TOKEN_BEDROCK",
+        reasoning_shape: super::ReasoningShape::StandardEffort,
         wire: super::BEDROCK_WIRE,
     },
     ModelInfo {
@@ -6966,6 +7461,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 0,
         supports_tools: true,
         env_key: "AWS_BEARER_TOKEN_BEDROCK",
+        reasoning_shape: super::ReasoningShape::StandardEffort,
         wire: super::BEDROCK_WIRE,
     },
     ModelInfo {
@@ -6980,6 +7476,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 0,
         supports_tools: true,
         env_key: "AWS_BEARER_TOKEN_BEDROCK",
+        reasoning_shape: super::ReasoningShape::StandardEffort,
         wire: super::BEDROCK_WIRE,
     },
     ModelInfo {
@@ -6994,6 +7491,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 0,
         supports_tools: true,
         env_key: "AWS_BEARER_TOKEN_BEDROCK",
+        reasoning_shape: super::ReasoningShape::StandardEffort,
         wire: super::BEDROCK_WIRE,
     },
     ModelInfo {
@@ -7008,6 +7506,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 0,
         supports_tools: true,
         env_key: "AWS_BEARER_TOKEN_BEDROCK",
+        reasoning_shape: super::ReasoningShape::StandardEffort,
         wire: super::BEDROCK_WIRE,
     },
     ModelInfo {
@@ -7022,6 +7521,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 0,
         supports_tools: true,
         env_key: "AWS_BEARER_TOKEN_BEDROCK",
+        reasoning_shape: super::ReasoningShape::StandardEffort,
         wire: super::BEDROCK_WIRE,
     },
     ModelInfo {
@@ -7036,6 +7536,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 0,
         supports_tools: true,
         env_key: "AWS_BEARER_TOKEN_BEDROCK",
+        reasoning_shape: super::ReasoningShape::StandardEffort,
         wire: super::BEDROCK_WIRE,
     },
     ModelInfo {
@@ -7050,6 +7551,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 0,
         supports_tools: true,
         env_key: "AWS_BEARER_TOKEN_BEDROCK",
+        reasoning_shape: super::ReasoningShape::StandardEffort,
         wire: super::BEDROCK_WIRE,
     },
     ModelInfo {
@@ -7064,6 +7566,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 0,
         supports_tools: true,
         env_key: "AWS_BEARER_TOKEN_BEDROCK",
+        reasoning_shape: super::ReasoningShape::StandardEffort,
         wire: super::BEDROCK_WIRE,
     },
     ModelInfo {
@@ -7078,6 +7581,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 0,
         supports_tools: true,
         env_key: "AWS_BEARER_TOKEN_BEDROCK",
+        reasoning_shape: super::ReasoningShape::StandardEffort,
         wire: super::BEDROCK_WIRE,
     },
     ModelInfo {
@@ -7092,6 +7596,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 0,
         supports_tools: true,
         env_key: "AWS_BEARER_TOKEN_BEDROCK",
+        reasoning_shape: super::ReasoningShape::StandardEffort,
         wire: super::BEDROCK_WIRE,
     },
     ModelInfo {
@@ -7106,6 +7611,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 0,
         supports_tools: true,
         env_key: "AWS_BEARER_TOKEN_BEDROCK",
+        reasoning_shape: super::ReasoningShape::StandardEffort,
         wire: super::BEDROCK_WIRE,
     },
     ModelInfo {
@@ -7120,6 +7626,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 0,
         supports_tools: true,
         env_key: "AWS_BEARER_TOKEN_BEDROCK",
+        reasoning_shape: super::ReasoningShape::StandardEffort,
         wire: super::BEDROCK_WIRE,
     },
     ModelInfo {
@@ -7134,6 +7641,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 0,
         supports_tools: true,
         env_key: "AWS_BEARER_TOKEN_BEDROCK",
+        reasoning_shape: super::ReasoningShape::StandardEffort,
         wire: super::BEDROCK_WIRE,
     },
     ModelInfo {
@@ -7148,6 +7656,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 0,
         supports_tools: true,
         env_key: "AWS_BEARER_TOKEN_BEDROCK",
+        reasoning_shape: super::ReasoningShape::StandardEffort,
         wire: super::BEDROCK_WIRE,
     },
     ModelInfo {
@@ -7162,6 +7671,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 0,
         supports_tools: true,
         env_key: "AWS_BEARER_TOKEN_BEDROCK",
+        reasoning_shape: super::ReasoningShape::StandardEffort,
         wire: super::BEDROCK_WIRE,
     },
     ModelInfo {
@@ -7176,6 +7686,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 0,
         supports_tools: true,
         env_key: "AWS_BEARER_TOKEN_BEDROCK",
+        reasoning_shape: super::ReasoningShape::StandardEffort,
         wire: super::BEDROCK_WIRE,
     },
     ModelInfo {
@@ -7190,6 +7701,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 0,
         supports_tools: true,
         env_key: "AWS_BEARER_TOKEN_BEDROCK",
+        reasoning_shape: super::ReasoningShape::StandardEffort,
         wire: super::BEDROCK_WIRE,
     },
     ModelInfo {
@@ -7204,6 +7716,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 0,
         supports_tools: true,
         env_key: "AWS_BEARER_TOKEN_BEDROCK",
+        reasoning_shape: super::ReasoningShape::StandardEffort,
         wire: super::BEDROCK_WIRE,
     },
     ModelInfo {
@@ -7218,6 +7731,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 0,
         supports_tools: true,
         env_key: "AWS_BEARER_TOKEN_BEDROCK",
+        reasoning_shape: super::ReasoningShape::StandardEffort,
         wire: super::BEDROCK_WIRE,
     },
     ModelInfo {
@@ -7232,6 +7746,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 0,
         supports_tools: true,
         env_key: "AWS_BEARER_TOKEN_BEDROCK",
+        reasoning_shape: super::ReasoningShape::StandardEffort,
         wire: super::BEDROCK_WIRE,
     },
     ModelInfo {
@@ -7246,6 +7761,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 0,
         supports_tools: true,
         env_key: "AWS_BEARER_TOKEN_BEDROCK",
+        reasoning_shape: super::ReasoningShape::StandardEffort,
         wire: super::BEDROCK_WIRE,
     },
     ModelInfo {
@@ -7260,6 +7776,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 0,
         supports_tools: true,
         env_key: "AWS_BEARER_TOKEN_BEDROCK",
+        reasoning_shape: super::ReasoningShape::StandardEffort,
         wire: super::BEDROCK_WIRE,
     },
     ModelInfo {
@@ -7274,6 +7791,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 0,
         supports_tools: true,
         env_key: "AWS_BEARER_TOKEN_BEDROCK",
+        reasoning_shape: super::ReasoningShape::StandardEffort,
         wire: super::BEDROCK_WIRE,
     },
     ModelInfo {
@@ -7288,6 +7806,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 0,
         supports_tools: true,
         env_key: "AWS_BEARER_TOKEN_BEDROCK",
+        reasoning_shape: super::ReasoningShape::StandardEffort,
         wire: super::BEDROCK_WIRE,
     },
     ModelInfo {
@@ -7302,6 +7821,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 0,
         supports_tools: true,
         env_key: "AWS_BEARER_TOKEN_BEDROCK",
+        reasoning_shape: super::ReasoningShape::StandardEffort,
         wire: super::BEDROCK_WIRE,
     },
     ModelInfo {
@@ -7316,6 +7836,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 2_500_000,
         supports_tools: true,
         env_key: "AWS_BEARER_TOKEN_BEDROCK",
+        reasoning_shape: super::ReasoningShape::StandardEffort,
         wire: super::BEDROCK_WIRE,
     },
     ModelInfo {
@@ -7330,6 +7851,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 0,
         supports_tools: true,
         env_key: "AWS_BEARER_TOKEN_BEDROCK",
+        reasoning_shape: super::ReasoningShape::StandardEffort,
         wire: super::BEDROCK_WIRE,
     },
     ModelInfo {
@@ -7344,6 +7866,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 0,
         supports_tools: true,
         env_key: "AWS_BEARER_TOKEN_BEDROCK",
+        reasoning_shape: super::ReasoningShape::StandardEffort,
         wire: super::BEDROCK_WIRE,
     },
     ModelInfo {
@@ -7358,6 +7881,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 0,
         supports_tools: true,
         env_key: "AWS_BEARER_TOKEN_BEDROCK",
+        reasoning_shape: super::ReasoningShape::StandardEffort,
         wire: super::BEDROCK_WIRE,
     },
     ModelInfo {
@@ -7372,6 +7896,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 0,
         supports_tools: true,
         env_key: "AWS_BEARER_TOKEN_BEDROCK",
+        reasoning_shape: super::ReasoningShape::StandardEffort,
         wire: super::BEDROCK_WIRE,
     },
     ModelInfo {
@@ -7386,6 +7911,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 0,
         supports_tools: true,
         env_key: "AWS_BEARER_TOKEN_BEDROCK",
+        reasoning_shape: super::ReasoningShape::StandardEffort,
         wire: super::BEDROCK_WIRE,
     },
     ModelInfo {
@@ -7400,6 +7926,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 0,
         supports_tools: true,
         env_key: "AWS_BEARER_TOKEN_BEDROCK",
+        reasoning_shape: super::ReasoningShape::StandardEffort,
         wire: super::BEDROCK_WIRE,
     },
     // ---- github-copilot --------------------------------------------------------
@@ -7415,6 +7942,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 12_500_000,
         supports_tools: true,
         env_key: "COPILOT_GITHUB_TOKEN",
+        reasoning_shape: super::ReasoningShape::StandardEffort,
         wire: super::github_copilot(
             "https://api.individual.githubcopilot.com",
             Some("COPILOT_GITHUB_TOKEN"),
@@ -7433,6 +7961,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 12_500_000,
         supports_tools: true,
         env_key: "COPILOT_GITHUB_TOKEN",
+        reasoning_shape: super::ReasoningShape::StandardEffort,
         wire: super::github_copilot(
             "https://api.individual.githubcopilot.com",
             Some("COPILOT_GITHUB_TOKEN"),
@@ -7451,6 +7980,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 1_250_000,
         supports_tools: true,
         env_key: "COPILOT_GITHUB_TOKEN",
+        reasoning_shape: super::ReasoningShape::StandardEffort,
         wire: super::github_copilot(
             "https://api.individual.githubcopilot.com",
             Some("COPILOT_GITHUB_TOKEN"),
@@ -7469,6 +7999,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 6_250_000,
         supports_tools: true,
         env_key: "COPILOT_GITHUB_TOKEN",
+        reasoning_shape: super::ReasoningShape::StandardEffort,
         wire: super::github_copilot(
             "https://api.individual.githubcopilot.com",
             Some("COPILOT_GITHUB_TOKEN"),
@@ -7487,6 +8018,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 6_250_000,
         supports_tools: true,
         env_key: "COPILOT_GITHUB_TOKEN",
+        reasoning_shape: super::ReasoningShape::StandardEffort,
         wire: super::github_copilot(
             "https://api.individual.githubcopilot.com",
             Some("COPILOT_GITHUB_TOKEN"),
@@ -7505,6 +8037,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 6_250_000,
         supports_tools: true,
         env_key: "COPILOT_GITHUB_TOKEN",
+        reasoning_shape: super::ReasoningShape::StandardEffort,
         wire: super::github_copilot(
             "https://api.individual.githubcopilot.com",
             Some("COPILOT_GITHUB_TOKEN"),
@@ -7523,6 +8056,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 3_750_000,
         supports_tools: true,
         env_key: "COPILOT_GITHUB_TOKEN",
+        reasoning_shape: super::ReasoningShape::StandardEffort,
         wire: super::github_copilot(
             "https://api.individual.githubcopilot.com",
             Some("COPILOT_GITHUB_TOKEN"),
@@ -7541,6 +8075,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 2_500_000,
         supports_tools: true,
         env_key: "COPILOT_GITHUB_TOKEN",
+        reasoning_shape: super::ReasoningShape::StandardEffort,
         wire: super::github_copilot(
             "https://api.individual.githubcopilot.com",
             Some("COPILOT_GITHUB_TOKEN"),
@@ -7559,6 +8094,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 0,
         supports_tools: true,
         env_key: "COPILOT_GITHUB_TOKEN",
+        reasoning_shape: super::ReasoningShape::StandardEffort,
         wire: super::github_copilot(
             "https://api.individual.githubcopilot.com",
             Some("COPILOT_GITHUB_TOKEN"),
@@ -7577,6 +8113,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 0,
         supports_tools: true,
         env_key: "COPILOT_GITHUB_TOKEN",
+        reasoning_shape: super::ReasoningShape::StandardEffort,
         wire: super::github_copilot(
             "https://api.individual.githubcopilot.com",
             Some("COPILOT_GITHUB_TOKEN"),
@@ -7595,6 +8132,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 0,
         supports_tools: true,
         env_key: "COPILOT_GITHUB_TOKEN",
+        reasoning_shape: super::ReasoningShape::StandardEffort,
         wire: super::github_copilot(
             "https://api.individual.githubcopilot.com",
             Some("COPILOT_GITHUB_TOKEN"),
@@ -7613,6 +8151,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 0,
         supports_tools: true,
         env_key: "COPILOT_GITHUB_TOKEN",
+        reasoning_shape: super::ReasoningShape::StandardEffort,
         wire: super::github_copilot(
             "https://api.individual.githubcopilot.com",
             Some("COPILOT_GITHUB_TOKEN"),
@@ -7631,6 +8170,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 0,
         supports_tools: true,
         env_key: "COPILOT_GITHUB_TOKEN",
+        reasoning_shape: super::ReasoningShape::StandardEffort,
         wire: super::github_copilot(
             "https://api.individual.githubcopilot.com",
             Some("COPILOT_GITHUB_TOKEN"),
@@ -7649,6 +8189,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 0,
         supports_tools: true,
         env_key: "COPILOT_GITHUB_TOKEN",
+        reasoning_shape: super::ReasoningShape::StandardEffort,
         wire: super::github_copilot(
             "https://api.individual.githubcopilot.com",
             Some("COPILOT_GITHUB_TOKEN"),
@@ -7667,6 +8208,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 0,
         supports_tools: true,
         env_key: "COPILOT_GITHUB_TOKEN",
+        reasoning_shape: super::ReasoningShape::StandardEffort,
         wire: super::github_copilot(
             "https://api.individual.githubcopilot.com",
             Some("COPILOT_GITHUB_TOKEN"),
@@ -7685,6 +8227,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 0,
         supports_tools: true,
         env_key: "COPILOT_GITHUB_TOKEN",
+        reasoning_shape: super::ReasoningShape::StandardEffort,
         wire: super::github_copilot(
             "https://api.individual.githubcopilot.com",
             Some("COPILOT_GITHUB_TOKEN"),
@@ -7703,6 +8246,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 0,
         supports_tools: true,
         env_key: "COPILOT_GITHUB_TOKEN",
+        reasoning_shape: super::ReasoningShape::StandardEffort,
         wire: super::github_copilot(
             "https://api.individual.githubcopilot.com",
             Some("COPILOT_GITHUB_TOKEN"),
@@ -7721,6 +8265,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 0,
         supports_tools: true,
         env_key: "COPILOT_GITHUB_TOKEN",
+        reasoning_shape: super::ReasoningShape::StandardEffort,
         wire: super::github_copilot(
             "https://api.individual.githubcopilot.com",
             Some("COPILOT_GITHUB_TOKEN"),
@@ -7739,6 +8284,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 250_000,
         supports_tools: true,
         env_key: "COPILOT_GITHUB_TOKEN",
+        reasoning_shape: super::ReasoningShape::StandardEffort,
         wire: super::github_copilot(
             "https://api.individual.githubcopilot.com",
             Some("COPILOT_GITHUB_TOKEN"),
@@ -7757,6 +8303,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 5_000_000,
         supports_tools: true,
         env_key: "COPILOT_GITHUB_TOKEN",
+        reasoning_shape: super::ReasoningShape::StandardEffort,
         wire: super::github_copilot(
             "https://api.individual.githubcopilot.com",
             Some("COPILOT_GITHUB_TOKEN"),
@@ -7775,6 +8322,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 2_500_000,
         supports_tools: true,
         env_key: "COPILOT_GITHUB_TOKEN",
+        reasoning_shape: super::ReasoningShape::StandardEffort,
         wire: super::github_copilot(
             "https://api.individual.githubcopilot.com",
             Some("COPILOT_GITHUB_TOKEN"),
@@ -7793,6 +8341,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 12_500_000,
         supports_tools: true,
         env_key: "COPILOT_GITHUB_TOKEN",
+        reasoning_shape: super::ReasoningShape::StandardEffort,
         wire: super::github_copilot(
             "https://api.individual.githubcopilot.com",
             Some("COPILOT_GITHUB_TOKEN"),
@@ -7811,6 +8360,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 0,
         supports_tools: true,
         env_key: "COPILOT_GITHUB_TOKEN",
+        reasoning_shape: super::ReasoningShape::StandardEffort,
         wire: super::github_copilot(
             "https://api.individual.githubcopilot.com",
             Some("COPILOT_GITHUB_TOKEN"),
@@ -7829,6 +8379,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 0,
         supports_tools: true,
         env_key: "COPILOT_GITHUB_TOKEN",
+        reasoning_shape: super::ReasoningShape::StandardEffort,
         wire: super::github_copilot(
             "https://api.individual.githubcopilot.com",
             Some("COPILOT_GITHUB_TOKEN"),
@@ -7847,6 +8398,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 0,
         supports_tools: true,
         env_key: "COPILOT_GITHUB_TOKEN",
+        reasoning_shape: super::ReasoningShape::StandardEffort,
         wire: super::github_copilot(
             "https://api.individual.githubcopilot.com",
             Some("COPILOT_GITHUB_TOKEN"),
@@ -7865,6 +8417,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 0,
         supports_tools: true,
         env_key: "COPILOT_GITHUB_TOKEN",
+        reasoning_shape: super::ReasoningShape::StandardEffort,
         wire: super::github_copilot(
             "https://api.individual.githubcopilot.com",
             Some("COPILOT_GITHUB_TOKEN"),
@@ -7883,6 +8436,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 0,
         supports_tools: true,
         env_key: "COPILOT_GITHUB_TOKEN",
+        reasoning_shape: super::ReasoningShape::StandardEffort,
         wire: super::github_copilot(
             "https://api.individual.githubcopilot.com",
             Some("COPILOT_GITHUB_TOKEN"),
@@ -7901,6 +8455,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 0,
         supports_tools: true,
         env_key: "COPILOT_GITHUB_TOKEN",
+        reasoning_shape: super::ReasoningShape::StandardEffort,
         wire: super::github_copilot(
             "https://api.individual.githubcopilot.com",
             Some("COPILOT_GITHUB_TOKEN"),
@@ -7920,6 +8475,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 0,
         supports_tools: false,
         env_key: "",
+        reasoning_shape: super::ReasoningShape::StandardEffort,
         wire: super::OLLAMA_WIRE,
     },
     ModelInfo {
@@ -7934,6 +8490,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         cache_write_cost_micro_per_mtok: 0,
         supports_tools: false,
         env_key: "",
+        reasoning_shape: super::ReasoningShape::StandardEffort,
         wire: super::OLLAMA_WIRE,
     },
 ];
