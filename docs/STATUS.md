@@ -3483,6 +3483,13 @@ are all writable. The remedy is fresh test-profile metadata, with one refinement
 
 ## Roadmap (cut scope lives here)
 
+> **On line numbers in this roadmap's prose:** an `epsilon-core/src/lib.rs:<line>`
+> written before 2026-10-14 names a file that no longer exists (the split moved
+> the loop into seven modules). The numbers stand as written — the rows are
+> dated records of what was wrong, and where, on their day — and the item's
+> verdict line says whether it landed. Re-derive before acting on one; the
+> census and sweep rule are in Known-broken.
+
 **Open front-end polish (the owner's instruction for the last stretch: "put high efforts on
 polishing tui and desktop IDE").** Ranked by what a reader sees first. Each was verified against the
 tree on 2026-10-04; the two investigations behind them are
@@ -4543,21 +4550,43 @@ things a newcomer could not decode were vocabulary, and one of them — `Ponytai
 
 ## Known-broken
 
-### The 2026-10-14 core split left 486 stale `lib.rs:<line>` citations
+### The 2026-10-14 core split's stale `lib.rs:<line>` citations — census taken
 
 The mechanical split of `crates/epsilon-core/src/lib.rs` (commit `58a3fb0`) moved the
-loop into seven child modules. **486 citations in `audit/`, `docs/`, `docs/qa/`,
-`agents/memory/` and inline test comments still name the old `lib.rs:<line>` numbers** —
-e.g. `audit/02-port-fidelity.md`'s `lib.rs:1452-1533` and test comments' `lib.rs:52-57`.
+loop into seven child modules, so every bare `lib.rs:<line>` citation pinned a location
+that no longer exists. **Measured census (taken 2026-10-15; the sweep that queued this
+entry carried the split child's own unmeasured claim of 486 — the measured number is
+340):**
+
+| Class | Count | Disposition |
+|---|---|---|
+| Dated records — `docs/milestones/`, `audit/history/`, `docs/reviews/`, the `docs/plans/*` set, `docs/parity/dsh-desktop.md` | 44 | **Left untouched by fiat.** The archaeology rule applies; a dated record describes its day. |
+| `crates/epsilon-core` — inline test comments and module docs | 27 | **The sweep.** Half done below; the rest follow the builder's landing. |
+| `audit/03-defects.md` | 20 | Its top reconciliation rows are current; the rest is D-row history. |
+| `docs/STATUS.md` | 15 | All inside the dated phase log and roadmap prose, which now carry a banner directing a reader to re-derive. |
+| `docs/design/epsilon-architecture.draft.md` | 28 | Its fate is the standing owner decision (a human decides whether the draft replaces the live tour or is deleted); wherever it stands it inherits this entry's staleness. |
+
+Everything else in the live docs is clean — **checked one by one**: the `lib.rs:<line>`
+citations in `docs/parity/pi-tui.md`, `docs/AGENTS-PROPOSALS.md` and the architecture
+guide name the un-split crates (`epsilon-runtime`, `epsilon-contracts`, `epsilon-tui`),
+not `epsilon-core`.
+
 They are not gate-visible (the citation checkers read full `crates/…` paths and the
 matrices, not bare `lib.rs:` prose), and the module named in each comment's prose is
 the code's new home, so every one is recoverable by reading one line — but a line
 number that resolves to nothing is indistinguishable from a fabricated one until
-someone checks. **Queued, with its shape:** a sweep that maps each citation through
-the split's symbol table (the commit's module map is the table), re-pointing only
-citations whose old line is past the new `lib.rs` length; dated milestone logs get
-a banner instead of an edit, per the archaeology rule. Until then, treat a bare
-`epsilon-core/src/lib.rs:<line>` citation in a live document as a lead, not a fact.
+someone checks. **The sweep's rule, taken from the rows already re-done** (each of
+which paired its re-point with reading the current code to confirm the new anchor):
+grep the symbol named in the comment, or the behaviour described at the old line, in
+the current tree and re-point there; anything not found that way, or where a line value
+came back unchanged against its old context, is verified before it is called
+re-pointed — the unverified version is how earlier misses happened. Until the sweep
+finishes, treat a bare `epsilon-core/src/lib.rs:<line>` citation in a live document as
+a lead, not a fact.
+
+**Done:** `core_ref_health.rs:144`; `util.rs:476-477`; `truncate.rs:229-231`;
+`reference_map.rs:115-125`. The remaining in-crate citations land with the next
+crate-touching change.
 
 ### The owner's report of 2026-10-04: "the model's output is not shown", traced to source
 
