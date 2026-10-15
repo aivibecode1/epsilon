@@ -12,7 +12,7 @@ Last updated: 2026-10-12 (revised goal: desktop removed, TUI-as-IDE; Phase 1 in 
 
 ## Current task
 
-**Scoreboard at 2026-10-14:** Pi matrix `docs/parity/pi-tui.md` — **339 rows: 89 done / 112 partial / 0 missing / 138 deliberately different** (`check-parity-counts` green). Every `missing` row is gone; the partials are half-built behaviours with their live halves named. Dated "Counts now …" rows in the phase log below are historical records of their day, not the current total.
+**Scoreboard at 2026-10-15:** Pi matrix `docs/parity/pi-tui.md` — **339 rows: 91 done / 110 partial / 0 missing / 138 deliberately different** (`check-parity-counts` green). Every `missing` row is gone; the partials are half-built behaviours with their live halves named. Dated "Counts now …" rows in the phase log below are historical records of their day, not the current total.
 
 **Verification verdict, 2026-10-15: `gate-production-20261015-c` GATE PASS — 15/15 legs, 2,144 passed / 0 failed / 15 ignored across 73 test binaries** (`audit/evidence/gate-production-20261015-c.log`, sha `fc65c89e895b214a`; debug info off, `CARGO_BUILD_JOBS=1`, cache cleared before the round per the disk rule). The shipped binary was reinstalled from the proved bytes and driven in a real console (`scripts/console-probe.py`): the window does not shrink (80×24 before and after), the frame renders with today's polish, and typed keys land in the composer (`❯ explain the layout module`). Probe JSON preserved at `audit/evidence/console-probe-{,-typed-}production-20261015.json`.
 
