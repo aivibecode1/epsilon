@@ -138,12 +138,22 @@ OLLAMA_ROWS = """\
 
 def load_registry(argv):
     if len(argv) > 1:
-        return json.loads(Path(argv[1]).read_text(encoding="utf-8"))
+        try:
+            return json.loads(Path(argv[1]).read_text(encoding="utf-8"))
+        except (OSError, ValueError) as e:
+            sys.exit(f"FATAL: could not read registry fixture: {e}")
     tmp = Path(tempfile.gettempdir()) / "modelsdev.json"
-    print(f"downloading {URL} -> {tmp}")
-    with urllib.request.urlopen(URL, timeout=60) as resp:
-        tmp.write_bytes(resp.read())
-    return json.loads(tmp.read_text(encoding="utf-8"))
+    # A fetch that fails here is an outage, not a catalog bug: the drift
+    # workflow turns this line red, and its job is to be readable by someone
+    # who then decides whether models.dev or we are wrong. The write in main()
+    # is past every parse, so a failure leaves the committed file untouched.
+    try:
+        print(f"downloading {URL} -> {tmp}")
+        with urllib.request.urlopen(URL, timeout=60) as resp:
+            tmp.write_bytes(resp.read())
+        return json.loads(tmp.read_text(encoding="utf-8"))
+    except (urllib.error.URLError, OSError, ValueError) as e:
+        sys.exit(f"FATAL: could not fetch {URL}: {e} (committed catalog untouched)")
 
 
 def micro_usd(cost, field):
