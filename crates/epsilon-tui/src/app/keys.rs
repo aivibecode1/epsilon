@@ -2362,9 +2362,16 @@ pub(crate) fn handle_key(app: &mut App, agent: &Arc<Agent>, key: KeyEvent) -> bo
         _ if app.keybindings.matches("app.thinking.toggle", &key) => {
             // Hide thinking blocks from the transcript (P-040), persisted
             // globally. Memory wins; disk is best-effort with a notice, like
-            // every other display preference.
+            // every other display preference. A test override diverts the write
+            // like every other TUI write (same shape as `toggle_favorite`).
             app.ui.hide_thinking = !app.ui.hide_thinking;
-            match epsilon_core::config::save_hide_thinking(app.ui.hide_thinking) {
+            let saved = app
+                .config_dir_override
+                .clone()
+                .or_else(epsilon_core::config::global_dir)
+                .map(|dir| epsilon_core::config::save_hide_thinking_in(&dir, app.ui.hide_thinking))
+                .unwrap_or_else(|| Err("no home directory resolved".to_string()));
+            match saved {
                 Ok(_) => app.ui.push_notice(if app.ui.hide_thinking {
                     "thinking hidden (saved)"
                 } else {

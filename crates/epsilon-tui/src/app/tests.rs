@@ -1516,6 +1516,10 @@ async fn login_oauth_never_falls_through_to_the_key_store() {
 #[tokio::test]
 async fn slash_model_direct_applies_instantly() {
     let (mut app, agent, (_f, _n)) = test_app();
+    // Pinned config dir: `apply_model` persists model+recents, and without the
+    // override that write lands in the developer's real global config.
+    let cfg = tempfile::tempdir().expect("a config dir");
+    app.config_dir_override = Some(cfg.path().to_path_buf());
     let before = app.ui.lines().len();
     // deepseek-v4-pro: resolvable in the test catalog (exactly one
     // candidate). Unresolvable text opens the picker instead — see
@@ -2042,6 +2046,12 @@ fn remapped_quit_via_keybindings_manager() {
 #[tokio::test]
 async fn ctrl_f_in_the_model_picker_toggles_a_favorite_instead_of_panicking() {
     let (mut app, agent, (_f, _n)) = test_app();
+    // Pinned config dir: the keypress below runs the real `toggle_favorite`
+    // handler, which writes <config dir>/config.toml — the comment below about
+    // "asserted without touching the user's config" holds only if the dir is
+    // not the user's. Assertions (filter text, picker state) are unaffected.
+    let cfg = tempfile::tempdir().expect("a config dir");
+    app.config_dir_override = Some(cfg.path().to_path_buf());
     // Open the picker, then descend into the highlighted provider so stage 2 (a
     // model list) is what the key acts on.
     assert!(!handle_key(&mut app, &agent, ctrl(KeyCode::Char('m'))));
@@ -2714,7 +2724,12 @@ async fn trust_gate_blocks_f2_favorite_cycling() {
     // M27 audit (lesson 14: every input path gets a gate test): F2 cycles
     // models AND mutates the thinking level (M26), persisting config — it
     // must not act while the project-config review is pending.
+    // Pinned config dir: the post-acceptance cycle below routes through
+    // `apply_model`, which persists — the gate blocks the first cycle, not
+    // the second.
     let (mut app, agent, (_f, _n)) = test_app();
+    let cfg = tempfile::tempdir().expect("a config dir");
+    app.config_dir_override = Some(cfg.path().to_path_buf());
     app.favorites = vec!["faux-1".into(), "deepseek-chat".into()];
     app.favorite_thinking = vec![("deepseek-chat".into(), "high".into())];
     app.trust_review_pending = true;
@@ -2964,6 +2979,11 @@ async fn favorites_section_orders_above_recents_and_marks_stars() {
 #[tokio::test]
 async fn f2_cycles_favorites_and_guides_when_empty() {
     let (mut app, agent, (_f, _n)) = test_app();
+    // Pinned config dir as well as cleared mirrors: F2 routes through
+    // `apply_model`, which persists — the mirrors are what F2 owns, the disk
+    // write is a side effect this test must not leave on the machine.
+    let cfg = tempfile::tempdir().expect("a config dir");
+    app.config_dir_override = Some(cfg.path().to_path_buf());
     // **Both mirrors are cleared here, and this line is the fix for a test that failed
     // twice on a machine that had run the product.** The first half of this test is
     // "what does F2 do with nothing to cycle through", but `test_app()` loads
@@ -3027,9 +3047,14 @@ async fn f2_applies_the_favorite_remembered_thinking_level() {
     // M26 (pi _cycleScopedModel): a remembered level overrides the session
     // level on cycle; no memory inherits it. Both paths end with the footer
     // mirror equal to the agent's actual level. The memory is injected via
-    // the App field (the same thing a real star toggle populates) so this
-    // test never touches the user's real config.
+    // the App field (the same thing a real star toggle populates).
+    // Pinned config dir: the comment above used to claim this test never
+    // touches the user's real config, but the F2 keypress routes through
+    // `apply_model`, which persists model+recents — the claim held only for
+    // the memory, not for the cycle. Assertions are in-memory/session state.
     let (mut app, agent, (_f, _n)) = test_app();
+    let cfg = tempfile::tempdir().expect("a config dir");
+    app.config_dir_override = Some(cfg.path().to_path_buf());
     app.favorites = vec!["faux-1".into(), "deepseek-chat".into()];
     app.favorite_thinking = vec![("deepseek-chat".into(), "high".into())];
 
@@ -8584,6 +8609,11 @@ async fn the_dialog_names_what_it_removed_and_withdraws_the_approve_keys() {
 #[tokio::test]
 async fn a_model_switch_is_recorded_where_a_resume_will_find_it() {
     let (mut app, agent, _receivers) = test_app();
+    // Pinned config dir: `apply_model` persists model+recents (see the pin on
+    // the thinking sibling below); this test asserts on the session store, so
+    // the override changes nothing it checks.
+    let cfg = tempfile::tempdir().expect("a config dir");
+    app.config_dir_override = Some(cfg.path().to_path_buf());
     let tmp = tempfile::tempdir().expect("a temporary workspace");
     let store = std::sync::Arc::new(std::sync::Mutex::new(
         epsilon_core::SessionStore::open(tmp.path().join("s.jsonl")).unwrap(),

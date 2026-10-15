@@ -793,9 +793,24 @@ impl App {
     /// level is captured through `agent`, which is also why this takes the
     /// handle instead of reading it in the caller.
     fn toggle_favorite(&mut self, agent: &Arc<Agent>, id: &str) {
-        match epsilon_core::config::toggle_favorite_model(id) {
+        // Favorites stay user-global by design (see `project_dir_or_global`),
+        // but a test override diverts them like every other TUI write —
+        // otherwise any test driving Ctrl+F writes the developer's real config.
+        // With no override this resolves to the same global dir the wrappers
+        // below used to read themselves, so production behaviour is unchanged.
+        let Some(dir) = self
+            .config_dir_override
+            .clone()
+            .or_else(epsilon_core::config::global_dir)
+        else {
+            self.ui
+                .push_notice("favorite not saved: no home directory resolved");
+            return;
+        };
+        match epsilon_core::config::toggle_favorite_model_in(&dir, id) {
             Ok(now_favorite) => {
-                let level = epsilon_core::config::set_favorite_thinking(
+                let level = epsilon_core::config::set_favorite_thinking_in(
+                    &dir,
                     id,
                     if now_favorite {
                         Some(agent.thinking_level().as_str())
@@ -807,8 +822,8 @@ impl App {
                     self.ui
                         .push_notice(format!("thinking memory not saved: {e}"));
                 }
-                self.favorites = epsilon_core::config::load_favorite_models();
-                self.favorite_thinking = epsilon_core::config::load_favorite_thinking();
+                self.favorites = epsilon_core::config::load_favorite_models_in(&dir);
+                self.favorite_thinking = epsilon_core::config::load_favorite_thinking_in(&dir);
                 self.invalidate_picker();
                 self.ui.push_notice(if now_favorite {
                     format!(
@@ -1535,7 +1550,18 @@ impl App {
         // user had once chosen in any process. The `is_ok()` gate was the other half, and
         // fixing only the gate would have left the test's result depending on the file it
         // claims not to depend on.
-        let _ = epsilon_core::config::push_recent_model(&id);
+        //
+        // Recents stay user-global by design, but a test override diverts them
+        // like every other TUI write (same shape as `toggle_favorite` above) —
+        // otherwise any test driving a model switch writes the developer's real
+        // config. With no override this is the same global dir as before.
+        if let Some(dir) = self
+            .config_dir_override
+            .clone()
+            .or_else(epsilon_core::config::global_dir)
+        {
+            let _ = epsilon_core::config::push_recent_model_in(&dir, &id);
+        }
         self.recents.retain(|r| !r.eq_ignore_ascii_case(&id));
         self.recents.insert(0, id.clone());
         self.invalidate_picker();

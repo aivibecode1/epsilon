@@ -981,7 +981,16 @@ impl App {
                     ));
                     return false;
                 }
-                match epsilon_core::config::set_skill_disabled(name, want_off) {
+                // Skills-disabled stays user-global by design, but a test override
+                // diverts it like every other TUI write — otherwise any test
+                // driving `/skill off` writes the developer's real config.
+                let disabled = self
+                    .config_dir_override
+                    .clone()
+                    .or_else(epsilon_core::config::global_dir)
+                    .map(|dir| epsilon_core::config::set_skill_disabled_in(&dir, name, want_off))
+                    .unwrap_or_else(|| Err("no home directory resolved".to_string()));
+                match disabled {
                     Ok(_) => self.ui.push_notice(format!(
                         "{name} {} — takes effect on the next turn",
                         if want_off { "off" } else { "on" }

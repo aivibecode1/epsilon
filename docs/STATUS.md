@@ -14,9 +14,9 @@ Last updated: 2026-10-12 (revised goal: desktop removed, TUI-as-IDE; Phase 1 in 
 
 **Scoreboard at 2026-10-15:** Pi matrix `docs/parity/pi-tui.md` — **339 rows: 91 done / 110 partial / 0 missing / 138 deliberately different** (`check-parity-counts` green). Every `missing` row is gone; the partials are half-built behaviours with their live halves named. Dated "Counts now …" rows in the phase log below are historical records of their day, not the current total.
 
-**Verification verdict, 2026-10-15: `gate-round4-20261015` GATE PASS — 14/14 legs, 2,191 passed / 0 failed / 15 ignored across 73 test binaries** (`audit/evidence/gate-round4-20261015.log`; debug info off, `CARGO_BUILD_JOBS=1`; hermetic: fake `HOME=%TEMP%\epsilon-fakehome-20261015`). Reconciled exactly against `gate-round3-20261015` (2,178): +13 = the Wave-C reasoning tests (usage suite 11→24). The previous verdict line (`gate-production-20261015-c`, 15 legs, 2,144) is kept as history below; legs are 14 since the unlock removed the lock leg.
+**Verification verdict, 2026-10-15: `gate-round5-20261015` GATE PASS — 14/14 legs, 2,191 passed / 0 failed / 15 ignored across 73 test binaries** (`audit/evidence/gate-round5-20261015.log`; debug info off, `CARGO_BUILD_JOBS=1`; hermetic: fake `HOME=%TEMP%\epsilon-fakehome-20261015`). Count unchanged from round4 (2,191): behavior-preserving change, zero new tests. The previous verdict line (`gate-production-20261015-c`, 15 legs, 2,144) is kept as history below; legs are 14 since the unlock removed the lock leg.
 
-**Attempt history for this round, kept because a failed attempt is evidence too.** `gate-production-20261015-c` GATE PASS — 15/15 legs, 2,144 passed / 0 failed / 15 ignored across 73 test binaries (`audit/evidence/gate-production-20261015-c.log`, sha `fc65c89e895b214a`; debug info off, `CARGO_BUILD_JOBS=1`). The shipped binary was reinstalled from the proved bytes and driven in a real console (`scripts/console-probe.py`): the window does not shrink (80×24 before and after), the frame renders with today's polish, and typed keys land in the composer (`❯ explain the layout module`). Probe JSON preserved at `audit/evidence/console-probe-{,-typed-}production-20261015.json`. `gate-production-20261015` was killed by the harness's 420 s foreground cap at the demo leg (partial log kept). `gate-production-20261015-b` GATE FAIL on exactly the two `epsilon-tools` wall-clock tests the repo's own notes call load-sensitive (`a_normal_command_reports_complete_output_immediately` at 6.6 s against a 4 s bound, `a_descendant_holding_the_pipe_does_not_hang_the_call`) — both pass in isolation on an idle machine (1.5 s and 16 s), the disk was at 30 GB free after ten hours of builds, and after clearing the build cache (target 13 GB → 6 MB, disk 42 GB free) the same suite passed inside the battery. The disposition is environmental load, and the logs for both attempts are kept rather than only the green one. `gate-wave20-20261015` FAIL discarded as poisoned evidence (ran concurrent with edits; E0425 on a tree that never existed whole). `gate-round1-20261015` FAIL discarded as machine fault (transient fingerprint `os error 3` on two legs + wedged demo, killed to free the machine). `gate-round1b-20261015` FAIL kept as the diagnostic: `test` 761+9 in `epsilon-tui --lib`, all 9 frame tests asserting Unicode widths under an ASCII-yielding runner env — the finding that produced the glyph pins below. `gate-round2-20261015` GATE PASS (14/14, 2,176/0/15, hermetic fake-HOME) covering Wave 20 + D4/D5 + doc drifts + glyph pins. `gate-round3-20261015` GATE PASS (14/14, 2,178/0/15, hermetic) covering the audit-backlog honesty batch — superseded by round4 below.
+**Attempt history for this round, kept because a failed attempt is evidence too.** `gate-production-20261015-c` GATE PASS — 15/15 legs, 2,144 passed / 0 failed / 15 ignored across 73 test binaries (`audit/evidence/gate-production-20261015-c.log`, sha `fc65c89e895b214a`; debug info off, `CARGO_BUILD_JOBS=1`). The shipped binary was reinstalled from the proved bytes and driven in a real console (`scripts/console-probe.py`): the window does not shrink (80×24 before and after), the frame renders with today's polish, and typed keys land in the composer (`❯ explain the layout module`). Probe JSON preserved at `audit/evidence/console-probe-{,-typed-}production-20261015.json`. `gate-production-20261015` was killed by the harness's 420 s foreground cap at the demo leg (partial log kept). `gate-production-20261015-b` GATE FAIL on exactly the two `epsilon-tools` wall-clock tests the repo's own notes call load-sensitive (`a_normal_command_reports_complete_output_immediately` at 6.6 s against a 4 s bound, `a_descendant_holding_the_pipe_does_not_hang_the_call`) — both pass in isolation on an idle machine (1.5 s and 16 s), the disk was at 30 GB free after ten hours of builds, and after clearing the build cache (target 13 GB → 6 MB, disk 42 GB free) the same suite passed inside the battery. The disposition is environmental load, and the logs for both attempts are kept rather than only the green one. `gate-wave20-20261015` FAIL discarded as poisoned evidence (ran concurrent with edits; E0425 on a tree that never existed whole). `gate-round1-20261015` FAIL discarded as machine fault (transient fingerprint `os error 3` on two legs + wedged demo, killed to free the machine). `gate-round1b-20261015` FAIL kept as the diagnostic: `test` 761+9 in `epsilon-tui --lib`, all 9 frame tests asserting Unicode widths under an ASCII-yielding runner env — the finding that produced the glyph pins below. `gate-round2-20261015` GATE PASS (14/14, 2,176/0/15, hermetic fake-HOME) covering Wave 20 + D4/D5 + doc drifts + glyph pins. `gate-round3-20261015` GATE PASS (14/14, 2,178/0/15, hermetic) covering the audit-backlog honesty batch. `gate-round4-20261015` GATE PASS (14/14, 2,191/0/15, hermetic) covering Wave C — superseded by round5 below.
 
 ### 2026-10-14 production-readiness session — landed so far
 
@@ -173,6 +173,23 @@ filed with provenance headers, audit/history/15-17), and the fourth was verified
   real handler). Fix = the Wave-20/polluter pin per test, verified one by one.
   Verification batteries run under a fake
   `HOME` (recorded per-run) until the writers are pinned, so no run can touch user data.
+  (Closed in round5 below: every write path respects the override and the full suite
+  is hash-proven clean, so hermetic HOME is now defense in depth rather than load-bearing.)
+  Rule, learned the hard way in round4: *focused* `cargo test -p epsilon-tui` runs count
+  as runs — the pre-battery focused suites re-polluted ambient favorites the hermetic
+  battery then could not have touched, and the file was restored byte-identical from
+  the hash-verified backup a second time.
+- **`round5 (2026-10-15)`** — LANDED, green battery above (14/14, 2,191/0/15, hermetic
+  fake-HOME; count unchanged — behavior-preserving by construction). Closes the
+  ambient-writer hunt: every TUI write path now respects `config_dir_override`
+  (routed `toggle_favorite`, `push_recent`, the Ctrl+T hide toggle, and `/skill`
+  disable through it; `save_scope`, model/preset/thinking/theme already did), and 7
+  driver tests carry the pin (model/thinking switch recorders, `/model`, both F2
+  cyclers, the trust-gated cycler, Ctrl+F — including correcting `f2_applies…`'s
+  false "never touches the user's real config" comment). Proof, not assertion: full
+  `--lib` 770/0 with the real `HOME` and the ambient `config.toml` hash byte-identical
+  before and after (the earlier drift was bisected to a pre-fix focused run, not the
+  suite). Hermetic HOME stays as defense in depth.
 - **`round4 (2026-10-15)`** — LANDED, green battery above (14/14, 2,191/0/15, hermetic
   fake-HOME; +13 over round3, all in the usage suite 11→24): Wave C reasoning bucket
   (`Usage.reasoning: Option<u64>`, subset of output, `None` = wire silent, K1-style;
@@ -185,8 +202,6 @@ filed with provenance headers, audit/history/15-17), and the fourth was verified
   (contracts round-trip uses `Some` so serialization is covered; session replay picks
   up pi's `reasoning` key; fixtures take `None`), ran all affected suites green
   before the battery, and reviewed the contract docs + ADR-042 text.
-  (contracts round-trip uses `Some` so serialization is covered; session replay picks
-  up pi's `reasoning` key; fixtures take `None`). Hermetic battery to come.
 - **`round3 (2026-10-15)`** — LANDED, green battery above (14/14, 2,178/0/15, hermetic
   fake-HOME; +2 over round2, both new tests named in the log):
   animated-PNG honest note (`files.rs` mirrors the BMP arm via newly-public
