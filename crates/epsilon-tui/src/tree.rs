@@ -366,12 +366,6 @@ impl FileViewer {
         self.discard_armed = false;
     }
 
-    /// True when there is an edit to undo — what a footer or a key handler reads
-    /// instead of probing the private stack.
-    pub fn can_undo(&self) -> bool {
-        !self.undo_stack.is_empty()
-    }
-
     /// True when the buffer differs from what was opened.
     pub fn is_dirty(&self) -> bool {
         self.editing && self.edit_lines != self.lines
@@ -411,22 +405,13 @@ impl FileViewer {
         }
     }
 
-    /// Replace every hit, or the one under the caret, in the buffer being edited.
+    /// Replace every hit, in the buffer being edited.
     ///
     /// The snapshot is taken **before** the mutation and pushed only when the
     /// text will actually change: a snapshot taken afterwards restores the
     /// replaced text and Ctrl+Z appears to do nothing, and a no-op replace pushes
     /// a snapshot that poisons the redo rail.
     pub fn replace_all(&mut self) -> usize {
-        self.replace_hits(false)
-    }
-
-    /// Replace only the hit the caret is on, then step to the next one.
-    pub fn replace_one(&mut self) -> usize {
-        self.replace_hits(true)
-    }
-
-    fn replace_hits(&mut self, only_one: bool) -> usize {
         if self.find_query.is_empty() || self.find_hits.is_empty() {
             return 0;
         }
@@ -436,17 +421,8 @@ impl FileViewer {
             &self.lines
         };
         let mut n = 0usize;
-        let targets: Vec<usize> = if only_one {
-            self.find_hits
-                .get(self.find_index)
-                .copied()
-                .into_iter()
-                .collect()
-        } else {
-            self.find_hits.clone()
-        };
-        for i in targets {
-            if let Some(line) = source.get(i)
+        for i in &self.find_hits {
+            if let Some(line) = source.get(*i)
                 && line.contains(self.find_query.as_str())
             {
                 n += line.matches(self.find_query.as_str()).count();
@@ -463,16 +439,8 @@ impl FileViewer {
         } else {
             &mut self.lines
         };
-        for i in if only_one {
-            self.find_hits
-                .get(self.find_index)
-                .copied()
-                .into_iter()
-                .collect::<Vec<_>>()
-        } else {
-            self.find_hits.clone()
-        } {
-            if let Some(line) = lines.get_mut(i) {
+        for i in &self.find_hits {
+            if let Some(line) = lines.get_mut(*i) {
                 *line = line.replace(query.as_str(), repl.as_str());
             }
         }
@@ -1164,7 +1132,6 @@ mod viewer_tests {
     #[test]
     fn a_fresh_edit_session_has_nothing_to_undo() {
         let mut v = edited();
-        assert!(!v.can_undo());
         assert!(!v.undo());
         assert!(!v.redo());
         assert_eq!(v.edit_lines, vec!["alpha", "beta", "gamma"]);

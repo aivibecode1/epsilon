@@ -91,19 +91,6 @@ impl FauxProvider {
         }
     }
 
-    /// Parse a script from JSON:
-    ///
-    /// ```json
-    /// [{"type":"assistant","text":"hello"},
-    ///  {"type":"tool_calls","text":null,
-    ///   "calls":[{"id":"tc_1","name":"read","arguments":{"path":"a.rs"}}]}]
-    /// ```
-    pub fn from_script_json(script: &str) -> Result<Self, String> {
-        let steps: Vec<FauxStep> =
-            serde_json::from_str(script).map_err(|e| format!("invalid faux script: {e}"))?;
-        Ok(Self::new(steps))
-    }
-
     /// Every request this provider received, in order (for assertions).
     pub fn recorded_requests(&self) -> Vec<LlmContext> {
         self.recorded.lock().map(|r| r.clone()).unwrap_or_default()
@@ -340,14 +327,22 @@ mod tests {
         assert_eq!(p.recorded_requests().len(), 2);
     }
 
+    /// The scripted-step wire shape, parsed without the convenience constructor.
+    ///
+    /// A script is user data (`--script`), so the JSON a script file may carry is
+    /// a contract: an assistant turn and a tool-call turn, with `text` nullable
+    /// because a tool call may say nothing. Parsing it here is what proves the
+    /// shape still deserializes now that nothing hands `FauxProvider` a string.
     #[tokio::test]
     async fn parses_json_script() {
-        let p = FauxProvider::from_script_json(
+        let steps: Vec<FauxStep> = serde_json::from_str(
             r#"[{"type":"assistant","text":"hi"},
                 {"type":"tool_calls","text":null,
                  "calls":[{"id":"tc_1","name":"read","arguments":{"path":"a.rs"}}]}]"#,
         )
         .expect("script parses");
+        assert_eq!(steps.len(), 2, "one assistant turn, one tool-call turn");
+        let p = FauxProvider::new(steps);
         assert_eq!(p.recorded_requests().len(), 0);
     }
 }

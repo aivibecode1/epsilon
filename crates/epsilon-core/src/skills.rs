@@ -3,8 +3,6 @@
 
 use std::path::{Path, PathBuf};
 
-use epsilon_contracts::tool::ToolFailure;
-
 /// Name rules per the spec (pi parity): <=64 chars, lowercase a-z/0-9/hyphen,
 /// no leading/trailing/consecutive hyphens.
 const MAX_NAME: usize = 64;
@@ -199,15 +197,6 @@ pub struct Skill {
     pub disable_model_invocation: bool,
 }
 
-impl Skill {
-    /// Full SKILL.md contents minus the frontmatter block.
-    pub fn load_body(&self) -> Result<String, ToolFailure> {
-        let raw = std::fs::read_to_string(self.dir.join("SKILL.md"))
-            .map_err(|e| ToolFailure::msg(format!("cannot read skill '{}': {e}", self.name)))?;
-        Ok(strip_frontmatter(&raw))
-    }
-}
-
 /// Parse `---` delimited frontmatter into key/value pairs (flat strings only).
 /// Returns the pairs and the body AFTER the closing marker.
 fn parse_frontmatter(raw: &str) -> (Vec<(String, String)>, String) {
@@ -229,10 +218,6 @@ fn parse_frontmatter(raw: &str) -> (Vec<(String, String)>, String) {
         }
     }
     (Vec::new(), raw.to_string()) // unterminated frontmatter: treat whole file as body
-}
-
-fn strip_frontmatter(raw: &str) -> String {
-    parse_frontmatter(raw).1
 }
 
 /// What discovery found, and what it could not look at.
@@ -557,7 +542,6 @@ mod tests {
         );
         assert_eq!(skills[0].name, "commit-craft");
         assert_eq!(skills[0].description, "Project override.");
-        assert_eq!(skills[0].load_body().unwrap().trim(), "body-v2");
     }
 
     #[test]
@@ -574,10 +558,6 @@ mod tests {
 
     #[test]
     fn frontmatter_edge_cases() {
-        assert_eq!(
-            strip_frontmatter("no frontmatter here"),
-            "no frontmatter here"
-        );
         let (fm, body) = parse_frontmatter("---\nname: x\n---\nBODY");
         assert_eq!(fm.len(), 1);
         assert_eq!(body.trim(), "BODY");
@@ -1004,13 +984,6 @@ mod tests {
             found.notices.is_empty(),
             "nine well-formed skills is nine well-formed skills, not nine problems: {found:?}"
         );
-        // And the body loads — a catalog entry with no readable body is half a feature.
-        let claude = found
-            .skills
-            .iter()
-            .find(|s| s.name == "claude-wrote-me")
-            .unwrap();
-        assert_eq!(claude.load_body().unwrap().trim(), "body");
     }
 
     /// **The portable alias outranks the tool-specific directory inside a tier.**
@@ -1040,8 +1013,7 @@ mod tests {
         let found = discover_with_notices(&project_roots(ws.path()));
         assert_eq!(found.skills.len(), 1, "one name, one winner: {found:?}");
         assert_eq!(
-            found.skills[0].load_body().unwrap().trim(),
-            "agents-body",
+            found.skills[0].description, "The portable copy.",
             "the portable alias wins the project tier: {found:?}"
         );
     }
@@ -1069,8 +1041,7 @@ mod tests {
         roots.extend(project_roots(ws.path()));
         let found = discover_with_notices(&roots);
         assert_eq!(
-            found.skills[0].load_body().unwrap().trim(),
-            "project-body",
+            found.skills[0].description, "The team's.",
             "the later root wins, and the project root is the later one: {found:?}"
         );
     }
@@ -1139,7 +1110,6 @@ mod tests {
             found.notices.is_empty(),
             "and no notice saying a skill shadows itself: {found:?}"
         );
-        assert_eq!(found.skills[0].load_body().unwrap().trim(), "body");
     }
 
     /// **The dedupe keeps the first spelling, so precedence is not silently rewritten.**

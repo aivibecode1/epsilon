@@ -103,13 +103,6 @@ pub fn custom_providers() -> Vec<CustomProvider> {
         .unwrap_or_default()
 }
 
-/// Whether a model id names one of the installed custom providers — the question the CLI asks while
-/// resolving a model, and the one a user meets when their id is `vendor/model` (M28/M225).
-#[must_use]
-pub fn is_custom_model_id(id: &str) -> bool {
-    lookup_custom(&custom_providers(), id).is_some()
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -168,13 +161,5 @@ mod tests {
             vec!["second"],
             "replaced, not merged"
         );
-
-        // And the id question the CLI asks resolves against what is installed.
-        assert!(is_custom_model_id("second/model-x"));
-        assert!(
-            !is_custom_model_id("first/model-x"),
-            "the replaced row is gone"
-        );
-        assert!(!is_custom_model_id("openai/gpt-4"));
     }
 }

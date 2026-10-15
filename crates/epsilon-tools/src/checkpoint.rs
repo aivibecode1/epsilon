@@ -148,14 +148,6 @@ impl CheckpointStore {
         }
     }
 
-    /// Open with a different ceiling (tests, and a future config knob).
-    pub fn with_max_bytes(workspace: &Path, max_bytes: u64) -> Self {
-        Self {
-            root: workspace.join(".epsilon").join("checkpoints"),
-            max_bytes,
-        }
-    }
-
     /// The directory this store owns.
     pub fn root(&self) -> &Path {
         &self.root
@@ -976,10 +968,17 @@ mod tests {
         );
     }
 
+    /// Eviction is live on every `record`, and the only way to see it is a ceiling
+    /// small enough to bite. The public constructors carry the 64 MiB default, so
+    /// this builds the store directly: `with_max_bytes` went when nothing outside
+    /// a test ever called it, and the eviction it existed to exercise stayed.
     #[test]
     fn the_store_evicts_old_blobs_when_it_grows_past_its_ceiling() {
         let dir = ws();
-        let store = CheckpointStore::with_max_bytes(dir.path(), 40);
+        let store = CheckpointStore {
+            root: dir.path().join(".epsilon").join("checkpoints"),
+            max_bytes: 40,
+        };
         let file = dir.path().join("src/lib.rs");
         for round in 0..6 {
             std::fs::write(&file, format!("content number {round}\n")).unwrap();

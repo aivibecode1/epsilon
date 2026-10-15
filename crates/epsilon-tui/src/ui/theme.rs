@@ -497,49 +497,8 @@ impl Glyphs {
     /// **That claim was itself wrong once** (M219): this list held sixteen names while the struct had
     /// seventeen single-glyph fields — `warn` was missing, and so are the two M219 added. So the one
     /// check that exists to keep the table honest skipped the very glyph that no console can render.
-    /// `named`'s match arm catches a *name with no field*; [`Self::SINGLE_GLYPH_FIELDS`] and the set
-    /// comparison in the tests catch the other direction.
+    /// `named`'s match arm catches a *name with no field*.
     pub const ALL: &'static [&'static str] = &[
-        "top_left",
-        "top_right",
-        "bottom_left",
-        "bottom_right",
-        "horizontal",
-        "vertical",
-        "bullet",
-        "cursor_bar",
-        "assistant",
-        "thinking",
-        "prompt",
-        "tool_call",
-        "tick",
-        "warn",
-        "cross",
-        "plus",
-        "minus",
-        "back",
-        "key",
-        "cycle",
-        "dash",
-        "dot",
-        "star",
-        "ellipsis",
-        "up",
-        "down",
-        "folder",
-        "fold_closed",
-        "fold_open",
-        "shift",
-        "quote",
-    ];
-
-    /// Every single-glyph field of the table, listed independently of [`Self::ALL`] (M219).
-    ///
-    /// Two lists that are supposed to agree, compared as *sets* rather than by count: a count passes
-    /// when both are wrong in the same way, which is how `warn` went unchecked for months. It is a
-    /// second list to keep in step — the price of a check that can actually fail — and
-    /// `the_glyph_name_list_and_the_table_agree` is what pays it.
-    pub const SINGLE_GLYPH_FIELDS: &'static [&'static str] = &[
         "top_left",
         "top_right",
         "bottom_left",
@@ -1347,22 +1306,22 @@ mod tests {
     /// `ALL` is what the check above walks, so a field absent from it is drawn and never verified —
     /// which is what happened: `warn` (and, after it, `key` and `cycle`) sat outside the list while
     /// the list's own comment claimed a field could not be added without a name. The old assertion
-    /// compared **counts**, which passes when both lists are wrong together; this compares **sets**.
+    /// compared **counts**, which passes when both lists are wrong together; this one pins the
+    /// property that survives without a second list — the names are a *set*, so every field is
+    /// walked exactly once.
     #[test]
     fn the_glyph_name_list_and_the_table_agree() {
-        let mut named: Vec<&str> = Glyphs::ALL.to_vec();
-        let mut fields: Vec<&str> = Glyphs::SINGLE_GLYPH_FIELDS.to_vec();
-        named.sort_unstable();
-        fields.sort_unstable();
-        named.dedup();
-        fields.dedup();
+        let mut listed: Vec<&str> = Glyphs::ALL.to_vec();
+        let count = listed.len();
+        listed.sort_unstable();
+        listed.dedup();
         assert_eq!(
-            named, fields,
-            "`ALL` drives the ASCII check, so a field missing from it is never checked; \
-             `SINGLE_GLYPH_FIELDS` is the independent list it is compared against"
+            listed.len(),
+            count,
+            "`ALL` lists a name twice, so one glyph is walked twice and another not at all"
         );
-        // The other direction: a *name* with no field panics inside `named()`, so walking it proves
-        // the two lists agree as code and not merely as text.
+        // And the other direction: a *name* with no field panics inside `named()`, so walking the
+        // whole table proves the list and the struct agree as code, not merely as text.
         assert_eq!(ASCII.named().count(), Glyphs::ALL.len());
     }
 

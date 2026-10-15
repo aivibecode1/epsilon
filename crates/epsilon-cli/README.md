@@ -16,7 +16,7 @@ this binary.
 
 Workspace dependencies: `epsilon-contracts`, `epsilon-llm`, `epsilon-core`,
 `epsilon-runtime`, `epsilon-tools`, `epsilon-lsp`, `epsilon-safety`, `epsilon-session`,
-`epsilon-tui`, `epsilon-server`, `epsilon-mcp`, `epsilon-ext`. Dev: `portable-pty`, `vt100`.
+`epsilon-tui`, `epsilon-server`, `epsilon-mcp`. Dev: `portable-pty`, `vt100`.
 Depended on by nothing in the workspace. It has a library target so its own tests can reach
 `doctor` and `rpc_mode`, and that target re-exports the composition crate as
 `epsilon_cli::runtime` (`src/lib.rs:12`) to keep older paths working.

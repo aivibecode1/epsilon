@@ -336,16 +336,6 @@ impl Hints {
             self.keys.push((key, action.to_string()));
         }
     }
-
-    /// The rendered left half, without styling: used by tests and by the width
-    /// budget so both agree on how long the hints are.
-    pub fn keys_text(&self) -> String {
-        self.keys
-            .iter()
-            .map(|(key, action)| format!("{key} {action}"))
-            .collect::<Vec<_>>()
-            .join(" · ")
-    }
 }
 
 /// Draw the footer row.
@@ -532,7 +522,7 @@ mod tests {
     #[test]
     fn idle_hints_name_only_keys_that_do_something() {
         let hints = Hints::idle(&defaults());
-        let text = hints.keys_text();
+        let text = full_line(&hints);
         assert!(text.contains("enter send"), "{text}");
         assert!(text.contains("ctrl+j newline"), "{text}");
         assert!(text.contains("ctrl+p palette"), "{text}");
@@ -617,15 +607,15 @@ mod tests {
     #[test]
     fn running_hints_offer_the_stop_key_and_the_queue_count() {
         let bindings = defaults();
-        let text = Hints::running(&bindings, 0).keys_text();
+        let text = full_line(&Hints::running(&bindings, 0));
         assert!(text.contains("esc stop"), "{text}");
-        let queued = Hints::running(&bindings, 2).keys_text();
+        let queued = full_line(&Hints::running(&bindings, 2));
         assert!(queued.contains('2'), "{queued}");
     }
 
     #[test]
     fn approval_hints_are_the_approval_keys() {
-        let text = Hints::approval().keys_text();
+        let text = full_line(&Hints::approval());
         for key in ["y allow once", "a always", "n deny", "e deny + guidance"] {
             assert!(text.contains(key), "missing {key} in {text}");
         }
@@ -787,8 +777,8 @@ mod tests {
     /// where the row is nothing but the location.
     ///
     /// The assertion is on the *frame*, not on `Hints`, because every part of this
-    /// row was correct as data: `Hints::idle` named real bindings, `keys_text`
-    /// joined them properly, and the loss happened in the cut.
+    /// row was correct as data: `Hints::idle` named real bindings, and the loss
+    /// happened in the cut.
     #[test]
     fn no_footer_row_ever_prints_half_a_hint_or_touches_the_location() {
         let hints = Hints {

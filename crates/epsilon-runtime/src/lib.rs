@@ -722,12 +722,6 @@ pub fn trust_requiring_resources(workspace: &Path) -> Vec<TrustRequiringResource
     found
 }
 
-/// True when the workspace carries anything trust must gate
-/// (pi `hasTrustRequiringProjectResources` as a boolean).
-pub fn has_trust_requiring_resources(workspace: &Path) -> bool {
-    !trust_requiring_resources(workspace).is_empty()
-}
-
 /// Convert declared project rules into an engine layer appended over the defaults.
 pub fn project_rules_layer(rules: &[ProjectRule]) -> epsilon_safety::Ruleset {
     use epsilon_safety::{Action, Rule, Ruleset};
@@ -829,15 +823,7 @@ pub fn mcp_servers_trusted(
     user.to_vec()
 }
 
-/// Extension roots: global (`~/.config/epsilon/extensions`) then project.
-///
-/// M39: same trust gate as [`skill_roots_trusted`] — untrusted projects load
-/// global extensions only, never project code.
-pub fn extension_roots(workspace: &Path) -> Vec<PathBuf> {
-    extension_roots_trusted(workspace, true)
-}
-
-/// [`extension_roots`] with an explicit trust gate.
+/// Extension roots, global then project, behind an explicit trust gate.
 pub fn extension_roots_trusted(workspace: &Path, project_trusted: bool) -> Vec<PathBuf> {
     let mut roots = Vec::new();
     if let Some(dir) = epsilon_core::config::global_dir() {
@@ -1436,17 +1422,6 @@ fn event_type_tag(ev: &AgentEvent) -> &'static str {
     }
 }
 
-/// Newest `*.jsonl` session under `dir` (for `--continue`).
-///
-/// M41: pi's `findMostRecentSession` filters by session-cwd and SKIPS files
-/// whose first line isn't a valid header (foreign `.jsonl` files share the
-/// directory). The cwd filter only applies when the newest candidate carries
-/// one — headerless v1 files have no cwd to compare, so they stay eligible
-/// rather than vanishing from `--continue`.
-pub fn latest_session_file(dir: &Path) -> Option<PathBuf> {
-    latest_session_file_in(dir, None)
-}
-
 /// The goal-gate runner, named so a frontend never has to.
 ///
 /// `epsilon-tools` is a **dev-dependency** of the terminal frontend, not a dependency, and
@@ -1745,7 +1720,7 @@ pub fn checkpoint_save(
 }
 
 /// Newest session under `dir` started from `cwd` (pi `findMostRecentSession`
-/// cwd match). `None` cwd disables the filter (same as [`latest_session_file`]).
+/// cwd match). `None` cwd disables the filter.
 ///
 /// M57: the scan itself lives in [`epsilon_session::latest_session`] — the TUI's
 /// `/sessions` browser lists the same directory, and two implementations of
@@ -1861,7 +1836,7 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         let dir = tmp.path().join("sessions");
         std::fs::create_dir_all(&dir).unwrap();
-        assert_eq!(latest_session_file(&dir), None);
+        assert_eq!(latest_session_file_in(&dir, None), None);
 
         // Discovery requires a valid header line (foreign jsonl is skipped).
         let header = |cwd: &str| {
@@ -1879,7 +1854,7 @@ mod tests {
         std::thread::sleep(std::time::Duration::from_millis(50));
         std::fs::write(&new, header("w")).unwrap();
 
-        assert_eq!(latest_session_file(&dir), Some(new.clone()));
+        assert_eq!(latest_session_file_in(&dir, None), Some(new.clone()));
         // …and the cwd filter keeps same-dir sessions, drops others.
         assert_eq!(
             latest_session_file_in(&dir, Some(Path::new("w"))),
@@ -1941,7 +1916,6 @@ mod tests {
                 "missing {expected:?} in {kinds:?}"
             );
         }
-        assert!(has_trust_requiring_resources(&ws));
     }
 
     #[test]
@@ -2069,9 +2043,8 @@ mod tests {
             "untrusted drops project extensions: {untrusted_ext:?}"
         );
 
-        // Back-compat shims stay fully trusted (all existing callers).
+        // Back-compat shim stays fully trusted (all existing callers).
         assert_eq!(skill_roots(ws), skill_roots_trusted(ws, true));
-        assert_eq!(extension_roots(ws), extension_roots_trusted(ws, true));
     }
 
     /// **A repository's `.claude/skills` must gate trust, exactly as `.epsilon/skills` does.**
@@ -3514,6 +3487,32 @@ mod protocol_doc_tests {
             // naming every window test). Exempt removals from that one retired path —
             // and only that path, so a test lost anywhere else still fails. A future
             // crate removal needs its own ADR line here, never a wider net.
+            //
+            // **And by test NAME for the dead-code wave.** Removing a `pub` item
+            // whose only caller was its own test takes the test with the item, which
+            // is the whole point of the removal: a test of unreachable code is what
+            // let the item look alive. Six of this wave's nine retired tests were
+            // re-pointed at the property that survived (`to_label_platform`'s round
+            // trip, `CachePolicy::DEFAULT.count()`, the faux script wire shape,
+            // `is_placeholder_key`, the glyph name set, checkpoint eviction). Three
+            // had no survivor to re-point at — the code under them left the tree:
+            //   * `describe_task_lists_sorted_or_empty` — the sorted agent list is
+            //     now pinned by `discovery_sorts_agents_by_name` on the discovery
+            //     that produces it.
+            //   * `chain_dedupes_requested_model_and_counts_usable` — `usable_count`
+            //     is gone; chain construction is pinned by
+            //     `the_chain_keeps_every_candidate_in_the_order_it_was_named`.
+            //   * `adc_file_parsing_accepts_service_account_rejects_other_shapes` —
+            //     the Vertex service-account parser went with `adc_jwt_input`, and
+            //     nothing else in the workspace reads that file shape.
+            // A NAME on this list is a test the owner authorised deleting. Anything
+            // not on it still fails, so this is narrower than the path exemption
+            // above rather than wider.
+            const RETIRED_WITH_THEIR_SUBJECT: &[&str] = &[
+                "adc_file_parsing_accepts_service_account_rejects_other_shapes",
+                "chain_dedupes_requested_model_and_counts_usable",
+                "describe_task_lists_sorted_or_empty",
+            ];
             let mut retired = false;
             let lines: Vec<&str> = text.lines().collect();
             for (index, line) in lines.iter().enumerate() {
@@ -3574,7 +3573,7 @@ mod protocol_doc_tests {
                             || t.starts_with("#[bench")
                     });
                 if is_test {
-                    if sign == "-" && retired {
+                    if sign == "-" && (retired || RETIRED_WITH_THEIR_SUBJECT.contains(&name)) {
                         continue;
                     }
                     out.insert(name.to_string());
@@ -4972,7 +4971,7 @@ pub async fn build_runtime_and_gate_runner(
     install_extension_turn_hooks(&agent, ext_hosts.clone());
     // A19: resolve the resume target BEFORE opening anything, and make it the file this launch
     // opens. The order used to be `open primary → attach → resolve resume → open resume`, which was
-    // harmless only while the primary had a fixed name: `latest_session_file` then returned the same
+    // harmless only while the primary had a fixed name: the newest-session lookup then returned the same
     // file. Since M210 the primary is named for this launch, so it *is* the newest — and `-c`
     // resolved to the empty file this process had created microseconds earlier, opened it a second
     // time (waiting on its own lease for a full STALE_AFTER window) and restored nothing from it.
@@ -5176,7 +5175,7 @@ pub async fn build_runtime_and_gate_runner(
 /// **A19's invariant, written where it can be tested: the resume target wins.** A launch must write
 /// to the file it resumes. The old shape kept the frontend's default as the session path and opened
 /// the resume target as a *second* store — invisible while the default name was fixed
-/// (`latest_session_file` then returned the same file) and fatal once each launch named its own: the
+/// (the newest-session lookup then returned the same file) and fatal once each launch named its own: the
 /// newest file in the directory was the empty one this process had just created, so `--continue`
 /// resolved to its own file, waited a full lease window on its own lock, and restored nothing.
 ///
@@ -5782,25 +5781,6 @@ pub struct LaunchRequest {
     pub resume: Resume,
 }
 
-impl LaunchRequest {
-    /// A plain launch in `workspace`, with everything else defaulted.
-    pub fn for_workspace(workspace: impl Into<PathBuf>) -> Self {
-        Self {
-            workspace: workspace.into(),
-            model_reference: None,
-            provider: ProviderChoice::Auto,
-            fallbacks: Vec::new(),
-            script_path: None,
-            stream_pace_ms: 0,
-            lsp: Lsp::Off,
-            plan_mode: false,
-            preset: epsilon_safety::Preset::Auto,
-            confinement: epsilon_tools::Confinement::Auto,
-            resume: Resume::No,
-        }
-    }
-}
-
 /// Everything a frontend needs after resolution, and nothing it has to decide for itself.
 ///
 /// `offline` is a **carried decision**, not something a frontend re-derives: a user can
@@ -6221,9 +6201,17 @@ mod launch_tests {
     fn an_unknown_model_is_an_error_a_frontend_can_show_not_an_exit() {
         let ws = workspace();
         let req = LaunchRequest {
+            workspace: ws.path().to_path_buf(),
             model_reference: Some("no-such-model-epsilon-has-never-heard-of-it".into()),
             provider: ProviderChoice::Faux,
-            ..LaunchRequest::for_workspace(ws.path())
+            fallbacks: Vec::new(),
+            script_path: None,
+            stream_pace_ms: 0,
+            lsp: Lsp::Off,
+            plan_mode: false,
+            preset: epsilon_safety::Preset::Auto,
+            confinement: epsilon_tools::Confinement::Auto,
+            resume: Resume::No,
         };
         // `Launch` is not `Debug` (see its doc), so `expect_err` cannot be used here.
         let Err(err) = resolve_launch(&req) else {
@@ -6245,8 +6233,17 @@ mod launch_tests {
     fn a_faux_launch_resolves_without_a_provider_or_a_key() {
         let ws = workspace();
         let req = LaunchRequest {
+            workspace: ws.path().to_path_buf(),
+            model_reference: None,
             provider: ProviderChoice::Faux,
-            ..LaunchRequest::for_workspace(ws.path())
+            fallbacks: Vec::new(),
+            script_path: None,
+            stream_pace_ms: 0,
+            lsp: Lsp::Off,
+            plan_mode: false,
+            preset: epsilon_safety::Preset::Auto,
+            confinement: epsilon_tools::Confinement::Auto,
+            resume: Resume::No,
         };
         let launch = resolve_launch(&req).expect("a faux launch always resolves");
         assert!(launch.offline, "ProviderChoice::Faux must report offline");
@@ -6268,9 +6265,17 @@ mod launch_tests {
     fn a_named_model_does_not_make_a_faux_launch_look_online() {
         let ws = workspace();
         let req = LaunchRequest {
+            workspace: ws.path().to_path_buf(),
             model_reference: Some("deepseek/deepseek-chat-v3.1".into()),
             provider: ProviderChoice::Faux,
-            ..LaunchRequest::for_workspace(ws.path())
+            fallbacks: Vec::new(),
+            script_path: None,
+            stream_pace_ms: 0,
+            lsp: Lsp::Off,
+            plan_mode: false,
+            preset: epsilon_safety::Preset::Auto,
+            confinement: epsilon_tools::Confinement::Auto,
+            resume: Resume::No,
         };
         let launch = resolve_launch(&req).expect("a faux launch always resolves");
         assert!(launch.model_id.contains("deepseek"));
@@ -6285,7 +6290,19 @@ mod launch_tests {
     #[test]
     fn defaults_are_offline_safe_and_off() {
         let ws = workspace();
-        let req = LaunchRequest::for_workspace(ws.path());
+        let req = LaunchRequest {
+            workspace: ws.path().to_path_buf(),
+            model_reference: None,
+            provider: ProviderChoice::Auto,
+            fallbacks: Vec::new(),
+            script_path: None,
+            stream_pace_ms: 0,
+            lsp: Lsp::Off,
+            plan_mode: false,
+            preset: epsilon_safety::Preset::Auto,
+            confinement: epsilon_tools::Confinement::Auto,
+            resume: Resume::No,
+        };
         assert_eq!(req.provider, ProviderChoice::Auto);
         assert!(!req.plan_mode);
         assert_eq!(req.preset, epsilon_safety::Preset::Auto);
@@ -6299,7 +6316,19 @@ mod launch_tests {
     #[test]
     fn preset_carries_through_resolution() {
         let ws = workspace();
-        let mut req = LaunchRequest::for_workspace(ws.path());
+        let mut req = LaunchRequest {
+            workspace: ws.path().to_path_buf(),
+            model_reference: None,
+            provider: ProviderChoice::Auto,
+            fallbacks: Vec::new(),
+            script_path: None,
+            stream_pace_ms: 0,
+            lsp: Lsp::Off,
+            plan_mode: false,
+            preset: epsilon_safety::Preset::Auto,
+            confinement: epsilon_tools::Confinement::Auto,
+            resume: Resume::No,
+        };
         req.preset = epsilon_safety::Preset::ReadOnly;
         let launch = resolve_launch(&req).expect("a faux launch always resolves");
         assert_eq!(launch.preset, epsilon_safety::Preset::ReadOnly);

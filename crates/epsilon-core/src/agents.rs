@@ -9,13 +9,11 @@
 //! sorted `- name: description` list appended to the task description.
 //!
 //! This module ports the discovery half: `AgentDef` mirrors pi's `AgentConfig`
-//! (name/description/tools/model/system-prompt/source), `discover_agents`
+//! (name/description/tools/model/system-prompt/source) and `discover_agents`
 //! mirrors `discoverAgents` (user roots always, project roots only when
-//! trusted — pi's agentScope gate maps onto the M39 trust lattice), and
-//! `describe_task` mirrors opencode's `ToolRegistry.describeTask` (sorted list
-//! for the task tool description). The execution half (routing `run_task` by
-//! type) consumes these defs; unknown types stay an error naming what's
-//! available (opencode parity).
+//! trusted — pi's agentScope gate maps onto the M39 trust lattice). The
+//! execution half (routing `run_task` by type) consumes these defs; unknown
+//! types stay an error naming what's available (opencode parity).
 
 use std::path::{Path, PathBuf};
 
@@ -297,21 +295,6 @@ fn parse_agent_def(raw: &str, source: AgentSource) -> Option<AgentDef> {
     })
 }
 
-/// Task-tool description suffix listing routable agent types (opencode
-/// `describeTask` parity): `- name: description` lines sorted by name, joined
-/// under one header. Empty when no agents are discovered (description stays
-/// exactly today's text — no dangling header).
-pub fn describe_task(agents: &[AgentDef]) -> String {
-    if agents.is_empty() {
-        return String::new();
-    }
-    let mut s = String::from("Available agent types and the tools they have access to:");
-    for a in agents {
-        s.push_str(&format!("\n- {}: {}", a.name, a.description));
-    }
-    s
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -400,9 +383,13 @@ mod tests {
         );
     }
 
+    /// Discovery returns the agents **sorted by name**, which is the property the
+    /// task tool's description suffix used to print. `describe_task` — the sorted
+    /// `- name: description` block appended to a tool description — went when
+    /// nothing read it; the sort itself is `discover_agents`' own, and this is what
+    /// keeps a reader from having to trust that.
     #[test]
-    fn describe_task_lists_sorted_or_empty() {
-        assert_eq!(describe_task(&[]), "");
+    fn discovery_sorts_agents_by_name() {
         let dir = tempfile::tempdir().unwrap();
         write_agent(
             dir.path(),
@@ -415,10 +402,8 @@ mod tests {
             "---\nname: alpha\ndescription: First\n---\nbody",
         );
         let agents = discover_agents(&[dir.path().to_path_buf()], &[], true);
-        let desc = describe_task(&agents);
-        let alpha = desc.find("- alpha: First").expect("alpha listed");
-        let worker = desc.find("- worker: Full tools").expect("worker listed");
-        assert!(alpha < worker, "sorted by name: {desc}");
+        let names: Vec<&str> = agents.iter().map(|a| a.name.as_str()).collect();
+        assert_eq!(names, vec!["alpha", "worker"], "sorted by name");
     }
 
     /// **The defect this channel exists for: an unreadable root read as an empty one.**

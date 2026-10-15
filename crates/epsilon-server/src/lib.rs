@@ -77,11 +77,6 @@ impl ServeState {
         token
     }
 
-    /// Number of runs currently executing (diagnostics/tests).
-    pub fn active_runs(&self) -> usize {
-        self.run_depth.load(Ordering::SeqCst)
-    }
-
     fn user_message(&self, text: String) -> Message {
         // M74: `@` references resolve through the shared constructor, so the HTTP surface gets
         // the same attachments as the TUI and `-p`.
@@ -605,7 +600,7 @@ mod tests {
         .await;
         assert_eq!(status, 202);
 
-        while st.active_runs() > 0 {
+        while st.run_depth.load(Ordering::SeqCst) > 0 {
             tokio::time::sleep(std::time::Duration::from_millis(5)).await;
         }
         let (status, _) = json_response(
@@ -662,10 +657,14 @@ mod tests {
         // Ending the run releases the reservation; nothing stays wedged.
         state.agent.abort_current_run();
         let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(5);
-        while state.active_runs() > 0 && tokio::time::Instant::now() < deadline {
+        while state.run_depth.load(Ordering::SeqCst) > 0 && tokio::time::Instant::now() < deadline {
             tokio::time::sleep(std::time::Duration::from_millis(10)).await;
         }
-        assert_eq!(state.active_runs(), 0, "admission must be released");
+        assert_eq!(
+            state.run_depth.load(Ordering::SeqCst),
+            0,
+            "admission must be released"
+        );
     }
 
     /// RPC-02: `POST /abort` cancels an active run through the same core call the stdio
@@ -717,11 +716,11 @@ mod tests {
         assert!(body.contains("\"request_id\":\"req_2\""), "{body}");
 
         let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(10);
-        while st.active_runs() > 0 && tokio::time::Instant::now() < deadline {
+        while st.run_depth.load(Ordering::SeqCst) > 0 && tokio::time::Instant::now() < deadline {
             tokio::time::sleep(std::time::Duration::from_millis(10)).await;
         }
         assert_eq!(
-            st.active_runs(),
+            st.run_depth.load(Ordering::SeqCst),
             0,
             "the aborted run's slot must be released"
         );
@@ -736,7 +735,7 @@ mod tests {
         assert_eq!(status, 409, "{body}");
         assert!(body.contains("\"aborted\":false"), "{body}");
         assert!(body.contains("no run is active"), "{body}");
-        assert_eq!(st.active_runs(), 0);
+        assert_eq!(st.run_depth.load(Ordering::SeqCst), 0);
 
         // A 409 whose request carried a `request_id` echoes it — the correlation half of
         // the 409 contract, exercised with a body (the request above sends none).
@@ -789,10 +788,10 @@ mod tests {
 
         st.agent.abort_current_run();
         let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(10);
-        while st.active_runs() > 0 && tokio::time::Instant::now() < deadline {
+        while st.run_depth.load(Ordering::SeqCst) > 0 && tokio::time::Instant::now() < deadline {
             tokio::time::sleep(std::time::Duration::from_millis(10)).await;
         }
-        assert_eq!(st.active_runs(), 0);
+        assert_eq!(st.run_depth.load(Ordering::SeqCst), 0);
     }
 
     /// RPC-02: `GET /state` answers the shared `SessionState` payload, live from the
@@ -960,7 +959,7 @@ mod tests {
         .await;
         assert_eq!(status, 200);
 
-        while st.active_runs() > 0 {
+        while st.run_depth.load(Ordering::SeqCst) > 0 {
             tokio::time::sleep(std::time::Duration::from_millis(5)).await;
         }
         let transcript: Vec<String> = agent

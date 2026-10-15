@@ -43,7 +43,6 @@ epsilon-session = { path = "../epsilon-session" }
 epsilon-tui = { path = "../epsilon-tui" }
 epsilon-server = { path = "../epsilon-server" }
 epsilon-mcp = { path = "../epsilon-mcp" }
-epsilon-ext = { path = "../epsilon-ext" }
 toml = { workspace = true }
 serde = { workspace = true }
 futures-util = { workspace = true }

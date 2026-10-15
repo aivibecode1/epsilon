@@ -32,14 +32,6 @@
 //! wire, not provider-name-gated, so a provider that gains the feature gets it without a
 //! second edit here.
 
-/// How many cache breakpoints a request may carry.
-///
-/// Anthropic accepts at most four. Three are spent on the boundaries above; the fourth is
-/// left deliberately free rather than spent on the newest assistant turn, because a marker
-/// at the very end caches a prefix that the *next* request invalidates — it would be paid
-/// for on this call and gone on the next.
-pub const MAX_BREAKPOINTS: usize = 3;
-
 /// Which blocks in a request should carry `cache_control`.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct CachePolicy {
@@ -88,17 +80,19 @@ pub fn ephemeral() -> serde_json::Value {
 mod tests {
     use super::*;
 
-    // These tests are about the **arithmetic** — how many markers a policy spends and
-    // whether it fits inside what the provider accepts. Whether a marker lands on the
-    // right block of the right JSON is not testable here at all, and asserting a `const`
-    // boolean would be a test that cannot fail. `tests/cache_breakpoints.rs` builds a real
-    // request body for that.
+    // These tests are about the **arithmetic** — how many markers a policy spends.
+    // Whether a marker lands on the right block of the right JSON is not testable here
+    // at all; `tests/cache_breakpoints.rs` builds a real request body for that.
 
     #[test]
     fn the_default_policy_uses_at_most_what_the_provider_accepts() {
-        assert!(
-            CachePolicy::DEFAULT.count() <= MAX_BREAKPOINTS,
-            "Anthropic accepts four; the policy spends three and leaves the fourth free"
+        // Anthropic accepts four; the policy spends three and leaves the fourth
+        // free, because a marker at the very end caches a prefix the *next*
+        // request invalidates.
+        assert_eq!(
+            CachePolicy::DEFAULT.count(),
+            3,
+            "the policy must spend at most what Anthropic accepts"
         );
     }
 

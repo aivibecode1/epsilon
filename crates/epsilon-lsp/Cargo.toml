@@ -9,7 +9,6 @@ description = "Language-server diagnostics as edit feedback (roadmap Phase 5 ite
 
 [dependencies]
 epsilon-contracts = { path = "../epsilon-contracts" }
-serde = { workspace = true }
 serde_json = { workspace = true }
 async-trait = { workspace = true }
 tokio = { workspace = true, features = ["rt-multi-thread"] }

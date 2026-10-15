@@ -26,7 +26,6 @@ epsilon-ext = { path = "../epsilon-ext" }
 epsilon-mcp = { path = "../epsilon-mcp" }
 sha2 = { workspace = true }
 toml = { workspace = true }
-serde = { workspace = true }
 # `ExtensionToolHooks` implements `ToolHooks`, which is `#[async_trait]`. Every
 # other crate that implements a contracts trait declares this the same way.
 async-trait = { workspace = true }

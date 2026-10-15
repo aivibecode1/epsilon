@@ -34,7 +34,7 @@
 //! invariant that this harness never paraphrases a user turn, and would also hide from the
 //! transcript what the user actually asked about.
 
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 use epsilon_contracts::content::UserContent;
 use epsilon_contracts::ids::new_id;
@@ -381,13 +381,6 @@ pub fn user_message_with(workspace: &Path, text: &str, limits: &ReferenceLimits)
     })
 }
 
-/// Where a token's path would land, for frontends that want to show it before submitting.
-pub fn preview_target(workspace: &Path, token: &str) -> Option<PathBuf> {
-    let (raw, _) = split_range(token);
-    let r = resolve_for_access(workspace, raw);
-    r.inside.then_some(r.path)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -660,13 +653,7 @@ mod tests {
     }
 
     #[test]
-    fn preview_and_range_parsing_agree() {
-        let dir = ws(&[("a.txt", "x")]);
-        assert_eq!(
-            preview_target(dir.path(), "a.txt:3-4"),
-            Some(dir.path().join("a.txt"))
-        );
-        assert_eq!(preview_target(dir.path(), "../a.txt"), None);
+    fn range_parsing_agrees_with_the_reference_expander() {
         // A Windows drive letter keeps its colon.
         assert_eq!(split_range("C:/x/y.rs").1, None);
         assert_eq!(split_range("a.rs:1-2").1, Some((1, 2)));

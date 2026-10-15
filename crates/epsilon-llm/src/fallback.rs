@@ -64,11 +64,6 @@ impl FallbackProvider {
                 .collect(),
         }
     }
-
-    /// Number of usable candidates (catalog-known AND key-resolvable).
-    pub fn usable_count(&self) -> usize {
-        self.chain.iter().filter(|c| c.api_key.is_some()).count()
-    }
 }
 
 #[async_trait::async_trait]
@@ -187,6 +182,19 @@ impl EventStreamAlias for OnceFail {
 mod tests {
     use super::*;
 
+    /// The chain keeps every candidate, in the order they were named.
+    ///
+    /// Dropping one at construction time would hide it from the user and from
+    /// `stream`, which walks the same list; `FallbackCandidate::resolve` is what
+    /// decides separately, per candidate, whether it has credentials.
+    #[test]
+    fn the_chain_keeps_every_candidate_in_the_order_it_was_named() {
+        let p = FallbackProvider::new(["claude-sonnet-4-5", "deepseek-chat"]);
+        assert_eq!(p.chain.len(), 2);
+        assert_eq!(p.chain[0].model_id, "claude-sonnet-4-5");
+        assert_eq!(p.chain[1].model_id, "deepseek-chat");
+    }
+
     #[test]
     fn resolve_skips_candidates_without_credentials_or_catalog_entry() {
         // faux provider rows have no env var and no stored key in tests.
@@ -196,20 +204,5 @@ mod tests {
         // Unknown ids resolve to no key (provider lookup misses).
         let unknown = FallbackCandidate::resolve("totally-not-a-model");
         assert!(unknown.api_key.is_none(), "unknown model has no key");
-    }
-
-    #[test]
-    fn chain_dedupes_requested_model_and_counts_usable() {
-        let p = FallbackProvider::new(["claude-sonnet-4-5", "deepseek-chat"]);
-        // Live-key flake fix: on this box deepseek is configured, so the chain
-        // may have 0 or 1 usable entries — both are honest. Structure is what
-        // matters: all candidates stay present and usable <= len.
-        assert_eq!(p.chain.len(), 2);
-        assert!(
-            p.usable_count() <= p.chain.len(),
-            "usable {} must be <= chain {}",
-            p.usable_count(),
-            p.chain.len()
-        );
     }
 }

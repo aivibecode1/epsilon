@@ -18,7 +18,6 @@ tokio = { workspace = true }
 [dev-dependencies]
 tokio = { workspace = true, features = ["macros", "rt"] }
 tempfile = { workspace = true }
-tokio-util = { workspace = true }
 epsilon-llm = { path = "../epsilon-llm" }
 epsilon-tools = { path = "../epsilon-tools" }
 

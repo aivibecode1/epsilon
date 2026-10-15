@@ -53,16 +53,6 @@ impl Mods {
         alt: false,
         command: false,
     };
-
-    /// True when these modifiers are **exactly** the other set.
-    ///
-    /// **Exact, and deliberately not "logical".** egui's own `consume_key` matches *logically* —
-    /// extra Shift and Alt are ignored — and that is right for a widget that has no better idea,
-    /// but it is how `Shift+Enter` came to be swallowed by a plain `Enter` read in the desktop
-    /// composer (M314). A binding is a **choice by a person**, so it means one specific set.
-    pub fn is_exactly(self, other: Self) -> bool {
-        self == other
-    }
 }
 
 /// A key, named in a way that both toolkits can map.
@@ -184,15 +174,6 @@ impl Chord {
             _ => return None,
         };
         Some(Self { key, mods })
-    }
-
-    /// The spelling a hint should print — `"ctrl+p"`, `"pgup"`, `"esc"`.
-    ///
-    /// **Printed from the chord, never typed by hand**, for the reason the terminal's own
-    /// `key_label` gives: a footer that hardcodes `ctrl-p` names a key it only *hopes* is
-    /// bound, and a rebound key must change its own hint.
-    pub fn to_label(self) -> String {
-        self.to_label_platform(cfg!(target_os = "macos"))
     }
 
     /// The chord as a hint spells it, on one platform: macOS reads `option`,
@@ -609,21 +590,28 @@ mod tests {
     }
 
     /// **The round trip that keeps a hint honest.** A chord printed by
-    /// [`Chord::to_label`] must parse back to itself, because the footer prints one and the
-    /// handler matches the other. A label that did not round-trip would be a footer
-    /// describing a key the product does not read.
+    /// [`Chord::to_label_platform`] must parse back to itself, because the footer
+    /// prints one and the handler matches the other. A label that did not
+    /// round-trip would be a footer describing a key the product does not read.
+    ///
+    /// **Both platforms, not only the build host's.** The macOS spelling is
+    /// `option` and a `cfg!`-selected print cannot reach it from a Windows or
+    /// Linux box, so the loop drives the spelling the product prints on each OS.
     #[test]
     fn a_label_round_trips_to_the_chord_it_came_from() {
         for (name, table) in [("TERMINAL", TERMINAL), ("WINDOW", WINDOW)] {
             for (id, cs) in table {
                 for c in *cs {
                     let parsed = Chord::parse(c).expect("declared chords parse");
-                    let label = parsed.to_label();
-                    assert_eq!(
-                        Chord::parse(&label),
-                        Some(parsed),
-                        "{name}:{id} prints as {label:?}, which does not parse back"
-                    );
+                    for macos in [false, true] {
+                        let label = parsed.to_label_platform(macos);
+                        assert_eq!(
+                            Chord::parse(&label),
+                            Some(parsed),
+                            "{name}:{id} prints as {label:?} on {}, which does not parse back",
+                            if macos { "macOS" } else { "everywhere else" }
+                        );
+                    }
                 }
             }
         }

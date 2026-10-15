@@ -49,18 +49,6 @@ impl GoogleVertexWire {
             || k == "gcp-vertex-credentials"
             || (k.starts_with('<') && k.ends_with('>') && k.len() >= 2)
     }
-
-    /// Resolve the bearer token: a real key passes through verbatim (pi's
-    /// API-key path); a placeholder means "mint from ADC" (the caller
-    /// performs the OAuth exchange — see `adc_access_token` — because the
-    /// wire layer does no network beyond the model call itself).
-    pub fn bearer_token<'a>(&self, key: &'a str) -> BearerSource<'a> {
-        if Self::is_placeholder_key(key) {
-            BearerSource::MintFromAdc
-        } else {
-            BearerSource::KeyDirect(key.trim())
-        }
-    }
 }
 
 /// Where the Vertex bearer token comes from (pi `resolveApiKey` fork).
@@ -70,35 +58,6 @@ pub enum BearerSource<'a> {
     KeyDirect(&'a str),
     /// Mint an OAuth token from ADC (caller runs `adc_access_token`).
     MintFromAdc,
-}
-
-/// Read an OAuth access token from a service-account JSON file
-/// (`client_email` + `private_key`, JWT-bearer grant against
-/// `https://oauth2.googleapis.com/token`, scope
-/// `https://www.googleapis.com/auth/cloud-platform`).
-///
-/// Synchronous surface: reads + parses the file here (pure), returns the
-/// assertion JWT input the caller POSTs — the single network hop stays with
-/// the caller so this function is unit-testable without HTTP. pi delegates
-/// this whole dance to the `@google/genai` SDK; we own the two lines that
-/// matter (file shape + scope) and skip the SDK dependency.
-pub fn adc_jwt_input(credentials_json: &str) -> Result<AdcJwtInput, String> {
-    let v: serde_json::Value =
-        serde_json::from_str(credentials_json).map_err(|e| format!("ADC file is not JSON: {e}"))?;
-    let client_email = v
-        .get("client_email")
-        .and_then(|e| e.as_str())
-        .filter(|e| !e.is_empty())
-        .ok_or_else(|| "ADC file has no client_email (need a service-account JSON)".to_string())?;
-    let private_key = v
-        .get("private_key")
-        .and_then(|e| e.as_str())
-        .filter(|e| !e.is_empty())
-        .ok_or_else(|| "ADC file has no private_key (need a service-account JSON)".to_string())?;
-    Ok(AdcJwtInput {
-        client_email: client_email.to_string(),
-        private_key: private_key.to_string(),
-    })
 }
 
 /// Parsed service-account identity for the JWT-bearer grant.
@@ -144,7 +103,7 @@ impl ProviderWire for GoogleVertexWire {
 
     fn headers(&self, key: &str) -> Vec<(String, String)> {
         // The key here is the RESOLVED bearer token (direct key or minted
-        // ADC token) — resolution happens above this layer (see bearer_token).
+        // ADC token); resolving it is not this layer's job.
         vec![("Authorization".to_string(), format!("Bearer {key}"))]
     }
 
@@ -188,22 +147,15 @@ mod tests {
         assert_eq!(w.env_key(), "GOOGLE_CLOUD_API_KEY");
     }
 
+    /// A placeholder key is "no real key, mint from ADC"; a real API key is not.
+    ///
+    /// The bearer fork that read this moved out of the wire layer, so the test pins
+    /// the predicate itself: the two things a Vertex user can have in the key slot
+    /// — an `AIza…` API key and the placeholder that means ADC — land on opposite
+    /// sides of the one line, and a trailing space does not turn a real key into a
+    /// placeholder.
     #[test]
     fn placeholder_keys_route_to_adc_real_keys_pass_through() {
-        assert_eq!(
-            GoogleVertexWire {
-                project: "p".into(),
-                location: "l".into(),
-                credentials_file: None,
-            }
-            .bearer_token("AIza-real"),
-            BearerSource::KeyDirect("AIza-real")
-        );
-        let w = GoogleVertexWire {
-            project: "p".into(),
-            location: "l".into(),
-            credentials_file: None,
-        };
         assert!(GoogleVertexWire::is_placeholder_key(""));
         assert!(GoogleVertexWire::is_placeholder_key(
             "gcp-vertex-credentials"
@@ -211,24 +163,8 @@ mod tests {
         assert!(GoogleVertexWire::is_placeholder_key(
             "<GOOGLE_CLOUD_API_KEY>"
         ));
-        assert_eq!(w.bearer_token(""), BearerSource::MintFromAdc);
-    }
-
-    #[test]
-    fn adc_file_parsing_accepts_service_account_rejects_other_shapes() {
-        let good = serde_json::json!({
-            "type": "service_account",
-            "client_email": "x@y.iam.gserviceaccount.com",
-            "private_key": "-----BEGIN PRIVATE KEY-----\n...\n",
-        })
-        .to_string();
-        let input = adc_jwt_input(&good).expect("service account parses");
-        assert_eq!(
-            input.scope(),
-            "https://www.googleapis.com/auth/cloud-platform"
-        );
-        assert!(adc_jwt_input(r#"{"type":"authorized_user"}"#).is_err());
-        assert!(adc_jwt_input("not json").is_err());
+        assert!(!GoogleVertexWire::is_placeholder_key("AIza-real"));
+        assert!(!GoogleVertexWire::is_placeholder_key("AIza-real "));
     }
 
     #[test]
