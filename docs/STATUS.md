@@ -62,6 +62,46 @@ integrated into the ledger and the list below. What landed from them:
   retry countdown, and the reference capabilities ranked below the permission diff
   (`changes` panel, the question tool, plan mode).
 
+### 2026-10-15 criteria campaign — landed so far
+
+The standing goal restated as eleven criteria (one per strand: audit, TUI, reference
+capability, skills discovery, catalog, usage accounting, persistence, code quality, docs,
+verification, parallelism). Four read-only audits of the criteria's unverified claims ran
+first; three delivered after their dispatches died on provider errors (the reports are
+filed with provenance headers, audit/history/15-17), and the fourth was verified in-house
+(audit/history/18). Then the implementation waves, in the audits' user-value order.
+
+- **`08798f9`** — the parity matrix caught up with last session's code: P-158's
+  `(cancelled)` and P-200's footer segments moved to done with their tests named, P-155 and
+  P-189 re-evidenced; counts re-tallied 91/110.
+- **`2300902`** — the citation census, measured: **340** bare `lib.rs:<line>` citations (not
+  the 486 the split child claimed), classified live-vs-dated by file, with the sweep rule and
+  the roadmap banner that makes the dated numbers leads rather than facts.
+- **`c612b81`** — the catalog generator's fetch failure says so in one line (its first real
+  activation was a live models.dev 403, which the old shape would have printed as a
+  traceback), and the committed file is provably untouched by any parse failure.
+- **`b14a41c` / `fc54fba` / `ec99488`** — the three recovered audits plus the in-house
+  capability re-verification filed in `audit/history/`.
+- **`38bb152`** — the usage-accounting record's test count corrected to the measured nine.
+- **`c880a5b`** — criterion 8's dead-code batch: 21 zero-live-caller `pub` items deleted with
+  their tests (six displaced tests re-pointed at surviving properties, several strictly
+  better — the keybind label round-trip now covers both platform spellings), five unused
+  dependency edges removed (all `cargo tree --depth 1` proofs: 0), and the retired test
+  names recorded in the tree's own exemption list. Verified by the integrator on the final
+  tree: fmt clean, workspace clippy `-D warnings` clean, **2,143 passed / 0 failed** against
+  the pre-wave 2,144, the −1 reconciled exactly to the one retired test.
+- **`32947dd`** — `--plan`, `--preset`, `--fallback` and `-c` documented for the first time
+  (the capability audit found plan mode working and invisible), both claims checked against
+  the gate's evaluate order before they were written.
+- **In flight:** Wave E (criterion 7 — `[thinking] level` as a persisted key, session
+  thinking restore, the frontend's model id following the composed agent through one shared
+  applier for launch and live resume, the project-or-global resolver for model saves, the
+  OAuth refresh-guard placement). Queued behind it: Wave C (criterion 6 — the Gemini
+  `thoughtsTokenCount` under-count and the reasoning bucket across four parsers) and Wave D
+  (criterion 5 — `ModelInfo` capability/deprecation/long-context price fields against the
+  module's own violated invariant). The G1 skills test (the untested user-tier root table)
+  lands with the first crate-touching change after Wave E.
+
 Revised goal (2026-10-12): remove the desktop frontend and focus on core solidity,
 docs/navigability, and an opencode-style full-screen TUI (tree + editor + agent, mouse,
 palette) that meets or beats the reference UX. Native terminal stack only.
