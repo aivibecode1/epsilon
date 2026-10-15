@@ -3769,6 +3769,8 @@ fn billed(input: u64, output: u64) -> epsilon_contracts::message::Usage {
         // A recorded session entry came from a provider that answered the cache
         // question; replaying it must not read as "never measurable" (K1).
         cache_reported: true,
+        // No reasoning split in this fixture's provider replies.
+        reasoning: None,
     }
 }
 

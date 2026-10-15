@@ -2540,6 +2540,8 @@ mod tests {
             // A fixture that carries a cache read is modelling a provider that
             // reports cache traffic, including the zero case (K1).
             cache_reported: true,
+            // No reasoning split in this fixture's replies.
+            reasoning: None,
         }
     }
 
@@ -3804,6 +3806,7 @@ mod tests {
                     cache_write: 0,
                     total_tokens: input + 100,
                     cache_reported: true,
+                    reasoning: None,
                 },
             );
             out.insert((*model).to_string(), reasons);
@@ -3848,6 +3851,7 @@ mod tests {
                 cache_write: 0,
                 total_tokens: input + output,
                 cache_reported: true,
+                reasoning: None,
             }),
             is_error: false,
         })
@@ -3976,6 +3980,7 @@ mod tests {
                     cache_write: 0,
                     total_tokens: 1_200,
                     cache_reported: true,
+                    reasoning: None,
                 },
             }),
         );
@@ -3989,6 +3994,7 @@ mod tests {
                 cache_write: 0,
                 total_tokens: 9_400,
                 cache_reported: true,
+                reasoning: None,
             }),
             model_id: Some("deepseek/deepseek-chat-v3.1".into()),
             summary: "a digest for the finish line".into(),

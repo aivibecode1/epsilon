@@ -366,6 +366,8 @@ mod tests {
             // This helper exists to exercise cache attribution, so every usage it
             // builds is one where the provider reported cache fields.
             cache_reported: true,
+            // No reasoning split: this helper predates the bucket.
+            reasoning: None,
         }
     }
 

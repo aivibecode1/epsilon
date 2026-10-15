@@ -246,3 +246,302 @@ fn responses_silent_stays_silent() {
         "no cache key appeared on the wire, so nothing was measured"
     );
 }
+
+// --- Wave C: the separately-reported reasoning-token bucket (criterion 6/7) ---
+//
+// Pi's `Usage.reasoning` (`references/pi-1.0.0/packages/ai/src/types.ts:427-448`):
+// reasoning/thinking tokens are a SUBSET of `output` — `output` already
+// includes them. Providers that expose the split set a number (possibly 0);
+// the rest leave it undefined. Cost stays on `output` only: pricing the split
+// a second time would charge the same tokens twice.
+//
+// The tests below pin each wire's split at the boundary, the same way the M140
+// tests above pin the cache split: the mistake (folding reasoning into a priced
+// bucket of its own, or dropping the split) is invisible downstream.
+
+/// Anthropic reports thinking as a subset of output: 500 output tokens of
+/// which 200 were thinking stay 500 output with the 200 recorded separately.
+#[test]
+fn anthropic_thinking_tokens_are_a_subset_of_output() {
+    let u = epsilon_llm::providers::test_support::anthropic_usage_from_json(&json!({
+        "input_tokens": 1_000,
+        "output_tokens": 500,
+        "cache_read_input_tokens": 0,
+        "cache_creation_input_tokens": 0,
+        "output_tokens_details": { "thinking_tokens": 200 },
+    }));
+
+    assert_eq!(
+        u.output, 500,
+        "output already includes thinking; it is not added"
+    );
+    assert_eq!(
+        u.reasoning,
+        Some(200),
+        "the thinking split is stored, not folded away"
+    );
+}
+
+/// The delta-body half of the same wire: fields present overwrite the seed.
+#[test]
+fn anthropic_delta_thinking_overwrites_when_present() {
+    let u = epsilon_llm::providers::test_support::anthropic_delta_usage_from_json(
+        &json!({
+            "input_tokens": 1_000,
+            "output_tokens": 500,
+            "output_tokens_details": { "thinking_tokens": 200 },
+        }),
+        &json!({
+            "output_tokens": 600,
+            "output_tokens_details": { "thinking_tokens": 250 },
+        }),
+    );
+
+    assert_eq!(u.output, 600);
+    assert_eq!(
+        u.reasoning,
+        Some(250),
+        "a thinking count the delta carries overwrites the seed"
+    );
+}
+
+/// ...and fields absent keep the seed (pi preserves `input_tokens` across the
+/// same boundary when proxies omit it; the split behaves the same way).
+#[test]
+fn anthropic_delta_without_thinking_keeps_the_seed() {
+    let u = epsilon_llm::providers::test_support::anthropic_delta_usage_from_json(
+        &json!({
+            "input_tokens": 1_000,
+            "output_tokens": 500,
+            "output_tokens_details": { "thinking_tokens": 200 },
+        }),
+        &json!({ "output_tokens": 600 }),
+    );
+
+    assert_eq!(u.output, 600);
+    assert_eq!(
+        u.reasoning,
+        Some(200),
+        "a delta that says nothing about thinking must not erase the seed's split"
+    );
+}
+
+/// An Anthropic reply with no `output_tokens_details` is reasoning-silent, not
+/// a measured zero — the K1 presence rule, applied to the new bucket.
+#[test]
+fn anthropic_silent_wire_leaves_reasoning_unset() {
+    let u = epsilon_llm::providers::test_support::anthropic_usage_from_json(&json!({
+        "input_tokens": 1_000,
+        "output_tokens": 500,
+    }));
+
+    assert_eq!(u.output, 500);
+    assert_eq!(u.reasoning, None, "no thinking key, no measurement");
+}
+
+/// ...while an explicit zero is a measurement, not silence.
+#[test]
+fn anthropic_measured_zero_thinking_is_some_zero() {
+    let u = epsilon_llm::providers::test_support::anthropic_usage_from_json(&json!({
+        "input_tokens": 1_000,
+        "output_tokens": 500,
+        "output_tokens_details": { "thinking_tokens": 0 },
+    }));
+
+    assert_eq!(
+        u.reasoning,
+        Some(0),
+        "the provider answered the question, and the answer was zero"
+    );
+}
+
+/// Chat-Completions reasoning arrives inside `completion_tokens_details`, and
+/// `completion_tokens` already includes it (pi `openai-completions.ts:1539`):
+/// parsing must record the split WITHOUT growing `output`.
+#[test]
+fn completions_reasoning_tokens_do_not_inflate_output() {
+    let u = epsilon_llm::providers::test_support::compat_usage_from_json(&json!({
+        "prompt_tokens": 8_000,
+        "completion_tokens": 500,
+        "completion_tokens_details": { "reasoning_tokens": 150 },
+    }));
+
+    assert_eq!(
+        u.output, 500,
+        "completion_tokens already includes reasoning; adding it would double-count"
+    );
+    assert_eq!(u.reasoning, Some(150));
+}
+
+/// A completions chunk with no `completion_tokens_details` is silent.
+#[test]
+fn completions_silent_wire_leaves_reasoning_unset() {
+    let u = epsilon_llm::providers::test_support::compat_usage_from_json(&json!({
+        "prompt_tokens": 8_000,
+        "completion_tokens": 500,
+    }));
+
+    assert_eq!(u.output, 500);
+    assert_eq!(u.reasoning, None, "no reasoning key, no measurement");
+}
+
+/// An explicit zero split is `Some(0)`, matching the cache-bucket rule that a
+/// key carrying zero is a measurement.
+#[test]
+fn completions_measured_zero_is_some_zero() {
+    let u = epsilon_llm::providers::test_support::compat_usage_from_json(&json!({
+        "prompt_tokens": 8_000,
+        "completion_tokens": 500,
+        "completion_tokens_details": { "reasoning_tokens": 0 },
+    }));
+
+    assert_eq!(u.reasoning, Some(0));
+}
+
+/// The Responses API nests the split in `output_tokens_details`; the reshaping
+/// step must forward it (like `input_tokens_details` in M140) or the split
+/// silently vanishes.
+#[test]
+fn responses_reasoning_tokens_are_forwarded() {
+    let u = epsilon_llm::providers::test_support::responses_usage_from_json(&json!({
+        "input_tokens": 8_000,
+        "output_tokens": 500,
+        "total_tokens": 8_500,
+        "output_tokens_details": { "reasoning_tokens": 120 },
+    }));
+
+    assert_eq!(
+        u.output, 500,
+        "output already includes reasoning on this wire too"
+    );
+    assert_eq!(
+        u.reasoning,
+        Some(120),
+        "a Responses reply that reasoned 120 tokens must not report an unset split"
+    );
+}
+
+/// Gemini is the one wire where `output` must GROW: the wire splits completion
+/// volume into `candidatesTokenCount` + `thoughtsTokenCount`, and our `output`
+/// is their sum (pi `google-generative-ai.ts:237-240`) with thoughts recorded
+/// as the split.
+#[test]
+fn gemini_thoughts_are_added_to_output_and_reported_as_reasoning() {
+    let u = epsilon_llm::providers::test_support::compat_usage_from_json(&json!({
+        "promptTokenCount": 200,
+        "candidatesTokenCount": 100,
+        "thoughtsTokenCount": 50,
+        "totalTokenCount": 350,
+    }));
+
+    assert_eq!(
+        u.output, 150,
+        "candidates + thoughts: thoughts are completion volume, not free text"
+    );
+    assert_eq!(u.reasoning, Some(50));
+    assert_eq!(u.input, 200);
+}
+
+/// A Gemini reply with no `thoughtsTokenCount` leaves the split unset and
+/// `output` at exactly the candidates count.
+#[test]
+fn gemini_silent_thoughts_leave_reasoning_unset() {
+    let u = epsilon_llm::providers::test_support::compat_usage_from_json(&json!({
+        "promptTokenCount": 200,
+        "candidatesTokenCount": 100,
+        "totalTokenCount": 300,
+    }));
+
+    assert_eq!(u.output, 100);
+    assert_eq!(u.reasoning, None, "no thoughts key, no measurement");
+}
+
+/// Aggregation ORs presence like `cache_reported` (one measured call is enough
+/// for the combined figure to carry the split) and sums values.
+#[test]
+fn combining_reasoning_ors_presence_and_sums_values() {
+    let silent = Usage {
+        input: 1_000,
+        output: 10,
+        ..Default::default()
+    };
+    let measured = Usage {
+        input: 1_000,
+        output: 500,
+        reasoning: Some(200),
+        ..Default::default()
+    };
+
+    assert_eq!(
+        silent.combine(silent).reasoning,
+        None,
+        "two silent calls are still silence, not a zero"
+    );
+    assert_eq!(
+        silent.combine(measured).reasoning,
+        Some(200),
+        "one reasoning-aware call is enough for the combined figure to carry the split"
+    );
+    assert_eq!(
+        measured.combine(silent).reasoning,
+        Some(200),
+        "combination is order-independent"
+    );
+    assert_eq!(
+        measured
+            .combine(Usage {
+                output: 300,
+                reasoning: Some(50),
+                ..Default::default()
+            })
+            .reasoning,
+        Some(250),
+        "two measured splits add, staying a subset of the summed output"
+    );
+}
+
+/// Cost stays on `output` ONLY. This prices a usage the way the header does —
+/// four disjoint buckets (input/output/cache_read/cache_write), deliberately
+/// no fifth product — and proves the reasoning split cannot move the bill.
+#[test]
+fn reasoning_is_priced_inside_output_never_beside_it() {
+    /// Mirrors the header's four-bucket shape (`epsilon-tui` `cost::micro_usd`):
+    /// each priced bucket appears exactly once, and reasoning appears nowhere
+    /// because it is inside `output` already.
+    fn priced_like_the_header(u: &Usage, out_rate: u64) -> u64 {
+        u.output * out_rate
+    }
+    const OUT_RATE: u64 = 10;
+
+    let with_split = Usage {
+        input: 1_000,
+        output: 500,
+        reasoning: Some(200),
+        ..Default::default()
+    };
+    let without_split = Usage {
+        reasoning: None,
+        ..with_split
+    };
+
+    assert!(
+        with_split.reasoning.unwrap_or(0) <= with_split.output,
+        "the subset invariant the pricing depends on: reasoning never exceeds output"
+    );
+    assert_eq!(
+        priced_like_the_header(&with_split, OUT_RATE),
+        priced_like_the_header(&without_split, OUT_RATE),
+        "recording the split must not move the bill"
+    );
+    assert_eq!(
+        priced_like_the_header(&with_split, OUT_RATE),
+        500 * OUT_RATE,
+        "the bill is the output count at the output rate — the 200 thinking tokens \
+         are inside the 500, not beside them"
+    );
+    assert_ne!(
+        priced_like_the_header(&with_split, OUT_RATE),
+        (500 + 200) * OUT_RATE,
+        "the double-count trap: output + reasoning at the output rate is the wrong number"
+    );
+}

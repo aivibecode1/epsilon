@@ -182,6 +182,7 @@ fn frames_compaction_digest() {
             cache_write: 0,
             total_tokens: 21_610,
             cache_reported: true,
+            reasoning: None,
         }),
         model_id: Some("test-model".into()),
         summary: summary.into(),

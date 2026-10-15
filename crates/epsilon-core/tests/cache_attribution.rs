@@ -71,6 +71,8 @@ impl StreamFn for Wire {
             // was never actually testing a silent provider; it was testing a
             // reporting one with no hits, and passed for the wrong reason.
             cache_reported: self.reports_cache,
+            // No reasoning split in this fixture's scripted replies.
+            reasoning: None,
         };
         let message = AssistantMessage {
             id: epsilon_contracts::new_id("msg"),

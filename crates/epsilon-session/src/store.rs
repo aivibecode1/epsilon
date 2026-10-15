@@ -2877,6 +2877,9 @@ fn legacy_usage(value: &serde_json::Value) -> Usage {
         // this object for every call, so a replayed `cacheRead: 0` is a measured
         // zero and must not come back as "not measurable".
         cache_reported: value.get("cacheRead").is_some() || value.get("cacheWrite").is_some(),
+        // Same presence rule for pi's `reasoning` split (subset of output):
+        // replayed with the key it stays measured, without it stays silent.
+        reasoning: value.get("reasoning").and_then(|v| v.as_u64()),
     }
 }
 

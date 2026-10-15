@@ -468,6 +468,9 @@ mod tests {
                     // serialization. A replayed session must not come back as "the
                     // provider never reported cache traffic" (K1).
                     cache_reported: true,
+                    // `Some`, not the `None` default, for the same reason: a replayed
+                    // session must not lose the reasoning split the provider reported.
+                    reasoning: Some(2),
                 }),
                 // Not `None`: this is the round-trip test for every kind, so a field set
                 // to `None` here would pass whether or not it survives serialization.
@@ -483,6 +486,7 @@ mod tests {
                     cache_write: 0,
                     total_tokens: 6,
                     cache_reported: true,
+                    reasoning: None,
                 }),
                 model_id: Some("branch-model".into()),
             },

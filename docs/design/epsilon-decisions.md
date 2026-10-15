@@ -3211,3 +3211,62 @@ final. The fix is for the observed spelling pair, not for a general taxonomy.
 
 **Revisit trigger.** A provider ships a third meaning for the phrase, or the catalog
 gains a retry-hint field that makes text classification unnecessary.
+
+## ADR-042: Reasoning tokens are a reported subset of output, priced inside it
+
+**Status: accepted (Wave C, criterion 6/7, 2026-10-15).**
+
+**The question.** Four providers tell us how many of the output tokens were spent
+thinking — Anthropic (`output_tokens_details.thinking_tokens`), Chat Completions
+(`completion_tokens_details.reasoning_tokens`), Responses
+(`output_tokens_details.reasoning_tokens`), Gemini (`thoughtsTokenCount`) — and
+we threw the split away: every `Usage` carried input/output/cache with no record
+of which output was reasoning. Pi keeps it as `Usage.reasoning`
+(`references/pi-1.0.0/packages/ai/src/types.ts:427-448`): *"a subset of
+`output`: `output` already includes these tokens. Set to a number (possibly 0)
+by providers that expose a reasoning breakdown; left undefined by providers
+that don't."* The wire disagreements that matter: Completions/Responses/Anthropic
+already include the split in `output` (record, do NOT add), while Gemini splits
+completion volume into candidates + thoughts (our `output` is their sum).
+Mistral and Bedrock report no split at all.
+
+**Decision: `pub reasoning: Option<u64>` on `Usage` (`#[serde(default)]`,
+`None` = wire silent), cost on `output` only, K1-style presence end to end.**
+
+- *Subset, not a bucket.* The field records the split; `output` is untouched on
+  three wires and grows by thoughts on Gemini — the one asymmetry, kept
+  deliberately (pi `google-generative-ai.ts:237-240`, `google-vertex.ts:245-248`)
+  because candidates alone under-reports completion volume there.
+- *`None` vs `Some(0)` is the K1 rule again.* A reported zero is a measurement;
+  a missing key is silence. `combine` ORs presence (one measured call carries
+  the split, like `cache_reported`) and sums values, so the combined split
+  stays a subset of the combined output.
+- *Absence-tolerant by the file's own rule.* The field carries `#[serde(default)]`
+  like `cache_reported`: old session files without the key still decode.
+- *Parsers:* `seed_usage` reads `thinking_tokens` (presence = key present);
+  `seed_usage_compat` reads both `reasoning_tokens` shapes plus `thoughtsTokenCount`;
+  `responses_usage` forwards `output_tokens_details` verbatim (the M140
+  `input_tokens_details` forwarding, one level over); `update_usage_tail`
+  applies present-overwrites to the delta split. Mistral/Bedrock stay `None`
+  (pi leaves them unpopulated) with a doc line saying so.
+
+**Rejected.** (a) Plain `u64` defaulting to 0: loses silent-vs-measured, the exact
+distinction K1 was written to keep — every silent provider would read as "measured
+no thinking". (b) A separately priced bucket: the tokens are inside `output`
+already, so pricing them again is the M140 double-count trap with a new name —
+the header's four-bucket cost shape is unchanged, and the Wave C cost test pins
+that recording the split cannot move the bill.
+
+**The behaviour change this records** (AGENTS.md §5): Gemini `output` now includes
+`thoughtsTokenCount` (was candidates only). No other wire's totals move; per-wire
+totals are left as each wire reports them rather than redesigned here.
+
+**Deferred display work, priced rather than hidden:** this wave is parse, store,
+aggregate only. The header/cost surfaces enumerate four buckets
+(`cost::TokenCounts`, `Metrics`) and do not render the split — a turn that
+reasoned heavily still shows one output number. Rendering it (header split,
+`/cost` line) is a display change for a later wave, not a correction to this one.
+
+**Revisit trigger.** A provider bills thinking at a distinct rate (cost-on-output
+stops being true), or a wire reports the split OUTSIDE its output count (subset
+stops being true).

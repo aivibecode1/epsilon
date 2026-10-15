@@ -279,6 +279,13 @@ impl HttpEventStream {
         // missed still reports both keys as 0, and that is a real 0% worth showing.
         u.cache_reported = usage.get("cache_read_input_tokens").is_some()
             || usage.get("cache_creation_input_tokens").is_some();
+        // Reasoning is a SUBSET of output (pi `anthropic-messages.ts:850-853`):
+        // `output_tokens` already includes the thinking tokens, so they are
+        // recorded separately and never added to `output`. Presence is the key,
+        // not the count (K1): `thinking_tokens: 0` is a measured zero.
+        if let Some(v) = usage.pointer("/output_tokens_details/thinking_tokens") {
+            u.reasoning = Some(v.as_u64().unwrap_or(0));
+        }
         if u.input + u.output > 0 {
             self.usage_seed = Some(u);
         }
@@ -328,6 +335,38 @@ impl HttpEventStream {
             .and_then(|v| v.as_u64())
             .unwrap_or_else(|| get_u64(&["cache_creation_input_tokens"]));
         let prompt = get_u64(&["prompt_tokens", "input_tokens", "promptTokenCount"]);
+        // Reasoning is a SUBSET of output on every wire that reports it, so the
+        // split is recorded without touching `output` — with one exception.
+        //
+        // - Chat Completions carries `completion_tokens_details.reasoning_tokens`
+        //   inside an `output` that already includes it (pi
+        //   `openai-completions.ts:1539-1546`): record, do NOT add.
+        // - The Responses API nests the same split one level deeper as
+        //   `output_tokens_details.reasoning_tokens` (pi
+        //   `openai-responses-shared.ts:567-573`); `responses_usage` forwards
+        //   that object verbatim so this read sees it.
+        // - Gemini splits completion volume into `candidatesTokenCount` +
+        //   `thoughtsTokenCount`, and OUR `output` is their sum (pi
+        //   `google-generative-ai.ts:237-240` and `google-vertex.ts:245-248`):
+        //   thoughts are completion volume, so they are ADDED here and
+        //   recorded as the split. Wires without the key add zero.
+        //
+        // Presence is the key, not the count (K1): a reported 0 is `Some(0)`,
+        // a silent wire is `None`.
+        let thoughts = usage
+            .get("thoughtsTokenCount")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(0);
+        let reasoning = usage
+            .pointer("/completion_tokens_details/reasoning_tokens")
+            .or_else(|| usage.pointer("/output_tokens_details/reasoning_tokens"))
+            .map(|v| v.as_u64().unwrap_or(0))
+            .or_else(|| {
+                usage
+                    .get("thoughtsTokenCount")
+                    .is_some()
+                    .then_some(thoughts)
+            });
         // K1: did the body actually *carry* a cache key? Detection, not arithmetic —
         // `cache_read == 0` is equally what a wire that never mentions caching
         // produces, and only the key's presence tells the two apart.
@@ -351,11 +390,15 @@ impl HttpEventStream {
             input: prompt
                 .saturating_sub(cache_read)
                 .saturating_sub(cache_write),
-            output: get_u64(&["completion_tokens", "output_tokens", "candidatesTokenCount"]),
+            // Gemini only: candidates + thoughts (see above). Every other wire
+            // has no `thoughtsTokenCount` key, so this adds zero there.
+            output: get_u64(&["completion_tokens", "output_tokens", "candidatesTokenCount"])
+                .saturating_add(thoughts),
             cache_read,
             cache_write,
             total_tokens: get_u64(&["total_tokens", "totalTokenCount"]),
             cache_reported,
+            reasoning,
         };
         if u.input + u.output > 0 {
             self.usage_tail = Some(u);
@@ -387,6 +430,14 @@ impl HttpEventStream {
                 *slot = v;
                 any = true;
             }
+        }
+        // Same present-overwrites rule for the thinking split: a delta that
+        // carries `output_tokens_details.thinking_tokens` replaces the seed's
+        // split, one that does not keeps it. (The seed path reads the same key;
+        // see `seed_usage`.)
+        if let Some(v) = usage.pointer("/output_tokens_details/thinking_tokens") {
+            u.reasoning = Some(v.as_u64().unwrap_or(0));
+            any = true;
         }
         u.total_tokens = u.input + u.output + u.cache_read + u.cache_write;
         if any {
@@ -502,6 +553,10 @@ impl HttpEventStream {
     /// Converse usage split (pi `handleMetadata`): `inputTokens` /
     /// `outputTokens` / `cacheReadInputTokens` / `cacheWriteInputTokens`,
     /// `totalTokens` or recomputed.
+    ///
+    /// Reasoning stays `None`: pi does not populate a reasoning split on the
+    /// Converse usage shape, so there is no key to read — and inventing one
+    /// would turn silence into a measured zero.
     pub(crate) fn seed_usage_bedrock(&mut self, usage: &serde_json::Value) {
         let get = |k: &str| usage.get(k).and_then(|v| v.as_u64()).unwrap_or(0);
         let mut u = Usage::default();
@@ -624,6 +679,10 @@ impl HttpEventStream {
     /// (plus the camelCase twins `cachedTokens` / `promptTokensDetails` and
     /// `num_{cached_}tokens`) — clamps to `[0, prompt_tokens]`, and stores
     /// `input = prompt - cached`, `cache_read = cached` (pi's exact split).
+    ///
+    /// Reasoning stays `None`: pi does not populate a reasoning split on
+    /// Mistral's usage shape, so there is no key to read — and inventing one
+    /// would turn silence into a measured zero.
     pub(crate) fn seed_usage_mistral(&mut self, usage: &serde_json::Value) {
         let prompt = usage
             .get("prompt_tokens")
@@ -1666,6 +1725,40 @@ pub mod test_support {
         st.seed_usage_compat(usage);
         st.usage_tail
             .expect("a usage block with tokens yields a tail")
+    }
+
+    /// Run a raw Anthropic `message/usage` object through the Anthropic seed
+    /// decoder, returning the seed it produced.
+    ///
+    /// Exposed for the same reason as [`compat_usage_from_json`]: the seed is
+    /// where `output_tokens_details.thinking_tokens` becomes `reasoning`, and
+    /// no end-to-end test can reach it. Anthropic is the one wire with a
+    /// presence-checked (rather than `|| 0`) reasoning read, so it gets its
+    /// own helper rather than sharing the compat one.
+    pub fn anthropic_usage_from_json(
+        usage: &serde_json::Value,
+    ) -> epsilon_contracts::message::Usage {
+        let mut st = super::HttpEventStream::new("test-model", "test", false);
+        st.seed_usage(usage);
+        st.usage_seed
+            .expect("a usage block with tokens yields a seed")
+    }
+
+    /// Run an Anthropic `message_start` usage plus a `message_delta` usage
+    /// through the seed + present-overwrites tail path, returning the tail.
+    ///
+    /// The delta half is what `update_usage_tail` owns: fields present in the
+    /// delta overwrite the seed, fields absent keep it — including the
+    /// `thinking_tokens` split.
+    pub fn anthropic_delta_usage_from_json(
+        seed: &serde_json::Value,
+        delta: &serde_json::Value,
+    ) -> epsilon_contracts::message::Usage {
+        let mut st = super::HttpEventStream::new("test-model", "test", false);
+        st.seed_usage(seed);
+        st.update_usage_tail(delta);
+        st.usage_tail
+            .expect("a delta carrying a usage key yields a tail")
     }
 
     /// Run a raw OpenAI Responses `usage` object through the Responses-specific

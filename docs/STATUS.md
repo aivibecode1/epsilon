@@ -14,9 +14,9 @@ Last updated: 2026-10-12 (revised goal: desktop removed, TUI-as-IDE; Phase 1 in 
 
 **Scoreboard at 2026-10-15:** Pi matrix `docs/parity/pi-tui.md` — **339 rows: 91 done / 110 partial / 0 missing / 138 deliberately different** (`check-parity-counts` green). Every `missing` row is gone; the partials are half-built behaviours with their live halves named. Dated "Counts now …" rows in the phase log below are historical records of their day, not the current total.
 
-**Verification verdict, 2026-10-15: `gate-round3-20261015` GATE PASS — 14/14 legs, 2,178 passed / 0 failed / 15 ignored across 73 test binaries** (`audit/evidence/gate-round3-20261015.log`; debug info off, `CARGO_BUILD_JOBS=1`; hermetic: fake `HOME=%TEMP%\epsilon-fakehome-20261015`). Reconciled exactly against `gate-round2-20261015` (2,176): +2 = the animated-PNG honesty test + the capture-fallback state test. The previous verdict line (`gate-production-20261015-c`, 15 legs, 2,144) is kept as history below; legs are 14 since the unlock removed the lock leg.
+**Verification verdict, 2026-10-15: `gate-round4-20261015` GATE PASS — 14/14 legs, 2,191 passed / 0 failed / 15 ignored across 73 test binaries** (`audit/evidence/gate-round4-20261015.log`; debug info off, `CARGO_BUILD_JOBS=1`; hermetic: fake `HOME=%TEMP%\epsilon-fakehome-20261015`). Reconciled exactly against `gate-round3-20261015` (2,178): +13 = the Wave-C reasoning tests (usage suite 11→24). The previous verdict line (`gate-production-20261015-c`, 15 legs, 2,144) is kept as history below; legs are 14 since the unlock removed the lock leg.
 
-**Attempt history for this round, kept because a failed attempt is evidence too.** `gate-production-20261015-c` GATE PASS — 15/15 legs, 2,144 passed / 0 failed / 15 ignored across 73 test binaries (`audit/evidence/gate-production-20261015-c.log`, sha `fc65c89e895b214a`; debug info off, `CARGO_BUILD_JOBS=1`). The shipped binary was reinstalled from the proved bytes and driven in a real console (`scripts/console-probe.py`): the window does not shrink (80×24 before and after), the frame renders with today's polish, and typed keys land in the composer (`❯ explain the layout module`). Probe JSON preserved at `audit/evidence/console-probe-{,-typed-}production-20261015.json`. `gate-production-20261015` was killed by the harness's 420 s foreground cap at the demo leg (partial log kept). `gate-production-20261015-b` GATE FAIL on exactly the two `epsilon-tools` wall-clock tests the repo's own notes call load-sensitive (`a_normal_command_reports_complete_output_immediately` at 6.6 s against a 4 s bound, `a_descendant_holding_the_pipe_does_not_hang_the_call`) — both pass in isolation on an idle machine (1.5 s and 16 s), the disk was at 30 GB free after ten hours of builds, and after clearing the build cache (target 13 GB → 6 MB, disk 42 GB free) the same suite passed inside the battery. The disposition is environmental load, and the logs for both attempts are kept rather than only the green one. `gate-wave20-20261015` FAIL discarded as poisoned evidence (ran concurrent with edits; E0425 on a tree that never existed whole). `gate-round1-20261015` FAIL discarded as machine fault (transient fingerprint `os error 3` on two legs + wedged demo, killed to free the machine). `gate-round1b-20261015` FAIL kept as the diagnostic: `test` 761+9 in `epsilon-tui --lib`, all 9 frame tests asserting Unicode widths under an ASCII-yielding runner env — the finding that produced the glyph pins below. `gate-round2-20261015` GATE PASS (14/14, 2,176/0/15, hermetic fake-HOME) covering Wave 20 + D4/D5 + doc drifts + glyph pins — superseded by round3 below.
+**Attempt history for this round, kept because a failed attempt is evidence too.** `gate-production-20261015-c` GATE PASS — 15/15 legs, 2,144 passed / 0 failed / 15 ignored across 73 test binaries (`audit/evidence/gate-production-20261015-c.log`, sha `fc65c89e895b214a`; debug info off, `CARGO_BUILD_JOBS=1`). The shipped binary was reinstalled from the proved bytes and driven in a real console (`scripts/console-probe.py`): the window does not shrink (80×24 before and after), the frame renders with today's polish, and typed keys land in the composer (`❯ explain the layout module`). Probe JSON preserved at `audit/evidence/console-probe-{,-typed-}production-20261015.json`. `gate-production-20261015` was killed by the harness's 420 s foreground cap at the demo leg (partial log kept). `gate-production-20261015-b` GATE FAIL on exactly the two `epsilon-tools` wall-clock tests the repo's own notes call load-sensitive (`a_normal_command_reports_complete_output_immediately` at 6.6 s against a 4 s bound, `a_descendant_holding_the_pipe_does_not_hang_the_call`) — both pass in isolation on an idle machine (1.5 s and 16 s), the disk was at 30 GB free after ten hours of builds, and after clearing the build cache (target 13 GB → 6 MB, disk 42 GB free) the same suite passed inside the battery. The disposition is environmental load, and the logs for both attempts are kept rather than only the green one. `gate-wave20-20261015` FAIL discarded as poisoned evidence (ran concurrent with edits; E0425 on a tree that never existed whole). `gate-round1-20261015` FAIL discarded as machine fault (transient fingerprint `os error 3` on two legs + wedged demo, killed to free the machine). `gate-round1b-20261015` FAIL kept as the diagnostic: `test` 761+9 in `epsilon-tui --lib`, all 9 frame tests asserting Unicode widths under an ASCII-yielding runner env — the finding that produced the glyph pins below. `gate-round2-20261015` GATE PASS (14/14, 2,176/0/15, hermetic fake-HOME) covering Wave 20 + D4/D5 + doc drifts + glyph pins. `gate-round3-20261015` GATE PASS (14/14, 2,178/0/15, hermetic) covering the audit-backlog honesty batch — superseded by round4 below.
 
 ### 2026-10-14 production-readiness session — landed so far
 
@@ -164,12 +164,31 @@ filed with provenance headers, audit/history/15-17), and the fourth was verified
   emptied, `gpt-4`-memory written during the 770-run; user config restored byte-identical
   via hash-verified backup). That is the lesson-16b class (F2/apply_model/toggle paths
   persist through the real global dir without override) — a per-test writer hunt that
-  stays queued rather than half-done here. Verification batteries run under a fake
+  stays queued rather than half-done here. Confirmed writer tests (each drives a
+  persisting path with no `config_dir_override`): `a_model_switch_is_recorded…`
+  (`tests.rs:8581`, `apply_model`), `slash_model_direct_applies_instantly`
+  (`tests.rs:~1520`, `apply_model`), `f2_cycles_favorites_and_guides_when_empty`
+  (`tests.rs:2965`, F2→`apply_model`), `ctrl_f…toggles_a_favorite` (`tests.rs:2043`,
+  `toggle_favorite` — its comment claims no config touch, but the keypress runs the
+  real handler). Fix = the Wave-20/polluter pin per test, verified one by one.
+  Verification batteries run under a fake
   `HOME` (recorded per-run) until the writers are pinned, so no run can touch user data.
+- **`round4 (2026-10-15)`** — LANDED, green battery above (14/14, 2,191/0/15, hermetic
+  fake-HOME; +13 over round3, all in the usage suite 11→24): Wave C reasoning bucket
+  (`Usage.reasoning: Option<u64>`, subset of output, `None` = wire silent, K1-style;
+  cost stays on output only), parsed on 4 wires (Anthropic `thinking_tokens` incl.
+  delta present-overwrites; completions + Responses `reasoning_tokens`; Gemini
+  `thoughtsTokenCount` added to output AND reasoning), Mistral/Bedrock stay `None`
+  per Pi; 13 RED-first usage tests; ADR-042 appended (rejected u64-zero + priced
+  bucket, deferred display noted, revisit trigger named). Delegated core with a
+  Pi-traced brief; integrator fixed the 12 out-of-scope `Usage` literals first-hand
+  (contracts round-trip uses `Some` so serialization is covered; session replay picks
+  up pi's `reasoning` key; fixtures take `None`), ran all affected suites green
+  before the battery, and reviewed the contract docs + ADR-042 text.
+  (contracts round-trip uses `Some` so serialization is covered; session replay picks
+  up pi's `reasoning` key; fixtures take `None`). Hermetic battery to come.
 - **`round3 (2026-10-15)`** — LANDED, green battery above (14/14, 2,178/0/15, hermetic
-  fake-HOME; +2 over round2, both new tests named in the log). Delegated to two
-  single-file-owner subagents (RED-first each, clippy/fmt clean); integrator verified
-  both diffs first-hand and no consumers of the old task state string exist.
+  fake-HOME; +2 over round2, both new tests named in the log):
   animated-PNG honest note (`files.rs` mirrors the BMP arm via newly-public
   `is_animated_png`; RED-first against the `refused: file looks binary`
   fall-through); task capture fallback `state="completed"`→`"capture"` + details

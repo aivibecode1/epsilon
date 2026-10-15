@@ -7538,6 +7538,8 @@ fn a_compaction_row_reports_the_same_tokens_it_records() {
         cache_write: 0,
         total_tokens: 21_610,
         cache_reported: true,
+        // No reasoning split in this fixture's compaction reply.
+        reasoning: None,
     };
 
     // The file's own driver for an event, so the totals move through exactly the
@@ -7603,6 +7605,8 @@ fn a_compaction_row_opens_to_the_summary_it_carried() {
         cache_write: 0,
         total_tokens: 21_610,
         cache_reported: true,
+        // No reasoning split in this fixture's compaction reply.
+        reasoning: None,
     };
     let summary = "The reader is porting the desktop's approval gate. \
                    The Enter routing defect is fixed and the honesty half is pinned. \

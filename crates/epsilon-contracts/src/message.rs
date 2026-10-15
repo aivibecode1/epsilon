@@ -130,6 +130,39 @@ pub struct Usage {
     pub input: u64,
     /// Completion tokens.
     pub output: u64,
+    /// Reasoning/thinking tokens, when the provider reports them — a SUBSET of
+    /// `output`, never an addition to it.
+    ///
+    /// Ported from pi's `Usage.reasoning`
+    /// (`references/pi-1.0.0/packages/ai/src/types.ts:427-448`): *"a subset of
+    /// `output`: `output` already includes these tokens. Set to a number
+    /// (possibly 0) by providers that expose a reasoning breakdown; left
+    /// undefined by providers that don't."*
+    ///
+    /// `None` is the wire being silent, and that is a K1 presence signal like
+    /// [`Usage::cache_reported`], not a zero: a provider that reports
+    /// `reasoning_tokens: 0` measured a zero (`Some(0)`), while a provider
+    /// whose usage block carries no reasoning key said nothing at all
+    /// (`None`). Collapsing the two would turn every silent provider into a
+    /// measured "no thinking happened".
+    ///
+    /// Cost stays on `output` ONLY. The output rate already prices these
+    /// tokens (they are inside `output`); a separate priced bucket would
+    /// charge them twice — the same double-count trap M140 closed for the
+    /// cached prefix.
+    ///
+    /// Carries `#[serde(default)]` under the file's own rule (`cache_reported`
+    /// above): a field added to a durable session type must decode when
+    /// absent, and `None` is the value the field's own semantics give an
+    /// unannotated writer. Old session files without this key still decode.
+    ///
+    /// Parse, store, aggregate only: no header/display surface reads this yet
+    /// (deferred display work, recorded in ADR-042).
+    ///
+    /// Mistral and Bedrock leave this `None`: pi does not populate reasoning
+    /// on their usage shapes, so there is no key to read.
+    #[serde(default)]
+    pub reasoning: Option<u64>,
     /// Tokens served from the prompt cache.
     pub cache_read: u64,
     /// Tokens written to the prompt cache this call.
@@ -190,6 +223,17 @@ impl Usage {
             // let a long tail of unannotated calls erase the evidence, and
             // summing would report a number of calls rather than a yes/no.
             cache_reported: self.cache_reported || other.cache_reported,
+            // Presence is OR-like (same shape as cache_reported): one call that
+            // saw a reasoning key is enough for the combined figure to carry
+            // the split. Values sum — both calls' thinking is inside their
+            // outputs, so the combined reasoning stays a subset of the
+            // combined output.
+            reasoning: match (self.reasoning, other.reasoning) {
+                (Some(a), Some(b)) => Some(a + b),
+                (Some(a), None) => Some(a),
+                (None, Some(b)) => Some(b),
+                (None, None) => None,
+            },
         }
     }
 }

@@ -336,6 +336,14 @@ pub(crate) fn responses_usage(usage: &serde_json::Value) -> serde_json::Value {
     if let Some(details) = usage.get("input_tokens_details") {
         out["prompt_tokens_details"] = details.clone();
     }
+    // Same forwarding for the reasoning split: the Responses API nests
+    // `reasoning_tokens` in `output_tokens_details` (pi
+    // `openai-responses-shared.ts:572`), and `seed_usage_compat` reads that
+    // shape. Dropped here, the split would silently vanish — `reasoning` would
+    // be `None` on a reply that reasoned. Absent stays absent (D5 again).
+    if let Some(details) = usage.get("output_tokens_details") {
+        out["output_tokens_details"] = details.clone();
+    }
     out
 }
 
