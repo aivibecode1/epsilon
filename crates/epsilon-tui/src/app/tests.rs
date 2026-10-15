@@ -9603,6 +9603,12 @@ fn settings_panel_lists_every_row_with_its_live_value_and_keys() {
     for hint in ["enter", "esc"] {
         assert!(screen.contains(hint), "the {hint} key is named: {screen}");
     }
+    for pointer in ["/scoped-models", "/skill", "/login", "/editor"] {
+        assert!(
+            screen.contains(pointer),
+            "the panel names where {pointer} lives: {screen}"
+        );
+    }
 }
 
 /// `/changes` with no checkpoints opens with its reason, not a blank panel.

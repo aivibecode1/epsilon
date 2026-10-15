@@ -1298,8 +1298,8 @@ impl App {
         // is trust-gated composition input, and this mirror cannot see the
         // project's value at all, so writing there would leave the footer
         // naming the global while the run used the project's. A repo opting
-        // into its own effort still edits the file by hand, exactly as it does
-        // for `[model] id` today.
+        // into its own effort still edits the file by hand (unlike `[model] id`
+        // and `[permissions] preset`, which the TUI writes project-first).
         let dir = self
             .config_dir_override
             .clone()

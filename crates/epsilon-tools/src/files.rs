@@ -152,6 +152,14 @@ impl Tool for ReadTool {
                 terminate: false,
             });
         }
+        if crate::image::is_animated_png(&bytes) {
+            // Animated PNG is detected but not sendable (animation frames break the
+            // still-image contract) — say so explicitly instead of refusing as
+            // "binary", mirroring the BMP arm above.
+            return Ok(ToolOutput::text(
+                "Read image file [image/png]\n[Image omitted: animated PNG images are not convertible in this build.]",
+            ));
+        }
         let page = util::read_page(&path, args.offset.unwrap_or(1), args.limit)?;
 
         // Number the page's lines. The split is on '\n' and not `str::lines()` because the

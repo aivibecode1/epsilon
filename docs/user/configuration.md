@@ -5,7 +5,10 @@ For users selecting models and project settings.
 Global configuration is `~/.config/epsilon/config.toml`; project configuration is
 `<workspace>/.epsilon/config.toml` and is **trust-gated**: the first time the file's content
 hash changes, Epsilon asks you to trust it (`/trust` in the TUI) before applying it.
-Precedence: command-line flag → project config → global config → catalog default (ADR-018).
+Precedence (for model id, thinking level, and permission preset — the keys both
+files carry): command-line flag → project config → global config → catalog default (ADR-018).
+Other keys (theme, favorites, editor, skills-disabled, custom providers, OAuth client
+ids, keybindings) are global-only and never read from the project file.
 
 ## Model selection
 
@@ -53,7 +56,7 @@ whole run regardless of what the model asks for.
 | Flag | Effect |
 |---|---|
 | `--plan` | Plan mode. A layer that denies every mutating capability is prepended to the engine and monotonic-deny keeps that boundary against project rules and mid-run approvals (ADR-006's F10 amendment). Reads, searches and diagnostics still work; writes, edits and shell commands that change anything are refused with the reason. There is no exit-normal transition — to allow edits, restart without the flag |
-| `--preset <name>` | Set the permission baseline: `auto` (default), `workspace-write`, `read-only`, `danger-full-access`. The elevation presets are deliberately not persisted; `danger-full-access` in particular is re-confirmed each launch |
+| `--preset <name>` | Set the permission baseline: `auto` (default), `workspace-write`, `read-only`, `danger-full-access`. Only `danger-full-access` is ephemeral (re-confirmed each launch, never written down); the other three persist through the TUI to the project config first, then the global one |
 | `--fallback <model>[,<model>…]` | After this flag's model list, fall through to the next candidate when a call fails for a retryable reason. Each candidate resolves its own credentials at stream time |
 | `-c` / `--continue` | Resume the newest session for the current workspace instead of starting a new one |
 

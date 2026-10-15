@@ -287,7 +287,7 @@ impl Tool for TaskTool {
         }
 
         let envelope = format!(
-            "<task id=\"{}\" state=\"completed\">\n<description>{}</description>\n<subagent_type>{}</subagent_type>\n<task_result>\n{prompt}\n</task_result>\n<note>Subagent host not wired in this context — prompt captured for inline execution. Continue the work directly; when run via the loop the task fans out to an isolated child Agent.</note>\n</task>",
+            "<task id=\"{}\" state=\"capture\">\n<description>{}</description>\n<subagent_type>{}</subagent_type>\n<task_result>\n{prompt}\n</task_result>\n<note>Subagent host not wired in this context — prompt captured for inline execution. Continue the work directly; when run via the loop the task fans out to an isolated child Agent.</note>\n</task>",
             call.tool_call_id, description, subagent_type
         );
 
@@ -299,6 +299,7 @@ impl Tool for TaskTool {
                 "prompt_chars": prompt.chars().count(),
                 "task_id": task_id,
                 "host": "capture-v1",
+                "state": "capture",
             }),
             usage: None,
             terminate: false,
@@ -335,6 +336,19 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn capture_fallback_does_not_claim_success() {
+        let out = run(serde_json::json!({
+            "description": "explore auth flow",
+            "prompt": "Read crates/epsilon-tui/src/app.rs and summarize."
+        }))
+        .await
+        .unwrap();
+        let text = text_of(&out);
+        assert!(text.contains("state=\"capture\""), "{text}");
+        assert!(!text.contains("state=\"completed\""), "{text}");
+    }
+
+    #[tokio::test]
     async fn renders_envelope_with_description_and_prompt() {
         let out = run(serde_json::json!({
             "description": "explore auth flow",
@@ -349,8 +363,11 @@ mod tests {
         assert!(text.contains("<task"));
         assert!(text.contains("explore auth flow"));
         assert!(text.contains("login picker"));
+        assert!(text.contains("state=\"capture\""), "{text}");
+        assert!(!text.contains("state=\"completed\""), "{text}");
         assert_eq!(out.details["description"], "explore auth flow");
         assert_eq!(out.details["host"], "capture-v1");
+        assert_eq!(out.details["state"], "capture");
     }
 
     #[tokio::test]
@@ -451,6 +468,8 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(out.details["subagent_type"], "default");
+        assert_eq!(out.details["state"], "capture");
+        assert!(text_of(&out).contains("state=\"capture\""));
     }
 
     /// Scripted host recording each delegated request (M53 shape).

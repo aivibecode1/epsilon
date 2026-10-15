@@ -70,7 +70,15 @@ fn is_png(buffer: &[u8]) -> bool {
         && starts_with_ascii(buffer, 12, "IHDR")
 }
 
-fn is_animated_png(buffer: &[u8]) -> bool {
+/// Report whether `buffer` holds an animated PNG (`acTL` before `IDAT`).
+///
+/// `detect_supported_image_mime` deliberately returns `None` for these — animation
+/// frames break the still-image contract providers accept — so the read tool checks
+/// this separately to refuse honestly instead of falling through to binary handling.
+pub fn is_animated_png(buffer: &[u8]) -> bool {
+    if !starts_with(buffer, &[0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A]) || !is_png(buffer) {
+        return false;
+    }
     let mut offset = PNG_SIGNATURE_LEN;
     while offset + 8 <= buffer.len() {
         let chunk_len = read_u32be(buffer, offset) as usize;

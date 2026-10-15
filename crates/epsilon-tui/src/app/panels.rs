@@ -1907,6 +1907,15 @@ pub(super) fn draw_settings(f: &mut Frame<'_>, app: &App, outer: Rect) {
         theme,
         &[(&arrows, "move"), ("enter", "change"), ("esc", "close")],
     ));
+    // Where the rest lives: this panel holds five rows of ~fourteen persisted
+    // things, and a settings screen that hides the others without naming them
+    // is a discoverability dead end (the settings audit). One more hint row,
+    // not more rows — a row without a writer would be the no-op AGENTS.md §2.7
+    // forbids, so the panel points instead of padding.
+    lines.push(overlay::hint_row(
+        theme,
+        &[("more", "/scoped-models /skill /login /editor")],
+    ));
     f.render_widget(Paragraph::new(lines), inner);
 }
 

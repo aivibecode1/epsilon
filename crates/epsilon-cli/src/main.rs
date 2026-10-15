@@ -153,7 +153,9 @@ FILES
                                   the workspace and every directory above it
   .epsilon/SYSTEM.md              replaces the built-in agent contract (trust-gated)
   .epsilon/APPEND_SYSTEM.md       appended to the system prompt (trust-gated)
-  .epsilon/skills, .agents/skills, ~/.config/epsilon/skills
+  .epsilon/skills, .agents/skills, ~/.config/epsilon/skills (+ Claude/Codex/Gemini
+                                  dirs both tiers; Cursor/Windsurf/opencode/DSH/pi project dirs too —
+                                  full table in docs/user/configuration.md)
                                   SKILL.md skill folders (progressive disclosure)
 
 EXAMPLES

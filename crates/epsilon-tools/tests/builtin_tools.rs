@@ -1471,6 +1471,60 @@ async fn read_returns_image_attachments_for_images() {
 }
 
 #[tokio::test]
+async fn read_reports_animated_png_honestly_instead_of_paging_bytes() {
+    // Animated PNG misses `detect_supported_image_mime` (still-PNG only) and must
+    // not fall through to text paging as binary garbage — it gets the honest
+    // omitted note, mirroring the BMP arm.
+    use epsilon_contracts::content::ContentBlock;
+    use epsilon_contracts::tool::{Tool, ToolInvocation};
+
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    let ctx = ctx_for(root);
+    let read = ReadTool::new();
+    let sink: epsilon_contracts::tool::ToolUpdateSink = Arc::new(|_| {});
+
+    // Minimal APNG per `image.rs` detection: signature + IHDR len 13 + acTL + IDAT.
+    let mut apng = vec![0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A];
+    apng.extend([0, 0, 0, 13]);
+    apng.extend(b"IHDR");
+    apng.extend([0u8; 13 + 4]);
+    apng.extend([0, 0, 0, 8]);
+    apng.extend(b"acTL");
+    apng.extend([0u8; 8 + 4]);
+    apng.extend([0, 0, 0, 0]);
+    apng.extend(b"IDAT");
+    std::fs::write(root.join("anim.png"), &apng).unwrap();
+
+    let out = read
+        .execute(
+            ToolInvocation {
+                tool_call_id: "tc_apng".into(),
+                args: serde_json::json!({"path": "anim.png"}),
+            },
+            ctx.clone(),
+            sink.clone(),
+        )
+        .await
+        .expect(
+            "animated PNG must return the honest omitted note, not fall through to binary handling",
+        );
+    assert!(
+        out.content
+            .iter()
+            .all(|b| !matches!(b, ContentBlock::Image(_))),
+        "animated PNG must not ride as an image attachment: {:?}",
+        out.content
+    );
+    assert_eq!(
+        out.content[0],
+        ContentBlock::text(
+            "Read image file [image/png]\n[Image omitted: animated PNG images are not convertible in this build.]"
+        )
+    );
+}
+
+#[tokio::test]
 async fn write_creates_then_edit_modifies_with_safety() {
     let (_d, ctx) = seeded_workspace();
     let write = WriteTool::new();
