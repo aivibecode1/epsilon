@@ -13,6 +13,7 @@ mod find;
 pub mod goal;
 pub mod image;
 mod mutation;
+pub mod question;
 mod read_log;
 mod search;
 mod shell;
@@ -35,6 +36,7 @@ pub use goal::{
     CreateGoalArgs, CreateGoalTool, GetGoalArgs, GetGoalTool, GoalAction, UpdateGoalArgs,
     UpdateGoalTool,
 };
+pub use question::{QuestionArgs, QuestionTool};
 pub use search::{GlobArgs, GlobTool, GrepArgs, GrepTool, LS_DEFAULT_LIMIT, LsArgs, LsTool};
 pub use shell::CommandVerdict;
 pub use shell::{BashArgs, BashTool, ChildStdio};

@@ -162,6 +162,11 @@ pub(crate) struct App {
     history: VecDeque<String>,
     history_idx: Option<usize>,
     pending_ask: Option<PendingAsk>,
+    /// The model-question overlay slot (criterion 4): seated from `draw` via
+    /// `ask::poll_ask`, owned by the keyboard while open. Per-`App`, never
+    /// process-global — a global slot lets one test's parked question appear in
+    /// another test's frame when the suite runs threaded (round9 battery).
+    ask_slot: ask::AskSlot,
     /// M94 review (identity-based, re-review round 2): the `request_id` of the ask
     /// the last frame actually painted in the dialog. `handle_key` answers a
     /// pending ask ONLY when its id matches this — a freshly seated ask (the
@@ -1990,10 +1995,15 @@ mod panels;
 // The panel surface, named rather than glob-imported: `draw()` is the only caller, and a list
 // keeps the set of things drawn over the transcript readable in one place.
 use panels::{
-    draw_at_file, draw_auth_picker, draw_auth_prompt, draw_changes, draw_dialog, draw_label_prompt,
-    draw_palette, draw_picker, draw_scope_picker, draw_session_browser, draw_settings,
-    draw_slash_autocomplete, draw_think_picker, draw_timeline, draw_transcript,
+    draw_ask, draw_at_file, draw_auth_picker, draw_auth_prompt, draw_changes, draw_dialog,
+    draw_label_prompt, draw_palette, draw_picker, draw_scope_picker, draw_session_browser,
+    draw_settings, draw_slash_autocomplete, draw_think_picker, draw_timeline, draw_transcript,
 };
+
+/// The model-question overlay: state, keys, and draw snapshot. A child module
+/// so it reaches `App` like `keys` does; the overlay slot lives there rather
+/// than on `App` because this change wires the open/draw/key paths only.
+mod ask;
 
 mod keys;
 // Re-exported so the event loop, the command handlers and the tests keep
@@ -2055,8 +2065,15 @@ impl TranscriptGeometry {
 /// work the user never saw. That behaviour is preserved from M94 unchanged.
 fn draw(f: &mut Frame<'_>, app: &mut App) {
     let area = f.area();
+    // A parked model question opens here, on the next frame after the turn
+    // parks: the event loop has no question arm, so the draw seats what the
+    // hub holds. This also arms operator presence for the hub (idempotent).
+    ask::poll_ask(app);
     if crate::ui::layout::Regions::too_small(area) {
         app.approval_painted_id = None;
+        // The dialog cannot fit here, so neither can the question overlay: a
+        // key must not answer what no frame showed.
+        ask::clear_painted(app);
         // Name a pending approval even here. The dialog is not painted, so the
         // keys are refused, but silently hiding a decision that is blocking the
         // run is how a user concludes the harness has hung.
@@ -2071,6 +2088,11 @@ fn draw(f: &mut Frame<'_>, app: &mut App) {
             )));
             lines.push(Line::from(
                 "widen the window to answer it — the run is waiting on you",
+            ));
+        }
+        if app.ask_slot.is_open() {
+            lines.push(Line::from(
+                "a model question is pending — widen the window to answer it",
             ));
         }
         f.render_widget(
@@ -2252,6 +2274,9 @@ fn draw(f: &mut Frame<'_>, app: &mut App) {
     }
     draw_at_file(f, app, transcript_area);
     draw_slash_autocomplete(f, app, transcript_area);
+    // The question overlay paints late, like every overlay, so the transcript
+    // never covers it; only the approval dialog paints above it.
+    draw_ask(f, app, f.area());
 
     // M94 review: the approval dialog is painted LAST, so no other overlay can
     // cover it — an ask that arrives while `/timeline` (or any popup) is open

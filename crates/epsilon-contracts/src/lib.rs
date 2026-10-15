@@ -17,6 +17,7 @@ pub mod keybind;
 pub mod lagged_notice;
 pub mod message;
 pub mod prompt_template;
+pub mod question;
 pub mod queue_mode;
 pub mod session_entry;
 pub mod session_state;

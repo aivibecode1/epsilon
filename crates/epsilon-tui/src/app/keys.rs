@@ -618,6 +618,13 @@ pub(crate) fn handle_key(app: &mut App, agent: &Arc<Agent>, key: KeyEvent) -> bo
     if app.pending_ask.is_some() && !app.keybindings.matches("app.exit", &key) {
         return handle_approval_key(app, key);
     }
+    // The model-question overlay owns the keyboard while open, like every
+    // other overlay: arrows/Enter/Tab answer, Esc dismisses (fail closed),
+    // and it never quits — the exit binding keeps its precedence above, so
+    // quitting drops the parked ask, which resolves to failure.
+    if app.ask_slot.is_open() && !app.keybindings.matches("app.exit", &key) {
+        return super::ask::handle_ask_key(app, key);
+    }
     if app.search.is_some() && !app.keybindings.matches("app.exit", &key) {
         return handle_search_key(app, key);
     }

@@ -3342,3 +3342,81 @@ not invented.
 table with registry data), a provider changes a family's shape, or a third wire needs
 family-dependent request bytes (extend the enum — the exhaustive matches point at both
 call sites).
+
+---
+
+## ADR-044: Model-initiated clarifying questions via a `question` tool
+
+**Status: accepted (criterion 4, 2026-10-15).**
+
+**The problem.** The model could plan work (`todo`), fan it out (`task`), and load
+skills — but it could not ask the operator anything mid-turn. Ambiguous instructions
+therefore resolved to guesses baked into edits, which is exactly the failure the
+approval gate exists to catch, one step too late. pi, opencode, and Claude Code all
+close this gap with an ask-the-user surface; Epsilon had the permission *dialog* (for
+gated actions) but no *question* primitive (for decisions).
+
+**Decision: a `question` tool over a shared hub, answered in the TUI overlay.**
+
+- *Shape adapted, not copied.* The vocabulary (`Option` label + description, `Prompt`
+  with `multiple` + `custom`, `Answer` as label arrays, `"q"="a, b"` + `Unanswered`
+  model output) is opencode's (`packages/schema/src/question.ts`,
+  `packages/core/src/tool/question.ts:34-45`, `packages/core/src/question.ts` ask /
+  reply / reject split); the recommended-first convention ("put the pick first, mark
+  it `(Recommended)`") lives in the tool description, which is Claude Code's
+  AskUserQuestion surface. Deviations are deliberate: `custom` defaults true and rides
+  the tool input (opencode's tool `Prompt` drops it while its service keeps it — two
+  shapes for one prompt); an empty header derives from the question rather than
+  refusing the call; the review/confirm stop exists for every multi-question or
+  multi-select call, not only opencode's tabbed case.
+- *Blocking and Sequential, like `task`.* The call parks the turn until the operator
+  answers. The TUI overlay (`app/ask.rs`, think-picker chrome) shows one question at
+  a time with tabs, option navigation, number-key jumps, custom free-text input, and
+  a review stop; `Enter` answers/toggles/submits, `Tab` walks, `Esc` dismisses.
+- *Caps (documented here, enforced at parse):* at most 4 questions per call, at most
+  6 options per question; question ≤ 500 chars, header ≤ 30, label ≤ 80, option
+  description ≤ 300, typed answer ≤ 2000. A prompt with no options and `custom: false`
+  is unanswerable — refused at parse, not at render.
+- *Failure semantics, all fail-closed:* no operator attached (headless/print/RPC/
+  serve) resolves IMMEDIATELY to a ToolFailure telling the model to proceed with its
+  best judgment — a hung turn is worse than a refused one. Dismissal (`Esc`/reject,
+  or submitting with any question unanswered) resolves to a `dismissed` ToolFailure,
+  never a fabricated answer. Reload/resume/session-switch drops the parked turn to
+  `SessionEnded` (the hub holds pendings in memory only; the transcript side was
+  already covered — `close_dangling_tool_calls` errors every unanswered call on
+  resume — so a question asked in a dead session cannot resurrect on either half).
+- *No new permission capability.* Asking is read-only human interaction, but it rides
+  the normal tool pipeline (registry, gate, transcript) like any other tool, so no
+  new capability exists to name: the gate sees (`question`, `*`) and the house rule
+  for unknown capabilities (`Ask`, never `Allow` — AGENTS.md §6) applies unchanged.
+  First use in the TUI asks approval once (session memory can promote it); headless
+  denies at the gate *and* the tool refuses at `ask` — two independent closed doors,
+  so even `--yes` (which auto-approves the gate) cannot hang a run that has nobody
+  attached. A capability that exists only to re-ask "may the model ask?" before every
+  question would double-prompt the operator for zero safety gain.
+- *Placement.* The trait and types live in `epsilon-contracts` (no new edges); the
+  tool in `epsilon-tools` speaks only the trait; the hub (parking lot + operator flag
+  + process-shared instance) lives in `epsilon-runtime`, which registers the tool —
+  the SkillTool pattern, because `epsilon-tools` is a dev-only edge from the TUI and
+  cannot host anything production TUI code drains. Operator presence arms on the
+  first drawn frame; modes that never draw never attach.
+
+**Rejected.** (a) A dedicated RPC round-trip per question (serve answering over REST,
+RPC over stdio): overkill beside the channel the hub already is — those modes fail
+closed instead, and an operator that wants to answer uses the terminal. (b)
+Auto-answer heuristics (first option wins, "Recommended" auto-accepts, empty means
+"whatever"): fabrication wearing helpfulness — a refused question the model routes
+around honestly beats an answered one nobody gave. (c) Letting the tool block on an
+undrained queue in headless modes "because the gate already denied it": the gate is
+one door and `--yes` opens it; the no-operator refusal at `ask` is the second door,
+and only both closed makes the hang impossible rather than merely unlikely.
+
+**The behaviour change this records** (AGENTS.md §5): the provider schema advertises
+`question`, and a model that calls it blocks for an operator answer in the TUI
+(Esc dismisses to a failure result); every other mode answers the call with an
+immediate failure result instead. No disk writes; no new capability; no new crate.
+
+**Revisit trigger.** A second frontend needs to answer questions (attach it to the
+hub rather than copying the overlay), or the footer-hint wart gets fixed properly:
+`overlay_open()` does not know about the ask overlay, so the footer advertises the
+composer's keys while a question owns the keyboard.

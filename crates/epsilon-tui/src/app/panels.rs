@@ -1682,6 +1682,107 @@ pub(super) fn draw_think_picker(f: &mut Frame<'_>, app: &App, outer: Rect) {
     f.render_widget(ratatui::widgets::Paragraph::new(lines), inner);
 }
 
+/// The model-question overlay (criterion 4): one parked `question` tool call.
+///
+/// The think-picker chrome (`Panel`, `list_row`, `hint_row`, measured
+/// capacity) over the ask snapshot: tab headers when several questions are
+/// queued, the current question, its option rows with `picked` marks (words,
+/// not only colour), the custom-answer row and input, or the review list on
+/// the confirm stop. Nothing here answers: keys do that in `ask.rs`.
+pub(super) fn draw_ask(f: &mut Frame<'_>, app: &mut App, outer: Rect) {
+    use crate::ui::overlay::{self, Panel, Width};
+    let Some(frame) = super::ask::draw_snapshot(app) else {
+        return;
+    };
+    super::ask::note_painted(app, frame.id.clone());
+    let width = Width::PANEL.resolve(outer);
+    let theme = &app.theme;
+    let inner_width = width.saturating_sub(4) as usize;
+    let mut lines: Vec<Line<'static>> = Vec::new();
+    if frame.show_tabs {
+        let mut tabs: Vec<Span<'static>> = Vec::new();
+        for (i, (header, active, answered)) in frame.tabs.iter().enumerate() {
+            if i > 0 {
+                tabs.push(Span::styled(" · ".to_string(), theme.dim()));
+            }
+            let style = if *active {
+                theme.selected()
+            } else if *answered {
+                theme.text()
+            } else {
+                theme.dim()
+            };
+            tabs.push(Span::styled(header.clone(), style));
+        }
+        lines.push(Line::from(tabs));
+    }
+    let mut head = frame.question.clone();
+    if frame.multi {
+        head.push_str(" (select all that apply)");
+    }
+    lines.push(Line::from(Span::styled(head, theme.text())));
+    if frame.at_review {
+        for (header, value) in &frame.review {
+            lines.push(Line::from(vec![
+                Span::styled(format!("{header}: "), theme.dim()),
+                Span::styled(value.clone(), theme.text()),
+            ]));
+        }
+    }
+    for (index, row) in frame.rows.iter().enumerate() {
+        let picked = if row.picked { Some("picked") } else { None };
+        lines.push(overlay::list_row(
+            theme,
+            index == frame.selected,
+            &format!("{}. {}", index + 1, row.label),
+            picked,
+            inner_width,
+        ));
+        if !row.description.is_empty() {
+            lines.push(Line::from(Span::styled(
+                format!("    {}", row.description),
+                theme.dim(),
+            )));
+        }
+    }
+    if frame.custom_open {
+        lines.push(Line::from(vec![
+            Span::styled("> ".to_string(), theme.accent()),
+            Span::styled(frame.custom_text.clone(), theme.text()),
+        ]));
+    }
+    lines.push(Line::from(""));
+    let arrows = overlay::up_down(theme.glyphs.up, theme.glyphs.down);
+    let hints: Vec<(&str, &str)> = if frame.custom_open {
+        vec![("type", "answer"), ("enter", "add"), ("esc", "back")]
+    } else if frame.at_review {
+        vec![("enter", "submit"), ("tab", "back"), ("esc", "dismiss")]
+    } else {
+        vec![
+            (&arrows, "move"),
+            ("enter", if frame.multi { "toggle" } else { "answer" }),
+            ("tab", "next"),
+            ("esc", "dismiss"),
+        ]
+    };
+    lines.push(overlay::hint_row(theme, &hints));
+    let height = (lines.len() + 2).min(outer.height.saturating_sub(2) as usize) as u16;
+    let panel = Panel {
+        theme,
+        // Top-aligned like the model picker: the overlay opens mid-turn, and
+        // a panel that moves between openings is disorienting.
+        area: Rect {
+            y: outer.y + 1,
+            ..overlay::centered(outer, width, height.max(5))
+        },
+        title: "question for you",
+        focused: true,
+        border: None,
+    };
+    let inner = panel.open(f);
+    f.render_widget(ratatui::widgets::Paragraph::new(lines), inner);
+}
+
 /// P-047: `/scoped-models` checklist over the F2 cycle scope.
 ///
 /// The think-picker chrome (Panel, `list_row`, `hint_row`, measured

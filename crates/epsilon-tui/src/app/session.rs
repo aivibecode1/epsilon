@@ -66,6 +66,7 @@ impl App {
             history_idx: None,
             pending_ask: None,
             approval_painted_id: None,
+            ask_slot: Default::default(),
             trust_review_pending: false,
             pending_import: None,
             pending_preset: None,

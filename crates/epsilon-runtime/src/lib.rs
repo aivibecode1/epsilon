@@ -306,6 +306,104 @@ pub fn load_project_config(workspace: &Path) -> (ProjectConfig, TrustDecision, V
 }
 
 #[cfg(test)]
+mod question_hub_tests {
+    use super::*;
+    use epsilon_contracts::question::{QuestionError, QuestionService};
+
+    fn prompt(question: &str) -> epsilon_contracts::question::QuestionPrompt {
+        epsilon_contracts::question::QuestionPrompt {
+            question: question.into(),
+            header: "h".into(),
+            options: vec![],
+            multiple: false,
+            custom: true,
+        }
+    }
+
+    /// A detached hub never parks: headless/print/RPC/serve resolve at once.
+    #[tokio::test]
+    async fn a_detached_hub_fails_the_ask_without_parking() {
+        let hub = QuestionHub::new();
+        assert!(!hub.is_operator_present());
+        let out = tokio::time::timeout(
+            std::time::Duration::from_secs(5),
+            hub.ask("s".into(), vec![prompt("Which?")]),
+        )
+        .await
+        .expect("a detached hub must resolve, never hang");
+        assert!(
+            matches!(out, Err(QuestionError::NoOperator(_))),
+            "fail closed: {out:?}"
+        );
+        assert_eq!(hub.pending_count(), 0, "nothing was parked");
+    }
+
+    /// An attached hub parks FIFO and an answer settles the waiter.
+    #[tokio::test]
+    async fn an_attached_hub_parks_and_an_answer_settles_it() {
+        let hub = Arc::new(QuestionHub::new());
+        hub.set_operator_present(true);
+        let waiter = tokio::spawn({
+            let hub = Arc::clone(&hub);
+            async move { hub.ask("s".into(), vec![prompt("Which?")]).await }
+        });
+        while hub.pending_count() == 0 {
+            tokio::task::yield_now().await;
+        }
+        let pending = hub.take_pending().expect("the parked question");
+        assert_eq!(pending.prompts[0].question, "Which?");
+        assert!(pending.id.starts_with("que_"), "opencode id shape");
+        assert!(pending.answer(vec![vec!["up".into()]]));
+        assert_eq!(
+            waiter.await.unwrap().unwrap(),
+            vec![vec!["up".to_string()]],
+            "labels round-trip in order"
+        );
+    }
+
+    /// Dismissal settles as dismissal, and an empty drain is None.
+    #[tokio::test]
+    async fn dismissal_settles_as_dismissed() {
+        let hub = Arc::new(QuestionHub::new());
+        hub.set_operator_present(true);
+        let waiter = tokio::spawn({
+            let hub = Arc::clone(&hub);
+            async move { hub.ask("s".into(), vec![prompt("Which?")]).await }
+        });
+        while hub.pending_count() == 0 {
+            tokio::task::yield_now().await;
+        }
+        assert!(hub.take_pending().unwrap().dismiss());
+        assert!(
+            matches!(waiter.await.unwrap(), Err(QuestionError::Dismissed)),
+            "never a fabricated answer"
+        );
+        assert!(hub.take_pending().is_none());
+    }
+
+    /// Reload/resume with a parked ask fails the waiter instead of
+    /// resurrecting the question in the new session.
+    #[tokio::test]
+    async fn abandoning_parked_asks_fails_the_waiter() {
+        let hub = Arc::new(QuestionHub::new());
+        hub.set_operator_present(true);
+        let waiter = tokio::spawn({
+            let hub = Arc::clone(&hub);
+            async move { hub.ask("s".into(), vec![prompt("Which?")]).await }
+        });
+        while hub.pending_count() == 0 {
+            tokio::task::yield_now().await;
+        }
+        hub.abandon_all();
+        assert_eq!(hub.pending_count(), 0);
+        assert!(
+            matches!(waiter.await.unwrap(), Err(QuestionError::SessionEnded(_))),
+            "a question asked in a dead session must not resurrect"
+        );
+    }
+}
+
+#[cfg(test)]
 mod project_hash_tests {
     use super::*;
 
@@ -4952,6 +5050,191 @@ pub struct RunParams<'a> {
     pub notices: &'a mut Vec<String>,
 }
 
+// ---------------------------------------------------------------------------
+// Operator questions (criterion 4): the shared parking lot.
+//
+// The `question` tool speaks `epsilon_contracts::question::QuestionService`;
+// this hub is the provisioned implementation. It parks each `ask` until the
+// operator answers — the TUI ask overlay drains [`QuestionHub::take_pending`]
+// and replies — and it fails closed the moment no operator can answer: an
+// ask with nobody attached resolves immediately to `NoOperator`, never to a
+// hang. Headless/print/RPC/serve modes never attach, so they get exactly that.
+//
+// A parked ask that is dropped (reload, resume, session switch) resolves to
+// `SessionEnded` on the await side: a question asked in a dead session must
+// not resurrect. The transcript side is already covered —
+// `Agent::close_dangling_tool_calls` gives every unanswered call an error
+// result on resume — so this is the half that unblocks the parked turn.
+
+/// How one parked [`PendingQuestion`] was settled by the operator.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum QuestionResolution {
+    /// One answer per prompt, in prompt order (labels, or typed text).
+    Answered(Vec<epsilon_contracts::question::QuestionAnswer>),
+    /// Esc/reject, or an empty multi-select: a failure, never an answer.
+    Dismissed,
+}
+
+/// One question round-trip parked for the operator, oldest first.
+///
+/// The reply channel rides along: whoever holds this answers it, and dropping
+/// it without answering (session switch, quit, reload) unblocks the parked
+/// turn with `SessionEnded` instead of hanging it.
+pub struct PendingQuestion {
+    /// Hub-assigned id (`que_…`), for diagnostics.
+    pub id: String,
+    /// Owning session, for labelling.
+    pub session_id: String,
+    /// The prompts the operator sees.
+    pub prompts: Vec<epsilon_contracts::question::QuestionPrompt>,
+    tx: Option<tokio::sync::oneshot::Sender<QuestionResolution>>,
+}
+
+impl PendingQuestion {
+    /// Settle with answers. False when nobody is waiting anymore.
+    pub fn answer(mut self, answers: Vec<epsilon_contracts::question::QuestionAnswer>) -> bool {
+        self.tx
+            .take()
+            .map(|tx| tx.send(QuestionResolution::Answered(answers)).is_ok())
+            .unwrap_or(false)
+    }
+
+    /// Settle as dismissed. False when nobody is waiting anymore.
+    pub fn dismiss(mut self) -> bool {
+        self.tx
+            .take()
+            .map(|tx| tx.send(QuestionResolution::Dismissed).is_ok())
+            .unwrap_or(false)
+    }
+}
+
+#[derive(Default)]
+struct HubState {
+    operator_present: bool,
+    pending: std::collections::VecDeque<PendingQuestion>,
+    next_id: u64,
+}
+
+/// The provisioned [`epsilon_contracts::question::QuestionService`]: parks
+/// asks for the TUI overlay, fails closed everywhere else.
+///
+/// Clone-friendly like [`ChannelApprovalUi`]: every clone feeds the same
+/// queue, and the composition hands out clones of the shared instance.
+#[derive(Default)]
+pub struct QuestionHub {
+    state: std::sync::Mutex<HubState>,
+}
+
+impl QuestionHub {
+    /// An empty hub with no operator attached (headless default: fail closed).
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Mark whether a draining operator exists. The TUI sets this when its
+    /// ask overlay is live; every other mode leaves the default. An ask that
+    /// arrives while detached fails immediately rather than parking into a
+    /// queue nobody drains.
+    pub fn set_operator_present(&self, present: bool) {
+        if let Ok(mut st) = self.state.lock() {
+            st.operator_present = present;
+        }
+    }
+
+    /// Whether an operator is currently draining this hub.
+    pub fn is_operator_present(&self) -> bool {
+        self.state
+            .lock()
+            .map(|st| st.operator_present)
+            .unwrap_or(false)
+    }
+
+    /// Take the oldest parked question, removing it from the pending set.
+    /// Resolution stays possible on the returned value via
+    /// [`PendingQuestion::answer`] / [`PendingQuestion::dismiss`].
+    pub fn take_pending(&self) -> Option<PendingQuestion> {
+        self.state
+            .lock()
+            .ok()
+            .and_then(|mut st| st.pending.pop_front())
+    }
+
+    /// How many questions are parked unanswered.
+    pub fn pending_count(&self) -> usize {
+        self.state.lock().map(|st| st.pending.len()).unwrap_or(0)
+    }
+
+    /// Drop every parked question unanswered (reload/resume path): each
+    /// parked turn resolves to `SessionEnded` instead of resurrecting in the
+    /// new session.
+    pub fn abandon_all(&self) {
+        if let Ok(mut st) = self.state.lock() {
+            st.pending.clear();
+        }
+    }
+}
+
+#[async_trait::async_trait]
+impl epsilon_contracts::question::QuestionService for QuestionHub {
+    async fn ask(
+        &self,
+        session_id: String,
+        questions: Vec<epsilon_contracts::question::QuestionPrompt>,
+    ) -> Result<
+        Vec<epsilon_contracts::question::QuestionAnswer>,
+        epsilon_contracts::question::QuestionError,
+    > {
+        use epsilon_contracts::question::QuestionError;
+        let rx = {
+            let mut st = match self.state.lock() {
+                Ok(st) => st,
+                Err(_) => {
+                    return Err(QuestionError::NoOperator(
+                        "the question queue is unusable".into(),
+                    ));
+                }
+            };
+            if !st.operator_present {
+                return Err(QuestionError::NoOperator(
+                    "this run has no attached operator — ask nothing; \
+                     proceed with your best judgment"
+                        .into(),
+                ));
+            }
+            st.next_id += 1;
+            let id = format!("que_{}", st.next_id);
+            let (tx, rx) = tokio::sync::oneshot::channel();
+            st.pending.push_back(PendingQuestion {
+                id,
+                session_id,
+                prompts: questions,
+                tx: Some(tx),
+            });
+            rx
+        };
+        match rx.await {
+            Ok(QuestionResolution::Answered(answers)) => Ok(answers),
+            Ok(QuestionResolution::Dismissed) => Err(QuestionError::Dismissed),
+            // The holder answered nothing and went away: reload, resume, or
+            // session switch. Fail closed, like a dropped approval ask.
+            Err(_) => Err(QuestionError::SessionEnded(
+                "the pending question was dropped before it was answered \
+                 (reload, resume, or session switch)"
+                    .into(),
+            )),
+        }
+    }
+}
+
+static SHARED_HUB: std::sync::OnceLock<Arc<QuestionHub>> = std::sync::OnceLock::new();
+
+/// The process-wide question hub the `question` tool parks on and the TUI
+/// overlay drains. Detached by default, so any mode that never attaches an
+/// operator fails closed without extra wiring.
+pub fn shared_question_hub() -> Arc<QuestionHub> {
+    Arc::clone(SHARED_HUB.get_or_init(|| Arc::new(QuestionHub::new())))
+}
+
 /// Compose one agent for `params`.
 ///
 /// This is the whole of "what it takes to run Epsilon in a workspace": the built-in tool
@@ -5071,6 +5354,11 @@ pub async fn build_runtime_and_gate_runner(
         let names: Vec<&str> = skills.iter().map(|s| s.name.as_str()).collect();
         notices.push(format!("skills: {}", names.join(", ")));
     }
+    // Operator questions (criterion 4): the tool parks on the shared hub; the
+    // TUI drains and answers it, every other mode fails closed at ask time.
+    registry.register(std::sync::Arc::new(
+        epsilon_tools::question::QuestionTool::new(shared_question_hub()),
+    ));
 
     // Extensions (M8/M9a bricks, wired M11): conventional roots PLUS project-declared
     // dirs resolved against the workspace's .epsilon/ (ADR-012 project layer, M12).
