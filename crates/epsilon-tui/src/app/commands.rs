@@ -2104,6 +2104,13 @@ impl App {
                         let mut produced = Vec::new();
                         let outcome = a.compact_now(&mut produced).await;
                         running.store(false, Ordering::Relaxed);
+                        // Anti-thrash (ADR-048): a manual compaction proves
+                        // operator intent, so a commit clears the
+                        // non-reducing streak — the auto gate stands down
+                        // only for automatic attempts, never for this one.
+                        if matches!(&outcome, Ok(epsilon_core::CompactionOutcome::Committed)) {
+                            a.reset_compaction_streak();
+                        }
                         if let Err(e) = outcome {
                             notices.send(format!("compaction failed: {e}")).ok();
                         }

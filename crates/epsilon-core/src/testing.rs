@@ -92,6 +92,59 @@ impl<S: epsilon_llm::StreamFn + Send + Sync> epsilon_llm::StreamFn for SlowProvi
     }
 }
 
+/// Rewrites every reply's billed `input` to a fixed realistic number.
+///
+/// Faux bills ~150 input tokens whatever the transcript holds, so an
+/// anchor built from them massively understates a multi-KB history — and
+/// any measurement comparing anchor against fallback (like the compaction
+/// anti-thrash rule) then classifies real reductions as growth. Wrap the
+/// main provider in scenarios where billed size must resemble transcript
+/// size; `output` and everything else pass through untouched.
+pub struct RebilledProvider<S> {
+    inner: S,
+    input: u64,
+}
+
+impl<S> RebilledProvider<S> {
+    /// Wrap `inner`, billing `input` tokens on every reply.
+    pub fn new(inner: S, input: u64) -> Self {
+        Self { inner, input }
+    }
+}
+
+struct RebillStream {
+    inner: epsilon_llm::BoxEventStream,
+    input: u64,
+}
+
+#[async_trait]
+impl epsilon_llm::EventStream for RebillStream {
+    async fn next(&mut self) -> Option<epsilon_contracts::stream::StreamEvent> {
+        match self.inner.next().await {
+            Some(epsilon_contracts::stream::StreamEvent::Done { mut message }) => {
+                message.usage.input = self.input;
+                message.usage.total_tokens = self.input + message.usage.output;
+                Some(epsilon_contracts::stream::StreamEvent::Done { message })
+            }
+            other => other,
+        }
+    }
+}
+
+#[async_trait]
+impl<S: epsilon_llm::StreamFn + Send + Sync> epsilon_llm::StreamFn for RebilledProvider<S> {
+    async fn stream(
+        &self,
+        model: &epsilon_llm::ModelRef,
+        ctx: epsilon_llm::LlmContext,
+    ) -> epsilon_llm::BoxEventStream {
+        Box::new(RebillStream {
+            inner: self.inner.stream(model, ctx).await,
+            input: self.input,
+        })
+    }
+}
+
 impl FailTool {
     /// Build with the default name `fail`.
     pub fn new() -> Self {

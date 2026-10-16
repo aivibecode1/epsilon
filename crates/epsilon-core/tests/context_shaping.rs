@@ -12,14 +12,16 @@
 use std::sync::Arc;
 
 use async_trait::async_trait;
+use epsilon_contracts::agent_event::{AgentEvent, TurnEndReason};
 use epsilon_contracts::content::UserContent;
 use epsilon_contracts::message::{Message, UserMessage};
 use epsilon_contracts::tool::{
     ExecutionMode, Tool, ToolContext, ToolDescriptor, ToolFailure, ToolInvocation, ToolOutput,
     ToolUpdateSink,
 };
+use epsilon_core::testing::RebilledProvider;
 use epsilon_core::{AutoAllow, LoopLimits, ToolRegistry};
-use epsilon_llm::{FauxProvider, FauxStep, FauxToolCall};
+use epsilon_llm::{FauxProvider, FauxStep, FauxToolCall, PanicGuard};
 
 /// A tool that returns whatever text it was built with — a stand-in for an MCP server or a
 /// fetched page, including the hostile cases.
@@ -80,13 +82,27 @@ fn agent_with(
     steps: Vec<FauxStep>,
     limits: LoopLimits,
 ) -> Arc<epsilon_core::Agent> {
+    agent_on(
+        Arc::new(PanicGuard(FauxProvider::new(steps))),
+        tools,
+        limits,
+    )
+}
+
+/// Same harness with an injectable main provider: the reducing test needs realistic bills
+/// (see `RebilledProvider`), and every other test uses [`agent_with`]'s faux script.
+fn agent_on(
+    main: Arc<dyn epsilon_llm::StreamFn>,
+    tools: Vec<Arc<dyn Tool>>,
+    limits: LoopLimits,
+) -> Arc<epsilon_core::Agent> {
     let mut registry = ToolRegistry::new();
     for tool in tools {
         registry.register(tool);
     }
     epsilon_core::Agent::new(
         limits,
-        Arc::new(epsilon_llm::PanicGuard(FauxProvider::new(steps))),
+        main,
         Arc::new(registry),
         Arc::new(AutoAllow),
         std::env::temp_dir(),
@@ -303,5 +319,260 @@ async fn a_compaction_keeps_the_users_own_words() {
     assert!(
         text.contains("<user_instructions>") && text.contains(instruction),
         "the user's exact words ride along with the summary: {text}"
+    );
+}
+
+// ── ADR-048 anti-thrash guard ─────────────────────────────────────────────
+// A compaction that COMMITS yet reclaims nothing retriggers every run: the failure latch
+// (`compact_suppressed`) resets per run and only covers failures, so success-without-
+// reduction loops forever, burning a paid summarizer call each time. These tests drive
+// the real loop: two consecutive non-reducing commits stand the AUTO trigger down (one
+// engage notice naming the manual override, then silent skips), a reducing commit clears
+// the streak, a manual /compact clears it, and overflow recovery stays ungated.
+//
+// Fixture logic (measured, not reasoned): a fresh agent has no usage anchor, so the
+// estimate is the fixed prefix (~1.6k tokens of agent contract) plus the tiny history —
+// above the 100-token test threshold, so the first pressure check fires on a history the
+// commit then *grows* (summary plus full tail): success without reduction, streak 1.
+
+/// Same harness as [`agent_with`], plus the isolated summarizer production uses: aux
+/// calls must not consume the main loop's scripted steps.
+fn compacting_agent(
+    steps: Vec<FauxStep>,
+    summaries: Vec<FauxStep>,
+    limits: LoopLimits,
+) -> Arc<epsilon_core::Agent> {
+    let agent = agent_with(vec![], steps, limits);
+    agent.set_summarizer(Arc::new(PanicGuard(FauxProvider::new(summaries))));
+    agent
+}
+
+fn thrash_limits() -> LoopLimits {
+    LoopLimits {
+        compaction_threshold_tokens: 100,
+        max_turns: 8,
+        ..Default::default()
+    }
+}
+
+fn drain_compaction_events(
+    rx: &mut tokio::sync::broadcast::Receiver<Arc<AgentEvent>>,
+) -> (usize, usize, Vec<String>) {
+    let mut started = 0;
+    let mut finished = 0;
+    let mut notices = Vec::new();
+    while let Ok(ev) = rx.try_recv() {
+        match &*ev {
+            AgentEvent::CompactionStarted => started += 1,
+            AgentEvent::CompactionFinished { .. } => finished += 1,
+            AgentEvent::Notice { text } => notices.push(text.clone()),
+            _ => {}
+        }
+    }
+    (started, finished, notices)
+}
+
+fn summary(text: &str) -> FauxStep {
+    FauxStep::say(format!("## Objective\n{text}"))
+}
+
+#[tokio::test]
+async fn a_non_reducing_commit_increments_the_streak() {
+    let agent = compacting_agent(
+        vec![FauxStep::say("done")],
+        vec![summary("summarized state")],
+        thrash_limits(),
+    );
+    let mut rx = agent.subscribe();
+    let outcome = agent.run(user("a small task")).await.expect("run");
+    assert_eq!(outcome.reason, TurnEndReason::Completed);
+
+    let (started, finished, _) = drain_compaction_events(&mut rx);
+    assert_eq!(
+        (started, finished),
+        (1, 1),
+        "the pressure trigger fired and committed"
+    );
+    assert_eq!(
+        agent.compaction_streak(),
+        1,
+        "committed yet reclaimed under 10%: the streak must record it"
+    );
+}
+
+#[tokio::test]
+async fn two_non_reducing_commits_stand_down_auto_compaction() {
+    let agent = compacting_agent(
+        vec![
+            FauxStep::say("one"),
+            FauxStep::say("two"),
+            FauxStep::say("three"),
+        ],
+        vec![summary("first"), summary("second")],
+        thrash_limits(),
+    );
+    let mut rx = agent.subscribe();
+    agent.run(user("first")).await.expect("run 1");
+    assert_eq!(agent.compaction_streak(), 1);
+    agent.run(user("second")).await.expect("run 2");
+    assert_eq!(
+        agent.compaction_streak(),
+        2,
+        "the streak persists across runs — a per-run reset would reproduce the bug"
+    );
+
+    let (_, _, notices) = drain_compaction_events(&mut rx);
+    let engage = notices
+        .iter()
+        .find(|t| t.contains("stood down"))
+        .expect("engaging suppression emits one notice");
+    assert!(
+        engage.contains("/compact manually") && engage.contains("manual compaction"),
+        "the notice names the manual override: {engage}"
+    );
+
+    // The third run is still over threshold, but the AUTO trigger stands down — silently —
+    // while the run itself completes normally (suppressed is not stuck).
+    let outcome = agent.run(user("third")).await.expect("run 3");
+    assert_eq!(outcome.reason, TurnEndReason::Completed);
+    let (started, finished, notices) = drain_compaction_events(&mut rx);
+    assert_eq!(
+        (started, finished),
+        (0, 0),
+        "no third paid summarizer call for a transcript that never shrinks"
+    );
+    assert!(notices.is_empty(), "further skips are silent: {notices:?}");
+}
+
+/// Bills like a real provider via the shared `RebilledProvider`: every
+/// response reports `input` prompt tokens, so the usage anchor measures a
+/// realistic window. Faux's 150-token stub keeps every commit non-reducing
+/// (the anchor is smaller than the fixed prefix), which is exactly what the
+/// reducing test must escape.
+#[tokio::test]
+async fn a_reducing_commit_clears_the_streak() {
+    // Turn 1 compacts a tiny history (non-reducing: streak 1). Turn 2's echo turn then
+    // lands under a realistic 60k anchor, so the next commit reclaims the bulk of it and
+    // the streak clears.
+    let agent = agent_on(
+        Arc::new(RebilledProvider::new(
+            FauxProvider::new(vec![
+                FauxStep::call(
+                    "tc_1",
+                    "echo",
+                    serde_json::json!({ "text": "x".repeat(4000) }),
+                ),
+                FauxStep::say("done"),
+            ]),
+            60_000,
+        )),
+        vec![Arc::new(epsilon_core::testing::EchoTool::new())],
+        thrash_limits(),
+    );
+    agent.set_summarizer(Arc::new(PanicGuard(FauxProvider::new(vec![
+        summary("first summary"),
+        summary("second summary"),
+    ]))));
+    let mut rx = agent.subscribe();
+
+    let outcome = agent.run(user("go")).await.expect("run");
+    assert_eq!(outcome.reason, TurnEndReason::Completed);
+    let (started, finished, _) = drain_compaction_events(&mut rx);
+    assert_eq!(
+        (started, finished),
+        (2, 2),
+        "both the tiny first commit and the big second one fired"
+    );
+    assert_eq!(
+        agent.compaction_streak(),
+        0,
+        "the second commit reclaimed the bulk of a 60k window: the streak must clear"
+    );
+}
+
+#[tokio::test]
+async fn manual_compact_clears_the_streak() {
+    // Contract test for the integration wiring the parent owns: the TUI's manual /compact
+    // task calls `compact_now` (here, directly) and then `reset_compaction_streak()` on
+    // `Committed` (wired at `commands.rs`); the resume path calls it from
+    // `restore_history` (covering live resume and new sessions). This test drives the exact
+    // calls both sites make, proving the guard lifts afterwards.
+    let agent = compacting_agent(
+        vec![
+            FauxStep::say("one"),
+            FauxStep::say("two"),
+            FauxStep::say("three"),
+        ],
+        vec![
+            summary("first"),
+            summary("second"),
+            summary("manual"),
+            summary("third"),
+        ],
+        thrash_limits(),
+    );
+    agent.run(user("first")).await.expect("run 1");
+    agent.run(user("second")).await.expect("run 2");
+    assert_eq!(agent.compaction_streak(), 2);
+
+    let mut produced = Vec::new();
+    let outcome = agent.compact_now(&mut produced).await.expect("manual");
+    assert_eq!(outcome, epsilon_core::CompactionOutcome::Committed);
+    agent.reset_compaction_streak();
+    assert_eq!(agent.compaction_streak(), 0);
+
+    let mut rx = agent.subscribe();
+    let outcome = agent.run(user("third")).await.expect("run 3");
+    assert_eq!(outcome.reason, TurnEndReason::Completed);
+    let (started, finished, _) = drain_compaction_events(&mut rx);
+    assert_eq!(
+        (started, finished),
+        (1, 1),
+        "after a manual clear the auto trigger works again"
+    );
+}
+
+#[tokio::test]
+async fn overflow_recovery_ignores_non_reducing_streak() {
+    let agent = compacting_agent(
+        vec![
+            FauxStep::say("one"),
+            FauxStep::say("two"),
+            FauxStep::Error {
+                message: "prompt is too long: maximum context window exceeded".into(),
+            },
+            FauxStep::say("recovered"),
+        ],
+        vec![summary("first"), summary("second"), summary("recovery")],
+        thrash_limits(),
+    );
+    let mut rx = agent.subscribe();
+    agent.run(user("first")).await.expect("run 1");
+    agent.run(user("second")).await.expect("run 2");
+    assert_eq!(agent.compaction_streak(), 2);
+    drain_compaction_events(&mut rx);
+
+    // Over threshold AND streak-suppressed, yet the provider rejects the request: recovery
+    // must still attempt — suppressing it would convert spend into a hard stuck turn.
+    let outcome = agent.run(user("third")).await.expect("run 3");
+    assert_eq!(
+        outcome.reason,
+        TurnEndReason::Completed,
+        "recovery compacted and retried instead of failing"
+    );
+    let (started, finished, notices) = drain_compaction_events(&mut rx);
+    assert_eq!(
+        (started, finished),
+        (1, 1),
+        "exactly one recovery pass despite the streak"
+    );
+    assert!(
+        notices.is_empty(),
+        "no noise on the recovery path: {notices:?}"
+    );
+    assert_eq!(
+        agent.compaction_streak(),
+        2,
+        "overflow recovery neither resets nor feeds the streak"
     );
 }

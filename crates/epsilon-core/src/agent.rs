@@ -1,7 +1,7 @@
 //! Building an [`Agent`] and everything a front end sets on it afterwards.
 
 use std::collections::HashMap;
-use std::sync::atomic::AtomicBool;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, RwLock};
 
 use epsilon_contracts::agent_event::AgentEvent;
@@ -50,6 +50,10 @@ impl Agent {
             // A goal is disarmed for a process that has not read it yet: see the field's docs.
             goal_armed: AtomicBool::new(false),
             compact_suppressed: AtomicBool::new(false),
+            // A new agent has made no attempts yet, so the ADR-048 streak starts at zero
+            // naturally; a live resume on an existing agent clears it via
+            // `reset_compaction_streak` instead (wired at the resume call site).
+            nonreducing_streak: std::sync::atomic::AtomicUsize::new(0),
             agents: Mutex::new(Vec::new()),
             task_depth: Mutex::new(0),
             agent_brief: Mutex::new(String::new()),
@@ -406,5 +410,116 @@ impl Agent {
 
     pub(crate) fn emit(&self, ev: AgentEvent) {
         let _ = self.events_tx.send(Arc::new(ev));
+    }
+
+    /// Consecutive pressure-triggered compactions that committed yet reclaimed less than
+    /// 10% of the estimated context (ADR-048). At 2 the automatic pressure trigger stands
+    /// down; manual `/compact` and overflow recovery are unaffected.
+    pub fn compaction_streak(&self) -> usize {
+        self.nonreducing_streak.load(Ordering::SeqCst)
+    }
+
+    /// Clear the ADR-048 streak. Called on every path that makes past non-reduction stale:
+    /// any manual `/compact` commit (user intent beats the guard), and a live resume or a
+    /// new-session restore (a different transcript is not the same thrash). Deliberately
+    /// NOT called on a model switch: a new window does not fix non-reducing summaries.
+    /// Wired at the manual-compact call site (`commands.rs`) and the resume path
+    /// (`restore_history`, which covers both live resume and new sessions); the pressure
+    /// path itself never calls this — it records through [`Self::record_pressure_commit`].
+    pub fn reset_compaction_streak(&self) {
+        self.nonreducing_streak.store(0, Ordering::SeqCst);
+    }
+
+    /// Fold one pressure-path commit into the ADR-048 streak. Called only at the pressure
+    /// call site in `run_.rs`, which is the one place that measures before/after
+    /// (`CompactionOutcome` itself carries no numbers, by design).
+    ///
+    /// Ratios, not absolutes, so small and large windows share one rule: non-reducing
+    /// means the commit reclaimed under 10% (`reclaimed * 10 < before`). An empty window
+    /// counts as reducing — nothing to reclaim is not thrash. The transition into streak
+    /// 2 emits the single engage notice naming the manual override; further automatic
+    /// skips stay silent.
+    pub(crate) fn record_pressure_commit(&self, tokens_before: usize, tokens_after: usize) {
+        let reclaimed = tokens_before.saturating_sub(tokens_after);
+        if tokens_before == 0 || reclaimed.saturating_mul(10) >= tokens_before {
+            self.nonreducing_streak.store(0, Ordering::SeqCst);
+            return;
+        }
+        if self.nonreducing_streak.fetch_add(1, Ordering::SeqCst) + 1 == 2 {
+            self.emit(AgentEvent::Notice {
+                text: "automatic context compaction stood down after 2 consecutive \
+                       compactions that reclaimed almost nothing — run /compact manually \
+                       to retry (a manual compaction clears this guard)"
+                    .into(),
+            });
+        }
+    }
+}
+
+#[cfg(test)]
+mod anti_thrash_tests {
+    use super::*;
+
+    fn test_agent() -> Arc<Agent> {
+        Agent::new(
+            LoopLimits::default(),
+            Arc::new(epsilon_llm::PanicGuard(epsilon_llm::FauxProvider::new(
+                Vec::<epsilon_llm::FauxStep>::new(),
+            ))),
+            Arc::new(ToolRegistry::new()),
+            Arc::new(crate::AutoAllow),
+            std::env::temp_dir(),
+        )
+    }
+
+    #[test]
+    fn an_empty_window_counts_as_reducing_not_thrash() {
+        let agent = test_agent();
+        agent.record_pressure_commit(0, 0);
+        agent.record_pressure_commit(0, 500);
+        assert_eq!(agent.compaction_streak(), 0);
+    }
+
+    #[test]
+    fn exactly_ten_percent_reclaimed_counts_as_reducing() {
+        let agent = test_agent();
+        agent.record_pressure_commit(1000, 901);
+        assert_eq!(agent.compaction_streak(), 1);
+        // Reclaiming exactly 10% meets the bar, so the streak clears.
+        agent.record_pressure_commit(1000, 900);
+        assert_eq!(agent.compaction_streak(), 0);
+    }
+
+    #[test]
+    fn a_commit_that_grows_context_counts_as_non_reducing() {
+        let agent = test_agent();
+        agent.record_pressure_commit(500, 900);
+        assert_eq!(agent.compaction_streak(), 1);
+    }
+
+    #[test]
+    fn the_engage_notice_fires_once_on_the_transition_into_two() {
+        let agent = test_agent();
+        let mut rx = agent.subscribe();
+        agent.record_pressure_commit(1000, 1000);
+        agent.record_pressure_commit(1000, 1000);
+        agent.record_pressure_commit(1000, 1000);
+        assert_eq!(agent.compaction_streak(), 3);
+        let mut engages = 0;
+        while let Ok(ev) = rx.try_recv() {
+            if matches!(&*ev, AgentEvent::Notice { text } if text.contains("/compact manually")) {
+                engages += 1;
+            }
+        }
+        assert_eq!(engages, 1, "one engage notice, further skips silent");
+    }
+
+    #[test]
+    fn reset_clears_the_streak() {
+        let agent = test_agent();
+        agent.record_pressure_commit(1000, 1000);
+        assert_eq!(agent.compaction_streak(), 1);
+        agent.reset_compaction_streak();
+        assert_eq!(agent.compaction_streak(), 0);
     }
 }

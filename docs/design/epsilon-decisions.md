@@ -3574,3 +3574,57 @@ startup or spends a request unasked.
 a real source), the 60-minute window proves wrong against measured listing
 churn, or a second surface needs freshness it cannot read through
 `live_status` (share the helper rather than copying the words).
+
+---
+
+## ADR-048: Compaction anti-thrash guard (non-reducing-commit streak)
+
+**Status: accepted (2026-10-16).**
+
+**The problem.** A compaction that COMMITS yet reclaims nothing retriggers every run:
+`compact_suppressed` (`run_.rs:154`) resets per run and only covers *failures*
+(provider error, empty answer, append failure), so success-without-reduction loops
+forever — one paid summarizer call per run, for a transcript that never shrinks. Hermes
+answers the same class of loop with a cooldown after non-reducing attempts
+(`references/hermes-agent-2026.9.24/website/docs/user-guide/configuration.md:1036`,
+developer-guide `context-compression-and-caching.md:141,265`, and the failure-cooldown
+plus provider-proven-overflow rules at `:172-220`).
+
+**Decision: a consecutive-non-reducing-commit streak on the agent.**
+
+- *State.* One `AtomicUsize` on `Agent` (`nonreducing_streak`), session-scoped and never
+  run-scoped — that persistence across runs IS the fix; a per-run reset would reproduce
+  the bug. No timers: wall-clock cooldowns are nondeterministic under test, a counter
+  is not.
+- *Measurement at the pressure call site.* Snapshot `estimated_context_tokens()` before
+  `compact_now`, re-read after `Committed`; `reclaimed = before.saturating_sub(after)`.
+  `CompactionOutcome` deliberately carries no numbers — threading them through would
+  ripple through every TUI handler for a measurement one call site can take. Non-reducing
+  means reclaimed under 10% (`reclaimed * 10 < before`): ratios, not absolutes, so small
+  and large windows share one rule. `before == 0` counts as reducing — nothing to
+  reclaim is not thrash.
+- *Gate.* Streak >= 2 suppresses the AUTO pressure trigger only. Engaging emits one
+  `AgentEvent::Notice` naming the state and the manual override ("run /compact manually
+  ... a manual compaction clears this guard"); further skips are silent, and the TUI
+  needs no change (the engage/skip notices flow through the existing notice channel).
+  Manual `/compact` always runs — user intent beats the guard.
+- *Overflow recovery stays ungated.* An oversized request cannot be sent otherwise, so
+  suppressing it would convert spend into a hard stuck turn — the same reason Hermes'
+  provider-proven overflow ignores its cooldown for one bounded attempt.
+- *Explicit resets, exhaustively:* any manual `/compact` commit; a live resume or a
+  new-session restore (a different transcript is not the same thrash); any reducing
+  commit. *Explicit non-reset:* a model switch does NOT clear the streak — a new window
+  does not fix non-reducing summaries.
+
+**Rejected.** (a) Time-based cooldown: nondeterministic tests and a second clock to keep;
+Hermes escalates 60s → 300s → 900s because its gateway must pace a broken backend across
+restarts — our counter paces the same loop deterministically inside one session. (b)
+Suppressing overflow recovery too: trades a paid call for a stuck turn (see above). (c)
+Changing `Committed` to carry reclaimed numbers: ripples through TUI handlers for a
+call-site measurement.
+
+**Revisit trigger.** Real-bill sessions show the 10% ratio misfiring (suppressing
+compactions that were about to help, or never engaging on genuine thrash), a second
+caller needs the streak read through anything but `compaction_streak()`, or resume
+wiring shows the reset belongs against a different transcript identity than
+`restore_history`.

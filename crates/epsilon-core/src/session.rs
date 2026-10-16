@@ -27,6 +27,9 @@ impl Agent {
         self.clear_usage_anchor();
         // ...and so is any run-scoped replacement built on top of it (CORE-02).
         self.bump_history_epoch();
+        // A resumed transcript is a new conversation for thrash purposes: the
+        // streak measured the old history's compressibility (ADR-048).
+        self.reset_compaction_streak();
     }
 
     /// Re-derive the model view from the store's *current* leaf and restore it into

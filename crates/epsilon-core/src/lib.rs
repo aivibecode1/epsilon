@@ -348,6 +348,12 @@ pub struct Agent {
     /// empty answer, append failure). One attempt per run: a summarizer that just
     /// failed will not succeed on the next turn, and each retry is a paid call.
     compact_suppressed: AtomicBool,
+    /// Consecutive pressure-triggered compactions that committed yet reclaimed less than
+    /// 10% of the estimated context (ADR-048 anti-thrash guard). Session-scoped, never
+    /// run-scoped: a per-run reset is the thrash this exists to stop. Updated only at the
+    /// pressure call site (`run_.rs`); read by the pressure gate; cleared by a reducing
+    /// commit, a manual `/compact` commit, or a session resume.
+    nonreducing_streak: std::sync::atomic::AtomicUsize,
     /// Discovered agent-type defs for `task` routing (M50: pi `agents.ts` parity).
     /// Interior-mutable so composition code can attach discoveries after `Arc<Agent>`.
     agents: Mutex<Vec<crate::agents::AgentDef>>,

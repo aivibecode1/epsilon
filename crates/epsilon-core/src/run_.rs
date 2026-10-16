@@ -304,9 +304,28 @@ impl Agent {
                 // summarizer just failed once (provider error, empty answer, append
                 // failure) and every retry is a paid provider call, so the next
                 // attempt belongs to the next run.
-                if !self.compact_suppressed.load(Ordering::SeqCst) && self.compaction_due() {
+                //
+                // ADR-048 anti-thrash: a compaction that COMMITS yet reclaims nothing
+                // retriggers every run — `compact_suppressed` above resets per run and
+                // only covers failures, so success-without-reduction loops forever,
+                // burning a paid summarizer call each time. Two consecutive
+                // non-reducing commits (under 10% reclaimed, measured around the call
+                // so `CompactionOutcome` carries no numbers) stand the AUTO trigger
+                // down across runs — the streak's persistence IS the fix. Manual
+                // /compact always runs (user intent beats the guard), and overflow
+                // recovery below stays ungated.
+                if !self.compact_suppressed.load(Ordering::SeqCst)
+                    && self.compaction_streak() < 2
+                    && self.compaction_due()
+                {
+                    let tokens_before = self.estimated_context_tokens();
                     match self.compact_now(&mut produced).await? {
-                        CompactionOutcome::Committed => {}
+                        CompactionOutcome::Committed => {
+                            self.record_pressure_commit(
+                                tokens_before,
+                                self.estimated_context_tokens(),
+                            );
+                        }
                         CompactionOutcome::Failed(why) => {
                             self.compact_suppressed.store(true, Ordering::SeqCst);
                             self.emit(AgentEvent::Notice {
@@ -380,6 +399,11 @@ impl Agent {
                 );
 
                 // ---- overflow recovery (ADR-007 trigger #2): compact once, retry ----
+                // ADR-048: deliberately ungated by the non-reducing streak. An oversized
+                // request cannot be sent otherwise, so suppressing recovery here would
+                // convert a paid summarizer call into a hard stuck turn. (Hermes answers
+                // the same way: provider-proven overflow ignores the cooldown for one
+                // bounded attempt — developer-guide context-compression:215-220.)
                 if assistant.stop_reason == StopReason::Error
                     && assistant
                         .error_message

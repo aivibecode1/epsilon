@@ -46,6 +46,45 @@ fn setup(
     )
 }
 
+/// Like [`setup`], but the main provider bills every reply at `input` tokens
+/// (see `RebilledProvider`): the anti-thrash measurement compares the
+/// provider-anchored estimate against the fallback sum, and faux's ~150-token
+/// bills make every commit read as growth whatever the transcript holds.
+/// Only tests that assert on repeated-compaction dynamics need this; the rest
+/// keep faux's small bills and the pressure dynamics they were calibrated on.
+fn setup_billed(
+    steps: Vec<FauxStep>,
+    limits: LoopLimits,
+    input: u64,
+) -> (
+    Arc<epsilon_core::Agent>,
+    Arc<Mutex<SessionStore>>,
+    tempfile::TempDir,
+) {
+    use epsilon_core::testing::RebilledProvider;
+    let dir = tempfile::tempdir().unwrap();
+    let store = SessionStore::open(dir.path().join("session.jsonl")).unwrap();
+
+    let provider = RebilledProvider::new(SlowProvider::new(FauxProvider::new(steps), 20), input);
+    let mut registry = ToolRegistry::new();
+    registry.register(Arc::new(EchoTool::new()));
+
+    let agent = epsilon_core::Agent::new(
+        limits,
+        Arc::new(PanicGuard(provider)),
+        Arc::new(registry),
+        Arc::new(AutoAllow),
+        dir.path().to_path_buf(),
+    );
+    agent.set_summarizer(Arc::new(PanicGuard(SlowProvider::new(
+        FauxProvider::new(vec![FauxStep::say("## Objective\nsummarized state")]),
+        20,
+    ))));
+    agent.attach_session_store(Arc::new(Mutex::new(store)));
+    let handle = agent.store_handle_for_tests();
+    (agent, handle, dir)
+}
+
 fn setup_with_summarizer(
     steps: Vec<FauxStep>,
     limits: LoopLimits,
@@ -115,6 +154,11 @@ fn has_summary_head(agent: &epsilon_core::Agent) -> bool {
 async fn pressure_triggers_compaction_and_persists_entry() {
     // Each big-echo turn costs ~2000 estimated tokens (args + result), so the 1500
     // threshold fires after the FIRST turn and may legitimately re-fire after refill.
+    // Billed honestly (20k/reply, transcript-sized): the anti-thrash measurement
+    // compares a provider-anchored estimate against the fallback sum, and faux's
+    // ~150-token bills would make every commit read as growth — the streak would
+    // stand the loop down and `history len <= 4` below would fail for the wrong
+    // reason. See `RebilledProvider`.
     let steps = vec![
         big_echo_call("tc_1", 4000),
         big_echo_call("tc_2", 4000),
@@ -126,7 +170,7 @@ async fn pressure_triggers_compaction_and_persists_entry() {
         max_turns: 8,
         ..Default::default()
     };
-    let (agent, store, _dir) = setup(steps, limits);
+    let (agent, store, _dir) = setup_billed(steps, limits, 20_000);
     let mut rx = agent.subscribe();
 
     let outcome = agent.run(user("long task")).await.unwrap();
