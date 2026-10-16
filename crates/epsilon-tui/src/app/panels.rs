@@ -2034,6 +2034,100 @@ pub(super) fn draw_settings(f: &mut Frame<'_>, app: &App, outer: Rect) {
     f.render_widget(Paragraph::new(lines), inner);
 }
 
+/// `/changes` expansion + restore-confirm state, keyed by workspace.
+///
+/// # Why this is not on `App`
+///
+/// `App` and its constructor live in files this change does not own, and the
+/// rows the panel lists are `(path, tool)` pairs captured at open. So the two
+/// transient answers — "which path is expanded, with what body" and "which
+/// path has a pending restore, with what sentence" — live here, keyed by the
+/// workspace root, reset on open and on close. One `App` per workspace in
+/// practice; the ceiling is fields on the struct, and the upgrade trigger is
+/// ownership of it.
+///
+/// Keyed by path rather than by row index: the rows are fixed while the panel
+/// is open, but a path still names the file the sentence was computed for even
+/// if the highlight moved since.
+#[derive(Debug, Default)]
+pub(crate) struct ChangesUi {
+    expanded: Option<ChangesExpanded>,
+    confirm: Option<ChangesConfirm>,
+}
+
+/// One expanded row: the unified diff, or the refusal sentence when no diff
+/// can be shown honestly (empty, oversized, binary, skipped capture).
+#[derive(Debug, Clone)]
+pub(crate) struct ChangesExpanded {
+    /// Workspace-relative path, as listed.
+    pub path: String,
+    /// Raw unified diff text when `is_diff`, otherwise a sentence to draw.
+    pub body: String,
+    /// Whether `body` parses as a diff or reads as prose.
+    pub is_diff: bool,
+}
+
+/// One pending restore: the sentence `r` showed, which `y` applies and any
+/// other key cancels.
+#[derive(Debug, Clone)]
+pub(crate) struct ChangesConfirm {
+    /// Workspace-relative path, as listed.
+    pub path: String,
+    /// The [`epsilon_runtime::describe_checkpoint`] sentence.
+    pub sentence: String,
+}
+
+fn changes_ui_map()
+-> &'static std::sync::Mutex<std::collections::HashMap<std::path::PathBuf, ChangesUi>> {
+    static MAP: std::sync::OnceLock<
+        std::sync::Mutex<std::collections::HashMap<std::path::PathBuf, ChangesUi>>,
+    > = std::sync::OnceLock::new();
+    MAP.get_or_init(|| std::sync::Mutex::new(std::collections::HashMap::new()))
+}
+
+/// Drop the panel state for `workspace`: called on open and on close, so a
+/// reopened panel never inherits another listing's expansion or question.
+pub(crate) fn changes_ui_reset(workspace: &std::path::Path) {
+    if let Ok(mut map) = changes_ui_map().lock() {
+        map.remove(workspace);
+    }
+}
+
+/// The expanded row for `workspace`, if any.
+pub(crate) fn changes_ui_expanded(workspace: &std::path::Path) -> Option<ChangesExpanded> {
+    changes_ui_map()
+        .lock()
+        .ok()?
+        .get(workspace)
+        .and_then(|s| s.expanded.clone())
+}
+
+/// The pending restore for `workspace`, if any.
+pub(crate) fn changes_ui_confirm(workspace: &std::path::Path) -> Option<ChangesConfirm> {
+    changes_ui_map()
+        .lock()
+        .ok()?
+        .get(workspace)
+        .and_then(|s| s.confirm.clone())
+}
+
+/// Set or clear the expanded row.
+pub(crate) fn changes_ui_set_expanded(
+    workspace: &std::path::Path,
+    expanded: Option<ChangesExpanded>,
+) {
+    if let Ok(mut map) = changes_ui_map().lock() {
+        map.entry(workspace.to_path_buf()).or_default().expanded = expanded;
+    }
+}
+
+/// Set or clear the pending restore.
+pub(crate) fn changes_ui_set_confirm(workspace: &std::path::Path, confirm: Option<ChangesConfirm>) {
+    if let Ok(mut map) = changes_ui_map().lock() {
+        map.entry(workspace.to_path_buf()).or_default().confirm = confirm;
+    }
+}
+
 /// `/changes`: the checkpoint list for this session (or the workspace, on `all`).
 ///
 /// Rows are `(path, tool)` pairs the command captured when the panel opened;
@@ -2056,10 +2150,93 @@ pub(super) fn draw_changes(f: &mut Frame<'_>, app: &App, outer: Rect) {
     };
     let inner = panel.open(f);
     let theme = &app.theme;
-    let capacity = inner.height.saturating_sub(2).max(1) as usize;
-    let start = crate::scroll::scroll_start(app.changes_rows.len(), app.changes_index, capacity);
-    let end = (start + capacity).min(app.changes_rows.len());
-    let mut lines: Vec<Line<'static>> = Vec::new();
+    let w = inner.width as usize;
+    let h = inner.height as usize;
+
+    // Hint labels resolve from the table so a rebind moves its own hint; the
+    // fallback spells the default, so the panel never hides a key it binds.
+    let diff_label = app
+        .keybindings
+        .effective()
+        .get("app.changes.diff")
+        .map(|v| v.join("/"))
+        .filter(|s| !s.is_empty())
+        .unwrap_or_else(|| "d/tab".to_string());
+    let describe_label = app
+        .keybindings
+        .key_text("app.changes.describe")
+        .unwrap_or_else(|| "r".to_string());
+    let apply_label = app
+        .keybindings
+        .key_text("app.changes.apply")
+        .unwrap_or_else(|| "y".to_string());
+    let close_hint = format!(
+        "{},esc",
+        app.keybindings
+            .key_text("app.changes.close")
+            .unwrap_or_else(|| "q".to_string())
+    );
+
+    // The pending restore, drawn first: the sentence names its path, so its
+    // position above the list is unambiguous. Wrapped, never clipped silently —
+    // the list below shrinks instead. A stale entry (its path left the rows)
+    // is ignored rather than drawn against the wrong file.
+    let confirm = changes_ui_confirm(&app.workspace_root)
+        .filter(|c| app.changes_rows.iter().any(|(p, _)| p == &c.path));
+    let mut confirm_lines: Vec<Line<'static>> = Vec::new();
+    if let Some(c) = &confirm {
+        for row in crate::wrap::wrap_line(&[(c.sentence.as_str(), theme.text())], w) {
+            confirm_lines.push(Line::from(
+                row.into_iter()
+                    .map(|(text, style)| Span::styled(text, style))
+                    .collect::<Vec<_>>(),
+            ));
+        }
+        confirm_lines.push(Line::from(vec![
+            Span::styled(apply_label.clone(), theme.dim_strong()),
+            Span::styled(" restores · any other key cancels", theme.faint()),
+        ]));
+    }
+
+    // The expanded row: diff rows through this panel's own renderer
+    // (`diff_body_rows` — the same signs, numbers and colours the approval
+    // dialog's diff uses, never a third notation), or the refusal sentence
+    // wrapped. Truncated with an honest count when taller than the room, so
+    // the hint rows below always fit.
+    let expanded = changes_ui_expanded(&app.workspace_root)
+        .filter(|e| app.changes_rows.iter().any(|(p, _)| p == &e.path));
+    let mut expanded_lines: Vec<Line<'static>> = Vec::new();
+    if let Some(e) = &expanded {
+        if e.is_diff {
+            expanded_lines = diff_body_rows(&crate::state::parse_diff(&e.body), w, theme);
+        } else {
+            for row in crate::wrap::wrap_line(&[(e.body.as_str(), theme.warn())], w) {
+                expanded_lines.push(Line::from(
+                    row.into_iter()
+                        .map(|(text, style)| Span::styled(text, style))
+                        .collect::<Vec<_>>(),
+                ));
+            }
+        }
+    }
+    // Fit: two hint rows + blank + confirm + expanded + at least one list row.
+    // The hints are never sacrificed — a footer that costs a visible entry is
+    // worse than a shorter diff, and a dropped hint is an undiscoverable key.
+    let min_list = usize::from(!app.changes_rows.is_empty());
+    let room = h.saturating_sub(3 + confirm_lines.len());
+    let max_expanded = room.saturating_sub(min_list);
+    if expanded_lines.len() > max_expanded {
+        let keep = max_expanded.saturating_sub(1);
+        let hidden = expanded_lines.len() - keep;
+        expanded_lines.truncate(keep);
+        expanded_lines.push(Line::from(Span::styled(
+            format!("{}and {hidden} more lines", theme.glyphs.ellipsis),
+            theme.faint(),
+        )));
+    }
+    let list_cap = room.saturating_sub(expanded_lines.len()).max(min_list);
+
+    let mut lines: Vec<Line<'static>> = confirm_lines;
     if app.changes_rows.is_empty() {
         lines.push(Line::from(Span::styled(
             format!(
@@ -2069,6 +2246,13 @@ pub(super) fn draw_changes(f: &mut Frame<'_>, app: &App, outer: Rect) {
             theme.dim(),
         )));
     }
+    let start =
+        crate::scroll::scroll_start(app.changes_rows.len(), app.changes_index, list_cap.max(1));
+    let end = (start + list_cap).min(app.changes_rows.len());
+    let expanded_index = expanded
+        .as_ref()
+        .and_then(|e| app.changes_rows.iter().position(|(p, _)| p == &e.path));
+    let expanded_visible = expanded_index.is_some_and(|i| (start..end).contains(&i));
     for (index, (path, tool)) in app
         .changes_rows
         .iter()
@@ -2083,12 +2267,39 @@ pub(super) fn draw_changes(f: &mut Frame<'_>, app: &App, outer: Rect) {
             Some(tool.as_str()),
             inner.width as usize,
         ));
+        // Inline under its own row: the diff belongs to the path above it,
+        // not to the highlight, so moving the highlight leaves it docked.
+        if expanded_index == Some(index) {
+            lines.extend(expanded_lines.clone());
+        }
+    }
+    if !expanded_visible && let Some(e) = &expanded {
+        // The expanded row scrolled out of the window: the diff stays on
+        // screen under a header naming its path, rather than silently
+        // vanishing while the state still calls it expanded.
+        lines.push(Line::from(Span::styled(
+            safe_to_show(&e.path),
+            theme.dim_strong(),
+        )));
+        lines.extend(expanded_lines.clone());
     }
     lines.push(Line::from(""));
     let arrows = crate::ui::overlay::up_down(theme.glyphs.up, theme.glyphs.down);
     lines.push(overlay::hint_row(
         theme,
-        &[(&arrows, "move"), ("enter", "preview"), ("esc", "close")],
+        &[
+            (&arrows, "move"),
+            ("enter", "preview"),
+            (&diff_label, "expand"),
+        ],
+    ));
+    lines.push(overlay::hint_row(
+        theme,
+        &[
+            (&describe_label, "describe"),
+            (&apply_label, "restore"),
+            (&close_hint, "close"),
+        ],
     ));
     f.render_widget(Paragraph::new(lines), inner);
 }
@@ -2163,5 +2374,283 @@ mod settings_and_retired_hint_tests {
             screen.contains("unavailable"),
             "the N-unavailable count stays alongside it: {screen}"
         );
+    }
+}
+
+#[cfg(test)]
+mod changes_panel_tests {
+    use super::super::keys::handle_key;
+    use super::super::tests_support::{render_rows, test_app};
+    use super::super::{Agent, App};
+    use crossterm::event::KeyEventState;
+    use crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
+    use std::sync::Arc;
+
+    fn key(code: KeyCode) -> KeyEvent {
+        KeyEvent {
+            code,
+            modifiers: KeyModifiers::NONE,
+            kind: KeyEventKind::Press,
+            state: KeyEventState::NONE,
+        }
+    }
+
+    /// Type `text` one key at a time and press Enter — the real key path.
+    fn type_and_enter(app: &mut App, agent: &Arc<Agent>, text: &str) -> bool {
+        for c in text.chars() {
+            handle_key(app, agent, key(KeyCode::Char(c)));
+        }
+        handle_key(app, agent, key(KeyCode::Enter))
+    }
+
+    /// The whole screen with whitespace squashed, so a sentence that wraps to
+    /// the terminal's width is still one assertion (the commands-tests `frame`
+    /// helper, same reason: the needle must not depend on the wrap column).
+    fn frame(app: &mut App, width: u16, height: u16) -> String {
+        render_rows(app, width, height)
+            .iter()
+            .map(|row| row.trim_start_matches(|c: char| c.is_whitespace() || "*•│┃".contains(c)))
+            .collect::<String>()
+            .chars()
+            .filter(|c| !c.is_whitespace())
+            .collect()
+    }
+
+    /// An edit recorded the way the tools record one: pre-image, new bytes,
+    /// post-image amendment. Contents avoid spaces so the squashed frame reads
+    /// `-oldline` rather than depending on where a row wrapped.
+    fn edited(root: &std::path::Path, path: &str, before: &str, after: &str) {
+        let file = root.join(path);
+        std::fs::create_dir_all(file.parent().expect("the file has a directory")).unwrap();
+        std::fs::write(&file, before).unwrap();
+        let store = epsilon_tools::checkpoint::CheckpointStore::open(root);
+        store.record(root, &file, "edit");
+        std::fs::write(&file, after).unwrap();
+        store.amend_with_post_image(root, &file, "edit");
+    }
+
+    /// A file the agent created: recorded while absent, then written.
+    fn created(root: &std::path::Path, path: &str, content: &str) {
+        let file = root.join(path);
+        std::fs::create_dir_all(file.parent().expect("the file has a directory")).unwrap();
+        let store = epsilon_tools::checkpoint::CheckpointStore::open(root);
+        store.record(root, &file, "write");
+        std::fs::write(&file, content).unwrap();
+        store.amend_with_post_image(root, &file, "write");
+    }
+
+    fn open_changes(app: &mut App, agent: &Arc<Agent>) {
+        assert!(!type_and_enter(app, agent, "/changes"));
+        assert!(app.changes_open, "the panel opens on its rows");
+    }
+
+    /// Whether the squashed frame holds a diff row with `sign` for `text`.
+    ///
+    /// The squashed frame runs sign, line number and text together
+    /// (`-2oldline`), so a plain `contains("-oldline")` misses every numbered
+    /// row. This looks for the text with only digits between it and its sign —
+    /// which is exactly what the number column produces.
+    fn has_signed_row(screen: &str, sign: char, text: &str) -> bool {
+        let mut rest = screen;
+        while let Some(i) = rest.find(text) {
+            let before = &rest[..i];
+            // Trailing ASCII digits are the number column (one byte each, so
+            // the cut is always a char boundary); the sign stands before them.
+            let digits = before
+                .chars()
+                .rev()
+                .take_while(|c| c.is_ascii_digit())
+                .count();
+            if before[..before.len() - digits].ends_with(sign) {
+                return true;
+            }
+            rest = &rest[i + text.len()..];
+        }
+        false
+    }
+
+    /// `d` expands an inline unified diff of checkpoint-before vs current
+    /// disk: the removed line and the added line are on the frame.
+    #[test]
+    fn expanded_diff_shows_minus_and_plus_rows() {
+        let (mut app, agent, _rx) = test_app();
+        app.theme.glyphs = crate::ui::theme::UNICODE;
+        let dir = tempfile::tempdir().expect("a temporary workspace");
+        app.workspace_root = dir.path().to_path_buf();
+        edited(
+            dir.path(),
+            "src/a.rs",
+            "alpha\noldline\nbeta\n",
+            "alpha\nnewline\nbeta\n",
+        );
+        open_changes(&mut app, &agent);
+
+        assert!(!handle_key(&mut app, &agent, key(KeyCode::Char('d'))));
+        for (w, h) in [(80u16, 24u16), (100u16, 30u16)] {
+            let screen = frame(&mut app, w, h);
+            assert!(
+                has_signed_row(&screen, '-', "oldline"),
+                "the removed line is on the frame at {w}x{h}: {screen}"
+            );
+            assert!(
+                has_signed_row(&screen, '+', "newline"),
+                "the added line is on the frame at {w}x{h}: {screen}"
+            );
+        }
+    }
+
+    /// A file the agent created expands as all-added: every content row is a
+    /// `+` row, because the before side is empty.
+    #[test]
+    fn created_file_shows_all_added() {
+        let (mut app, agent, _rx) = test_app();
+        app.theme.glyphs = crate::ui::theme::UNICODE;
+        let dir = tempfile::tempdir().expect("a temporary workspace");
+        app.workspace_root = dir.path().to_path_buf();
+        created(dir.path(), "src/new.rs", "createdline\n");
+        open_changes(&mut app, &agent);
+
+        assert!(!handle_key(&mut app, &agent, key(KeyCode::Char('d'))));
+        for (w, h) in [(80u16, 24u16), (100u16, 30u16)] {
+            let screen = frame(&mut app, w, h);
+            assert!(
+                has_signed_row(&screen, '+', "createdline"),
+                "the creation reads as all-added at {w}x{h}: {screen}"
+            );
+            assert!(
+                !has_signed_row(&screen, '-', "createdline"),
+                "and removes nothing at {w}x{h}: {screen}"
+            );
+        }
+    }
+
+    /// `r` shows the describe sentence and `y` applies the restore: the file
+    /// goes back to the checkpoint bytes and the frame says `restored`.
+    #[test]
+    fn r_then_y_reverts_and_the_frame_says_restored() {
+        let (mut app, agent, _rx) = test_app();
+        app.theme.glyphs = crate::ui::theme::UNICODE;
+        let dir = tempfile::tempdir().expect("a temporary workspace");
+        app.workspace_root = dir.path().to_path_buf();
+        edited(dir.path(), "src/a.rs", "beforeline\n", "afterline\n");
+        open_changes(&mut app, &agent);
+
+        assert!(!handle_key(&mut app, &agent, key(KeyCode::Char('r'))));
+        let file = dir.path().join("src/a.rs");
+        assert!(!handle_key(&mut app, &agent, key(KeyCode::Char('y'))));
+        assert_eq!(
+            std::fs::read_to_string(&file).unwrap(),
+            "beforeline\n",
+            "y applies the restore the describe sentence offered"
+        );
+        for (w, h) in [(80u16, 24u16), (100u16, 30u16)] {
+            let screen = frame(&mut app, w, h);
+            assert!(
+                screen.contains("restored"),
+                "the frame says what happened at {w}x{h}: {screen}"
+            );
+        }
+    }
+
+    /// `r` shows the describe sentence, and any other key cancels: Esc closes
+    /// with the file untouched and no restore applied.
+    #[test]
+    fn r_then_esc_cancels_and_changes_nothing() {
+        let (mut app, agent, _rx) = test_app();
+        app.theme.glyphs = crate::ui::theme::UNICODE;
+        let dir = tempfile::tempdir().expect("a temporary workspace");
+        app.workspace_root = dir.path().to_path_buf();
+        edited(dir.path(), "src/a.rs", "beforeline\n", "afterline\n");
+        open_changes(&mut app, &agent);
+
+        assert!(!handle_key(&mut app, &agent, key(KeyCode::Char('r'))));
+        let screen = frame(&mut app, 80, 24);
+        assert!(
+            screen.contains("nothinghaschangedyet"),
+            "r shows the describe sentence first: {screen}"
+        );
+        assert!(!handle_key(&mut app, &agent, key(KeyCode::Esc)));
+        assert!(!app.changes_open, "esc closes the panel");
+        assert_eq!(
+            std::fs::read_to_string(dir.path().join("src/a.rs")).unwrap(),
+            "afterline\n",
+            "the cancelled restore leaves the file exactly as it was"
+        );
+        let screen = frame(&mut app, 80, 24);
+        assert!(
+            !screen.contains("restored"),
+            "and no restore is reported: {screen}"
+        );
+    }
+
+    /// A file touched after the checkpoint refuses through the panel too, and
+    /// the refusal leaves the later work intact — the `check_unchanged` guard
+    /// reached through `r`, `y` rather than through `/restore`.
+    #[test]
+    fn touched_after_checkpoint_refuses_with_the_file_intact() {
+        let (mut app, agent, _rx) = test_app();
+        app.theme.glyphs = crate::ui::theme::UNICODE;
+        let dir = tempfile::tempdir().expect("a temporary workspace");
+        app.workspace_root = dir.path().to_path_buf();
+        edited(dir.path(), "src/a.rs", "beforeline\n", "afterline\n");
+        std::fs::write(dir.path().join("src/a.rs"), "touchedline\n").unwrap();
+        open_changes(&mut app, &agent);
+
+        assert!(!handle_key(&mut app, &agent, key(KeyCode::Char('r'))));
+        assert!(!handle_key(&mut app, &agent, key(KeyCode::Char('y'))));
+        assert_eq!(
+            std::fs::read_to_string(dir.path().join("src/a.rs")).unwrap(),
+            "touchedline\n",
+            "a refusal must leave the later work exactly as it was"
+        );
+        for (w, h) in [(80u16, 24u16), (100u16, 30u16)] {
+            let screen = frame(&mut app, w, h);
+            assert!(
+                screen.contains("changedafterthisharnesswroteit"),
+                "the frame says why it refused at {w}x{h}: {screen}"
+            );
+        }
+    }
+
+    /// Every new key is named where it is bound: expand, describe, apply,
+    /// close.
+    #[test]
+    fn every_new_key_is_in_the_hint_row() {
+        let (mut app, agent, _rx) = test_app();
+        app.theme.glyphs = crate::ui::theme::UNICODE;
+        let dir = tempfile::tempdir().expect("a temporary workspace");
+        app.workspace_root = dir.path().to_path_buf();
+        edited(dir.path(), "src/a.rs", "beforeline\n", "afterline\n");
+        open_changes(&mut app, &agent);
+
+        for (w, h) in [(80u16, 24u16), (100u16, 30u16)] {
+            let rows = render_rows(&mut app, w, h);
+            let has = |needle: &str| rows.iter().any(|r| r.contains(needle));
+            assert!(
+                has("d/tab expand"),
+                "d/tab expands, at {w}x{h}: {}",
+                rows.join("\n")
+            );
+            assert!(
+                has("r describe"),
+                "r describes, at {w}x{h}: {}",
+                rows.join("\n")
+            );
+            assert!(
+                has("y restore"),
+                "y restores, at {w}x{h}: {}",
+                rows.join("\n")
+            );
+            assert!(
+                has("q,esc close"),
+                "q/esc closes, at {w}x{h}: {}",
+                rows.join("\n")
+            );
+            assert!(
+                has("enter preview"),
+                "enter still previews, at {w}x{h}: {}",
+                rows.join("\n")
+            );
+        }
     }
 }

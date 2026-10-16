@@ -2237,6 +2237,100 @@ pub fn describe_checkpoint(workspace: &Path, argument: &str) -> Result<String, S
     ))
 }
 
+/// Inline diff for the `/changes` panel: the bytes captured **before** the
+/// harness's write vs the bytes on disk **now**. Read-only — it never writes,
+/// records or amends, so expanding a diff cannot move the guard
+/// [`restore_checkpoint`] will ask.
+///
+/// # Why this lives beside [`describe_checkpoint`]
+///
+/// The panel needs both sides as text, and `/restore`'s own docs record the
+/// ceiling honestly: the preview has only the "before" side, and synthesising
+/// the other one there would invent a second diff implementation. This does
+/// not: the text is produced by the edit tool's own
+/// [`epsilon_tools::util::unified_diff`], the same function `files.rs` stores
+/// in `details.diff` — one diff implementation, read here rather than remade.
+///
+/// # The refusals are the value, not the error path
+///
+/// A diff that cannot be shown honestly says which one: identical bytes read
+/// `no differences`; either side over the tool read cap refuses as oversized;
+/// a NUL in the first 4 KiB (the same window the tools use) or non-UTF-8
+/// refuses as binary; a skipped capture repeats its recorded reason; a
+/// missing blob or an unreadable file names itself. The panel draws the
+/// sentence, so a `/changes` row never expands into a lie.
+pub fn diff_checkpoint(workspace: &Path, argument: &str) -> Result<String, String> {
+    let store = epsilon_tools::checkpoint::CheckpointStore::open(workspace);
+    let entry = store.resolve(workspace, argument)?;
+    // The before-image: the blob the capture stored, or empty for a file the
+    // agent created (an empty old side is exactly what `unified_diff` renders
+    // as all-added). A skipped capture on an existing file has neither, and
+    // that is a refusal with the recorded reason, never a silent empty diff.
+    let before: Vec<u8> = match (&entry.blob, entry.existed) {
+        (Some(blob), _) => {
+            // `blob_path` is private to the store; the layout it names is
+            // `<store root>/blobs/<name>` (`record` writes it there). One path
+            // join here rather than a second accessor there.
+            let path = store.root().join("blobs").join(blob);
+            std::fs::read(&path).map_err(|e| format!("checkpoint blob {blob} is missing: {e}"))?
+        }
+        (None, false) => Vec::new(),
+        (None, true) => {
+            let why = entry
+                .skipped
+                .as_deref()
+                .unwrap_or("the reason was not recorded");
+            return Err(format!("no captured bytes for {}: {why}", entry.path));
+        }
+    };
+    let target = workspace.join(entry.path.replace('/', std::path::MAIN_SEPARATOR_STR));
+    let after: Vec<u8> = match std::fs::read(&target) {
+        Ok(bytes) => bytes,
+        // Deleted since: the current side is empty, so the diff reads as
+        // all-removed — the honest picture of "reverting recreates it".
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Vec::new(),
+        Err(e) => return Err(format!("cannot read {}: {e}", entry.path)),
+    };
+    // Same budgets as the tools: the read cap bounds what the panel renders,
+    // and the binary window is `read_text_capped_ex`'s.
+    for (which, bytes) in [("checkpoint", &before), ("file", &after)] {
+        if bytes.len() > epsilon_tools::util::MAX_READ_BYTES {
+            return Err(format!(
+                "no diff for {}: the {which} side is {} bytes, over the {}-byte diff limit",
+                entry.path,
+                bytes.len(),
+                epsilon_tools::util::MAX_READ_BYTES,
+            ));
+        }
+        if bytes.iter().take(4096).any(|b| *b == 0) {
+            return Err(format!(
+                "no diff for {}: the {which} side looks binary",
+                entry.path
+            ));
+        }
+    }
+    let before_str = String::from_utf8(before).map_err(|_| {
+        format!(
+            "no diff for {}: the checkpoint side is not valid UTF-8",
+            entry.path
+        )
+    })?;
+    let after_str = String::from_utf8(after).map_err(|_| {
+        format!(
+            "no diff for {}: the file side is not valid UTF-8",
+            entry.path
+        )
+    })?;
+    let diff = epsilon_tools::util::unified_diff(&before_str, &after_str);
+    if diff.is_empty() {
+        return Err(format!(
+            "no differences for {}: the file on disk matches the checkpoint",
+            entry.path
+        ));
+    }
+    Ok(diff)
+}
+
 /// Apply the newest checkpoint recorded for `argument`.
 ///
 /// # The safety property is the store's, and this wrapper must not soften it
@@ -2313,6 +2407,111 @@ pub fn checkpoint_save(
     std::fs::write(path, bytes).map_err(|e| e.to_string())?;
     store.amend_with_post_image(workspace, path, tool);
     Ok(bytes.len() as u64)
+}
+
+#[cfg(test)]
+mod diff_checkpoint_tests {
+    use super::*;
+
+    /// An edit recorded the way `tools/files.rs` records one: the pre-image
+    /// first, the new bytes second, the post-image amendment last. A fixture
+    /// that records after writing captures the NEW bytes as the "before" and
+    /// earns an empty diff for a file that changed.
+    fn edited(root: &Path, path: &str, before: &str, after: &str) -> PathBuf {
+        let file = root.join(path);
+        std::fs::create_dir_all(file.parent().expect("the file has a directory")).unwrap();
+        std::fs::write(&file, before).unwrap();
+        let store = epsilon_tools::checkpoint::CheckpointStore::open(root);
+        store.record(root, &file, "edit");
+        std::fs::write(&file, after).unwrap();
+        store.amend_with_post_image(root, &file, "edit");
+        file
+    }
+
+    /// A file the agent created: recorded while absent, then written, then amended.
+    fn created(root: &Path, path: &str, content: &str) -> PathBuf {
+        let file = root.join(path);
+        std::fs::create_dir_all(file.parent().expect("the file has a directory")).unwrap();
+        let store = epsilon_tools::checkpoint::CheckpointStore::open(root);
+        store.record(root, &file, "write");
+        std::fs::write(&file, content).unwrap();
+        store.amend_with_post_image(root, &file, "write");
+        file
+    }
+
+    #[test]
+    fn a_modified_file_diffs_before_vs_current() {
+        let dir = tempfile::tempdir().unwrap();
+        edited(dir.path(), "src/a.rs", "oldline\n", "newline\n");
+        let diff = diff_checkpoint(dir.path(), "src/a.rs").expect("an edit has a diff");
+        assert!(diff.contains("-oldline"), "the removed line: {diff}");
+        assert!(diff.contains("+newline"), "the added line: {diff}");
+    }
+
+    #[test]
+    fn a_created_file_diffs_as_all_added() {
+        let dir = tempfile::tempdir().unwrap();
+        created(dir.path(), "src/new.rs", "createdline\n");
+        let diff = diff_checkpoint(dir.path(), "src/new.rs").expect("a creation has a diff");
+        assert!(diff.contains("+createdline"), "the added line: {diff}");
+        assert!(
+            diff.lines().filter(|l| l.starts_with('-')).count() == 0,
+            "a creation removes nothing: {diff}"
+        );
+    }
+
+    #[test]
+    fn identical_bytes_refuse_with_no_differences() {
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("src/same.rs");
+        std::fs::create_dir_all(file.parent().unwrap()).unwrap();
+        std::fs::write(&file, "same\n").unwrap();
+        let store = epsilon_tools::checkpoint::CheckpointStore::open(dir.path());
+        store.record(dir.path(), &file, "edit");
+        store.amend_with_post_image(dir.path(), &file, "edit");
+        let err = diff_checkpoint(dir.path(), "src/same.rs").expect_err("nothing changed");
+        assert!(err.contains("no differences"), "honest refusal: {err}");
+    }
+
+    #[test]
+    fn an_oversized_file_refuses_instead_of_rendering() {
+        let dir = tempfile::tempdir().unwrap();
+        let big = "x".repeat(epsilon_tools::util::MAX_READ_BYTES + 1);
+        edited(dir.path(), "big.txt", "tiny\n", &big);
+        let err = diff_checkpoint(dir.path(), "big.txt").expect_err("too large to show");
+        assert!(err.contains("over"), "names the cap: {err}");
+    }
+
+    #[test]
+    fn a_binary_file_refuses_instead_of_rendering() {
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("bin.dat");
+        std::fs::write(&file, b"old\n").unwrap();
+        let store = epsilon_tools::checkpoint::CheckpointStore::open(dir.path());
+        store.record(dir.path(), &file, "write");
+        std::fs::write(&file, [b'a', 0, b'b']).unwrap();
+        store.amend_with_post_image(dir.path(), &file, "write");
+        let err = diff_checkpoint(dir.path(), "bin.dat").expect_err("binary is not text");
+        assert!(err.contains("binary"), "honest refusal: {err}");
+    }
+
+    #[test]
+    fn a_skipped_capture_refuses_with_its_reason() {
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("huge.bin");
+        std::fs::write(
+            &file,
+            vec![b'z'; (epsilon_tools::checkpoint::MAX_FILE_BYTES + 1) as usize],
+        )
+        .unwrap();
+        let store = epsilon_tools::checkpoint::CheckpointStore::open(dir.path());
+        store.record(dir.path(), &file, "write");
+        let err = diff_checkpoint(dir.path(), "huge.bin").expect_err("nothing was captured");
+        assert!(
+            err.contains("no captured bytes"),
+            "carries the skip reason: {err}"
+        );
+    }
 }
 
 /// Newest session under `dir` started from `cwd` (pi `findMostRecentSession`

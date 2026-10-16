@@ -1286,20 +1286,31 @@ pub(crate) fn handle_key(app: &mut App, agent: &Arc<Agent>, key: KeyEvent) -> bo
         return false;
     }
     // `/changes`: the checkpoint list — Up/Down move, Enter previews the
-    // highlighted file in the viewer, Esc closes. A file that can no longer
-    // be read names why instead of opening an empty viewer.
+    // highlighted file in the viewer, `d`/Tab expands an inline unified diff
+    // of checkpoint-before vs current disk, `r` shows the restore sentence and
+    // `y` applies exactly that, any other key cancels the pending restore,
+    // `q`/Esc closes. A file that can no longer be read names why instead of
+    // opening an empty viewer.
     if app.changes_open {
         let last = app.changes_rows.len().saturating_sub(1);
+        // Closing resets the transient expansion + confirm state with the rows,
+        // so a reopened panel never inherits another listing's question.
+        let close_changes = |app: &mut App| {
+            app.changes_open = false;
+            app.changes_index = 0;
+            app.changes_rows.clear();
+            super::panels::changes_ui_reset(&app.workspace_root);
+        };
         match key.code {
             KeyCode::Esc => {
-                app.changes_open = false;
-                app.changes_index = 0;
-                app.changes_rows.clear();
+                close_changes(app);
             }
             KeyCode::Up => {
+                super::panels::changes_ui_set_confirm(&app.workspace_root, None);
                 app.changes_index = app.changes_index.saturating_sub(1).min(last);
             }
             KeyCode::Down => {
+                super::panels::changes_ui_set_confirm(&app.workspace_root, None);
                 if !app.changes_rows.is_empty() {
                     app.changes_index = (app.changes_index + 1).min(last);
                 }
@@ -1309,15 +1320,105 @@ pub(crate) fn handle_key(app: &mut App, agent: &Arc<Agent>, key: KeyEvent) -> bo
                     let root = app.workspace_root.clone();
                     match crate::tree::open_viewer(&root, &path) {
                         Ok(viewer) => {
-                            app.changes_open = false;
-                            app.changes_index = 0;
+                            close_changes(app);
                             app.open_viewer_tab(viewer);
                         }
                         Err(e) => app.ui.push_notice(format!("cannot preview {path}: {e}")),
                     }
                 }
             }
-            _ => {}
+            _ if app.keybindings.matches("app.changes.close", &key) => {
+                close_changes(app);
+            }
+            _ if app.keybindings.matches("app.changes.diff", &key) => {
+                // Any key other than `y` cancels a pending restore — including
+                // this one, which then goes on to expand.
+                super::panels::changes_ui_set_confirm(&app.workspace_root, None);
+                if let Some((path, _)) = app.changes_rows.get(app.changes_index).cloned() {
+                    let already = super::panels::changes_ui_expanded(&app.workspace_root)
+                        .is_some_and(|e| e.path == path);
+                    if already {
+                        super::panels::changes_ui_set_expanded(&app.workspace_root, None);
+                    } else {
+                        let root = app.workspace_root.clone();
+                        let body = match epsilon_runtime::diff_checkpoint(&root, &path) {
+                            Ok(diff) => super::panels::ChangesExpanded {
+                                path,
+                                body: diff,
+                                is_diff: true,
+                            },
+                            // No diff to show is still something to show: the
+                            // refusal sentence is drawn where it would go.
+                            Err(why) => super::panels::ChangesExpanded {
+                                path,
+                                body: why,
+                                is_diff: false,
+                            },
+                        };
+                        super::panels::changes_ui_set_expanded(&app.workspace_root, Some(body));
+                    }
+                }
+            }
+            _ if app.keybindings.matches("app.changes.describe", &key) => {
+                if let Some((path, _)) = app.changes_rows.get(app.changes_index).cloned() {
+                    let root = app.workspace_root.clone();
+                    match epsilon_runtime::describe_checkpoint(&root, &path) {
+                        Ok(sentence) => super::panels::changes_ui_set_confirm(
+                            &app.workspace_root,
+                            Some(super::panels::ChangesConfirm { path, sentence }),
+                        ),
+                        // No sentence, no question: the reason is drawn where
+                        // the expansion would go, where the reader can see it.
+                        Err(why) => {
+                            super::panels::changes_ui_set_confirm(&app.workspace_root, None);
+                            super::panels::changes_ui_set_expanded(
+                                &app.workspace_root,
+                                Some(super::panels::ChangesExpanded {
+                                    path,
+                                    body: why,
+                                    is_diff: false,
+                                }),
+                            );
+                        }
+                    }
+                }
+            }
+            _ if app.keybindings.matches("app.changes.apply", &key) => {
+                let pending = super::panels::changes_ui_confirm(&app.workspace_root);
+                let highlighted = app.changes_rows.get(app.changes_index).cloned();
+                match (pending, highlighted) {
+                    (Some(c), Some((path, _))) if c.path == path => {
+                        // The same guard `/restore` uses: a run in flight owns
+                        // the workspace's files, and this is a synchronous key
+                        // handler. Refusing is the honest answer, not a race.
+                        if app.ui.running() || agent.is_running() {
+                            app.ui.push_notice(
+                                "restore: busy — wait for the current run to finish, then r, y again",
+                            );
+                        } else {
+                            let root = app.workspace_root.clone();
+                            match epsilon_runtime::restore_checkpoint(&root, &c.path) {
+                                Ok(sentence) => {
+                                    app.ui.push_notice(format!("restore: {sentence}"));
+                                }
+                                Err(why) => app.ui.push_notice(format!("restore: {why}")),
+                            }
+                            close_changes(app);
+                        }
+                    }
+                    _ => {
+                        app.ui.push_notice(
+                            "no pending restore — r describes the highlighted file first",
+                        );
+                    }
+                }
+            }
+            other => {
+                super::panels::changes_ui_set_confirm(&app.workspace_root, None);
+                app.notice(format!(
+                    "{other} is not bound in the changes panel — d/tab expands, r describes, y restores, q closes"
+                ));
+            }
         }
         return false;
     }

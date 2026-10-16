@@ -3846,3 +3846,45 @@ loud banner stays loud.
 Fix 1's drop — not the old override — is the behaviour being changed), or
 first sight must stop trusting (then the `Trusted` row and its recording go
 together, never one without the other).
+
+## ADR-050: The `/changes` panel shows diffs and reverts instead of only listing
+
+**Status: accepted (behaviour change, 2026-10-16).**
+
+**The question.** `/changes` was a list that opened files: every row needed an
+Enter into the viewer to answer "what changed", and reverting meant leaving
+the panel for `/restore <path> yes`. The preview sentence already existed
+(`describe_checkpoint`), and the guard already existed (`check_unchanged`
+inside `restore_checkpoint`) — the panel just reached neither.
+
+**Decision: expand and confirm in place, through the same sentences and the
+same guard.**
+
+- *`d`/`Tab` expands an inline unified diff* of checkpoint-before vs
+current-disk for the highlighted row, via a new read-only
+`epsilon_runtime::diff_checkpoint` beside `describe_checkpoint`. It resolves
+through the store's own `resolve` (so `/restore`'s grammar and refusals are
+untouched) and renders through the edit tool's own `util::unified_diff` — one
+diff implementation, read here rather than remade. A created file reads as
+all-added (empty before side); identical bytes, an oversized side, a binary
+side, a skipped capture and a missing blob each refuse with a sentence naming
+which one, drawn where the diff would go.
+- *`r` stages, `y` applies, any other key cancels.* `r` shows the
+`describe_checkpoint` sentence in a confirm row; `y` applies
+`restore_checkpoint` to exactly that path — including its touched-after
+refusal, with the file intact — and closes with the notice; `q`/`Esc` closes.
+Enter still previews the current file in the viewer.
+- *Four TERMINAL bindings, rebindable like the rest* (`app.changes.diff`
+`d`/`tab`, `app.changes.describe` `r`, `app.changes.apply` `y`,
+`app.changes.close` `q`; Esc stays raw beside `q` because `escape` already
+belongs to `app.interrupt`). Every bound key is in the hint row, resolved
+from the table so a rebind moves its own hint. No new wire types; the
+headless, HTTP and RPC modes never call the new function.
+- *One ceiling, stated.* The expansion + pending-restore state lives in the
+panel keyed by workspace rather than on `App`, whose struct this change does
+not own; it resets on open and on close. The upgrade trigger is ownership of
+the struct, and then it moves onto it.
+
+**Revisit trigger.** The panel needs multi-row expansion, a diff the read cap
+refuses to render, or restore from outside the key handler (which would want
+the per-path mutation queue, not a synchronous arm).

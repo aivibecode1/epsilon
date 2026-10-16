@@ -415,6 +415,20 @@ pub const TERMINAL: &[(&str, &[&str])] = &[
     // test below holds it).
     ("app.viewer.tabNext", &["alt+]"]),
     ("app.viewer.tabPrev", &["alt+["]),
+    // `/changes` panel (the list that shows diffs and reverts): bare letters,
+    // read only while the panel owns the keyboard — the composer is not
+    // listening, so no text is at stake. `d` and `tab` both expand because Tab
+    // is the discoverable "open this row" habit and `d` the diff one; `r`
+    // shows the `/restore` preview sentence in-panel (so the reader decides
+    // against text just read, not a notice behind the overlay); `y` applies
+    // exactly what `r` showed; `q` closes beside the raw Esc the arm already
+    // handled. Verified free above: the only bare letters in this table are
+    // `g`/`G` (transcript-live, fired only while frozen), so the
+    // `no_chord_is_bound_to_two_ids` test holds it.
+    ("app.changes.diff", &["d", "tab"]),
+    ("app.changes.describe", &["r"]),
+    ("app.changes.apply", &["y"]),
+    ("app.changes.close", &["q"]),
 ];
 
 /// The desktop window's default bindings.

@@ -91,7 +91,12 @@ left alone rather than overwritten (F15, fixed in M100 and M104 — the two halv
 file it could not restore, and clobbering edits made after the snapshot). The user-facing revert
 exists: **`/restore <path>`** previews the restore and applies it only after a trailing `yes`
 (M277, ADR-023); a file created by the agent and edited by you afterwards is protected too
-(M298, ADR-026). The ceiling, stated plainly: `/restore` reverts one file at a time and shows no
+(M298, ADR-026). **`/changes`** lists the files with checkpoints (bare: this session,
+`all`: the workspace). Inside the panel `Enter` previews the file, `d`/`Tab` expands an
+inline diff of checkpoint-before vs current disk, `r` stages that file's restore sentence
+and `y` applies exactly it (any other key cancels), `q`/`Esc` closes. A file touched
+after its checkpoint refuses through `y` with the file untouched, like
+`/restore <path> yes` does. The ceiling, stated plainly: `/restore` reverts one file at a time and shows no
 diff, so a turn's whole footprint is not one undo away — the session tree (`/tree`, `/fork`) is
 the conversation-side tool. Keep sessions under private backup for recovery; do not commit
 sensitive session transcripts to a public repository.

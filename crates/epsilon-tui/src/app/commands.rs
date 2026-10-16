@@ -2259,9 +2259,12 @@ impl App {
 
     /// `/changes` — the files this session (or the workspace) has a checkpoint for.
     ///
-    /// Enter previews through [`epsilon_runtime::describe_checkpoint`] and changes
-    /// nothing. Applying the revert stays `/restore <path> yes`, which already
-    /// confirms. A panel that restored on Enter would overwrite on one keystroke.
+    /// The panel lists `(path, tool)` rows captured here, at open. Enter previews
+    /// the highlighted file in the viewer; `d`/Tab expands an inline unified
+    /// diff beside the row; `r` stages the `/restore` preview sentence for that
+    /// path and `y` applies exactly it. Applying stays a two-press revert through
+    /// the same [`epsilon_runtime::restore_checkpoint`] guard `/restore` uses —
+    /// a panel that restored on Enter would overwrite on one keystroke.
     fn open_changes(&mut self, agent: &Agent, argument: String) {
         let word = argument.trim();
         if !word.is_empty() && !word.eq_ignore_ascii_case("all") {
@@ -2285,6 +2288,9 @@ impl App {
             .map(|row| (row.path, row.tool))
             .collect();
         self.changes_index = 0;
+        // A fresh listing asks fresh questions: drop any expansion or pending
+        // restore the previous listing left behind.
+        super::panels::changes_ui_reset(&self.workspace_root);
         self.changes_open = true;
     }
 
