@@ -96,6 +96,16 @@ pub(crate) fn clear_for_test(app: &mut App) {
 }
 
 impl AskOverlay {
+    /// Whether the free-text field owns printable keys (footer hint switch).
+    pub(crate) fn is_custom_open(&self) -> bool {
+        self.custom_open
+    }
+
+    /// Whether the review stop is showing (footer hint switch).
+    pub(crate) fn is_at_review(&self) -> bool {
+        self.at_review()
+    }
+
     fn new(pending: epsilon_runtime::PendingQuestion) -> Self {
         let staged = vec![Vec::new(); pending.prompts.len()];
         Self {
@@ -645,6 +655,35 @@ mod tests {
                 Err(epsilon_contracts::question::QuestionError::Dismissed)
             ),
             "dismissal resolves to dismissed: {settled:?}"
+        );
+        clear_for_test(&mut app);
+    }
+
+    /// While the overlay owns the keyboard, the footer names its keys — not
+    /// the composer keys, which would not work (the ADR-044 wart). The frame,
+    /// not the state: the last row must read as a question footer.
+    #[tokio::test]
+    async fn open_question_names_its_keys_in_the_footer() {
+        let (mut app, _agent, _rx) = test_app();
+        app.theme.glyphs = crate::ui::theme::UNICODE;
+        let (_hub, _waiter) = park_and_seat(&mut app, two_prompts()).await;
+
+        let rows = render_rows(&mut app, 80, 24);
+        let footer = rows.last().cloned().unwrap_or_default();
+        assert!(
+            footer.contains("question"),
+            "the footer names the owner of the keyboard:\n{}",
+            rows.join("\n")
+        );
+        assert!(
+            footer.contains("dismiss"),
+            "Esc dismisses, and the footer says so:\n{}",
+            rows.join("\n")
+        );
+        assert!(
+            !footer.contains("insert"),
+            "composer keys must not be advertised while the overlay owns them:\n{}",
+            rows.join("\n")
         );
         clear_for_test(&mut app);
     }

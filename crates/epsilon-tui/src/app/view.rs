@@ -451,6 +451,40 @@ impl App {
             } else {
                 Hints::approval_deny_only()
             }
+        } else if let Some(overlay) = self.ask_slot.overlay.as_ref() {
+            // The model-question overlay owns the keyboard (keys.rs routes
+            // here past approvals), so the footer names its keys — the
+            // composer keys below would not work, which is the wart ADR-044
+            // recorded. Mirrors the overlay's own hint row, state for state.
+            let arrows = crate::ui::overlay::up_down(
+                crate::ui::theme::Glyphs::detect().up,
+                crate::ui::theme::Glyphs::detect().down,
+            );
+            let keys = if overlay.is_custom_open() {
+                vec![
+                    ("type".into(), "answer".into()),
+                    ("enter".into(), "add".into()),
+                    ("esc".into(), "back".into()),
+                ]
+            } else if overlay.is_at_review() {
+                vec![
+                    ("enter".into(), "submit".into()),
+                    ("tab".into(), "back".into()),
+                    ("esc".into(), "dismiss".into()),
+                ]
+            } else {
+                vec![
+                    (arrows, "move".into()),
+                    ("enter".into(), "answer".into()),
+                    ("tab".into(), "next".into()),
+                    ("esc".into(), "dismiss".into()),
+                ]
+            };
+            Hints {
+                mode: Some("question".into()),
+                keys,
+                ..Hints::default()
+            }
         } else if !self.viewer_tabs.is_empty() {
             let viewer = self.viewer_tabs.get(self.viewer_tab);
             let editing = viewer.is_some_and(|v| v.editing);
