@@ -55,7 +55,7 @@ pub const SLASH_ITEMS: &[SlashItem] = &[
     },
     SlashItem {
         value: "/think ",
-        description: "thinking effort: off..max (Ctrl+T cycles)",
+        description: "thinking effort: off..max (Ctrl+T cycles; settings thinking row opens picker)",
     },
     SlashItem {
         value: "/compact",
@@ -63,7 +63,7 @@ pub const SLASH_ITEMS: &[SlashItem] = &[
     },
     SlashItem {
         value: "/timeline",
-        description: "browse session branches by seq/lane/snippet, Enter jumps",
+        description: "browse session branches by seq/lane/snippet, Enter jumps (same browser as /branch, /tree)",
     },
     SlashItem {
         value: "/tasks",
@@ -100,7 +100,7 @@ pub const SLASH_ITEMS: &[SlashItem] = &[
     },
     SlashItem {
         value: "/clear",
-        description: "clear transcript (totals kept)",
+        description: "clear transcript (totals kept; Ctrl+C clears the draft, not the transcript)",
     },
     SlashItem {
         value: "/help",
@@ -149,7 +149,7 @@ pub const SLASH_ITEMS: &[SlashItem] = &[
     },
     SlashItem {
         value: "/tree",
-        description: "navigate session tree (switch branches)",
+        description: "same branch browser as /timeline (session tree view)",
     },
     SlashItem {
         value: "/clone",
@@ -178,7 +178,7 @@ pub const SLASH_ITEMS: &[SlashItem] = &[
         // `every_offered_command_is_reachable_from_slash_items` exists to close —
         // and the description says who answers it, so the offer never lies.
         value: "/open ",
-        description: "open a workspace directory (no front end offers this yet; the terminal refuses by name)",
+        description: "open a workspace directory (unavailable here — terminal is bound to its directory; use /resume <path>)",
     },
     SlashItem {
         // The name is the file and the verb is the argument, because "restore" on its own
@@ -244,11 +244,14 @@ pub const SLASH_ITEMS: &[SlashItem] = &[
         // Reachable by name and by `--theme`/`EPSILON_THEME`, and **not** by bare `/theme`, which
         // stays a dark↔light toggle: a key a user presses to change their mind about brightness
         // should not sometimes land on a third thing.
-        description: "switch palette: dark, light, high-contrast",
+        // Both gestures before the colon so the palette list after it stays
+        // parseable (`every_palette_the_description_advertises_is_one_the_product_has`
+        // splits on `: ` then `,` — a paren on the last item would read as a palette).
+        description: "switch palette (bare toggles; settings theme row keeps it): dark, light, high-contrast",
     },
     SlashItem {
         value: "/expand",
-        description: "toggle tool output in the transcript",
+        description: "toggle tool output in the transcript (Ctrl+X)",
     },
     SlashItem {
         value: "/templates",
@@ -256,7 +259,7 @@ pub const SLASH_ITEMS: &[SlashItem] = &[
     },
     SlashItem {
         value: "/branch",
-        description: "browse session branches by seq/lane/snippet, Enter jumps",
+        description: "alias for /timeline — same branch browser",
     },
     SlashItem {
         value: "/exit",

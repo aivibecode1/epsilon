@@ -900,6 +900,26 @@ impl App {
         true
     }
 
+    /// Open the model picker empty, from any entry point.
+    ///
+    /// One helper so `/models`, bare `/model`, Ctrl+M, the settings model row
+    /// and the palette model row cannot drift: stash the draft (the editor
+    /// becomes the filter box), clear the filter, reset to stage 1 at index 0,
+    /// and kick the live auto-fetch (M20). Callers that need a pre-filled
+    /// filter (ambiguous `/model <text>`) call this then set `input`.
+    pub(super) fn open_model_picker(&mut self) {
+        self.stash_draft();
+        self.input.clear();
+        self.cursor_chars = 0;
+        self.picker_index = 0;
+        self.picker_provider = None;
+        self.picker_open = true;
+        // M20 auto-fetch (opencode/Hermes convention): the highlighted
+        // provider's live list starts refreshing immediately, so by the
+        // time the user descends into it the rows are current.
+        self.request_live(false);
+    }
+
     /// Provider and model commands.
     fn run_provider_command(
         &mut self,
@@ -908,15 +928,7 @@ impl App {
     ) -> bool {
         match command {
             crate::picker::Command::Models => {
-                self.picker_open = true;
-                self.picker_index = 0;
-                // Reuse the editor line as the picker's filter box.
-                self.input.clear();
-                self.cursor_chars = 0;
-                // M20 auto-fetch (opencode/Hermes convention): the highlighted
-                // provider's live list starts refreshing immediately, so by the
-                // time the user descends into it the rows are current.
-                self.request_live(false);
+                self.open_model_picker();
             }
             crate::picker::Command::Model(id) => {
                 // Hybrid (P-247): one candidate applies instantly; zero or
@@ -929,9 +941,8 @@ impl App {
                 if epsilon_llm::catalog::resolve_model_candidates(id.trim()).len() == 1 {
                     self.apply_model(agent, id)
                 } else {
-                    self.picker_open = true;
-                    self.picker_provider = None;
-                    self.picker_index = 0;
+                    // Same open as bare, then the typed text becomes the filter.
+                    self.open_model_picker();
                     self.input = id.trim().to_string();
                     self.cursor_chars = self.input.chars().count();
                     self.invalidate_picker();
@@ -2491,11 +2502,7 @@ impl App {
         match index {
             0 => {
                 self.settings_open = false;
-                self.picker_open = true;
-                self.picker_index = 0;
-                self.input.clear();
-                self.cursor_chars = 0;
-                self.request_live(false);
+                self.open_model_picker();
             }
             1 => {
                 self.settings_open = false;
@@ -2933,6 +2940,14 @@ impl App {
                         .to_string(),
                     "keys — PgUp/PgDn scroll · Ctrl+M model · Ctrl+P palette · Ctrl+T think"
                         .to_string(),
+                    // Transcript vs draft (#3): Ctrl+C clears the composer draft,
+                    // `/clear` clears the transcript and keeps totals — one key,
+                    // one command, different buffers.
+                    "clear — Ctrl+C clears the draft · /clear clears transcript".to_string(),
+                    // Hidden shortcuts (#10): q/? and the dashed/underscore
+                    // spellings work but are offered by no palette row — named
+                    // here so a reader can find them, not swapped into HEADs.
+                    "aliases — q quits, ? helps · scoped-models/scoped_models".to_string(),
                     // F6 opens the workspace file tree (Phase 3, `app.tree.toggle`),
                     // and until now no screen named it — the chord was real and
                     // undiscoverable, which is invariant 7 read the other way
@@ -3152,11 +3167,24 @@ impl App {
                 let _ = self.open_timeline_picker(agent, "timeline", None);
             }
             crate::picker::Command::Hotkeys => {
+                // Resolved from the table so a rebind moves the hint; the
+                // fallback spells the default. Lowercase matches `key_text`.
+                let filter_key = self
+                    .keybindings
+                    .key_text("app.transcript.filter.cycle")
+                    .unwrap_or_else(|| "ctrl+o".to_string());
+                let clear_key = self
+                    .keybindings
+                    .key_text("app.clear")
+                    .unwrap_or_else(|| "ctrl+c".to_string());
                 for line in [
-                    "hotkeys: Enter submit · Esc stops run (quits idle) · Ctrl+X expands output",
-                    "         PgUp/PgDn scroll · Ctrl+M model · Ctrl+P palette · Ctrl+T think",
-                    "         Ctrl+U kill to start · Ctrl+W kill word · Ctrl+Y yank · Ctrl+F favorite",
-                    "         /help lists slash commands · /models switches model",
+                    "hotkeys: Enter submit · Esc stops run (quits idle) · Ctrl+X expands output (/expand)".to_string(),
+                    "         PgUp/PgDn scroll · Ctrl+M model (/models) · Ctrl+P palette · Ctrl+T think (/think)".to_string(),
+                    "         Ctrl+U kill to start · Ctrl+W kill word · Ctrl+Y yank · Ctrl+F favorite".to_string(),
+                    format!(
+                        "         {filter_key} filters transcript · {clear_key} clears draft (/clear clears transcript, totals kept)"
+                    ),
+                    "         /help lists slash commands · /models switches model · /theme toggles (settings keeps it)".to_string(),
                 ] {
                     self.ui.push_notice(line);
                 }
@@ -3170,6 +3198,15 @@ impl App {
                         .push_notice("bindings (effective — ~/.config/epsilon/keybindings.json):");
                     for (id, keys) in eff {
                         self.ui.push_notice(format!("  {id}: {}", keys.join(" | ")));
+                    }
+                }
+                // Unbound-but-handled ids, resolved from the table rather than
+                // a hand list: a user binding in keybindings.json moves them to
+                // the effective list above, and this line goes quiet.
+                for id in ["app.transcript.halfUp", "app.transcript.halfDown"] {
+                    if self.keybindings.key_text(id).is_none() {
+                        self.ui
+                            .push_notice(format!("  {id}: (unbound — set in keybindings.json)"));
                     }
                 }
             }
@@ -5619,5 +5656,109 @@ mod tests {
                 .any(|l| l.contains("recents") && l.contains("not saved")),
             "and the recents write failure is said too: {lines:?}"
         );
+    }
+
+    /// Control-duplication #5 RED: the model picker opens identically from
+    /// `/models` and from Ctrl+M (stash + clear + index 0 + provider None + live).
+    ///
+    /// RED-first: fails while `/models` skips `stash_draft` and leaves the
+    /// draft in place while Ctrl+M stashes it — two entries, two behaviours.
+    #[tokio::test]
+    async fn model_picker_opens_identically_from_slash_and_key() {
+        use crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
+        use std::collections::HashMap;
+        fn ctrl_m() -> KeyEvent {
+            KeyEvent {
+                code: KeyCode::Char('m'),
+                modifiers: KeyModifiers::CONTROL,
+                kind: KeyEventKind::Press,
+                state: crossterm::event::KeyEventState::empty(),
+            }
+        }
+        // From /models.
+        let (mut via_slash, agent_slash, _rx) = test_app();
+        via_slash.input = "hello draft".to_string();
+        via_slash.cursor_chars = 11;
+        via_slash.run_command(
+            &agent_slash,
+            crate::picker::parse_command("/models").expect("/models parses"),
+        );
+        // From Ctrl+M.
+        let (mut via_key, agent_key, _rx2) = test_app();
+        via_key.input = "hello draft".to_string();
+        via_key.cursor_chars = 11;
+        // Same keybindings table for both (defaults).
+        via_key.keybindings = crate::keybindings::KeybindingsManager::from_map(HashMap::new());
+        assert!(!handle_key(&mut via_key, &agent_key, ctrl_m()));
+        for (name, a, b) in [
+            ("picker_open", via_slash.picker_open, via_key.picker_open),
+            (
+                "picker_index==0",
+                via_slash.picker_index == 0,
+                via_key.picker_index == 0,
+            ),
+            (
+                "provider None",
+                via_slash.picker_provider.is_none(),
+                via_key.picker_provider.is_none(),
+            ),
+            (
+                "input cleared",
+                via_slash.input.is_empty(),
+                via_key.input.is_empty(),
+            ),
+            (
+                "cursor zero",
+                via_slash.cursor_chars == 0,
+                via_key.cursor_chars == 0,
+            ),
+            (
+                "stash holds draft",
+                via_slash.stash.is_some(),
+                via_key.stash.is_some(),
+            ),
+        ] {
+            assert_eq!(a, b, "divergent {name}: slash={a:?} key={b:?}");
+        }
+        assert!(
+            via_slash.picker_open && via_key.picker_open,
+            "both entries open the picker"
+        );
+        assert!(
+            via_slash.stash.is_some() && via_key.stash.is_some(),
+            "both entries stash the draft: slash={:?} key={:?}",
+            via_slash.stash,
+            via_key.stash
+        );
+    }
+
+    /// Control-duplication #13 RED: `/hotkeys` lists unbound-but-handled ids
+    /// as `(unbound — set in keybindings.json)`, resolved from `effective()`.
+    ///
+    /// RED-first: fails while the hotkeys output omits the half-page ids —
+    /// handled in `keys.rs` with no TERMINAL default, so `key_text` is None.
+    #[test]
+    fn hotkeys_lists_unbound_half_page_ids() {
+        let (mut app, agent, _rx) = test_app();
+        app.theme.glyphs = crate::ui::theme::UNICODE;
+        assert!(!type_and_enter(&mut app, &agent, "/hotkeys"));
+        for (w, h) in [(80u16, 24u16), (100u16, 30u16)] {
+            let screen = frame(&mut app, w, h);
+            for id in ["app.transcript.halfUp", "app.transcript.halfDown"] {
+                assert!(
+                    screen.contains(id),
+                    "{id} must be named at {w}x{h}: {screen}"
+                );
+                assert!(
+                    screen.contains("unbound"),
+                    "{id} must read as unbound while it has no default at {w}x{h}: {screen}"
+                );
+            }
+            // #11: the transcript-filter line comes from the table, not a literal.
+            assert!(
+                screen.contains("ctrl+o") || screen.contains("ctrlo"),
+                "the filter chord must be on screen at {w}x{h}: {screen}"
+            );
+        }
     }
 }

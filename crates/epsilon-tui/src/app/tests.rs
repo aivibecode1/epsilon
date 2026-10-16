@@ -2795,6 +2795,13 @@ async fn ctrl_t_cycles_the_thinking_ladder() {
 #[tokio::test]
 async fn trust_review_holds_submits_until_answered() {
     let (mut app, agent, (_f, _n)) = test_app();
+    // Isolated workspace: the accept path writes `.epsilon/trust.json`
+    // under the workspace root, and the default root is shared by every
+    // parallel test in this binary — under battery load a shared write
+    // collides and the accept notice degrades to "accepted, but not
+    // saved", failing the assertion below for contention, not behavior.
+    let tmp = tempfile::tempdir().unwrap();
+    app.workspace_root = tmp.path().to_path_buf();
     // Simulate the startup banner having flagged a changed config.
     app.trust_review_pending = true;
 
@@ -2835,6 +2842,11 @@ async fn trust_no_quits_instead_of_running_against_unreviewed_config() {
 #[tokio::test]
 async fn trust_gate_blocks_palette_and_stages_initial_task() {
     let (mut app, agent, (_f, _n)) = test_app();
+    // Isolated workspace, same reason as
+    // `trust_review_holds_submits_until_answered`: the accept below writes
+    // `.epsilon/trust.json`, which must not collide with parallel tests.
+    let tmp = tempfile::tempdir().unwrap();
+    app.workspace_root = tmp.path().to_path_buf();
     app.trust_review_pending = true;
 
     // Ctrl+P must NOT open the palette while review is pending.
@@ -2860,6 +2872,11 @@ async fn trust_gate_blocks_f2_favorite_cycling() {
     app.config_dir_override = Some(cfg.path().to_path_buf());
     app.favorites = vec!["faux-1".into(), "deepseek-chat".into()];
     app.favorite_thinking = vec![("deepseek-chat".into(), "high".into())];
+    // Isolated workspace, same reason as
+    // `trust_review_holds_submits_until_answered`: the accept below writes
+    // `.epsilon/trust.json`, which must not collide with parallel tests.
+    let ws = tempfile::tempdir().unwrap();
+    app.workspace_root = ws.path().to_path_buf();
     app.trust_review_pending = true;
 
     handle_key(&mut app, &agent, key(KeyCode::F(2)));

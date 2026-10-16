@@ -430,6 +430,13 @@ fn draw_picker_stage2(f: &mut Frame<'_>, app: &App, outer: Rect, provider: &str)
     let unavailable = rows.iter().filter(|r| r.is_unavailable).count();
     let retired = rows.iter().filter(|r| r.is_retired).count();
     let count = format!("{unavailable} unavailable");
+    // Resolved from the table like the changes panel, so a rebind moves the
+    // hint with it; the fallback spells the default in the same lowercase
+    // `ctrl+s` form the scope picker uses.
+    let save_label = app
+        .keybindings
+        .key_text("app.model.saveDefault")
+        .unwrap_or_else(|| "ctrl+s".to_string());
     let mut hints = vec![("type", "filters (fuzzy)"), ("enter", "apply")];
     if unavailable > 0 {
         hints.push(("", count.as_str()));
@@ -437,7 +444,7 @@ fn draw_picker_stage2(f: &mut Frame<'_>, app: &App, outer: Rect, provider: &str)
     if retired > 0 {
         hints.push(("", "retired rows cannot be applied"));
     }
-    hints.push(("ctrl+s", "save default"));
+    hints.push((save_label.as_str(), "save default"));
     hints.push(("backspace/esc", "back"));
     lines.push(overlay::hint_row(&app.theme, &hints));
     f.render_widget(Paragraph::new(lines), inner);
@@ -1854,13 +1861,20 @@ pub(super) fn draw_scope_picker(f: &mut Frame<'_>, app: &App, outer: Rect) {
     }
     lines.push(Line::from(""));
     let arrows = crate::ui::overlay::up_down(theme.glyphs.up, theme.glyphs.down);
+    // Resolved from the table like the changes panel, so a rebind moves the
+    // hint with it; the fallback is lowercase `ctrl+s`, the same spelling the
+    // stage-2 picker uses (unified, not `^S`).
+    let save_label = app
+        .keybindings
+        .key_text("app.model.saveDefault")
+        .unwrap_or_else(|| "ctrl+s".to_string());
     lines.push(overlay::hint_row(
         theme,
         &[
             ("type", "filter"),
             (&arrows, "move"),
             ("space", "toggle"),
-            ("^S", "save"),
+            (save_label.as_str(), "save"),
             ("esc", "discard"),
         ],
     ));
@@ -1984,7 +1998,7 @@ pub(super) fn draw_settings(f: &mut Frame<'_>, app: &App, outer: Rect) {
     use crate::ui::overlay::{self, Panel, Width};
     let rows = app.setting_rows();
     let width = Width::PANEL.resolve(outer);
-    let height = 12u16.min(outer.height.saturating_sub(2));
+    let height = 14u16.min(outer.height.saturating_sub(2));
     let panel = Panel {
         theme: &app.theme,
         // Top-aligned like the model picker: the two are the same list at
@@ -2024,24 +2038,27 @@ pub(super) fn draw_settings(f: &mut Frame<'_>, app: &App, outer: Rect) {
     ));
     // What Enter DOES depends on the row (the settings audit): model/thinking
     // open a chooser, theme/blocks change at once unasked, permission/plan
-    // raising asks in the composer. One legend row naming the three classes —
-    // first-to-survive order, since a hint row drops last-to-first.
+    // raising asks in the composer. Two legend rows naming the three classes
+    // plus both gestures — one row held all three and truncated preset/plan
+    // at 80 columns, hiding the very mapping it exists to teach. Split keeps
+    // every class visible at both evidence widths.
     lines.push(overlay::hint_row(
         theme,
-        &[
-            ("model/thinking", "open"),
-            ("theme/blocks", "change"),
-            ("preset/plan", "ask"),
-        ],
+        &[("model/thinking (/models,/think)", "open")],
+    ));
+    lines.push(overlay::hint_row(
+        theme,
+        &[("theme/blocks (/theme)", "change"), ("preset/plan", "ask")],
     ));
     // Where the rest lives: this panel holds six rows of ~fourteen persisted
     // things, and a settings screen that hides the others without naming them
     // is a discoverability dead end (the settings audit). One more hint row,
     // not more rows — a row without a writer would be the no-op AGENTS.md §2.7
-    // forbids, so the panel points instead of padding.
+    // forbids, so the panel points instead of padding. `/expand` lives here:
+    // it has no settings row, and the key (Ctrl+X) is named in /hotkeys.
     lines.push(overlay::hint_row(
         theme,
-        &[("more", "/scoped-models /skill /login /editor")],
+        &[("more", "/scoped-models /skill /login /editor /expand")],
     ));
     f.render_widget(Paragraph::new(lines), inner);
 }
@@ -2703,6 +2720,36 @@ mod changes_panel_tests {
                 has("enter preview"),
                 "enter still previews, at {w}x{h}: {}",
                 rows.join("\n")
+            );
+        }
+    }
+
+    /// Control-duplication #11 RED: the scope picker's save hint follows the
+    /// `app.model.saveDefault` binding via `key_text`, like the changes panel.
+    ///
+    /// RED-first: fails while the hint is the hardcoded `^S` — rebinding the
+    /// id moves the key but not the hint, so the screen names a dead chord.
+    #[test]
+    fn scope_save_hint_follows_the_rebound_save_binding() {
+        use std::collections::HashMap;
+        let (mut app, _agent, _rx) = test_app();
+        app.theme.glyphs = crate::ui::theme::UNICODE;
+        let mut map = HashMap::new();
+        map.insert(
+            "app.model.saveDefault".to_string(),
+            vec!["ctrl+k".to_string()],
+        );
+        app.keybindings = crate::keybindings::KeybindingsManager::from_map(map);
+        app.scope_open = true;
+        for (w, h) in [(80u16, 24u16), (100u16, 30u16)] {
+            let screen = render_rows(&mut app, w, h).join("\n");
+            assert!(
+                screen.contains("ctrl+k"),
+                "the rebound save chord must be on screen at {w}x{h}: {screen}"
+            );
+            assert!(
+                !screen.contains("^S"),
+                "the hardcoded ^S must be gone at {w}x{h}: {screen}"
             );
         }
     }

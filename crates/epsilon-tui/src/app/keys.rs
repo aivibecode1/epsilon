@@ -1434,14 +1434,15 @@ pub(crate) fn handle_key(app: &mut App, agent: &Arc<Agent>, key: KeyEvent) -> bo
         }
         return false;
     }
-    // `app.clear` is checked FIRST, and that ordering is the whole fix. Both
-    // `app.clear` and `app.exit` were bound to ctrl+c; `app.exit` was matched here,
-    // so Ctrl+C quit the process and discarded the draft while `/hotkeys` advertised
-    // "Clear editor" for that same chord. pi's own defaults separate them: `app.clear`
-    // is ctrl+c and `app.exit` is ctrl+d. Epsilon keeps ctrl+d for forward-delete, so
-    // `app.clear` owns ctrl+c and `app.exit` keeps ctrl+q alone — matched first,
-    // ctrl+c empties the draft; ctrl+q is the way out, through the same busy
-    // guard as `/quit` (a mid-run quit would orphan the turn).
+    // `app.clear` clears the composer draft (not the transcript — `/clear`
+    // clears the transcript and keeps totals). Both `app.clear` and `app.exit`
+    // were bound to ctrl+c; `app.exit` was matched here, so Ctrl+C quit the
+    // process and discarded the draft while `/hotkeys` advertised "Clear editor"
+    // for that same chord. pi's own defaults separate them: `app.clear` is
+    // ctrl+c and `app.exit` is ctrl+d. Epsilon keeps ctrl+d for forward-delete,
+    // so `app.clear` owns ctrl+c and `app.exit` keeps ctrl+q alone — matched
+    // first, ctrl+c empties the draft; ctrl+q is the way out, through the same
+    // busy guard as `/quit` (a mid-run quit would orphan the turn).
     if app.keybindings.matches("app.clear", &key) {
         app.clear_editor();
         return false;
@@ -2469,12 +2470,10 @@ pub(crate) fn handle_key(app: &mut App, agent: &Arc<Agent>, key: KeyEvent) -> bo
         }
         _ if app.keybindings.matches("app.model.select", &key) => {
             // Layout-independent picker access (slash may need AltGr on some layouts).
+            // One helper with /models, the settings model row and the palette
+            // model row, so every entry stashes, clears, resets and fetches once.
             if !app.picker_open {
-                app.picker_open = true;
-                app.picker_index = 0;
-                app.stash_draft();
-                // M20: same auto-fetch as /models (one code path per open).
-                app.request_live(false);
+                app.open_model_picker();
             }
             false
         }
