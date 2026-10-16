@@ -3575,6 +3575,19 @@ a real source), the 60-minute window proves wrong against measured listing
 churn, or a second surface needs freshness it cannot read through
 `live_status` (share the helper rather than copying the words).
 
+**Amendment (round25, review findings).** The refresh decision is now a
+pinned pure function: TTL-fresh skips before answered-state is consulted
+(a stale entry refetches even though the session answered once), in-flight
+is per-provider with a named wait (a same-provider second request waits
+rather than doubling; other providers proceed), and an empty page preserves
+rather than clobbers. Timestamps in the future read as stale; zero stamps
+drop at load; faux builds never see a "not fetched" promise; endpoint-less
+cached entries are badged as kept-from-cache; persist failures are reported
+on the merge line; config rows parse independently so one bad row keeps the
+good ones. None of this changes the ADR's shape — advisory overlay,
+replace-on-success, no background loop — it closes the ways the first cut
+could mislead within it.
+
 ---
 
 ## ADR-048: Compaction anti-thrash guard (non-reducing-commit streak)
