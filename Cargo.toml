@@ -60,13 +60,19 @@ rustls = { version = "=0.23.43", default-features = false, features = ["ring", "
 # `WireStream`'s body into a boxed `Stream`, whose item type is `bytes::Bytes`, and
 # Rust will not let a crate name a transitive dependency. See the ADR-017 amendment.
 bytes = "=1.12.1"
+# MCP StreamableHTTP (ADR-013 amendment): `StreamableHttpClientTransportConfig::custom_headers`
+# is a `HashMap<http::HeaderName, http::HeaderValue>`, and Rust will not let epsilon-mcp
+# name those types through rmcp. Already in the tree transitively at this exact version
+# (via reqwest 0.13.4 and axum 0.8.9 in Cargo.lock — declaring it adds no new compilation,
+# only the name). Pinned exact per ADR-016.
+http = "=1.5.0"
 tempfile = "=3.23.0"
 regex = "=1.13.1"
 schemars = { version = "=1.2.2", features = ["derive"] }
 ratatui = "=0.30.2"
 crossterm = { version = "=0.29.0", features = ["event-stream"] }
 axum = "=0.8.9"
-rmcp = { version = "=3.1.4", default-features = false, features = ["base64", "macros", "client", "transport-child-process"] }
+rmcp = { version = "=3.1.4", default-features = false, features = ["base64", "macros", "client", "transport-child-process", "transport-streamable-http-client-reqwest"] }
 
 # Test-only: the terminal integration test drives the *built binary* through a
 # real pseudo-console. `portable-pty` is the platform's own pty (ConPTY on

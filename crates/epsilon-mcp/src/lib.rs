@@ -1,7 +1,9 @@
 //! MCP integration plumbing (ADR-013, staged delivery).
 //!
 //! This crate owns everything EXCEPT the wire transport:
-//! - [`McpServerConfig`]: declarative server configuration (stdio command shape),
+//! - [`McpServerConfig`]: declarative stdio server configuration (command shape),
+//! - [`HttpServerConfig`]: declarative StreamableHTTP server configuration,
+//! - [`McpServerSpec`]: the config enum — stdio or HTTP per entry,
 //! - [`Connector`]: the transport seam the official rmcp SDK implements (M9),
 //! - [`bridge`]: registers a connector's tools into the normal registry under
 //!   `mcp__<server>__<tool>` with TTL+grace availability probes (Hermes pattern).
@@ -10,8 +12,10 @@
 //! in-process double now; plugging rmcp's stdio client in later is a connector impl, not a
 //! redesign. ADR-013 carries the amendment.
 
+mod http;
 mod stdio;
 
+pub use http::{HttpConnector, attach_http_server, attach_mcp_server};
 pub use stdio::{ScrubEnv, StdioConnector, attach_stdio_server};
 
 use async_trait::async_trait;
@@ -30,6 +34,206 @@ pub struct McpServerConfig {
     /// argv for `command`.
     #[serde(default)]
     pub args: Vec<String>,
+}
+
+/// Declarative config for one StreamableHTTP MCP server.
+///
+/// Headers and the bearer token come from the config FILE only — never from a
+/// flag (AGENTS.md §6: no secrets on command lines). A full `Authorization`
+/// header value travels verbatim; `bearer_token` carries a bare token that
+/// rmcp sends as `Bearer <token>` (proven in `tests/http_header_proof.rs` —
+/// `authorization` is not an rmcp-reserved header, so both paths work and the
+/// parse below keeps them from being set at once).
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct HttpServerConfig {
+    /// Server name; tools register as `mcp__<name>__<tool>`.
+    pub name: String,
+    /// Absolute `http(s)://` URL of the MCP endpoint.
+    pub url: String,
+    /// Static headers sent on every request (config file only).
+    #[serde(default)]
+    pub headers: std::collections::BTreeMap<String, String>,
+    /// Optional bare bearer token, sent as `Authorization: Bearer <token>`.
+    /// `None` means no auth header. Never accepted on a command line.
+    #[serde(default)]
+    pub bearer_token: Option<String>,
+}
+
+/// The config enum: one `[[mcp_servers]]` entry is stdio XOR HTTP.
+///
+/// The tag is the entry's content, not a tag field: legacy files name
+/// `command` (stdio) with no tag at all, so `url` vs `command` is the
+/// discriminator. Entries naming both or neither — or any unknown key — are
+/// rejected at parse WITH the entry name (the runtime's TOML branch does the
+/// table inspection and calls [`http_server_config`] for the HTTP half).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum McpServerSpec {
+    /// Spawn a child process over stdio.
+    Stdio(McpServerConfig),
+    /// Dial a remote StreamableHTTP endpoint.
+    Http(HttpServerConfig),
+}
+
+impl McpServerSpec {
+    /// The server name, whichever transport it dials.
+    pub fn name(&self) -> &str {
+        match self {
+            McpServerSpec::Stdio(cfg) => &cfg.name,
+            McpServerSpec::Http(cfg) => &cfg.name,
+        }
+    }
+}
+
+/// Build a validated [`HttpServerConfig`], failing closed with the entry name.
+///
+/// Rejected at parse (never at first-request time):
+/// - empty names and malformed URLs (non-`http(s)`, userinfo, empty hosts,
+///   bad ports, fragments);
+/// - `Authorization` headers and bearer tokens over plaintext `http://` to a
+///   non-loopback host (a secret on the wire in the clear — use `https://`);
+/// - `Authorization` AND `bearer_token` together (ambiguous: one source);
+/// - rmcp-reserved headers (`accept`, `mcp-session-id`, `last-event-id`),
+///   which the transport rejects per request and the config refuses up front;
+/// - header names/values outside the HTTP field rules.
+pub fn http_server_config(
+    name: &str,
+    url: &str,
+    headers: std::collections::BTreeMap<String, String>,
+    bearer_token: Option<String>,
+) -> Result<HttpServerConfig, String> {
+    let entry = |why: &str| format!("mcp server '{name}': {why}");
+    if name.trim().is_empty() {
+        return Err(entry("server name must not be empty"));
+    }
+    let parsed = parse_http_url(url).map_err(|why| entry(&why))?;
+    let bearer = match bearer_token {
+        Some(t) if t.trim().is_empty() => {
+            return Err(entry("bearer_token must not be empty; omit it for no auth"));
+        }
+        other => other,
+    };
+    let mut saw_authorization = false;
+    for (key, value) in &headers {
+        let lower = key.to_lowercase();
+        if matches!(
+            lower.as_str(),
+            "accept" | "mcp-session-id" | "last-event-id"
+        ) {
+            return Err(entry(&format!(
+                "header '{key}' is reserved by the MCP transport and cannot be set"
+            )));
+        }
+        if lower == "authorization" {
+            saw_authorization = true;
+        }
+        // Name/value legality lives beside the transport (`http.rs` owns the
+        // only `use http::…` in the crate — this module's own name shadows the
+        // crate, so naming those types here does not resolve).
+        crate::http::check_header(key, value).map_err(|why| entry(&why))?;
+    }
+    if saw_authorization && bearer.is_some() {
+        return Err(entry(
+            "ambiguous: sets both an Authorization header and bearer_token; use one",
+        ));
+    }
+    // Fail closed on plaintext secrets: an Authorization header OR a bearer
+    // token over http:// to a non-loopback host would cross the network in the
+    // clear. Loopback and https are the two honest carriers.
+    if (saw_authorization || bearer.is_some()) && !parsed.https && !parsed.loopback {
+        return Err(entry(&format!(
+            "refuses to send Authorization over plaintext http to non-loopback host \
+             '{}'; use https:// or a loopback URL",
+            parsed.host
+        )));
+    }
+    Ok(HttpServerConfig {
+        name: name.to_string(),
+        url: url.to_string(),
+        headers,
+        bearer_token: bearer,
+    })
+}
+
+/// The parsed shape of an MCP HTTP URL (stdlib only — no URL crate needed).
+struct ParsedUrl {
+    https: bool,
+    host: String,
+    loopback: bool,
+}
+
+/// Validate an absolute `http(s)://` URL without a URL crate: the shape is
+/// small (scheme, authority, no userinfo, numeric port) and a dependency for
+/// one check the standard library already covers is the slop Ponytail names.
+fn parse_http_url(url: &str) -> Result<ParsedUrl, String> {
+    let (scheme, rest) = url
+        .split_once("://")
+        .ok_or_else(|| format!("malformed URL '{url}': must be an absolute http(s) URL"))?;
+    let https = match scheme.to_lowercase().as_str() {
+        "https" => true,
+        "http" => false,
+        _ => {
+            return Err(format!(
+                "malformed URL '{url}': scheme must be http or https"
+            ));
+        }
+    };
+    // Authority ends where the path/query begins; fragments never travel.
+    let authority_end = rest.find(['/', '?']).unwrap_or(rest.len());
+    if rest[authority_end..].contains('#') {
+        return Err(format!("malformed URL '{url}': fragments are never sent"));
+    }
+    let authority = &rest[..authority_end];
+    if authority.contains('@') {
+        return Err(format!(
+            "malformed URL '{url}': userinfo credentials are not accepted in the URL"
+        ));
+    }
+    let host = if let Some(bracketed) = authority.strip_prefix('[') {
+        let (inside, after) = bracketed
+            .split_once(']')
+            .ok_or_else(|| format!("malformed URL '{url}': unterminated IPv6 literal"))?;
+        if !after.is_empty() {
+            parse_port(
+                after.strip_prefix(':').ok_or_else(|| {
+                    format!("malformed URL '{url}': unexpected text after IPv6 literal")
+                })?,
+                url,
+            )?;
+        }
+        inside.to_string()
+    } else {
+        if authority.chars().filter(|&c| c == ':').count() > 1 {
+            return Err(format!(
+                "malformed URL '{url}': unbracketed IPv6 literals are not accepted"
+            ));
+        }
+        match authority.split_once(':') {
+            Some((host, port)) => {
+                parse_port(port, url)?;
+                host.to_string()
+            }
+            None => authority.to_string(),
+        }
+    };
+    if host.trim().is_empty() {
+        return Err(format!("malformed URL '{url}': host must not be empty"));
+    }
+    let lower = host.to_lowercase();
+    let loopback = lower == "localhost" || lower == "::1" || lower.starts_with("127.");
+    Ok(ParsedUrl {
+        https,
+        host,
+        loopback,
+    })
+}
+
+/// A port is digits and nothing else, in range. Empty and out-of-range are
+/// both paste errors, and both fail here rather than at dial time.
+fn parse_port(port: &str, url: &str) -> Result<(), String> {
+    match port.parse::<u16>() {
+        Ok(_) => Ok(()),
+        Err(_) => Err(format!("malformed URL '{url}': port must be 1-65535")),
+    }
 }
 
 /// Transport seam. rmcp-backed stdio/HTTP connectors implement this (M9).

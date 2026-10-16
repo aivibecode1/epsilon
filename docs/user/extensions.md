@@ -238,3 +238,39 @@ Two things are worth checking as you go:
   break an extension, and it fails confusingly.
 - **Answer with the `id` you were given.** A plausible-looking answer with the wrong `id` is
   discarded silently, which looks identical to the harness ignoring you.
+
+## Connecting an MCP server over HTTP
+
+Extensions run as child processes. An MCP server can instead live at a URL and
+speak StreamableHTTP. Each `[[mcp_servers]]` entry is one or the other:
+`command` spawns stdio, `url` dials HTTP. Both together — or neither — is
+rejected with the entry named.
+
+```toml
+[[mcp_servers]]
+name = "docs"
+url = "https://mcp.example.com/mcp"
+
+[mcp_servers.headers]
+"x-api-key" = "only-in-this-file"
+```
+
+`epsilon --mcp-http docs=https://mcp.example.com/mcp` attaches the same
+server for one run. The flag carries only the endpoint: headers and bearer
+tokens live in the config file, never on a command line, because command
+lines leak into shell history and process lists.
+
+Rules, all enforced when the entry is read, not when the first call runs:
+
+- `Authorization` headers and bearer tokens travel only over `https://`,
+  unless the URL is loopback (`localhost`, `127.*`, `::1`). Anything else is
+  refused outright.
+- `accept`, `mcp-session-id` and `last-event-id` cannot be set. They belong
+  to the transport.
+- There is no OAuth. A bearer token is static configuration.
+- The legacy SSE transport is not accepted. An entry shaped for it is
+  rejected with its name.
+
+A project-declared HTTP server starts only in a trusted workspace, exactly
+like a project-declared stdio server. A dead server fails the launch with
+the server named rather than running without its tools.

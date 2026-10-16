@@ -110,6 +110,10 @@ pub struct ProjectConfig {
     pub extension_dirs: Vec<String>,
     /// `[[mcp_servers]]` stdio servers, same shape as the `--mcp` flag.
     pub mcp_servers: Vec<epsilon_mcp::McpServerConfig>,
+    /// `[[mcp_servers]]` HTTP servers (`url` instead of `command`), same shape
+    /// as the `--mcp-http` flag. Headers and bearer tokens live in this file
+    /// so they never appear on a command line (AGENTS.md §6).
+    pub mcp_http_servers: Vec<epsilon_mcp::HttpServerConfig>,
 }
 
 /// One `[[rules]]` entry.
@@ -276,33 +280,152 @@ pub fn load_project_config(workspace: &Path) -> (ProjectConfig, TrustDecision, V
 
     if let Some(servers) = parsed.get("mcp_servers").and_then(|r| r.as_array()) {
         for s in servers {
-            match (
-                s.get("name").and_then(|v| v.as_str()),
-                s.get("command").and_then(|v| v.as_str()),
-            ) {
-                (Some(name), Some(command)) => {
-                    cfg.mcp_servers.push(epsilon_mcp::McpServerConfig {
-                        name: name.into(),
-                        command: command.into(),
-                        args: s
-                            .get("args")
-                            .and_then(|a| a.as_array())
-                            .map(|a| {
-                                a.iter()
-                                    .filter_map(|v| v.as_str().map(String::from))
-                                    .collect()
-                            })
-                            .unwrap_or_default(),
-                    });
-                }
-                _ => notices.push(format!(
-                    "ignoring [[mcp_servers]] missing name/command: {s}"
-                )),
-            }
+            push_mcp_server_entry(s, &mut cfg, &mut notices);
         }
     }
 
     (cfg, decision, notices)
+}
+
+/// One `[[mcp_servers]]` table: stdio XOR HTTP, rejected with its name.
+///
+/// The tag is the entry's content — legacy files name `command` with no tag
+/// field, so `url` vs `command` discriminates. Both or neither is ambiguous;
+/// unknown keys in a `url` entry and the legacy SSE shape are rejected rather
+/// than silently ignored (an ignored `transport = "sse"` would run nothing
+/// while looking configured — AGENTS.md §2.7). The stdio half keeps its
+/// historical leniency (unknown keys ignored); only the new `url` branch is
+/// strict, so no existing file changes meaning.
+fn push_mcp_server_entry(s: &toml::Value, cfg: &mut ProjectConfig, notices: &mut Vec<String>) {
+    let name = s.get("name").and_then(|v| v.as_str());
+    let label = name.unwrap_or("?");
+    let has_command = s.get("command").is_some();
+    let has_url = s.get("url").is_some();
+    if has_command && has_url {
+        notices.push(format!(
+            "ignoring [[mcp_servers]] '{label}': ambiguous: sets both command (stdio) and url (http); use one"
+        ));
+        return;
+    }
+    // Legacy SSE shape: rejected, never silently ignored.
+    let legacy_sse = s.get("transport").and_then(|v| v.as_str()) == Some("sse")
+        || ["sse", "sse_url", "endpoint"]
+            .iter()
+            .any(|k| s.get(k).is_some());
+    if legacy_sse {
+        notices.push(format!(
+            "ignoring [[mcp_servers]] '{label}': legacy SSE transport is not supported; use url for StreamableHTTP"
+        ));
+        return;
+    }
+    if has_url {
+        push_http_server_entry(s, label, cfg, notices);
+        return;
+    }
+    if has_command {
+        // Same acceptance as before the `url` branch existed: name AND command
+        // must both be strings, else the historical notice. A non-string
+        // command (e.g. `command = 7`) must not become an empty spawn.
+        match (name, s.get("command").and_then(|v| v.as_str())) {
+            (Some(entry_name), Some(command)) => {
+                cfg.mcp_servers.push(epsilon_mcp::McpServerConfig {
+                    name: entry_name.into(),
+                    command: command.into(),
+                    args: s
+                        .get("args")
+                        .and_then(|a| a.as_array())
+                        .map(|a| {
+                            a.iter()
+                                .filter_map(|v| v.as_str().map(String::from))
+                                .collect()
+                        })
+                        .unwrap_or_default(),
+                });
+            }
+            _ => notices.push(format!(
+                "ignoring [[mcp_servers]] missing name/command: {s}"
+            )),
+        }
+        return;
+    }
+    notices.push(format!(
+        "ignoring [[mcp_servers]] missing name/command: {s}"
+    ));
+}
+
+/// The `url` half of [`push_mcp_server_entry`]: strict keys, validated values.
+///
+/// Unknown keys reject the ENTRY (with its name), because a misspelled
+/// `headers`/`bearer_token` that was silently dropped would run an
+/// unauthenticated client while looking configured.
+fn push_http_server_entry(
+    s: &toml::Value,
+    label: &str,
+    cfg: &mut ProjectConfig,
+    notices: &mut Vec<String>,
+) {
+    const KNOWN: &[&str] = &["name", "url", "headers", "bearer_token"];
+    if let Some(table) = s.as_table() {
+        let mut unknown: Vec<&str> = table
+            .keys()
+            .map(String::as_str)
+            .filter(|k| !KNOWN.contains(k))
+            .collect();
+        unknown.sort();
+        if !unknown.is_empty() {
+            notices.push(format!(
+                "ignoring [[mcp_servers]] '{label}': unknown key(s) {} (want name, url, headers, bearer_token)",
+                unknown.join(", ")
+            ));
+            return;
+        }
+    }
+    let Some(url) = s.get("url").and_then(|v| v.as_str()) else {
+        notices.push(format!(
+            "ignoring [[mcp_servers]] '{label}': url must be a string"
+        ));
+        return;
+    };
+    let mut headers = std::collections::BTreeMap::new();
+    if let Some(table) = s.get("headers") {
+        let Some(map) = table.as_table() else {
+            notices.push(format!(
+                "ignoring [[mcp_servers]] '{label}': headers must be a table of strings"
+            ));
+            return;
+        };
+        for (k, v) in map {
+            match v.as_str() {
+                Some(header_value) => {
+                    headers.insert(k.clone(), header_value.to_string());
+                }
+                None => {
+                    notices.push(format!(
+                        "ignoring [[mcp_servers]] '{label}': header '{k}' must be a string"
+                    ));
+                    return;
+                }
+            }
+        }
+    }
+    let bearer = match s.get("bearer_token") {
+        None => None,
+        Some(v) => match v.as_str() {
+            Some(token) => Some(token.to_string()),
+            None => {
+                notices.push(format!(
+                    "ignoring [[mcp_servers]] '{label}': bearer_token must be a string"
+                ));
+                return;
+            }
+        },
+    };
+    // `http_server_config` fails closed with the entry name (malformed URL,
+    // plaintext secrets, ambiguous auth, reserved headers).
+    match epsilon_mcp::http_server_config(label, url, headers, bearer) {
+        Ok(entry) => cfg.mcp_http_servers.push(entry),
+        Err(e) => notices.push(format!("ignoring [[mcp_servers]]: {e}")),
+    }
 }
 
 #[cfg(test)]
@@ -1047,6 +1170,34 @@ pub fn mcp_servers_trusted(
         let names: Vec<&str> = project.iter().map(|c| c.name.as_str()).collect();
         eprintln!(
             "project is untrusted: not starting {} declared MCP server(s) ({}). \
+             Trust this workspace to run them.",
+            project.len(),
+            names.join(", ")
+        );
+    }
+    user.to_vec()
+}
+
+/// HTTP half of [`mcp_servers_trusted`]: same gate, same message shape.
+///
+/// An `[[mcp_servers]]` entry with a `url` dials a remote endpoint and sends
+/// it the workspace's tool calls — an untrusted project must not smuggle one
+/// in any more than it may smuggle a command. The trust function itself is
+/// unchanged; this applies its rule to the new list at the same call site.
+pub fn mcp_http_servers_trusted(
+    user: &[epsilon_mcp::HttpServerConfig],
+    project: &[epsilon_mcp::HttpServerConfig],
+    project_trusted: bool,
+) -> Vec<epsilon_mcp::HttpServerConfig> {
+    if project_trusted {
+        let mut all = user.to_vec();
+        all.extend(project.iter().cloned());
+        return all;
+    }
+    if !project.is_empty() {
+        let names: Vec<&str> = project.iter().map(|c| c.name.as_str()).collect();
+        eprintln!(
+            "project is untrusted: not starting {} declared HTTP MCP server(s) ({}). \
              Trust this workspace to run them.",
             project.len(),
             names.join(", ")
@@ -2432,6 +2583,138 @@ mod tests {
         assert_eq!(mcp_servers_trusted(&user, &[], false), user);
         assert_eq!(mcp_servers_trusted(&user, &[], true), user);
         assert!(mcp_servers_trusted(&[], &[], false).is_empty());
+    }
+
+    /// Write `body` as `.epsilon/config.toml` under a scratch workspace and
+    /// load it.
+    fn load_toml(body: &str) -> (ProjectConfig, Vec<String>) {
+        let tmp = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(tmp.path().join(".epsilon")).unwrap();
+        std::fs::write(tmp.path().join(".epsilon").join("config.toml"), body).unwrap();
+        let (cfg, _decision, notices) = load_project_config(tmp.path());
+        (cfg, notices)
+    }
+
+    /// A `url` entry parses beside a `command` entry — neither disturbs the other.
+    #[test]
+    fn http_servers_parse_from_toml_alongside_stdio() {
+        let (cfg, notices) = load_toml(
+            "[[mcp_servers]]\nname = \"local\"\ncommand = \"my-server\"\n\
+             [[mcp_servers]]\nname = \"remote\"\nurl = \"http://127.0.0.1:8080/mcp\"\n\
+             [mcp_servers.headers]\n\"x-api-key\" = \"k\"\n",
+        );
+        assert!(
+            !notices.iter().any(|n| n.contains("ignoring")),
+            "valid entries produce no complaints: {notices:?}"
+        );
+        assert_eq!(cfg.mcp_servers.len(), 1, "the stdio entry still parses");
+        assert_eq!(cfg.mcp_servers[0].command, "my-server");
+        assert_eq!(
+            cfg.mcp_http_servers.len(),
+            1,
+            "the url entry parses as HTTP"
+        );
+        let http = &cfg.mcp_http_servers[0];
+        assert_eq!(http.name, "remote");
+        assert_eq!(http.url, "http://127.0.0.1:8080/mcp");
+        assert_eq!(http.headers.get("x-api-key").map(String::as_str), Some("k"));
+    }
+
+    /// Both `command` and `url` is ambiguous: the entry is dropped WITH its name.
+    #[test]
+    fn ambiguous_command_and_url_is_rejected_with_the_entry_name() {
+        let (cfg, notices) = load_toml(
+            "[[mcp_servers]]\nname = \"both\"\ncommand = \"x\"\nurl = \"http://127.0.0.1:1/mcp\"\n",
+        );
+        assert!(cfg.mcp_servers.is_empty() && cfg.mcp_http_servers.is_empty());
+        assert!(
+            notices
+                .iter()
+                .any(|n| n.contains("both") && n.contains("ambiguous")),
+            "rejection must name the entry: {notices:?}"
+        );
+    }
+
+    /// Unknown keys in a `url` entry reject the entry WITH its name — a
+    /// misspelled `headers` must not silently run an unauthenticated client.
+    #[test]
+    fn unknown_keys_in_http_entries_are_rejected_with_the_entry_name() {
+        let (cfg, notices) = load_toml(
+            "[[mcp_servers]]\nname = \"typo\"\nurl = \"http://127.0.0.1:1/mcp\"\nhedears = \"x\"\n",
+        );
+        assert!(cfg.mcp_http_servers.is_empty());
+        assert!(
+            notices
+                .iter()
+                .any(|n| n.contains("typo") && n.contains("unknown")),
+            "rejection must name the entry: {notices:?}"
+        );
+    }
+
+    /// The legacy SSE shape is REJECTED, never silently ignored: an ignored
+    /// `transport = "sse"` would run nothing while looking configured.
+    #[test]
+    fn legacy_sse_shape_is_rejected_not_silently_ignored() {
+        for body in [
+            "[[mcp_servers]]\nname = \"old\"\ntransport = \"sse\"\nsse_url = \"http://127.0.0.1:1/sse\"\n",
+            "[[mcp_servers]]\nname = \"older\"\nendpoint = \"http://127.0.0.1:1/sse\"\n",
+        ] {
+            let (cfg, notices) = load_toml(body);
+            assert!(cfg.mcp_servers.is_empty() && cfg.mcp_http_servers.is_empty());
+            assert!(
+                notices.iter().any(|n| n.contains("SSE")),
+                "legacy SSE must be rejected by name: {notices:?}"
+            );
+        }
+    }
+
+    /// Plaintext-http secrets in the file fail closed WITH the entry name.
+    #[test]
+    fn plaintext_http_auth_in_toml_is_rejected_with_the_entry_name() {
+        let (cfg, notices) = load_toml(
+            "[[mcp_servers]]\nname = \"plain\"\nurl = \"http://192.168.1.10/mcp\"\n\
+             [mcp_servers.headers]\nAuthorization = \"Bearer s\"\n",
+        );
+        assert!(cfg.mcp_http_servers.is_empty());
+        assert!(
+            notices.iter().any(|n| n.contains("plain")),
+            "rejection must name the entry: {notices:?}"
+        );
+    }
+
+    /// The HTTP mirror of the stdio trust test: an untrusted project's
+    /// declared HTTP servers do not start, and the user's own survive.
+    #[test]
+    fn an_untrusted_projects_declared_http_servers_are_not_started() {
+        let user = vec![
+            epsilon_mcp::http_server_config(
+                "mine",
+                "http://127.0.0.1:8080/mcp",
+                Default::default(),
+                None,
+            )
+            .unwrap(),
+        ];
+        let project = vec![
+            epsilon_mcp::http_server_config(
+                "evil",
+                "http://127.0.0.1:9090/mcp",
+                Default::default(),
+                None,
+            )
+            .unwrap(),
+        ];
+        let trusted = mcp_http_servers_trusted(&user, &project, true);
+        assert_eq!(trusted.len(), 2, "a trusted project attaches both");
+        let untrusted = mcp_http_servers_trusted(&user, &project, false);
+        assert_eq!(
+            untrusted, user,
+            "an untrusted project contributes nothing, and the user's own servers survive"
+        );
+        assert!(
+            untrusted.iter().all(|c| c.name != "evil"),
+            "nothing declared by an untrusted config may be dialed"
+        );
     }
 
     #[test]
@@ -4999,6 +5282,9 @@ pub struct RunParams<'a> {
     /// MCP servers named on the command line. Project-declared ones are added by
     /// `build_runtime` from `project.mcp_servers`, so a caller passes only the extra.
     pub mcp_servers: &'a [McpServerConfig],
+    /// HTTP MCP servers named on the command line (`--mcp-http`). Project-declared
+    /// ones join from `project.mcp_http_servers` behind the same trust gate.
+    pub mcp_http_servers: &'a [epsilon_mcp::HttpServerConfig],
     /// Session JSONL path, relative to the workspace (e.g. ".epsilon/sessions/tui.jsonl").
     pub session_file: String,
     /// How side-effecting commands are confined. `Auto` resolves to the best backend the
@@ -5289,6 +5575,7 @@ pub async fn build_runtime_and_gate_runner(
         stream_fn,
         approvals,
         mcp_servers,
+        mcp_http_servers,
         session_file,
         confinement,
         lsp,
@@ -5320,6 +5607,17 @@ pub async fn build_runtime_and_gate_runner(
     for cfg in &all_mcp {
         let attached =
             epsilon_mcp::attach_stdio_server(&mut registry, cfg, Some(scrub.clone())).await?;
+        notices.push(format!(
+            "mcp server '{}' attached ({attached} tools)",
+            cfg.name
+        ));
+    }
+    // HTTP dispatch: same trust gate, same `?` composition behavior — one bad
+    // server refuses the launch rather than running without its tools.
+    let all_http =
+        mcp_http_servers_trusted(mcp_http_servers, &project.mcp_http_servers, project_trusted);
+    for cfg in &all_http {
+        let attached = epsilon_mcp::attach_http_server(&mut registry, cfg).await?;
         notices.push(format!(
             "mcp server '{}' attached ({attached} tools)",
             cfg.name
@@ -5718,6 +6016,7 @@ mod composition_notice_tests {
             stream_fn: Arc::new(FauxProvider::new(Vec::<FauxStep>::new())),
             approvals: Arc::new(epsilon_safety::AutoApprove),
             mcp_servers: &[],
+            mcp_http_servers: &[],
             session_file: ".epsilon/sessions/notice-test.jsonl".to_string(),
             confinement: &epsilon_tools::Confinement::Off,
             lsp: Lsp::Off,
@@ -5765,6 +6064,7 @@ mod composition_notice_tests {
             stream_fn: Arc::new(FauxProvider::new(Vec::<FauxStep>::new())),
             approvals: Arc::new(epsilon_safety::AutoApprove),
             mcp_servers: &[],
+            mcp_http_servers: &[],
             session_file: ".epsilon/sessions/preset-project.jsonl".to_string(),
             confinement: &epsilon_tools::Confinement::Off,
             lsp: Lsp::Off,
@@ -5810,6 +6110,7 @@ mod composition_notice_tests {
             stream_fn: Arc::new(FauxProvider::new(Vec::<FauxStep>::new())),
             approvals: Arc::new(epsilon_safety::AutoApprove),
             mcp_servers: &[],
+            mcp_http_servers: &[],
             session_file: ".epsilon/sessions/preset-flag.jsonl".to_string(),
             confinement: &epsilon_tools::Confinement::Off,
             lsp: Lsp::Off,
@@ -5853,6 +6154,7 @@ mod composition_notice_tests {
             stream_fn: Arc::new(FauxProvider::new(Vec::<FauxStep>::new())),
             approvals: Arc::new(epsilon_safety::AutoApprove),
             mcp_servers: &[],
+            mcp_http_servers: &[],
             session_file: ".epsilon/sessions/plan-flag.jsonl".to_string(),
             confinement: &epsilon_tools::Confinement::Off,
             lsp: Lsp::Off,
@@ -5878,6 +6180,7 @@ mod composition_notice_tests {
             stream_fn: Arc::new(FauxProvider::new(Vec::<FauxStep>::new())),
             approvals: Arc::new(epsilon_safety::AutoApprove),
             mcp_servers: &[],
+            mcp_http_servers: &[],
             session_file: ".epsilon/sessions/plan-off.jsonl".to_string(),
             confinement: &epsilon_tools::Confinement::Off,
             lsp: Lsp::Off,

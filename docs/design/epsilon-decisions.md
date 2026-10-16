@@ -3641,3 +3641,72 @@ compactions that were about to help, or never engaging on genuine thrash), a sec
 caller needs the streak read through anything but `compaction_streak()`, or resume
 wiring shows the reset belongs against a different transcript identity than
 `restore_history`.
+
+---
+
+## ADR-013 amendment: StreamableHTTP client transport
+
+**Status: accepted (2026-10-16).**
+
+**The problem.** The stdio-only client reaches servers the harness spawns and
+nothing else: hosted MCP endpoints (docs servers, team gateways) were
+unreachable, and every reference harness the project tracks speaks
+StreamableHTTP beside stdio. ADR-013 named streamable-http as future work on
+the same seam; this amendment lands it.
+
+**Decision: a second connector behind the unchanged `Connector` seam.**
+
+- *Config.* One `[[mcp_servers]]` entry is stdio XOR HTTP. The discriminator
+  is content, not a tag field: legacy files name `command` with no tag, so
+  `url` vs `command` decides, and both-or-neither is rejected with the entry
+  named — as are unknown keys in a `url` entry and the legacy SSE shape
+  (`transport = "sse"` and its key spellings), which is refused rather than
+  silently ignored. `McpServerConfig` (stdio) is untouched, so every existing
+  file keeps its meaning; the HTTP half is additive. Folding both into one
+  enum is the honest follow-up and touches the stdio call sites, so it waits
+  for its own round.
+- *Auth without OAuth.* Static headers ride every request; a bare bearer token
+  rides rmcp's `auth_header` (sent as `Bearer <token>`). `Authorization` over
+  plaintext `http://` to a non-loopback host fails closed at parse, as does
+  setting both auth sources at once. Headers and tokens live in the config
+  file only — never on `--mcp-http`, which carries just `name=URL` (AGENTS.md
+  §6). There is deliberately no OAuth flow.
+- *One retry, and never for calls.* rmcp's transparent re-init is OFF: it
+  would replay the failed POST inside the worker, and replaying tools/call
+  double-executes a possibly side-effecting tool. Instead a 404-expired list
+  (read-only) does one re-handshake plus one retry in the connector, while a
+  tools/call POST is sent exactly once — the next operation heals. 401s
+  surface honestly with no retry loop, and a dead server fails the attach fast
+  with the server named (the composition's `?` behavior is unchanged).
+- *Trust.* Project-declared HTTP servers join behind the same trust gate as
+  stdio: untrusted projects start none. `is_healthy` is `service.is_closed()`,
+  mirroring stdio — with the documented limit that an idle HTTP transport
+  cannot see a dead remote until a request fails, so staleness is bounded by
+  the bridge TTL plus per-call honest errors.
+
+**Proven before the transport was written.** (a) The
+`transport-streamable-http-client-reqwest` feature unifies onto the workspace
+reqwest 0.13.4 as json/stream/rustls-no-provider only — no aws-lc, no
+native-tls, no OAuth (`cargo tree -i`). The connector therefore uses rmcp's
+`from_config` default client (no redirects, so static headers never replay to
+a redirect target) rather than a harness-built `with_client`. (b)
+`validate_custom_header` leaves `authorization` unreserved (vendored
+`http_header.rs:31-45`); wire tests prove a static `Authorization` arrives
+verbatim, a bearer arrives `Bearer`-prefixed, and `accept` fails closed
+before any request. Two edges were still required, each with its reason:
+`http` names the header-map types rmcp's config demands (already transitive
+at the pinned version — the `bytes` precedent, ADR-017 amendment), and
+`rustls` installs the ring provider before the first client build, without
+which rmcp's default client panics where it should return an error
+(epsilon-mcp's own proof tests tripped it).
+
+**Rejected.** (a) A harness-built reqwest client: a new edge plus replicated
+pool/redirect settings for zero measured benefit. (b) Retrying tools/call
+after re-handshake: a second POST of a non-idempotent tool. (c) An active
+`is_healthy` ping: load and failure modes against the prescription to mirror
+stdio. (d) OAuth here: static tokens cover the servers in reach; a flow is
+its own ADR.
+
+**Revisit trigger.** A server needs OAuth or non-bearer auth, retry policy
+proves wrong against measured 404/429 shapes, or the single-enum config
+fold lands (retire the additive note above when it does).

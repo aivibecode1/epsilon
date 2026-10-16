@@ -13,7 +13,15 @@ serde = { workspace = true }
 serde_json = { workspace = true }
 async-trait = { workspace = true }
 tokio = { workspace = true }
-rmcp = { workspace = true }
+rmcp = { workspace = true, features = ["transport-streamable-http-client-reqwest"] }
+# Name the header-map types for the StreamableHTTP transport config (workspace pin:
+# already transitive via rmcp/axum, no new compilation — same justification as `bytes`).
+http = { workspace = true }
+# Install the ring TLS provider before rmcp builds its default reqwest client:
+# the workspace uses `rustls-no-provider`, and without this an https MCP attach
+# panics where it should return an honest error (epsilon-llm/src/http.rs:81-93).
+# Already in the tree via reqwest; no new compilation.
+rustls = { workspace = true }
 
 [[bin]]
 name = "mcp-fixture-server"
@@ -23,11 +31,15 @@ required-features = ["rmcp/server", "rmcp/transport-io"]
 
 [dev-dependencies]
 rmcp = { workspace = true, features = ["server", "transport-io"] }
+# In-process StreamableHTTP fixture for the HTTP connector tests: a real axum router
+# over a real TCP socket, the same shape rmcp's own `test_custom_headers` uses.
+# Already in the tree via epsilon-server; test-only, never ships.
+axum = { workspace = true }
 # `test-util` for `#[tokio::test(start_paused = true)]`: the hung-call test reaches its
 # deadline the moment the call has nothing left to do, so the wait is instant and the
 # test never sleeps. `tokio-util` because `ToolContext::token` is a
 # `CancellationToken` and a test has to be able to build one.
-tokio = { workspace = true, features = ["macros", "rt", "test-util"] }
+tokio = { workspace = true, features = ["macros", "rt", "test-util", "net"] }
 tokio-util = { workspace = true }
 
 [lints]

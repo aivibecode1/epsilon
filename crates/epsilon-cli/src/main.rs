@@ -7,6 +7,8 @@
 //! - `--serve [--port N] ["task"]` : HTTP/SSE server for remote frontends
 //! - `--script <file>`   : faux-script JSON driving ANY mode offline/reproducibly
 //! - `--mcp <name>=<cmd>[:arg,arg…]` : attach an MCP stdio server (repeatable)
+//! - `--mcp-http <name>=<url>` : attach an MCP StreamableHTTP server (repeatable;
+//!   headers via config file only, never the flag)
 //! - `--workspace <dir>` : override workspace root (default: cwd)
 //!
 //! Offline-first: without `--script`, print/tui/serve use a small built-in faux script so
@@ -19,7 +21,7 @@ use epsilon_contracts::agent_event::{AgentEvent, TurnEndReason};
 use epsilon_contracts::message::{Message, StopReason};
 use epsilon_core::{LoopLimits, ToolRegistry};
 use epsilon_llm::{FauxProvider, FauxStep, FauxToolCall, PanicGuard};
-use epsilon_mcp::McpServerConfig;
+use epsilon_mcp::{HttpServerConfig, McpServerConfig};
 use epsilon_safety::{ApprovalUi, ChannelApprovalUi};
 // ADR-021: composition is a library crate now, so the desktop IDE can build the same agent
 // this binary does. `Resume` came with it, because a frontend cannot ask for a session
@@ -44,7 +46,7 @@ const USAGE: &str = "usage: epsilon            interactive TUI (default)
   epsilon auth login <provider> [key]   save an API key (prompted if key omitted)
   epsilon auth login <provider> --oauth [--paste]   subscription login (anthropic|openrouter|xai|github-copilot)
   epsilon auth logout <provider>        remove the stored key
-  flags: --model id · --provider faux|real · --script f · --mcp name=cmd[:a,b]
+  flags: --model id · --provider faux|real · --script f · --mcp name=cmd[:a,b] · --mcp-http name=URL (headers via config file only)
          --sandbox auto|read-only|off · --plan · -c/--continue | --resume f · --version
   epsilon --help          every flag, env var and file, in full";
 
@@ -119,6 +121,9 @@ FLAGS
                         it (leaving the pi file untouched), print the summary, exit
   --script FILE         faux-provider script for offline runs
   --mcp NAME=CMD[:A,B]  attach an MCP server over stdio
+  --mcp-http NAME=URL   attach an MCP server over StreamableHTTP (repeatable;
+                        headers and bearer tokens come from the config file only,
+                        never from this flag)
   -V, --version         print the version
   -h, --help            this text
 
@@ -182,6 +187,9 @@ struct Args {
     stream_pace_ms: u64,
     workspace: Option<PathBuf>,
     mcp_servers: Vec<McpServerConfig>,
+    /// `--mcp-http` endpoints. Headers/bearer stay in the config file (AGENTS.md §6),
+    /// so the flag carries only `name=URL`.
+    mcp_http_servers: Vec<HttpServerConfig>,
     port: u16,
     confinement: epsilon_tools::Confinement,
     /// M79: ask a language server about edited files (`--lsp auto|off`).
@@ -333,6 +341,7 @@ fn parse_args() -> Args {
             stream_pace_ms: 0,
             workspace: None,
             mcp_servers: Vec::new(),
+            mcp_http_servers: Vec::new(),
             port: 8787,
             confinement: epsilon_tools::Confinement::Auto,
             lsp: epsilon_cli::runtime::Lsp::Auto,
@@ -351,6 +360,7 @@ fn parse_args() -> Args {
     let mut stream_pace_ms: u64 = 0;
     let mut workspace = None;
     let mut mcp_servers = Vec::new();
+    let mut mcp_http_servers = Vec::new();
     let mut port: u16 = 8787;
     let mut confinement = epsilon_tools::Confinement::Auto;
     let mut lsp = epsilon_cli::runtime::Lsp::Auto;
@@ -532,6 +542,19 @@ fn parse_args() -> Args {
                 mode = Mode::ListModels(provider);
             }
             "--port" => die("--port belongs to --serve"),
+            a if a.starts_with("--mcp-http") => {
+                let spec = a
+                    .strip_prefix("--mcp-http")
+                    .and_then(|r| r.strip_prefix('='))
+                    .map(|s| s.to_string())
+                    .unwrap_or_else(|| {
+                        i += 1;
+                        raw.get(i)
+                            .cloned()
+                            .unwrap_or_else(|| die("--mcp-http needs name=URL"))
+                    });
+                mcp_http_servers.push(parse_mcp_http_spec(&spec));
+            }
             a if a.starts_with("--mcp") => {
                 let spec = a
                     .strip_prefix("--mcp")
@@ -559,6 +582,7 @@ fn parse_args() -> Args {
         stream_pace_ms,
         workspace,
         mcp_servers,
+        mcp_http_servers,
         port,
         confinement,
         lsp,
@@ -612,6 +636,18 @@ fn parse_mcp_spec(spec: &str) -> McpServerConfig {
             })
             .unwrap_or_default(),
     }
+}
+
+/// `<name>=<url>` — headers and bearer tokens come from the config file only,
+/// never from this flag (AGENTS.md §6: no secrets on command lines), so the
+/// flag carries just the endpoint. A malformed URL refuses the launch here,
+/// at parse, with the entry named — not at first-request time.
+fn parse_mcp_http_spec(spec: &str) -> HttpServerConfig {
+    let (name, url) = spec
+        .split_once('=')
+        .unwrap_or_else(|| die("--mcp-http expects name=URL"));
+    epsilon_mcp::http_server_config(name, url, std::collections::BTreeMap::new(), None)
+        .unwrap_or_else(|e| die(&e))
 }
 
 fn die(msg: &str) -> ! {
@@ -1209,6 +1245,7 @@ async fn dispatch(args: Args) -> i32 {
         workspace: launch.workspace.clone(),
         stream_fn: launch.stream_fn.clone(),
         mcp_servers: args.mcp_servers.clone(),
+        mcp_http_servers: args.mcp_http_servers.clone(),
         confinement: launch.confinement.clone(),
         lsp: launch.lsp,
         model_id: launch.model_id.clone(),
@@ -1273,6 +1310,7 @@ async fn rpc_mode(shared: &SharedRun) -> i32 {
         stream_fn: Arc::clone(&shared.stream_fn),
         approvals: Arc::clone(&approvals) as Arc<dyn ApprovalUi>,
         mcp_servers: &shared.mcp_servers,
+        mcp_http_servers: &shared.mcp_http_servers,
         session_file: ".epsilon/sessions/rpc.jsonl".to_string(),
         confinement: &shared.confinement,
         lsp: shared.lsp,
@@ -1414,6 +1452,7 @@ struct SharedRun {
     workspace: PathBuf,
     stream_fn: Arc<dyn epsilon_llm::StreamFn>,
     mcp_servers: Vec<McpServerConfig>,
+    mcp_http_servers: Vec<HttpServerConfig>,
     confinement: epsilon_tools::Confinement,
     lsp: epsilon_cli::runtime::Lsp,
     model_id: String,
@@ -1463,6 +1502,7 @@ async fn print_mode(shared: &SharedRun, yes: bool, task: String) -> i32 {
         stream_fn: Arc::clone(&shared.stream_fn),
         approvals: approvals_ui,
         mcp_servers: &shared.mcp_servers,
+        mcp_http_servers: &shared.mcp_http_servers,
         session_file: ".epsilon/sessions/cli.jsonl".to_string(),
         confinement: &shared.confinement,
         lsp: shared.lsp,
@@ -1652,6 +1692,7 @@ async fn tui_mode(
         stream_fn: Arc::clone(&shared.stream_fn),
         approvals: Arc::clone(&approvals) as Arc<dyn ApprovalUi>,
         mcp_servers: &shared.mcp_servers,
+        mcp_http_servers: &shared.mcp_http_servers,
         session_file: session_file.clone(),
         confinement: &shared.confinement,
         lsp: shared.lsp,
@@ -1727,6 +1768,7 @@ async fn serve_mode(shared: &SharedRun, initial_task: Option<String>, port: u16)
         stream_fn: Arc::clone(&shared.stream_fn),
         approvals: Arc::clone(&approvals) as Arc<dyn ApprovalUi>,
         mcp_servers: &shared.mcp_servers,
+        mcp_http_servers: &shared.mcp_http_servers,
         session_file: ".epsilon/sessions/serve.jsonl".to_string(),
         confinement: &shared.confinement,
         lsp: shared.lsp,
@@ -1815,7 +1857,7 @@ fn doctor_mode(args: &Args) -> i32 {
         workspace: &workspace,
         model_arg: args.model_id.as_deref(),
         confinement: &args.confinement,
-        mcp_server_count: args.mcp_servers.len(),
+        mcp_server_count: args.mcp_servers.len() + args.mcp_http_servers.len(),
         real_feature: cfg!(feature = "real"),
     };
     epsilon_cli::doctor::run(&inputs)
@@ -2050,6 +2092,7 @@ action = "allow"
             ])),
             approvals: Arc::new(epsilon_safety::AutoApprove),
             mcp_servers: &[],
+            mcp_http_servers: &[],
             session_file: ".epsilon/session.jsonl".to_string(),
             confinement: &epsilon_tools::Confinement::Off,
             lsp: epsilon_cli::runtime::Lsp::Off,
