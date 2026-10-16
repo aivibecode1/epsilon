@@ -820,6 +820,86 @@ impl App {
         }
     }
 
+    /// Provider ids `/login` may save for (F3): the bundled catalog's
+    /// distinct providers plus any custom providers this session knows.
+    /// Sorted and deduplicated, so the unknown-provider error can list them.
+    fn known_login_providers(&self) -> Vec<String> {
+        let mut out: Vec<String> = epsilon_llm::catalog::curated()
+            .iter()
+            .map(|m| m.provider.to_string())
+            .collect();
+        for c in &self.customs {
+            out.push(c.name.clone());
+        }
+        out.sort();
+        out.dedup();
+        out
+    }
+
+    /// Closest known provider ids for an unknown `/login` target (F3):
+    /// prefix matches first, then substring, then fuzzy — at most three, so
+    /// the error names a fix instead of a directory.
+    fn suggest_login_providers(&self, want: &str) -> Vec<String> {
+        let q = want.trim().to_ascii_lowercase();
+        if q.is_empty() {
+            return Vec::new();
+        }
+        let mut prefix = Vec::new();
+        let mut sub = Vec::new();
+        let mut fuzzy: Vec<(i64, String)> = Vec::new();
+        for p in self.known_login_providers() {
+            let l = p.to_ascii_lowercase();
+            if l.starts_with(&q) {
+                prefix.push(p);
+            } else if l.contains(&q) {
+                sub.push(p);
+            } else if let m = crate::fuzzy::fuzzy_match(&q, &l)
+                && m.matches
+            {
+                fuzzy.push((m.score, p));
+            }
+        }
+        fuzzy.sort_by_key(|(score, _)| *score);
+        prefix
+            .into_iter()
+            .chain(sub)
+            .chain(fuzzy.into_iter().map(|(_, p)| p))
+            .take(3)
+            .collect()
+    }
+
+    /// Refuse an unknown `/login` provider id BEFORE anything is saved or
+    /// prompted (F3). A typo is the common case, so the error suggests the
+    /// closest known ids and lists them all; nothing is written. Returns true
+    /// when the caller must stop.
+    fn reject_unknown_login_provider(&mut self, provider: &str) -> bool {
+        if self
+            .known_login_providers()
+            .iter()
+            .any(|p| p.eq_ignore_ascii_case(provider.trim()))
+        {
+            return false;
+        }
+        let sug = self.suggest_login_providers(provider);
+        let hint = if sug.is_empty() {
+            String::new()
+        } else {
+            format!(
+                " — did you mean {}?",
+                sug.iter()
+                    .map(|s| format!("'{s}'"))
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            )
+        };
+        self.ui.push_notice(format!(
+            "unknown provider '{}'{hint} — known providers: {}",
+            provider.trim(),
+            self.known_login_providers().join(", ")
+        ));
+        true
+    }
+
     /// Provider and model commands.
     fn run_provider_command(
         &mut self,
@@ -912,6 +992,12 @@ impl App {
             }
             crate::picker::Command::Login { provider, key } => {
                 let provider = provider.trim().to_string();
+                // F3: an unknown provider id errors with suggestions BEFORE
+                // anything is saved or prompted — checking after the save
+                // would persist a credential no provider can ever use.
+                if !provider.is_empty() && self.reject_unknown_login_provider(&provider) {
+                    return false;
+                }
                 // M52: `/login <provider> oauth` (or `--oauth`) starts the
                 // subscription ceremony instead of storing a pasted key.
                 if !provider.is_empty() && epsilon_llm::oauth_login::is_oauth_ceremony_arg(&key) {
@@ -947,7 +1033,20 @@ impl App {
                     ));
                     return false;
                 }
-                match epsilon_llm::auth::save_credential(&provider, key.trim()) {
+                // A test override diverts the save like every other TUI write —
+                // otherwise any test driving `/login` writes the developer's
+                // real credential store. With no override this resolves to the
+                // same global dir `save_credential` reads itself, so
+                // production behaviour is unchanged.
+                let dir = self
+                    .config_dir_override
+                    .clone()
+                    .or_else(epsilon_core::config::global_dir);
+                let saved = match dir {
+                    Some(dir) => epsilon_llm::auth::save_credential_in(&dir, &provider, key.trim()),
+                    None => Err("no home directory resolved".to_string()),
+                };
+                match saved {
                     Ok(path) => {
                         self.ui.push_notice(format!(
                             "saved key for '{provider}' → {}  (next request uses it)",
@@ -1649,6 +1748,10 @@ impl App {
                     self.ui.push_notice("plan mode: already on");
                 } else if agent.set_plan_mode(true) {
                     self.settings_plan = true;
+                    // F2 write-through, like the preset path: the gate alone
+                    // forgets on restart. Failure is a notice, never a
+                    // revert, and never closes the settings panel.
+                    self.persist_plan_mode(true);
                     self.ui.push_notice(
                         "plan mode: on (was off) — writes, edits and shell are now denied",
                     );
@@ -1847,7 +1950,9 @@ impl App {
                     self.ui.push_notice(
                         "new: busy — wait for the current run to finish, then /new again",
                     );
-                    return true;
+                    // Refusal, not quit: returning true would exit the
+                    // process on a routine busy moment (audit finding).
+                    return false;
                 }
                 let (tin, tout) = self.ui.usage();
                 let dir = epsilon_session::time::session_dir_for(
@@ -1857,7 +1962,8 @@ impl App {
                 if let Err(e) = std::fs::create_dir_all(&dir) {
                     self.ui
                         .push_notice(format!("new session: {}: {e}", dir.display()));
-                    return true;
+                    // Failure, not quit (see the busy arm above).
+                    return false;
                 }
                 // pi's file name, from the rule M209 transcribed and M217 put behind a directory.
                 let path = dir.join(epsilon_session::time::session_file_name(
@@ -1870,7 +1976,8 @@ impl App {
                 if let Err(e) = epsilon_session::SessionStore::open_in(&path, &dir).map(|_| ()) {
                     self.ui
                         .push_notice(format!("new session: {}: {e}", path.display()));
-                    return true;
+                    // Failure, not quit (see the busy arm above).
+                    return false;
                 }
                 match self.switch_session_file(agent, &path, None) {
                     Ok(_) => self.ui.push_notice(format!(
@@ -2153,8 +2260,12 @@ impl App {
                     return false;
                 }
                 if self.ui.running() {
+                    // Honest refusal, not a queue: nothing consumes a
+                    // "queued" compaction after the turn (audit finding) —
+                    // claiming it would run is a success without effect.
+                    // The loop still auto-compacts on pressure by itself.
                     self.ui.push_notice(
-                        "compact queued — will run after the current turn (loop also auto-compacts on pressure)",
+                        "compact: busy — not queued, re-run when idle (the loop still auto-compacts on pressure)",
                     );
                 } else {
                     use std::sync::atomic::Ordering;
@@ -2379,24 +2490,50 @@ impl App {
             1 => {
                 self.settings_open = false;
                 self.think_pick_open = true;
-                self.think_pick_index = 0;
+                // F1: preselect the current level like bare `/think` does, so
+                // Enter with no move is a no-op close rather than a reset to
+                // Off.
+                self.think_pick_index = epsilon_contracts::ThinkingLevel::ALL
+                    .iter()
+                    .position(|level| *level == agent.thinking_level())
+                    .unwrap_or(0);
                 self.input.clear();
                 self.cursor_chars = 0;
             }
             2 => {
                 let next = self.theme.palette().next();
+                let was = self.theme.palette();
                 self.theme.set_palette(next);
                 self.render_cache.clear();
                 let dir = self
                     .config_dir_override
                     .clone()
                     .or_else(epsilon_core::config::global_dir);
-                if let Some(dir) = dir
-                    && let Err(e) = epsilon_core::config::save_tui_theme_in(&dir, next.name())
-                {
-                    self.settings_open = false;
-                    self.ui
-                        .push_notice(format!("theme is {}, not saved: {e}", next.name()));
+                // F7: a switch that lands says where, like the model row
+                // does — a persisted toggle with no success notice reads as
+                // session-only. Bare `/theme` stays silent-on-purpose (its
+                // notice already says session-only); this row is the keeper.
+                match dir {
+                    Some(dir) => match epsilon_core::config::save_tui_theme_in(&dir, next.name()) {
+                        Ok(path) => self.ui.push_notice(format!(
+                            "theme: {} \u{2192} {} \u{2014} saved to {}",
+                            was.name(),
+                            next.name(),
+                            path.display()
+                        )),
+                        Err(e) => {
+                            self.settings_open = false;
+                            self.ui
+                                .push_notice(format!("theme is {}, not saved: {e}", next.name()));
+                        }
+                    },
+                    None => {
+                        self.settings_open = false;
+                        self.ui.push_notice(format!(
+                            "theme is {}, not saved: no home directory resolved",
+                            next.name()
+                        ));
+                    }
                 }
             }
             3 => {
@@ -5186,6 +5323,291 @@ mod tests {
         assert!(
             joined.contains("ghost"),
             "the broken link is announced, not silent: {joined:?}"
+        );
+    }
+
+    /// F1: the settings thinking row preselects the current level, like bare
+    /// `/think` does — Enter with no move is a no-op close, not a reset to Off.
+    ///
+    /// RED-first: this fails while `apply_setting` opens the picker at index
+    /// 0 — the picker then names Off and Enter applies it.
+    #[test]
+    fn settings_thinking_row_preselects_the_current_level() {
+        let (mut app, agent, _rx) = test_app();
+        agent.set_thinking_level(epsilon_contracts::ThinkingLevel::High);
+        app.settings_open = true;
+        app.apply_setting(&agent, 1);
+        assert!(app.think_pick_open, "the row opens the chooser");
+        assert_eq!(
+            app.think_pick_index, 4,
+            "High is ALL[4]; index 0 would be a reset to Off"
+        );
+    }
+
+    /// F3: `/login` with an unknown provider id errors with suggestions and
+    /// saves NOTHING — no prompt opens, no credential is written.
+    ///
+    /// RED-first: this fails while the arm saves first and asks never — the
+    /// typo lands in auth.json and the notice (if any) names no fix.
+    #[test]
+    fn login_typo_errors_with_suggestions_and_saves_nothing() {
+        let (mut app, agent, _rx) = test_app();
+        let cfg = tempfile::tempdir().expect("a config dir");
+        app.config_dir_override = Some(cfg.path().to_path_buf());
+
+        // With a pasted key: the save must never happen.
+        let quit = app.run_command(
+            &agent,
+            crate::picker::parse_command("/login anthopic test-key-123").expect("/login parses"),
+        );
+        assert!(!quit, "a typo must not end the session");
+        let lines: Vec<String> = app.ui.lines().iter().map(|l| l.text.clone()).collect();
+        assert!(
+            lines
+                .iter()
+                .any(|l| l.contains("unknown provider 'anthopic'")),
+            "the error names the typo: {lines:?}"
+        );
+        assert!(
+            lines
+                .iter()
+                .any(|l| l.contains("did you mean") && l.contains("anthropic")),
+            "the error suggests the fix: {lines:?}"
+        );
+        assert!(
+            !cfg.path().join("auth.json").exists(),
+            "no credential file may exist after a rejected provider"
+        );
+
+        // Without a key: the masked prompt must never open either.
+        let quit = app.run_command(
+            &agent,
+            crate::picker::parse_command("/login anthopic").expect("/login parses"),
+        );
+        assert!(!quit, "a typo must not end the session");
+        assert!(
+            !app.auth_prompt_open,
+            "no prompt may open for a provider nothing can save for"
+        );
+    }
+
+    /// F3 positive control: a known provider still saves through the same arm.
+    #[test]
+    fn login_known_provider_still_saves() {
+        let (mut app, agent, _rx) = test_app();
+        let cfg = tempfile::tempdir().expect("a config dir");
+        app.config_dir_override = Some(cfg.path().to_path_buf());
+        let quit = app.run_command(
+            &agent,
+            crate::picker::parse_command("/login anthropic test-key-123").expect("/login parses"),
+        );
+        assert!(!quit);
+        assert!(
+            app.ui
+                .lines()
+                .iter()
+                .any(|l| l.text.contains("saved key for 'anthropic'")),
+            "the save notice: {:?}",
+            app.ui.lines().iter().map(|l| &l.text).collect::<Vec<_>>()
+        );
+        assert!(
+            epsilon_llm::auth::load_credentials_in(cfg.path()).contains_key("anthropic"),
+            "the credential lands in the override store, never the real one"
+        );
+    }
+
+    /// F2: `/plan on` and `/plan off` persist `[plan] mode` project-first,
+    /// and a restart-equivalent read comes back with the same value.
+    ///
+    /// RED-first: this fails while the gate is the only memory — the file
+    /// never appears and the "round trip" reads None.
+    #[test]
+    fn plan_on_and_off_persist_project_first_with_a_global_fallback() {
+        // Project-first: a workspace with its own `.epsilon` gets the write.
+        let (mut app, agent, _rx) = test_app();
+        let ws = tempfile::tempdir().expect("a workspace");
+        std::fs::create_dir_all(ws.path().join(".epsilon")).expect("project dir");
+        app.workspace_root = ws.path().to_path_buf();
+        app.config_dir_override = None;
+
+        assert!(!type_and_enter(&mut app, &agent, "/plan on"));
+        assert!(agent.in_plan_mode(), "on restricts at once");
+        assert_eq!(
+            epsilon_core::config::load_plan_mode_in(&ws.path().join(".epsilon")),
+            Some(true),
+            "on writes the project's own file"
+        );
+
+        // The settings row shares the path: off through the panel asks first.
+        app.settings_open = true;
+        app.apply_setting(&agent, 5);
+        assert!(agent.in_plan_mode(), "the raising direction asks first");
+        assert!(!app.settings_open, "and the question leaves the panel");
+        assert!(!type_and_enter(&mut app, &agent, "yes"));
+        assert!(!agent.in_plan_mode(), "yes disables");
+        assert_eq!(
+            epsilon_core::config::load_plan_mode_in(&ws.path().join(".epsilon")),
+            Some(false),
+            "off writes too — both directions persist"
+        );
+
+        // Global fallback: no `.epsilon` here, so the override dir takes it.
+        let (mut app, agent, _rx) = test_app();
+        let plain = tempfile::tempdir().expect("a workspace without .epsilon");
+        let cfg = tempfile::tempdir().expect("a config dir");
+        app.workspace_root = plain.path().to_path_buf();
+        app.config_dir_override = Some(cfg.path().to_path_buf());
+        assert!(!type_and_enter(&mut app, &agent, "/plan on"));
+        assert_eq!(
+            epsilon_core::config::load_plan_mode_in(cfg.path()),
+            Some(true),
+            "with no project file the global-equivalent takes the write"
+        );
+
+        // A failed write is a notice, never a revert.
+        let (mut app, agent, _rx) = test_app();
+        let dir = tempfile::tempdir().expect("tmp");
+        let blocker = dir.path().join("blocker");
+        std::fs::write(&blocker, "not a dir").unwrap();
+        app.workspace_root = plain.path().to_path_buf();
+        app.config_dir_override = Some(blocker);
+        assert!(!type_and_enter(&mut app, &agent, "/plan on"));
+        assert!(
+            agent.in_plan_mode(),
+            "the switch happened; only the file failed"
+        );
+        assert!(
+            app.ui.lines().iter().any(|l| l.text.contains("not saved")),
+            "and the failure is said out loud: {:?}",
+            app.ui.lines().iter().map(|l| &l.text).collect::<Vec<_>>()
+        );
+    }
+
+    /// F7: the settings theme row pushes a "saved" notice naming the file,
+    /// like the model row does. Bare `/theme` stays session-only (its notice
+    /// already says so) — this row is the keeper.
+    ///
+    /// RED-first: this fails while the row only speaks on error — a kept
+    /// theme reads exactly like a session-only toggle.
+    #[test]
+    fn settings_theme_switch_pushes_a_saved_notice() {
+        let (mut app, agent, _rx) = test_app();
+        let cfg = tempfile::tempdir().expect("a config dir");
+        app.config_dir_override = Some(cfg.path().to_path_buf());
+        app.settings_open = true;
+        app.apply_setting(&agent, 2);
+        let lines: Vec<String> = app.ui.lines().iter().map(|l| l.text.clone()).collect();
+        assert!(
+            lines.iter().any(|l| l.contains("saved to")),
+            "the switch must say it kept the theme: {lines:?}"
+        );
+        assert!(
+            app.settings_open,
+            "a successful toggle stays in the panel with the new value visible"
+        );
+        let raw = std::fs::read_to_string(cfg.path().join("config.toml")).unwrap();
+        assert!(
+            raw.contains("[tui]") && raw.contains("theme"),
+            "and the file agrees: {raw}"
+        );
+    }
+
+    /// F4: the `/settings` copy says six rows and lists every one — the panel
+    /// holds model, thinking, theme, thinking blocks, permission preset and
+    /// plan, and a list that stops early hides the rest.
+    ///
+    /// RED-first: this fails while the copy names four things ("model,
+    /// thinking, theme, and permissions") for six rows.
+    #[test]
+    fn slash_settings_copy_names_all_six_rows() {
+        let item = crate::picker::SLASH_ITEMS
+            .iter()
+            .find(|i| i.value == "/settings")
+            .expect("/settings is offered");
+        assert!(
+            item.description.contains("six"),
+            "the copy says how many rows there are: {:?}",
+            item.description
+        );
+        for row in [
+            "model",
+            "thinking",
+            "theme",
+            "thinking blocks",
+            "permission",
+            "plan",
+        ] {
+            assert!(
+                item.description.contains(row),
+                "the copy names the {row} row: {:?}",
+                item.description
+            );
+        }
+        assert_eq!(
+            test_app().0.setting_rows().len(),
+            6,
+            "and the panel holds exactly the six the copy promises"
+        );
+    }
+
+    /// F6: the thinking level persists project-first, like the model id and
+    /// the preset already do — a global-only write from a workspace with its
+    /// own file was shadowed by the launch's project-over-global read.
+    ///
+    /// RED-first: this fails while `set_thinking` writes global-only — the
+    /// project's own file never appears.
+    #[test]
+    fn thinking_level_persists_project_first_with_a_global_fallback() {
+        let (mut app, agent, _rx) = test_app();
+        let ws = tempfile::tempdir().expect("a workspace");
+        std::fs::create_dir_all(ws.path().join(".epsilon")).expect("project dir");
+        app.workspace_root = ws.path().to_path_buf();
+        app.config_dir_override = None;
+        assert!(!type_and_enter(&mut app, &agent, "/think high"));
+        assert_eq!(
+            epsilon_core::config::load_thinking_level_in(&ws.path().join(".epsilon")),
+            Some(epsilon_contracts::ThinkingLevel::High),
+            "the project's own file takes the write"
+        );
+
+        // No `.epsilon` here: the override dir takes the write instead.
+        let (mut app, agent, _rx) = test_app();
+        let plain = tempfile::tempdir().expect("a workspace without .epsilon");
+        let cfg = tempfile::tempdir().expect("a config dir");
+        app.workspace_root = plain.path().to_path_buf();
+        app.config_dir_override = Some(cfg.path().to_path_buf());
+        assert!(!type_and_enter(&mut app, &agent, "/think low"));
+        assert_eq!(
+            epsilon_core::config::load_thinking_level_in(cfg.path()),
+            Some(epsilon_contracts::ThinkingLevel::Low),
+            "with no project file the write falls back, not nowhere"
+        );
+    }
+
+    /// F9 (recents half): a refused recents push gets a notice — the picker
+    /// already applied the push in memory, so silence would leave the session
+    /// showing an order the next launch silently breaks.
+    ///
+    /// RED-first: this fails while the push sits behind `let _` — the model
+    /// notice names its own failure and the recents one says nothing.
+    #[test]
+    fn recents_push_failure_gets_a_notice() {
+        let (mut app, agent, _rx) = test_app();
+        let dir = tempfile::tempdir().expect("tmp");
+        let blocker = dir.path().join("blocker");
+        std::fs::write(&blocker, "not a dir").unwrap();
+        app.config_dir_override = Some(blocker);
+        app.apply_model(&agent, "f9-test-model".to_string());
+        let lines: Vec<String> = app.ui.lines().iter().map(|l| l.text.clone()).collect();
+        assert!(
+            lines.iter().any(|l| l.contains("not saved")),
+            "the model write failure is said: {lines:?}"
+        );
+        assert!(
+            lines
+                .iter()
+                .any(|l| l.contains("recents") && l.contains("not saved")),
+            "and the recents write failure is said too: {lines:?}"
         );
     }
 }

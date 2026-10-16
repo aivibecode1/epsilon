@@ -1974,7 +1974,7 @@ pub(super) fn draw_auth_picker(f: &mut Frame<'_>, app: &App, outer: Rect) {
     f.render_widget(Paragraph::new(lines), inner);
 }
 
-/// `/settings`: the in-TUI chooser over the five live rows.
+/// `/settings`: the in-TUI chooser over the six live rows.
 ///
 /// Rows are computed per frame from [`App::setting_rows`], never stored, so
 /// the value a row shows is the value the next Enter will change. The panel
@@ -2018,11 +2018,23 @@ pub(super) fn draw_settings(f: &mut Frame<'_>, app: &App, outer: Rect) {
         theme,
         &[
             (&arrows, "move"),
-            ("enter", "change (raising asks in composer)"),
+            ("enter", "open · change · ask"),
             ("esc", "close"),
         ],
     ));
-    // Where the rest lives: this panel holds five rows of ~fourteen persisted
+    // What Enter DOES depends on the row (the settings audit): model/thinking
+    // open a chooser, theme/blocks change at once unasked, permission/plan
+    // raising asks in the composer. One legend row naming the three classes —
+    // first-to-survive order, since a hint row drops last-to-first.
+    lines.push(overlay::hint_row(
+        theme,
+        &[
+            ("model/thinking", "open"),
+            ("theme/blocks", "change"),
+            ("preset/plan", "ask"),
+        ],
+    ));
+    // Where the rest lives: this panel holds six rows of ~fourteen persisted
     // things, and a settings screen that hides the others without naming them
     // is a discoverability dead end (the settings audit). One more hint row,
     // not more rows — a row without a writer would be the no-op AGENTS.md §2.7
@@ -2331,23 +2343,64 @@ mod safe_to_show_tests {
 mod settings_and_retired_hint_tests {
     use crate::app::tests_support::{render_rows, test_app};
 
-    /// The settings hint names the raising behaviour: raising rows close the
-    /// panel for the composer yes-gate, so the hint must say so.
-    /// Before: `enter change`; after: `enter change (raising asks in composer)`.
+    /// The settings hint distinguishes the three Enter classes: navigate
+    /// rows open a chooser, act rows change at once, gate rows ask first.
+    /// Before: one `enter change (raising asks in composer)` for all six rows.
     #[test]
-    fn settings_hint_names_the_raising_gate() {
+    fn settings_hint_names_all_three_enter_classes() {
         let (mut app, _agent, _rx) = test_app();
         app.theme.glyphs = crate::ui::theme::UNICODE;
         app.settings_open = true;
         let screen = render_rows(&mut app, 100, 30).join("\n");
         assert!(
-            screen.contains("raising asks in composer"),
-            "the settings hint must say raising rows ask in the composer: {screen}"
+            screen.contains("open · change · ask"),
+            "the enter hint must name all three behaviours: {screen}"
         );
-        assert!(
-            screen.contains("change (raising asks in composer)"),
-            "the full enter hint, not only the parenthesis: {screen}"
-        );
+        for (rows, verb) in [
+            ("model/thinking", "open"),
+            ("theme/blocks", "change"),
+            ("preset/plan", "ask"),
+        ] {
+            assert!(
+                screen.contains(rows) && screen.contains(verb),
+                "the legend must map {rows} to {verb}: {screen}"
+            );
+        }
+    }
+
+    /// The settings panel draws all six rows plus the three-class legend on
+    /// the real frame at both evidence widths (80x24 and 100x30, UNICODE
+    /// pinned): a legend that wraps steals a row from the list it describes.
+    #[test]
+    fn settings_panel_fits_six_rows_and_legend_at_both_widths() {
+        for (w, h) in [(80u16, 24u16), (100u16, 30u16)] {
+            let (mut app, _agent, _rx) = test_app();
+            app.theme.glyphs = crate::ui::theme::UNICODE;
+            app.settings_open = true;
+            let screen = render_rows(&mut app, w, h).join("\n");
+            for row in [
+                "model",
+                "thinking",
+                "theme",
+                "thinking blocks",
+                "permission",
+                "plan",
+            ] {
+                assert!(screen.contains(row), "{w}x{h} lost the {row} row: {screen}");
+            }
+            assert!(
+                screen.contains("open · change · ask"),
+                "{w}x{h} lost the enter hint: {screen}"
+            );
+            assert!(
+                screen.contains("preset/plan"),
+                "{w}x{h} lost the legend row: {screen}"
+            );
+            assert!(
+                screen.contains("·"),
+                "{w}x{h} must carry its unicode joins: {screen}"
+            );
+        }
     }
 
     /// When any retired row is present, the stage-2 hint row gains

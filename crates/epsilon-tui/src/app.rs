@@ -985,6 +985,37 @@ impl App {
         }
     }
 
+    /// Persist a plan-mode switch (settings-workflow audit F2: `[plan] mode`).
+    ///
+    /// One writer for every switch site — `run_plan_command` (`/plan on` and
+    /// the settings panel) and the `pending_preset` plan-disable yes-path
+    /// below — so every switch lands in the same file the composition reads,
+    /// resolved through [`Self::project_dir_or_global`] like the model default
+    /// and the preset (the project's own file when the workspace has one).
+    /// The switch itself already happened: a write failure is a notice naming
+    /// the reason, never a revert (the thinking-level shape), and nothing
+    /// closes — in particular the settings panel stays open on failure so the
+    /// reader sees why (the `save_scope` shape).
+    ///
+    /// Both directions persist, and that is safe where persisting
+    /// `danger-full-access` would not be: plan values never exceed today's
+    /// default permissiveness — `on` restricts, `off` records the default —
+    /// so a reloaded file cannot escalate a launch past what running without
+    /// it already allows (ADR-051).
+    fn persist_plan_mode(&mut self, on: bool) {
+        let Some(dir) = self.project_dir_or_global() else {
+            self.ui
+                .push_notice("plan mode not saved: no home directory resolved");
+            return;
+        };
+        if let Err(e) = epsilon_core::config::save_plan_mode_in(&dir, on) {
+            self.ui.push_notice(format!(
+                "plan mode {} not saved: {e}",
+                if on { "on" } else { "off" }
+            ));
+        }
+    }
+
     /// Persist the staged `/scoped-models` checklist (P-047: pi's Ctrl+S).
     ///
     /// Space stages in `favorites` (memory only, so the F2 cycle rescopes
@@ -1314,6 +1345,9 @@ impl App {
                         self.pending_preset = None;
                         if agent.set_plan_mode(false) {
                             self.settings_plan = false;
+                            // F2 write-through, like the `/plan on` arm: the
+                            // gate alone forgets on restart.
+                            self.persist_plan_mode(false);
                             self.ui
                                 .push_notice("plan mode: off (was on) — mutations allowed again");
                         } else {
@@ -1426,18 +1460,19 @@ impl App {
     /// choke point, so every surface that changes the level persists it.
     fn set_thinking(&mut self, agent: &Arc<Agent>, level: epsilon_contracts::ThinkingLevel) {
         self.adopt_thinking(agent, level);
-        // **Global, deliberately — the same dir every other TUI write uses and
-        // the same one `App::new` reads.** The project override goes the other
-        // way and is not offered a write path here: `<ws>/.epsilon/config.toml`
-        // is trust-gated composition input, and this mirror cannot see the
-        // project's value at all, so writing there would leave the footer
-        // naming the global while the run used the project's. A repo opting
-        // into its own effort still edits the file by hand (unlike `[model] id`
-        // and `[permissions] preset`, which the TUI writes project-first).
-        let dir = self
-            .config_dir_override
-            .clone()
-            .or_else(epsilon_core::config::global_dir);
+        // **Project-first, like `[model] id` and `[permissions] preset`**
+        // (settings-workflow audit F6). The launch reads the project's own
+        // `[thinking] level` over the global one
+        // (`resolve_default_thinking_level`), so a global-only write from a
+        // workspace with its own file was shadowed on the next launch — the
+        // level the notice had just confirmed, silently lost. Writing through
+        // `project_dir_or_global` keeps the file and the next launch in
+        // agreement; the footer names the live value this call just set
+        // either way, so nothing misstates. Trust posture unchanged: an
+        // effort default is no more sensitive than the model id and preset
+        // already written through this resolver, and the trust gate still
+        // reviews a changed project file before it applies.
+        let dir = self.project_dir_or_global();
         let Some(dir) = dir else {
             self.ui
                 .push_notice("thinking level not saved: no home directory resolved");
@@ -1679,7 +1714,12 @@ impl App {
             .clone()
             .or_else(epsilon_core::config::global_dir)
         {
-            let _ = epsilon_core::config::push_recent_model_in(&dir, &id);
+            // Invariant 7: the picker already applied this push in memory, so
+            // a refused write must still be said — otherwise the ordering this
+            // session shows is a promise the next launch silently breaks.
+            if let Err(e) = epsilon_core::config::push_recent_model_in(&dir, &id) {
+                self.ui.push_notice(format!("recents not saved: {e}"));
+            }
         }
         self.recents.retain(|r| !r.eq_ignore_ascii_case(&id));
         self.recents.insert(0, id.clone());

@@ -1286,7 +1286,10 @@ async fn new_command_refuses_while_a_run_is_in_flight() {
     app.ui
         .apply(&epsilon_contracts::agent_event::AgentEvent::AgentStart);
     assert!(app.ui.running(), "the premise: a turn is in flight");
-    type_and_enter(&mut app, &agent, "/new");
+    assert!(
+        !type_and_enter(&mut app, &agent, "/new"),
+        "a busy refusal must not quit the process: /new while running used to return quit=true"
+    );
     let texts: Vec<String> = app.ui.lines().iter().map(|l| l.text.clone()).collect();
     assert!(
         texts.join("\n").contains("busy"),
@@ -2912,6 +2915,31 @@ async fn a_session_can_compact_more_than_once() {
             .iter()
             .map(|l| &l.text)
             .collect::<Vec<_>>()
+    );
+}
+
+/// **`/compact` while busy refuses honestly instead of promising a queue.**
+///
+/// The busy arm used to say "compact queued — will run after the current
+/// turn" while setting no flag, spawning nothing, and enqueuing nothing —
+/// a success without effect. Nothing consumes a queued compaction, so the
+/// honest answer is a refusal naming the re-run (the loop still
+/// auto-compacts on pressure by itself).
+#[tokio::test]
+async fn compact_while_busy_refuses_instead_of_promising_a_queue() {
+    let (mut app, agent, _rx) = test_app();
+    app.ui
+        .apply(&epsilon_contracts::agent_event::AgentEvent::AgentStart);
+    assert!(app.ui.running(), "the premise: a turn is in flight");
+    assert!(!type_and_enter(&mut app, &agent, "/compact"));
+    let texts: Vec<String> = app.ui.lines().iter().map(|l| l.text.clone()).collect();
+    assert!(
+        texts.join("\n").contains("not queued"),
+        "the refusal must disclaim the queue: {texts:?}"
+    );
+    assert!(
+        !texts.join("\n").contains("will run after"),
+        "the old promise must be gone: {texts:?}"
     );
 }
 

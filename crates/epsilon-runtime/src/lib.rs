@@ -103,6 +103,10 @@ pub struct ProjectConfig {
     /// global file, under the `--preset` flag; see
     /// [`resolve_effective_preset`] for the whole chain.
     pub preset: Option<String>,
+    /// `[plan] mode` — the workspace's own plan-mode default, as the raw bool
+    /// the file holds. Over the global file, under the `--plan` flag; see
+    /// [`resolve_plan_mode`] for the whole chain.
+    pub plan_mode: Option<bool>,
     /// `[[rules]]` entries stacked over the defaults as a `"project"` layer
     /// (last-match-wins; any deny still wins immediately per ADR-006 semantics).
     pub rules: Vec<ProjectRule>,
@@ -262,6 +266,11 @@ pub fn load_project_config(workspace: &Path) -> (ProjectConfig, TrustDecision, V
         .and_then(|p| p.get("preset"))
         .and_then(|v| v.as_str())
         .map(str::to_string);
+
+    cfg.plan_mode = parsed
+        .get("plan")
+        .and_then(|p| p.get("mode"))
+        .and_then(|v| v.as_bool());
 
     if let Some(rules) = parsed.get("rules").and_then(|r| r.as_array()) {
         for r in rules {
@@ -6800,6 +6809,24 @@ pub fn resolve_effective_preset(
         .unwrap_or_default()
 }
 
+/// Whether a launch starts in plan mode (settings-workflow audit F2).
+///
+/// Precedence, in the order the code reads it: an explicit `--plan` flag,
+/// then the project's own `[plan] mode`, then the global one, then off.
+///
+/// The flag is one-directional: present means on, absent means "ask the
+/// files". A project `mode = false` masks a global `mode = true` — the layer
+/// decides, like every other project-over-global key — and both layers only
+/// ever record today's default permissiveness or a restriction of it, never
+/// an escalation (ADR-051), so falling through is always safe.
+///
+/// Both inputs arrive as parameters rather than being read here so the rule
+/// is testable without a home directory — the same shape as
+/// [`resolve_default_thinking_level`].
+pub fn resolve_plan_mode(flag: bool, project: Option<bool>, global: Option<bool>) -> bool {
+    flag || project.or(global).unwrap_or(false)
+}
+
 /// Names a preset value falls through *past*, for the composition notice.
 ///
 /// The resolver above is deliberately silent (a pure function of three
@@ -7394,6 +7421,36 @@ mod thinking_resume_tests {
         );
     }
 
+    /// **Settings-workflow audit F2: plan resolves flag > project > global.**
+    ///
+    /// The flag is one-directional (present means on); the files decide when
+    /// it is absent, project over global. A project `off` masks a global `on`
+    /// — the layer decides, like every other project-over-global key.
+    #[test]
+    fn plan_flag_beats_project_beats_global_beats_off() {
+        assert!(
+            resolve_plan_mode(true, Some(false), Some(false)),
+            "flag on beats files off"
+        );
+        assert!(resolve_plan_mode(true, None, None), "flag on with no files");
+        assert!(
+            resolve_plan_mode(false, Some(true), Some(false)),
+            "no flag: the project file stands"
+        );
+        assert!(
+            resolve_plan_mode(false, None, Some(true)),
+            "no project value: the global file stands"
+        );
+        assert!(
+            !resolve_plan_mode(false, Some(false), Some(true)),
+            "a project off masks a global on — the layer decides"
+        );
+        assert!(
+            !resolve_plan_mode(false, None, None),
+            "and with neither, off"
+        );
+    }
+
     /// **`None` is not "off".** A session that recorded a level comes back on
     /// it; one that never said is left alone, so the composition default (the
     /// caller's business) survives; an unknown level is not guessed at.
@@ -7973,6 +8030,28 @@ pub fn resolve_launch(req: &LaunchRequest) -> Result<Launch, String> {
     // were produced. The CLI printed the first to stderr and passed the second on; a window
     notices.extend(startup_notices);
 
+    // Settings-workflow audit F2: a persisted `[plan] mode` reaches the
+    // launch — the flag wins, then the project file, then the global one.
+    // This is the one place the three meet, so every mode (TUI, headless,
+    // HTTP, RPC) resolves the same way. A file-supplied `on` is announced
+    // with its layer, because a launch that denies mutations without a word
+    // about why is the silent posture this notice exists to prevent.
+    let plan_mode = resolve_plan_mode(
+        req.plan_mode,
+        project.plan_mode,
+        epsilon_core::config::load_plan_mode(),
+    );
+    if plan_mode && !req.plan_mode {
+        notices.push(format!(
+            "plan mode on (from {} config `[plan] mode`; `/plan off` allows mutations — asks first)",
+            if project.plan_mode.is_some() {
+                "project"
+            } else {
+                "global"
+            }
+        ));
+    }
+
     Ok(Launch {
         workspace: req.workspace.clone(),
         stream_fn,
@@ -7985,7 +8064,7 @@ pub fn resolve_launch(req: &LaunchRequest) -> Result<Launch, String> {
         project,
         project_trusted: trusted_now,
         trust_review_pending,
-        plan_mode: req.plan_mode,
+        plan_mode,
         preset: req.preset,
         resume: req.resume.clone(),
         notices,
@@ -8065,6 +8144,74 @@ mod launch_tests {
         assert!(
             launch.notices.iter().any(|n| n.contains("faux")),
             "the launch says what it is running: {:?}",
+            launch.notices
+        );
+    }
+
+    /// **Settings-workflow audit F2: a project `[plan] mode` file reaches the
+    /// launch, and the flag still beats it.**
+    ///
+    /// Same rig as the preset composition tests: the file the TUI writes is
+    /// the file the launch reads. The global layer is whoever runs the test's
+    /// (assertions avoid depending on it: project-on reads on whatever the
+    /// global says, and flag-on beats a project-off).
+    #[test]
+    fn a_project_plan_file_reaches_the_launch_and_the_flag_beats_it() {
+        let ws = workspace();
+        std::fs::create_dir_all(ws.path().join(".epsilon")).expect("project dir");
+        std::fs::write(
+            ws.path().join(".epsilon").join("config.toml"),
+            "[plan]\nmode = true\n",
+        )
+        .expect("project plan file");
+        let base = LaunchRequest {
+            workspace: ws.path().to_path_buf(),
+            model_reference: None,
+            provider: ProviderChoice::Faux,
+            fallbacks: Vec::new(),
+            script_path: None,
+            stream_pace_ms: 0,
+            lsp: Lsp::Off,
+            plan_mode: false,
+            preset: epsilon_safety::Preset::Auto,
+            confinement: epsilon_tools::Confinement::Auto,
+            resume: Resume::No,
+        };
+        let launch = resolve_launch(&base).expect("a faux launch always resolves");
+        assert!(
+            launch.plan_mode,
+            "no flag: the project's persisted plan mode is what the launch runs"
+        );
+        assert!(
+            launch
+                .notices
+                .iter()
+                .any(|n| n.contains("plan mode on") && n.contains("project")),
+            "a file-supplied restriction names its layer: {:?}",
+            launch.notices
+        );
+
+        // The flag beats the file: same workspace, project says off, flag on.
+        std::fs::write(
+            ws.path().join(".epsilon").join("config.toml"),
+            "[plan]\nmode = false\n",
+        )
+        .expect("project plan file off");
+        let flagged = LaunchRequest {
+            plan_mode: true,
+            ..base
+        };
+        let launch = resolve_launch(&flagged).expect("a faux launch always resolves");
+        assert!(
+            launch.plan_mode,
+            "flag on beats a project file that says off"
+        );
+        assert!(
+            !launch
+                .notices
+                .iter()
+                .any(|n| n.contains("from project config")),
+            "an explicit flag outranks the file, so no file notice: {:?}",
             launch.notices
         );
     }

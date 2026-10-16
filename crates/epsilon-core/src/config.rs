@@ -919,6 +919,57 @@ pub fn save_preset(preset: &str) -> Result<PathBuf, String> {
     save_preset_in(&dir, preset)
 }
 
+// ---- plan mode default (settings-workflow audit F2) ---------------------------
+
+/// Persisted plan mode (`[plan] mode`) from `config_dir/config.toml`.
+///
+/// A bool, not a string: plan mode is on or off, and a string would invent a
+/// third state a typo could silently resolve. Same fail-open contract as every
+/// reader here: a missing file, table or key, or a non-bool value, is `None`
+/// — never an error, because a typo must not change the posture a launch runs
+/// under.
+pub fn load_plan_mode_in(config_dir: &Path) -> Option<bool> {
+    let raw = std::fs::read_to_string(config_dir.join("config.toml")).ok()?;
+    let table: toml::Table = toml::from_str(&raw).ok()?;
+    table.get("plan")?.get("mode")?.as_bool()
+}
+
+/// [`load_plan_mode_in`] against the resolved global directory.
+pub fn load_plan_mode() -> Option<bool> {
+    global_dir().and_then(|d| load_plan_mode_in(&d))
+}
+
+/// Set `[plan] mode`, preserving every other key. Persists immediately;
+/// returns the file written.
+///
+/// Same read-modify-write idiom as [`save_preset_in`]: a second way of
+/// editing `config.toml` is a second way of losing a setting. Both values
+/// persist — unlike `danger-full-access`, which is never written down: plan
+/// values never exceed today's default permissiveness (`on` restricts, `off`
+/// records the default), so a reloaded file cannot escalate a launch past
+/// what running without it already allows (ADR-051).
+pub fn save_plan_mode_in(config_dir: &Path, on: bool) -> Result<PathBuf, String> {
+    std::fs::create_dir_all(config_dir)
+        .map_err(|e| format!("create {}: {e}", config_dir.display()))?;
+    let path = config_dir.join("config.toml");
+    let mut table: toml::Table = std::fs::read_to_string(&path)
+        .ok()
+        .and_then(|raw| toml::from_str(&raw).ok())
+        .unwrap_or_default();
+
+    table
+        .entry("plan")
+        .or_insert(toml::Value::Table(toml::map::Map::new()))
+        .as_table_mut()
+        .ok_or_else(|| "[plan] exists but is not a table".to_string())?
+        .insert("mode".into(), toml::Value::Boolean(on));
+
+    let serialized =
+        toml::to_string_pretty(&table).map_err(|e| format!("serialize config: {e}"))?;
+    std::fs::write(&path, serialized).map_err(|e| format!("write {}: {e}", path.display()))?;
+    Ok(path)
+}
+
 /// Persist `[tui] theme`, preserving every other key.
 ///
 /// The settings panel writes this. Bare `/theme` still does not: that key is a
@@ -1516,6 +1567,73 @@ mod tests {
         assert!(
             save_preset_in(dir, "read-only").is_err(),
             "must refuse to overwrite a non-table [permissions]"
+        );
+    }
+
+    /// **Settings-workflow audit F2: `[plan] mode` round-trips both
+    /// directions, and a write leaves every other key alone.**
+    ///
+    /// `/plan` used to switch only the in-memory gate, so every restart came
+    /// back off with no notice. The round trip is the whole fix on the config
+    /// side; the coexistence assertion keeps it from becoming a second way of
+    /// losing a setting.
+    #[test]
+    fn plan_mode_round_trips_both_directions_and_leaves_other_keys_alone() {
+        let tmp = tempfile::tempdir().expect("tmp");
+        let dir = tmp.path();
+
+        // Unset reads None: no file yet, and a file without our key.
+        assert_eq!(load_plan_mode_in(dir), None);
+        std::fs::write(dir.join("config.toml"), "[other]\nkey = 1\n").unwrap();
+        assert_eq!(load_plan_mode_in(dir), None);
+
+        // Set on, read back on; set off, read back off.
+        save_plan_mode_in(dir, true).unwrap();
+        assert_eq!(load_plan_mode_in(dir), Some(true));
+        save_plan_mode_in(dir, false).unwrap();
+        assert_eq!(load_plan_mode_in(dir), Some(false));
+
+        // Coexists with other tables: a preset survives a plan write.
+        save_preset_in(dir, "read-only").unwrap();
+        save_plan_mode_in(dir, true).unwrap();
+        assert_eq!(load_plan_mode_in(dir), Some(true));
+        assert_eq!(
+            load_preset_in(dir).as_deref(),
+            Some("read-only"),
+            "the [permissions] table survives a plan write"
+        );
+
+        // Unknown keys survive the round trip too.
+        let text = std::fs::read_to_string(dir.join("config.toml")).unwrap();
+        assert!(
+            text.contains("[plan]"),
+            "the [plan] table is present: {text}"
+        );
+        assert!(
+            text.contains("[permissions]"),
+            "and [permissions] too: {text}"
+        );
+    }
+
+    #[test]
+    fn plan_mode_malformed_loads_as_none_and_non_table_section_errors() {
+        let tmp = tempfile::tempdir().expect("tmp");
+        let dir = tmp.path();
+
+        std::fs::write(dir.join("config.toml"), "not [ valid toml {{{{").unwrap();
+        assert_eq!(load_plan_mode_in(dir), None);
+
+        // A string is not our key: plan mode is a bool, and a string would
+        // invent a third state a typo could silently resolve.
+        std::fs::write(dir.join("config.toml"), "[plan]\nmode = \"on\"\n").unwrap();
+        assert_eq!(load_plan_mode_in(dir), None);
+
+        // A pre-existing scalar `plan = ...` must error rather than be
+        // silently clobbered — same shape as the `[permissions]` guard above.
+        std::fs::write(dir.join("config.toml"), "plan = \"scalar\"\n").unwrap();
+        assert!(
+            save_plan_mode_in(dir, true).is_err(),
+            "must refuse to overwrite a non-table [plan]"
         );
     }
 

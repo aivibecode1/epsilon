@@ -399,7 +399,8 @@ def main():
             sys.stderr.write(f"console-probe: unknown option {a!r}\n")
             sys.stderr.write(
                 "options: --early --late --maximize --at SECONDS --size COLSxROWS"
-                " --enter --settle SECONDS --keys SEQ --submit\n"
+                " --enter --settle SECONDS --keys SEQ --submit"
+                " --resize-to COLSxROWS [--resize-settle SECONDS]\n"
                 "        --shell cmd|powershell --exe-args ARGS --during\n"
             "        SEQ is literal text plus <up> <down> <left> <right> <enter>\n"
             "        <tab> <esc> <home> <end> <pgup> <pgdn> <space> <backspace>\n"
@@ -408,6 +409,8 @@ def main():
             return 2
     mode = "late"
     size = None
+    resize_to = None
+    resize_settle_s = 3.0
     maximize = False
     wait_s = 7.0
     press_enter = False
@@ -492,6 +495,13 @@ def main():
             i += 1
             parts = argv[i].lower().split("x")
             size = tuple(int(p) for p in parts)
+        elif argv[i] == "--resize-to":
+            i += 1
+            parts = argv[i].lower().split("x")
+            resize_to = tuple(int(p) for p in parts)
+        elif argv[i] == "--resize-settle":
+            i += 1
+            resize_settle_s = float(argv[i])
         else:
             positionals.append(argv[i])
         i += 1
@@ -738,6 +748,16 @@ def main():
         time.sleep(settle_s)
         result["after_submit"] = snapshot(out)
         result["settled_screen"] = screen_text(out, limit_rows=64)
+
+    if resize_to:
+        # Resize transition (directive §5): shrink/grow the live console
+        # mid-run and photograph the re-layout — fresh launches at sizes
+        # prove the layout math, only a transition proves the resize path
+        # (event → re-measure → redraw) holds the frame together.
+        result["mid_resize"] = set_size(out, *resize_to)
+        time.sleep(resize_settle_s)
+        result["after_resize"] = snapshot(out)
+        result["resized_screen"] = screen_text(out, limit_rows=64)
 
     kill(shell.pid)
     print(json.dumps(result, indent=2))

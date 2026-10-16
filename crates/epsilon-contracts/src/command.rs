@@ -214,7 +214,11 @@ pub const SLASH_ITEMS: &[SlashItem] = &[
     },
     SlashItem {
         value: "/settings",
-        description: "change model, thinking, theme, and permissions here",
+        // Six rows, all named: the copy once said "model, thinking, theme,
+        // and permissions" for a panel that also holds thinking blocks and
+        // plan — a list that stops early is the discoverability failure the
+        // panel's own "more" row exists to prevent.
+        description: "six rows: model, thinking, theme, thinking blocks, permission preset, plan",
     },
     SlashItem {
         value: "/scoped-models",

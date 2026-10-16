@@ -1074,6 +1074,13 @@ pub(crate) fn handle_key(app: &mut App, agent: &Arc<Agent>, key: KeyEvent) -> bo
                     app.input.clear();
                     app.cursor_chars = 0;
                     begin_auth_key_prompt(app, chosen);
+                } else {
+                    // Invariant 7: a filtered-empty auth picker swallowing
+                    // Enter reads as a frozen panel.
+                    app.ui.push_notice(format!(
+                        "no providers match '{}' — clear the filter or type another provider id",
+                        app.input
+                    ));
                 }
             }
             KeyCode::Up => {
@@ -1148,6 +1155,11 @@ pub(crate) fn handle_key(app: &mut App, agent: &Arc<Agent>, key: KeyEvent) -> bo
                     app.input.clear();
                     app.cursor_chars = 0;
                     app.set_thinking(agent, level);
+                } else {
+                    // Invariant 7: an out-of-range think index swallowing
+                    // Enter reads as a frozen panel.
+                    app.ui
+                        .push_notice("no thinking level selected — nothing to apply".to_string());
                 }
             }
             KeyCode::Up => {
@@ -2147,6 +2159,12 @@ pub(crate) fn handle_key(app: &mut App, agent: &Arc<Agent>, key: KeyEvent) -> bo
                         app.input.clear();
                         app.cursor_chars = 0;
                         app.apply_model(agent, id);
+                    } else {
+                        // Invariant 7: a filtered-empty stage-2 Enter must say
+                        // so, not swallow the keystroke.
+                        app.ui.push_notice(format!(
+                            "no model rows for '{provider}' match — clear the filter or pick another provider"
+                        ));
                     }
                 } else {
                     // Stage 1: descend into the selected provider's model list.
@@ -2159,6 +2177,11 @@ pub(crate) fn handle_key(app: &mut App, agent: &Arc<Agent>, key: KeyEvent) -> bo
                         // M20: entering a provider refreshes its live list once
                         // per session (no-op when it already answered).
                         app.request_live(false);
+                    } else {
+                        // Invariant 7: an empty provider list swallowing Enter
+                        // reads as a frozen picker.
+                        app.ui
+                            .push_notice("no provider rows — nothing to open".to_string());
                     }
                 }
             }

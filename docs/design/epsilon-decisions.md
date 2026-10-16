@@ -3956,3 +3956,90 @@ above — not the floor rule — is the behaviour being changed), a wire sends
 a total that disagrees with its buckets (then trust-wire is the behaviour
 being changed), or a provider bills thinking at a distinct rate (ADR-042's
 own trigger).
+
+---
+
+## ADR-051: Settings-workflow audit fixes — plan persistence, thinking project-first, login validation
+
+**Status: accepted (behaviour change, 2026-10-16).**
+
+**The problem.** The settings-workflow audit found nine live findings (F8
+deferred, below). Three change persisted behaviour, one changes validation,
+the rest change copy, hints and notices: (F1) the settings thinking row
+opened its picker at index 0 while bare `/think` preselects the current
+level, so Enter reset to Off; (F2) plan mode was session-only with no config
+key — `/plan on` forgot on restart; (F3) `/login` with an unknown provider id
+saved a credential no provider can use; (F4) the `/settings` copy named four
+things for six rows; (F5) one hint covered three Enter behaviours; (F6) the
+thinking write went global-only while the launch prefers the project file, so
+a project-level value shadowed it; (F7) the theme row never said it saved;
+(F9) refused recents pushes and empty-picker Enters stayed silent.
+
+**Decision: persist plan like preset, validate login like skill.**
+
+- *Plan persists project-first (`[plan] mode`).* `epsilon-core::config`
+  gains `load_plan_mode_in` / `save_plan_mode_in` (bool, fail-open, the same
+  read-modify-write idiom as `[permissions] preset`); `ProjectConfig` carries
+  the raw bool; `resolve_plan_mode` (beside `resolve_effective_preset`)
+  reads flag, then project, then global, then off — a project `off` masks a
+  global `on`, the layer decides. `resolve_launch` is the one place the three
+  meet, so every mode resolves the same way, and a file-supplied `on` is
+  announced with its layer. `/plan on` and the plan-disable yes-path both
+  write through `project_dir_or_global` (the preset shape: failure is a
+  notice, never a revert).
+- *Both plan directions persist, and that is safe where persisting
+  `danger-full-access` would not be.* The withheld analogy from the audit:
+  danger is never written down because a reloaded file would re-escalate a
+  launch with no question asked. Plan values never exceed today's default
+  permissiveness — `on` restricts, `off` records the default — so a
+  persisted file cannot escalate a launch past what running without it
+  already allows.
+- *Thinking writes project-first (the F6 promote half).* `set_thinking` goes
+  through `project_dir_or_global` like `[model] id` and `[permissions]`
+  preset already do. The old comment's two worries are answered in code: the
+  footer names the live value this call just set either way, so nothing
+  misstates; and an effort default is no more sensitive than the model id
+  and preset already written through this resolver, with the trust gate
+  still reviewing a changed project file before it applies. The startup
+  footer mirror still reads global-only (`app/session.rs`, untouched this
+  wave) — a known boundary, not a second fix smuggled in.
+- *Login validates against the catalog before save or prompt (F3).*
+  Unknown ids error with up-to-three suggestions (prefix, then substring,
+  then fuzzy) plus the full known list — bundled providers plus customs —
+  and save nothing: no prompt opens, no credential is written. The
+  `/skill` existence check is the precedent: a setting for a name nothing
+  provides is the defect in both cases. The typed arm also saves through
+  the test override like every other TUI write (production resolves to the
+  same global dir); the masked-prompt Enter path in `keys.rs` is unchanged
+  this wave.
+- *Copy, hint, notices (F1/F4/F5/F7/F9-recents).* The thinking row
+  preselects the current level (the bare-`/think` position lookup, not a
+  second rule). The `/settings` SLASH_ITEM copy says six rows and names
+  them all. The hint keeps one short Enter row (`open · change · ask`) plus
+  a legend row mapping `model/thinking → open`, `theme/blocks → change`,
+  `preset/plan → ask` (first-to-survive order — hint rows drop
+  last-to-first). The theme row pushes a `saved to <path>` notice on
+  success (bare `/theme` stays session-only, deliberately and honestly).
+  A refused recents push pushes `recents not saved` — the picker already
+  applied it in memory, so silence would promise an order the next launch
+  breaks. The empty-picker Enter notices (model stage-1/stage-2, auth
+  picker, think picker) land in `keys.rs` beside this wave.
+
+**Deferred by design (OUT, not overlooked): F8 config-only rows.**
+Keybindings remap and custom-provider add stay file-edit-only this wave;
+the honest follow-up is hint/footer lines naming the file plus reload, not
+an in-TUI editor smuggled into a notice wave.
+
+**Rejected.** (a) Warn-instead-of-promote for thinking: a warning on every
+settings write in a workspace with a project default nags the common case
+to protect a trust distinction the model id and preset do not observe —
+promoting keeps one resolver for all three. (b) Persisting `danger-full-access`
+by analogy with plan-off: the analogy reverses — plan-off records the
+default, danger records an escalation.
+
+**Revisit trigger.** A plan value needs to mean more than on/off (then the
+bool — not the layering — is the behaviour being changed), a second writer
+needs the startup footer mirror to read the project file (then `session.rs`
+is in scope with its own frame test), or login needs provider-specific
+validation beyond "known" (then the check moves to the credential seam,
+not the command arm).
