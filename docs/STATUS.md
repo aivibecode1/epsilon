@@ -179,6 +179,10 @@ filed with provenance headers, audit/history/15-17), and the fourth was verified
   as runs — the pre-battery focused suites re-polluted ambient favorites the hermetic
   battery then could not have touched, and the file was restored byte-identical from
   the hash-verified backup a second time.
+- **`round17 (2026-10-16)`** — rustdoc hygiene: the six `cargo doc` warnings
+  across the workspace (all pre-existing, none from session code) fixed as
+  code spans / full paths / a `text` fence. Evidence is the doc build itself
+  (zero warnings); covered by the next battery.
 - **`round16 (2026-10-16)`** — LANDED, green battery above (14/14, 2,263/0/15,
   hermetic fake-HOME; +1 over round15, the footer frame test): ask footer hints
   (list/custom/review states, after approvals, accessors).

@@ -198,7 +198,7 @@ pub fn more_lines(remaining: usize, key: Option<&str>, hidden_below: bool) -> St
     affordance(remaining, unit, hidden_below, key)
 }
 
-/// [`more_lines`] for a count of **wrapped rows**, which is what [`cap`] counts.
+/// [`more_lines`] for a count of **wrapped rows**, which is what `cap` counts.
 pub fn more_rows(remaining: usize, key: Option<&str>, hidden_below: bool) -> String {
     let unit = if remaining == 1 { "row" } else { "rows" };
     affordance(remaining, unit, hidden_below, key)

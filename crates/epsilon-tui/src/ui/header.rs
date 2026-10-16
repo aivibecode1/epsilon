@@ -79,7 +79,7 @@ impl RunState {
 /// epsilon-tools v0.1.0` turned `Faux (offline scripted)` into `ed)`, because
 /// [`side_by_side`] trims the half that yields from its far end and the model is
 /// one span. Budgeting the phase against the smallest right half there is
-/// ([`metric_spans`] built against the phase-less run state) keeps every
+/// (`metric_spans` built against the phase-less run state) keeps every
 /// measurement whole, and the phase is what pays for it.
 pub fn draw(f: &mut Frame<'_>, area: Rect, theme: &Theme, state: &RunState, metrics: &Metrics) {
     if area.width == 0 || area.height == 0 {

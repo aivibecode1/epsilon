@@ -5123,7 +5123,7 @@ struct HubState {
 /// The provisioned [`epsilon_contracts::question::QuestionService`]: parks
 /// asks for the TUI overlay, fails closed everywhere else.
 ///
-/// Clone-friendly like [`ChannelApprovalUi`]: every clone feeds the same
+/// Clone-friendly like [`epsilon_safety::ChannelApprovalUi`]: every clone feeds the same
 /// queue, and the composition hands out clones of the shared instance.
 #[derive(Default)]
 pub struct QuestionHub {
@@ -6060,7 +6060,7 @@ mod composition_notice_tests {
 /// The thinking level a launch with no session record starts on.
 ///
 /// Precedence, in the order the code reads it: the project's own
-/// `[thinking] level`, then the global one, then [`ThinkingLevel::default`].
+/// `[thinking] level`, then the global one, then [`epsilon_contracts::ThinkingLevel::default`].
 /// This is a *default*, not the last word — an explicit per-favourite memory
 /// still wins over it on F2 cycling, and an explicit session record still wins
 /// over it at resume (see [`resumed_thinking_level`]).

@@ -31,7 +31,7 @@
 //! *be* another. In a harness where a reader approves a command after reading it, that is
 //! not a rendering bug; it is the approval prompt lying. It costs eleven characters.
 //!
-//! ```
+//! ```text
 //! // "delete" with RLO around "px" displays as "dpxelete" or worse, while the bytes run
 //! // the other way. Stripping the override makes the line say what it does.
 //! ```

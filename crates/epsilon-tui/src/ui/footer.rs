@@ -137,7 +137,7 @@ pub struct Hints {
     /// name reads as a different *kind* of fact from the branch beside it: the branch is
     /// what the workspace is, the name is what this conversation is.
     ///
-    /// The value comes from [`crate::app::App::session_name`], which the terminal title
+    /// The value comes from `App::session_name`, which the terminal title
     /// already reads (`app/session.rs:545-553`); it is not recomputed here. It is stripped
     /// of display-steering characters before it is stored, for the same reason the title
     /// strips it — a session name is user-typed text and this row draws it.
