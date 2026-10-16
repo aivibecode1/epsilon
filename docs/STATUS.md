@@ -179,6 +179,13 @@ filed with provenance headers, audit/history/15-17), and the fourth was verified
   as runs — the pre-battery focused suites re-polluted ambient favorites the hermetic
   battery then could not have touched, and the file was restored byte-identical from
   the hash-verified backup a second time.
+- **`round14 (2026-10-16)`** — Ponytail simplicity pass over session-new code
+  (`question.rs` ×2, `ask.rs`, plan additions, extra-dirs): no cuts. Checked
+  for dead public surface (`format_model_output` has one production caller +
+  tests; `QuestionAnswer` flows through submit), duplicated validation (tool
+  vs overlay caps are a documented cross-crate mirror, not a copy), and
+  mirror state (`settings_plan` follows the `settings_preset` idiom).
+  Verdict: the new code earns its lines; findings stay at zero.
 - **`round13 (2026-10-16)`** — usage-reconciliation investigation, closed with
   evidence (no code change): traced all four bill-carrying kinds (Assistant,
   ToolResult, Compaction, BranchSummary) through both counters — the session-file
