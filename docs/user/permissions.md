@@ -49,6 +49,16 @@ the terminal IDE. Switching *down* applies at once; switching *up* to
 `danger-full-access` asks first — type `yes` to confirm, anything else leaves
 the posture unchanged. Parked approval asks keep the policy that raised them.
 
+## Plan mode
+
+Read-only research, toggled mid-session. `--plan` starts in it; `/plan`
+reports the state, `/plan on` restricts at once, `/plan off` asks first
+(disabling is the privilege-raising direction, so it confirms exactly like
+`danger-full-access`). The header shows a `plan` chip while it is on, and
+the `/settings` panel carries the state as a row. Denies the same four
+capabilities as the launch flag (write, edit, bash, shell) with the same
+limits; clears the session's always-allow memory in both directions.
+
 ## Layer 2 — OS confinement for shell commands
 
 ```sh

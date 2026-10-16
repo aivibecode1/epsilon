@@ -12,7 +12,7 @@ claims are not proof that a capability works today.
 | [`START-HERE.md`](START-HERE.md) | **the reading guide for a newcomer**: a ten-minute tour, a reading order, a folder map, a glossary, one diagram of how the pieces connect. | you are new and want the shortest path in |
 | [`STATUS.md`](STATUS.md) | **what is true right now**: progress, decisions in flight, what was cut, what is broken | you want the current state, not the history |
 | [`HANDOFF.md`](HANDOFF.md) | **the working guide for the next agent**: what is verified versus claimed, how to run the battery, the machine rules, and the traps that have cost real time. Points at [`plans/024-finishing-the-objective.md`](plans/024-finishing-the-objective.md) for what is left | you are picking this up from someone else |
-| [`user/`](user) | product guides: install, configuration, auth, permissions, sessions, [goals](user/goals.md), [extensions](user/extensions.md), [prompt templates](user/prompt-templates.md), troubleshooting | you are using or configuring Epsilon |
+| [`user/`](user) | product guides: install, configuration, auth, permissions, models, sessions, [goals](user/goals.md), [extensions](user/extensions.md), [prompt templates](user/prompt-templates.md), troubleshooting | you are using or configuring Epsilon |
 | [`../CHANGELOG.md`](../CHANGELOG.md) | user-visible changes, milestone by milestone, newest first | you want to know what changed |
 
 ## Contributor documentation

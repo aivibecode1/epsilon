@@ -18,6 +18,7 @@ nothing in the workspace reads it.
 | [`configuration.md`](configuration.md) | configure models, custom providers, client ids, editors, keybindings |
 | [`auth.md`](auth.md) | manage API keys and OAuth subscriptions, fix credential problems |
 | [`permissions.md`](permissions.md) | understand permission rules, presets, sandbox modes, `--plan`, headless behavior |
+| [`models.md`](models.md) | pick a model, read live listings and their age, understand retired badges |
 | [sessions.md](sessions.md) | resume, fork, export, recover damaged transcripts, leases |
 | [`goals.md`](goals.md) | park one long-running objective, watch it, stop it, understand what it costs |
 | [`extensions.md`](extensions.md) | write or install a helper process that sees or answers tool calls |
