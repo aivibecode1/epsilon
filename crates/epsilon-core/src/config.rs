@@ -250,6 +250,113 @@ pub fn current_project_config_hash_in(workspace: &Path) -> Option<String> {
     Some(sha256_hex(raw.as_bytes()))
 }
 
+/// Read-only project-trust status: the launch decision table without the write.
+///
+/// `load_project_config` in `epsilon-runtime` RECORDS first sight (it writes
+/// `trust.json`); a listing (`get_commands`) or a refresh (`/reload`) must
+/// never record trust, so they read this instead — one table, two
+/// presentations, never two answers about what "no memory" means.
+///
+/// Semantics, row for row the launch path's:
+/// - [`ProjectTrustStatus::Absent`]: no project config on disk — nothing to review.
+/// - [`ProjectTrustStatus::Trusted`]: genuine first sight (no trust file and
+///   no memory), or a remembered workspace whose recorded hash still matches.
+/// - [`ProjectTrustStatus::Changed`]: the config changed since it was
+///   recorded; a remembered refusal; or — the Fix 2 row — a pre-existing
+///   trust file whose hash matches with NO remembered entry (a repository
+///   ships both files, so a matching hash without memory is a stranger's
+///   word, not trust).
+///
+/// A torn or unreadable global store reads as no memory (fail closed: without
+/// memory only first sight trusts). This answers for the whole trust model —
+/// skills, MCP servers, prompts and commands all gate on the same decision —
+/// not only the slash-command surface that prompted the review.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ProjectTrustStatus {
+    /// No project config on disk — nothing to review.
+    Absent,
+    /// The project tier may load.
+    Trusted,
+    /// Re-prompt (and curtail the project tier until answered).
+    Changed,
+}
+
+/// [`ProjectTrustStatus`] for `workspace`, read-only (see the enum docs).
+pub fn project_trust_status(workspace: &Path) -> ProjectTrustStatus {
+    let Some(current) = current_project_config_hash_in(workspace) else {
+        return ProjectTrustStatus::Absent;
+    };
+    let remembered = remembered_project_trust(workspace);
+    let saved = saved_project_config_hash(workspace);
+    match (remembered, saved) {
+        // A remembered refusal curtails (a refresh re-asks; the writeful
+        // launch path stays quiet here, where nothing new arrived to review).
+        (Some(false), _) => ProjectTrustStatus::Changed,
+        (Some(true), None) => ProjectTrustStatus::Trusted,
+        (Some(true), Some(hash)) if hash == current => ProjectTrustStatus::Trusted,
+        (Some(true), Some(_)) => ProjectTrustStatus::Changed,
+        // Genuine first sight: nothing recorded anywhere yet.
+        (None, None) => ProjectTrustStatus::Trusted,
+        // A recorded hash without memory — shipped or edited — re-prompts.
+        (None, Some(_)) => ProjectTrustStatus::Changed,
+    }
+}
+
+/// The recorded config hash for `workspace`, if any (`trust.json`).
+fn saved_project_config_hash(workspace: &Path) -> Option<String> {
+    let raw = std::fs::read_to_string(workspace.join(".epsilon").join("trust.json")).ok()?;
+    serde_json::from_str::<serde_json::Value>(&raw)
+        .ok()?
+        .get("config_sha256")?
+        .as_str()
+        .map(String::from)
+}
+
+/// The remembered per-path decision for `workspace`, if any.
+///
+/// Reads the same `<global_dir>/trust.json` the writeful stores own
+/// (`epsilon_runtime::ProjectTrustStore`, the TUI's `trust_store`): this crate
+/// can depend on neither — both depend on it — so the nearest-ancestor lookup
+/// is repeated here, read-only and lock-free. A torn read is no memory (fail
+/// closed: without memory only first sight trusts).
+fn remembered_project_trust(workspace: &Path) -> Option<bool> {
+    let raw = std::fs::read_to_string(global_dir()?.join("trust.json")).ok()?;
+    let obj = serde_json::from_str::<serde_json::Value>(&raw).ok()?;
+    let obj = obj.as_object()?;
+    // Same rule as the stores' canonicalize (pi `normalizeCwd`): absolute +
+    // lexically normalized, so keys compare without touching the filesystem.
+    let canonicalize = |path: &Path| {
+        let abs = if path.is_absolute() {
+            path.to_path_buf()
+        } else {
+            std::env::current_dir().unwrap_or_default().join(path)
+        };
+        let mut out = PathBuf::new();
+        for comp in abs.components() {
+            match comp {
+                std::path::Component::ParentDir => {
+                    out.pop();
+                }
+                std::path::Component::CurDir => {}
+                other => out.push(other.as_os_str()),
+            }
+        }
+        out.to_string_lossy().into_owned()
+    };
+    // Nearest `cwd`-or-ancestor key wins (pi `findNearestTrustEntry`).
+    let mut dir = canonicalize(workspace);
+    loop {
+        if let Some(decision) = obj.get(&dir).and_then(|v| v.as_bool()) {
+            return Some(decision);
+        }
+        let parent = Path::new(&dir).parent()?.to_string_lossy().into_owned();
+        if parent == dir {
+            return None;
+        }
+        dir = parent;
+    }
+}
+
 /// Favorite (starred) model ids (`[picker] favorite`), insertion order, uncapped —
 /// opencode's `favorite` list semantics (toggled in the picker, cycled with
 /// Ctrl+P like pi's scoped-models cycling).
@@ -1617,6 +1724,83 @@ mod tests {
         append_prompt_history_in(dir, "has \"quotes\" and\nnewlines").unwrap();
         let loaded = load_prompt_history_in(dir);
         assert!(loaded.contains(&"has \"quotes\" and\nnewlines".to_string()));
+    }
+
+    // --- read-only project-trust status (adversarial-review Fix 3) ------------
+    //
+    // RED-first: `project_trust_status` does not exist yet — the first run
+    // must fail to compile on exactly that name. The table mirrors the launch
+    // decision (`epsilon_runtime::load_project_config` + `resolve_launch`)
+    // without writing anything: a listing or a refresh must never record
+    // trust, so first sight here answers without persisting.
+
+    /// No config, nothing to review.
+    #[test]
+    fn trust_status_without_a_config_is_absent() {
+        let tmp = tempfile::tempdir().unwrap();
+        assert_eq!(project_trust_status(tmp.path()), ProjectTrustStatus::Absent);
+    }
+
+    /// Genuine first sight trusts (the writeful launch path records it; this
+    /// read-only answer persists nothing).
+    #[test]
+    fn trust_status_on_first_sight_is_trusted() {
+        let tmp = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(tmp.path().join(".epsilon")).unwrap();
+        std::fs::write(
+            tmp.path().join(".epsilon").join("config.toml"),
+            "[model]\nid = \"x\"\n",
+        )
+        .unwrap();
+        assert_eq!(
+            project_trust_status(tmp.path()),
+            ProjectTrustStatus::Trusted
+        );
+    }
+
+    /// Fix 2 at the shared table: a pre-existing trust file whose hash matches
+    /// reads Changed with no remembered entry — a repo ships both files, and a
+    /// shipped file is not an acceptance.
+    #[test]
+    fn trust_status_with_a_shipped_matching_hash_is_changed() {
+        let tmp = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(tmp.path().join(".epsilon")).unwrap();
+        std::fs::write(
+            tmp.path().join(".epsilon").join("config.toml"),
+            "[model]\nid = \"x\"\n",
+        )
+        .unwrap();
+        let current = current_project_config_hash_in(tmp.path()).expect("a current hash");
+        std::fs::write(
+            tmp.path().join(".epsilon").join("trust.json"),
+            serde_json::json!({ "config_sha256": current }).to_string(),
+        )
+        .unwrap();
+        assert_eq!(
+            project_trust_status(tmp.path()),
+            ProjectTrustStatus::Changed
+        );
+    }
+
+    /// An edited config reads Changed — the re-prompt row.
+    #[test]
+    fn trust_status_with_an_edited_config_is_changed() {
+        let tmp = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(tmp.path().join(".epsilon")).unwrap();
+        std::fs::write(
+            tmp.path().join(".epsilon").join("config.toml"),
+            "[model]\nid = \"x\"\n",
+        )
+        .unwrap();
+        std::fs::write(
+            tmp.path().join(".epsilon").join("trust.json"),
+            r#"{"config_sha256": "0000000000000000000000000000000000000000000000000000000000000000"}"#,
+        )
+        .unwrap();
+        assert_eq!(
+            project_trust_status(tmp.path()),
+            ProjectTrustStatus::Changed
+        );
     }
 }
 

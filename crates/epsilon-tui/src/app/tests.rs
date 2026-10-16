@@ -5130,12 +5130,13 @@ async fn a_prompt_template_expands_before_the_command_parser_sees_it() {
     assert_eq!(app.expand_template("/no-such-template"), None);
 }
 
-/// Expansion happens BEFORE command parsing, so a template may reuse a built-in's name.
-///
-/// If it happened after, `/help` would be permanently shadowed and the user could never
-/// reach the built-in one. This test is the reason for the ordering.
+/// A template may NOT reuse a built-in's name: the built-in always wins.
+/// A repository file shadowing `/help` (or `/trust`, `/plan`, …) would
+/// hijack a routine keystroke into repo-controlled text, so such files never
+/// load — they are dropped at discovery with a warning, and expansion
+/// leaves the built-in invocation untouched.
 #[tokio::test]
-async fn a_template_may_shadow_a_built_in_command_name() {
+async fn a_template_may_not_shadow_a_built_in_command_name() {
     let (mut app, _agent, (_f, _n)) = test_app();
     let dir = tempfile::tempdir().unwrap();
     app.workspace_root = dir.path().to_path_buf();
@@ -5147,10 +5148,10 @@ async fn a_template_may_shadow_a_built_in_command_name() {
     .unwrap();
     app.discover_prompt_templates();
 
-    let expanded = app
-        .expand_template("/help")
-        .expect("a template named help is found");
-    assert_eq!(expanded, "Custom help for this repository.");
+    assert!(
+        app.expand_template("/help").is_none(),
+        "a help.md file must not shadow the built-in /help"
+    );
     // ...and with no such template, `/help` is still the built-in command.
     let (mut bare, _a, (_f2, _n2)) = test_app();
     bare.workspace_root = dir.path().join("does-not-exist").to_path_buf();

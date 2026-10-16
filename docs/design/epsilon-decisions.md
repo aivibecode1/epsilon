@@ -3779,3 +3779,70 @@ repository-authored command bodies.
 headless-literal pin names the exact behaviour being changed), cross-harness
 command dirs need scanning, or a command needs more than prose-plus-builtin
 — which is a new ADR, not a new frontmatter key.
+
+---
+
+**Amendment (2026-10-16, wave `ac7a52d` adversarial review) — three trust-boundary fixes.**
+
+An adversarial review of the wave above found three holes in the
+custom-slash-command trust boundary. All three are closed below; none adds a
+dependency or a crate.
+
+**Fix 1 — `prompts/` files can no longer shadow builtins (either tier).**
+`commands/` already dropped builtin-named files with a warning, but
+`prompts/` had no guard at all: a `prompts/trust.md` expanded *before* the
+command parse, so `/trust` ran the file's body instead of the builtin — a
+repository file answering the trust prompt. Now a template whose stem is a
+`COMMAND_HEADS` head never loads, in both tiers (even user-tier: a builtin
+must always run the builtin). The drop is announced on the same
+`DiscoveredFiles` notices channel `commands/` uses
+(`epsilon-contracts::prompt_template::discover_templates`, new), and the
+merged TUI cache enforces the same rule in `merge_kinds` — which is the path
+whose notices already reach the transcript at startup and on `/reload`.
+The old shadowing rule is retired deliberately: a same-named template no
+longer overrides, it is dropped.
+
+**Fix 2 — a repo-shipped `trust.json` arrives untrusted.** First sight of a
+config recorded its hash and trusted it — including a `trust.json` the
+repository shipped alongside the config, whose matching hash then read
+`Unchanged` forever with no remembered acceptance. Now a matching hash with
+no remembered per-path entry reads `Changed` and re-prompts; genuine first
+sight (no trust file at all) still trusts and records. Consequences worth
+stating plainly: first sight trusts *once* — the second run re-prompts until
+the user answers — and the accept path is unchanged because it already
+records both memories (hash file plus trust-store entry, verified first-hand
+in the TUI accept path), so accept → restart stays trusted with no
+re-prompt. This affects the whole trust model, not only commands: skills,
+MCP servers, prompts and commands all gate on the same decision, so the
+shipped pair previously admitted all of them.
+
+**Fix 3 — one read-only trust table; `/reload` re-validates; symlinks rejected.**
+`epsilon-core::config::project_trust_status` (new, `Absent`/`Trusted`/
+`Changed`) owns the launch decision table without the write — a listing or a
+refresh must never record trust by looking. `/reload` recomputes it first: on
+`Changed` it sets `trust_review_pending`, evicts project-tier entries from
+the cached templates/commands, and re-prompts with the startup sentences, so
+every discovery below runs under the fresh flag exactly as at startup. RPC
+`get_commands` answers through the same table (its private hash copy is
+deleted — net deletion): a remembered workspace with an edited config now
+hides project files there too, matching the TUI popup, which already gated
+them. Symlink entries never load in either directory loader
+(`symlink_metadata` + `is_symlink`, announced naming the link; broken links
+announced too, never swallowed). Two honest limitations: a `prompts/`-dir
+symlink skip is silent at TUI startup (the silent scan's signature is shared
+with startup code, so the warning exists at the API layer and on the
+`commands/` side, not on that one path), and a remembered refusal reads
+`Changed` from the shared table (a refresh re-asks; the writeful launch path
+stays quiet, where nothing new arrived to review).
+
+**Rejected.** (a) Teaching the silent scan a notices return: its signature is
+shared with startup code outside this wave, and a flag-day rename buys the
+same warning a new function already carries. (b) A trust-file age or
+authorship check to tell shipped from recorded: indistinguishable bytes, so
+the rule fails closed instead. (c) Headless auto-accept of any of this: the
+loud banner stays loud.
+
+**Revisit trigger.** A use case needs a template to shadow a builtin (then
+Fix 1's drop — not the old override — is the behaviour being changed), or
+first sight must stop trusting (then the `Trusted` row and its recording go
+together, never one without the other).

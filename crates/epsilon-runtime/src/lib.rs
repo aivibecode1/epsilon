@@ -189,6 +189,10 @@ pub fn load_project_config(workspace: &Path) -> (ProjectConfig, TrustDecision, V
                 .and_then(|h| h.as_str())
                 .map(String::from)
         });
+    // Whether the operator ever answered for this workspace (pi `get`): the
+    // store read the launch composition below repeats. `None`/unreadable is
+    // never a decision — the hash rows below say what happens without one.
+    let remembered: ProjectTrustDecision = ProjectTrustStore::open().and_then(|s| s.get(workspace));
     let decision = match &previous {
         None => {
             notices.push(format!(
@@ -198,6 +202,15 @@ pub fn load_project_config(workspace: &Path) -> (ProjectConfig, TrustDecision, V
             TrustDecision::Trusted
         }
         Some(prev) if prev != &hash => TrustDecision::Changed {
+            previous: prev.clone(),
+        },
+        // A matching hash is trust only when somebody answered: a repository
+        // can ship BOTH files (config + a trust.json recording its hash), so
+        // with no remembered per-path entry the file is a stranger's word,
+        // not an acceptance — it reads Changed and re-prompts (Fix 2). The
+        // accept path records BOTH memories (hash file + store entry), so
+        // accept → restart stays trusted with no re-prompt.
+        Some(prev) if remembered.is_none() => TrustDecision::Changed {
             previous: prev.clone(),
         },
         Some(_) => TrustDecision::Unchanged,
@@ -742,6 +755,177 @@ mod project_hash_tests {
             said.contains("trust.json"),
             "and it must name the file, so the reader can fix it: {said}"
         );
+    }
+
+    /// Adversarial-review Fix 2: a repository can ship BOTH files — a config
+    /// and a `trust.json` recording its hash. With no remembered per-path
+    /// entry that matching hash must read `Changed` (re-prompt), not
+    /// `Unchanged`: a shipped file is not an acceptance.
+    ///
+    /// RED-first: this fails while first sight with a recorded hash reads
+    /// `Unchanged` — the exact shape under test.
+    #[test]
+    fn a_shipped_trust_file_with_a_matching_hash_reads_changed() {
+        let tmp = tempfile::tempdir().unwrap();
+        let ws = tmp.path();
+        std::fs::create_dir_all(ws.join(".epsilon")).unwrap();
+        let body = "[model]\nid = \"faux-9\"\n";
+        std::fs::write(ws.join(".epsilon").join("config.toml"), body).unwrap();
+        // What a cloned repository contains: the config plus a trust file
+        // recording exactly its hash. Written as bytes rather than through the
+        // accept path because a repo ships bytes, not our function calls — and
+        // the temp workspace has no remembered entry, exactly like a workspace
+        // opened for the first time.
+        let hash =
+            epsilon_core::config::current_project_config_hash_in(ws).expect("a current hash");
+        std::fs::write(
+            ws.join(".epsilon").join("trust.json"),
+            serde_json::json!({ "config_sha256": hash }).to_string(),
+        )
+        .unwrap();
+
+        let (_cfg, decision, _notices) = load_project_config(ws);
+        assert_eq!(
+            decision,
+            TrustDecision::Changed { previous: hash },
+            "a matching hash with no remembered entry is a stranger's word, not trust"
+        );
+    }
+
+    /// First sight still trusts (and records): a genuine first run asks
+    /// nothing. The SECOND load — same bytes, still no remembered entry —
+    /// re-prompts instead: our own recording is indistinguishable from a
+    /// shipped file, so it fails closed until the user answers.
+    ///
+    /// RED-first: the second assertion fails while a recorded hash reads
+    /// `Unchanged` without memory.
+    #[test]
+    fn first_sight_trusts_once_then_reprompts_until_remembered() {
+        let tmp = tempfile::tempdir().unwrap();
+        let ws = tmp.path();
+        std::fs::create_dir_all(ws.join(".epsilon")).unwrap();
+        std::fs::write(
+            ws.join(".epsilon").join("config.toml"),
+            "[model]\nid = \"faux-9\"\n",
+        )
+        .unwrap();
+
+        let (_cfg, first, _notices) = load_project_config(ws);
+        assert_eq!(
+            first,
+            TrustDecision::Trusted,
+            "a first run records and loads"
+        );
+        assert!(
+            ws.join(".epsilon").join("trust.json").is_file(),
+            "first sight records the hash it trusted"
+        );
+
+        let (_cfg, second, _notices) = load_project_config(ws);
+        assert!(
+            matches!(second, TrustDecision::Changed { .. }),
+            "without a remembered entry the recording re-prompts: {second:?}"
+        );
+    }
+
+    /// Fix 3: the shared read-only table agrees with the writeful launch
+    /// decision on every row a hermetic test can drive (no remembered entry —
+    /// the real trust store never holds a temp workspace, the same property
+    /// the RPC trust tests already rely on).
+    ///
+    /// RED-first: `project_trust_status` does not exist yet in `epsilon-core`,
+    /// so this fails to compile until the single table lands.
+    #[test]
+    fn the_shared_trust_table_agrees_with_load_project_config() {
+        use epsilon_core::config::{ProjectTrustStatus, project_trust_status};
+
+        // Absent: no config, nothing to review.
+        let empty = tempfile::tempdir().unwrap();
+        assert_eq!(
+            project_trust_status(empty.path()),
+            ProjectTrustStatus::Absent
+        );
+        assert_eq!(load_project_config(empty.path()).1, TrustDecision::Absent);
+
+        // First sight: trusted, and the launch path records it.
+        let first = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(first.path().join(".epsilon")).unwrap();
+        std::fs::write(
+            first.path().join(".epsilon").join("config.toml"),
+            "[model]\nid = \"faux-9\"\n",
+        )
+        .unwrap();
+        assert_eq!(
+            project_trust_status(first.path()),
+            ProjectTrustStatus::Trusted
+        );
+        assert_eq!(load_project_config(first.path()).1, TrustDecision::Trusted);
+
+        // Shipped pair (matching hash, no memory): Changed on both.
+        let shipped = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(shipped.path().join(".epsilon")).unwrap();
+        std::fs::write(
+            shipped.path().join(".epsilon").join("config.toml"),
+            "[model]\nid = \"faux-9\"\n",
+        )
+        .unwrap();
+        let hash =
+            epsilon_core::config::current_project_config_hash_in(shipped.path()).expect("a hash");
+        std::fs::write(
+            shipped.path().join(".epsilon").join("trust.json"),
+            serde_json::json!({ "config_sha256": hash }).to_string(),
+        )
+        .unwrap();
+        assert_eq!(
+            project_trust_status(shipped.path()),
+            ProjectTrustStatus::Changed
+        );
+        assert!(
+            matches!(
+                load_project_config(shipped.path()).1,
+                TrustDecision::Changed { .. }
+            ),
+            "the writeful decision matches the shared table"
+        );
+
+        // Edited config (stale hash): Changed on both.
+        std::fs::write(
+            shipped.path().join(".epsilon").join("config.toml"),
+            "[model]\nid = \"faux-10\"\n",
+        )
+        .unwrap();
+        assert_eq!(
+            project_trust_status(shipped.path()),
+            ProjectTrustStatus::Changed
+        );
+        assert!(
+            matches!(
+                load_project_config(shipped.path()).1,
+                TrustDecision::Changed { .. }
+            ),
+            "an edit re-prompts on both paths"
+        );
+    }
+
+    /// The accept path writes TWO memories — the config hash (per-file
+    /// integrity) and the remembered per-path entry (so the next run trusts
+    /// without re-asking). The remembered half round-trips through an isolated
+    /// store: `set` sticks, `clear` forgets.
+    ///
+    /// This is the write the normal accept→restart→trusted flow depends on
+    /// (verified first-hand: the TUI accept path records `Some(true)` before
+    /// the hash). The launch mapping for a remembered workspace is unchanged
+    /// by this wave; what changes is only the no-memory rows above.
+    #[test]
+    fn the_remembered_entry_accept_writes_round_trips() {
+        let tmp = tempfile::tempdir().unwrap();
+        let store = ProjectTrustStore::open_in(tmp.path().join("trust.json"));
+        let ws = tempfile::tempdir().unwrap();
+        assert_eq!(store.get(ws.path()), None, "nothing remembered yet");
+        store.set(ws.path(), Some(true)).expect("remembered");
+        assert_eq!(store.get(ws.path()), Some(true), "accept's memory sticks");
+        store.clear(ws.path()).expect("forgotten");
+        assert_eq!(store.get(ws.path()), None, "forgetting asks again");
     }
 }
 
@@ -7313,10 +7497,19 @@ pub fn resolve_launch(req: &LaunchRequest) -> Result<Launch, String> {
     // a changed one (the user already answered); `None`/unreadable falls back
     // to the hash decision. "No memory" is never a decision.
     let remembered: Option<bool> = ProjectTrustStore::open().and_then(|s| s.get(&req.workspace));
+    // The hash half of this table is owned read-only by
+    // `epsilon_core::config::project_trust_status` (Fix 3); `trust` above is
+    // the writeful launch-path recording of the same answer, and
+    // `the_shared_trust_table_agrees_with_load_project_config` pins the two
+    // together. The `None` arm reads the shared table so a launch and a
+    // listing/refresh cannot disagree about what "no memory" means.
     let trusted_now = match remembered {
         Some(false) => false,
         Some(true) => true,
-        None => !matches!(trust, TrustDecision::Changed { .. }),
+        None => !matches!(
+            epsilon_core::config::project_trust_status(&req.workspace),
+            epsilon_core::config::ProjectTrustStatus::Changed
+        ),
     };
     // M39: untrusted projects curtail skills/extensions/prompts at the roots —
     // the config hash gates config.toml, but third-party CODE never loads

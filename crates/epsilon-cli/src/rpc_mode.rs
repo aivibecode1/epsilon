@@ -366,39 +366,17 @@ fn model_value(info: &epsilon_llm::catalog::ModelInfo) -> serde_json::Value {
 
 /// Whether an RPC listing may name the workspace's own prompt files.
 ///
-/// The same decision composition makes (`resolve_launch`: a remembered denial
-/// wins, remembered trust wins, otherwise the config hash decides — absent or
-/// unchanged trusts, changed curtails), answered read-only. `load_project_config`
-/// cannot be reused here: it records the first-sight hash on disk, and a
-/// listing must not write trust state — so the hash comparison is done here
-/// against the recorded file, with no write on any path.
+/// Answered read-only through the shared table
+/// (`epsilon_core::config::project_trust_status`): the same answer
+/// composition reaches at launch and `/reload` reaches on refresh, so the
+/// three cannot describe different sets of names. Absent (no config) and
+/// Trusted list; Changed curtails — including the Fix 2 row, where a shipped
+/// trust file with a matching hash re-prompts instead of trusting.
 fn project_trusted_for_listing(workspace: &std::path::Path) -> bool {
-    if let Some(store) = epsilon_runtime::ProjectTrustStore::open() {
-        match store.get(workspace) {
-            Some(false) => return false,
-            Some(true) => return true,
-            None => {}
-        }
-    }
-    let Ok(raw) = std::fs::read_to_string(workspace.join(".epsilon").join("config.toml")) else {
-        return true; // no config: nothing could have changed (Absent trusts)
-    };
-    let Ok(saved) = std::fs::read_to_string(workspace.join(".epsilon").join("trust.json")) else {
-        return true; // first sight trusts, without recording it here
-    };
-    let recorded = serde_json::from_str::<serde_json::Value>(&saved)
-        .ok()
-        .and_then(|v| {
-            v.get("config_sha256")
-                .and_then(|h| h.as_str())
-                .map(str::to_string)
-        });
-    let Some(previous) = recorded else {
-        return true; // no recorded hash: same as first sight
-    };
-    // The trust-hash primitive both cli and tui share — not a second copy of
-    // the hex loop (config.rs owns it).
-    epsilon_core::config::sha256_hex(raw.as_bytes()) == previous
+    !matches!(
+        epsilon_core::config::project_trust_status(workspace),
+        epsilon_core::config::ProjectTrustStatus::Changed
+    )
 }
 
 /// The prompt files `get_commands` may list: user tier always, project tier
@@ -416,17 +394,11 @@ fn listable_prompt_files(
 
     let global = epsilon_core::config::global_dir();
     let trusted = project_trusted_for_listing(workspace);
-    let mut user = Vec::new();
-    let mut project = Vec::new();
-    for (dir, scope) in pt::template_dirs(global.as_deref(), workspace, trusted) {
-        let loaded = pt::load_from_dir(&dir, scope);
-        if scope == pt::TemplateScope::Project {
-            project.extend(loaded);
-        } else {
-            user.extend(loaded);
-        }
-    }
-    let templates = pt::merge(user, project, Vec::new());
+    // The noticed template scan; its warnings are a TUI transcript channel
+    // and RPC has nowhere to put them, so they are dropped here — exactly how
+    // the command notices below are treated.
+    let templates =
+        pt::discover_templates(&pt::template_dirs(global.as_deref(), workspace, trusted)).files;
     let found = pt::discover_commands(&pt::command_dirs(global.as_deref(), workspace, trusted));
     // Notices are a TUI transcript channel; RPC has nowhere to put them, and
     // the listing names only what loaded — which is exactly what the drift
@@ -2986,6 +2958,51 @@ mod tests {
         assert!(
             !names.contains(&"review".to_string()),
             "an untrusted project names no templates: {names:?}"
+        );
+        assert!(
+            names.contains(&"help".to_string()),
+            "builtins keep listing: {names:?}"
+        );
+    }
+
+    /// A shipped trust pair hides the project tiers too: a config plus a
+    /// MATCHING trust.json with no remembered entry reads Changed after Fix 2
+    /// (a repo ships both files), so the listing curtails like the TUI does.
+    ///
+    /// RED-first: this fails while a matching hash reads trusted.
+    #[tokio::test]
+    async fn get_commands_hides_project_files_when_trust_was_shipped() {
+        let ws = tempfile::tempdir().unwrap();
+        let epsilon = ws.path().join(".epsilon");
+        std::fs::create_dir_all(epsilon.join("commands")).unwrap();
+        std::fs::write(epsilon.join("commands").join("ship.md"), "Ship it.\n").unwrap();
+        std::fs::create_dir_all(ws.path().join(".agents").join("prompts")).unwrap();
+        std::fs::write(
+            ws.path().join(".agents").join("prompts").join("review.md"),
+            "Review it.\n",
+        )
+        .unwrap();
+        std::fs::write(epsilon.join("config.toml"), "[model]\nid = \"x\"\n").unwrap();
+        // The shipped pair: trust.json recording exactly this config's hash.
+        let raw = std::fs::read_to_string(epsilon.join("config.toml")).unwrap();
+        let hash = epsilon_core::config::sha256_hex(raw.as_bytes());
+        std::fs::write(
+            epsilon.join("trust.json"),
+            serde_json::json!({ "config_sha256": hash }).to_string(),
+        )
+        .unwrap();
+
+        let agent = agent_in(ws.path().to_path_buf());
+        let reply = parse(&dispatch_line(r#"{"op":"get_commands"}"#, &agent, &approvals()).await);
+        assert_eq!(reply["success"], true, "{reply}");
+        let names = command_names(&reply);
+        assert!(
+            !names.contains(&"ship".to_string()),
+            "a shipped trust file is not trust: {names:?}"
+        );
+        assert!(
+            !names.contains(&"review".to_string()),
+            "templates gate identically: {names:?}"
         );
         assert!(
             names.contains(&"help".to_string()),

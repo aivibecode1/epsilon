@@ -382,17 +382,60 @@ pub fn expand_prompt_template(text: &str, templates: &[PromptTemplate]) -> Optio
 ///
 /// A missing directory is not an error: most workspaces have no `prompts/` at all, and
 /// making that a failure would mean every caller has to ask whether it exists first.
+/// Symlinks never load (see `load_dir_scan`); rejections are silent here — this
+/// signature predates the notices channel — and announced through
+/// [`discover_templates`], which is the same scan with its warnings attached.
 pub fn load_from_dir(dir: &Path, scope: TemplateScope) -> Vec<PromptTemplate> {
+    let mut dropped = Vec::new();
+    load_dir_scan(dir, scope, &mut dropped)
+}
+
+/// Scan one template dir, symlink-safe, reporting every skip into `notices`.
+///
+/// `load_from_dir` passes a throwaway sink (its signature is shared with
+/// startup code this change does not touch); [`discover_templates`] is the
+/// noticed presentation of the same scan. One scan, two presentations — never
+/// two scanners that can disagree about what a directory holds.
+fn load_dir_scan(
+    dir: &Path,
+    scope: TemplateScope,
+    notices: &mut Vec<String>,
+) -> Vec<PromptTemplate> {
     let Ok(entries) = std::fs::read_dir(dir) else {
         return Vec::new();
     };
     let mut out = Vec::new();
     for entry in entries.flatten() {
         let path = entry.path();
-        // A symlink to a file is a file. `read_dir`'s file type is the link itself, so a
-        // symlinked template directory entry is reported as neither file nor dir.
+        // A symlink is never loaded: a link answers to a path outside the dir
+        // the trust gate approved, so following it would be an escape, not a
+        // load. `symlink_metadata` tests the LINK itself — `metadata` would
+        // follow it into whatever it points at, which is exactly the escape —
+        // and every skip is announced: a file the operator wrote that never
+        // loads must say so, or "my template does nothing" is unfixable.
+        match std::fs::symlink_metadata(&path) {
+            Ok(meta) if meta.file_type().is_symlink() => {
+                notices.push(format!(
+                    "prompts: ignoring {}: it is a symlink, which never loads",
+                    path.display()
+                ));
+                continue;
+            }
+            Err(e) => {
+                notices.push(format!("prompts: cannot read {}: {e}", path.display()));
+                continue;
+            }
+            Ok(_) => {}
+        }
+        // `metadata` follows the link `symlink_metadata` just refused, so a
+        // failure here means the target vanished mid-scan (or is unreadable) —
+        // also announced, never silent.
         let Ok(meta) = std::fs::metadata(&path) else {
-            continue; // broken symlink
+            notices.push(format!(
+                "prompts: cannot read {}: unreadable or a link to nothing",
+                path.display()
+            ));
+            continue;
         };
         if !meta.is_file() || path.extension().and_then(|e| e.to_str()) != Some("md") {
             continue;
@@ -447,6 +490,62 @@ pub fn load_from_file(path: &Path, scope: TemplateScope) -> Option<PromptTemplat
         kind: PromptFileKind::Template,
         file_path: path.to_path_buf(),
     })
+}
+
+/// Load prompt templates from scope-tagged `prompts/` directories — the noticed
+/// presentation of the [`load_from_dir`] scan.
+///
+/// Every `.md` file becomes a template EXCEPT a file whose stem is a builtin
+/// head ([`crate::command::COMMAND_HEADS`]): the builtin always wins, in both
+/// tiers, so a repository file can never hijack `/trust` (a `prompts/trust.md`
+/// answering the trust prompt is the attack, not a feature — this diverges
+/// from the old shadowing rule on purpose, exactly as `commands/` already
+/// does). Dropped with a warning on the same [`DiscoveredFiles`] channel
+/// [`discover_commands`] uses. Symlink rejections arrive with their notices
+/// from the shared scan.
+pub fn discover_templates(dirs: &[(PathBuf, TemplateScope)]) -> DiscoveredFiles {
+    let mut files: Vec<PromptTemplate> = Vec::new();
+    let mut notices: Vec<String> = Vec::new();
+    for (dir, scope) in dirs {
+        match std::fs::read_dir(dir) {
+            Ok(_) => {}
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => continue,
+            Err(e) => {
+                notices.push(format!("prompts: cannot read {}: {e}", dir.display()));
+                continue;
+            }
+        }
+        let mut loaded = load_dir_scan(dir, *scope, &mut notices);
+        // The builtin guard, announced: a template answering to a builtin name
+        // would run instead of it at submit time (expansion runs before the
+        // command parse), so silence here is a hijack, not an override.
+        loaded.retain(|t| {
+            if crate::command::COMMAND_HEADS.contains(&t.name.as_str()) {
+                notices.push(format!(
+                    "prompts: ignoring {}: '/{}' is a builtin command, which always wins \
+                     over a file of the same name",
+                    t.file_path.display(),
+                    t.name
+                ));
+                return false;
+            }
+            true
+        });
+        files.extend(loaded);
+    }
+    // Later directories win, exactly as [`merge`]: user first, project after.
+    let mut out: Vec<PromptTemplate> = Vec::new();
+    for f in files {
+        match out.iter_mut().find(|existing| existing.name == f.name) {
+            Some(slot) => *slot = f,
+            None => out.push(f),
+        }
+    }
+    out.sort_by(|a, b| a.name.cmp(&b.name));
+    DiscoveredFiles {
+        files: out,
+        notices,
+    }
 }
 
 /// Parse `---` delimited frontmatter into flat key/value pairs, returning them with the body.
@@ -578,7 +677,11 @@ pub fn command_dirs(
     dirs
 }
 
-/// What custom-command discovery found, and what it would not load.
+/// What file discovery found, and what it would not load.
+///
+/// Shared by [`discover_commands`] and [`discover_templates`]: one channel for
+/// both tiers and both directories, so a dropped file is announced the same
+/// way wherever it was found.
 ///
 /// The notices exist for the same reason the skills channel has them: a file
 /// the operator wrote that never loads must say so, or "my command does
@@ -617,8 +720,34 @@ pub fn discover_commands(dirs: &[(PathBuf, TemplateScope)]) -> DiscoveredFiles {
         };
         for entry in entries.flatten() {
             let path = entry.path();
+            // Symlinks never load here either (see `load_dir_scan` for why):
+            // the link itself is tested via `symlink_metadata`, and a file
+            // that cannot even be statted is announced rather than swallowed —
+            // a broken link used to vanish silently, which is exactly what
+            // makes "my command does nothing" unfixable.
+            match std::fs::symlink_metadata(&path) {
+                Ok(meta) if meta.file_type().is_symlink() => {
+                    notices.push(format!(
+                        "commands: ignoring {}: it is a symlink, which never loads",
+                        path.display()
+                    ));
+                    continue;
+                }
+                Err(e) => {
+                    notices.push(format!("commands: cannot read {}: {e}", path.display()));
+                    continue;
+                }
+                Ok(_) => {}
+            }
+            // `metadata` follows the link `symlink_metadata` just refused, so
+            // a failure here means the target vanished mid-scan (or is
+            // unreadable) — also announced, never silent.
             let Ok(meta) = std::fs::metadata(&path) else {
-                continue; // broken symlink
+                notices.push(format!(
+                    "commands: cannot read {}: unreadable or a link to nothing",
+                    path.display()
+                ));
+                continue;
             };
             if !meta.is_file() || path.extension().and_then(|e| e.to_str()) != Some("md") {
                 continue;
@@ -702,12 +831,33 @@ pub fn discover_commands(dirs: &[(PathBuf, TemplateScope)]) -> DiscoveredFiles {
 /// share one `/name` and a listing that hid one of them would lie about what
 /// the name does. The notice names the winner so the template's author can
 /// find the file that took its name.
+///
+/// A builtin-named TEMPLATE never reaches the cache either, whatever tier it
+/// came from: the TUI pipeline scans templates with the silent
+/// [`load_from_dir`], so the announced drop on that path fires here, where
+/// the notices already reach the transcript (startup and `/reload` forward
+/// them; RPC ignores them exactly like the command ones).
+/// [`discover_templates`] drops the same files with the same sentence for
+/// direct API users — one sentence, two gates, and each path fires exactly
+/// once because each path scans once.
 pub fn merge_kinds(
     templates: Vec<PromptTemplate>,
     commands: Vec<PromptTemplate>,
 ) -> (Vec<PromptTemplate>, Vec<String>) {
     let mut notices = Vec::new();
-    let mut out = templates;
+    let mut out = Vec::new();
+    for t in templates {
+        if crate::command::COMMAND_HEADS.contains(&t.name.as_str()) {
+            notices.push(format!(
+                "prompts: ignoring {}: '/{}' is a builtin command, which always wins \
+                 over a file of the same name",
+                t.file_path.display(),
+                t.name
+            ));
+            continue;
+        }
+        out.push(t);
+    }
     for c in commands {
         if let Some(slot) = out.iter_mut().find(|t| t.name == c.name) {
             notices.push(format!(
@@ -1514,6 +1664,218 @@ mod tests {
         assert!(
             found.notices.iter().any(|n| n.contains("Bad")),
             "the invalid stem is announced: {:?}",
+            found.notices
+        );
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    // --- prompts/ builtin-shadow (Fix 1) + symlink rejection (Fix 3) -----------
+    //
+    // RED-first: `discover_templates` does not exist yet — the first run must
+    // fail to compile on exactly that name (the established RED pattern for a
+    // new API in this module). `load_from_dir` cannot carry the warning: it
+    // returns files only, and the channel this must match is `DiscoveredFiles`
+    // (files + notices) — the same one `discover_commands` uses.
+
+    /// A `trust.md` template must never hijack `/trust` — user tier or
+    /// project tier, a builtin always runs the builtin. Dropped at discovery
+    /// with a warning, exactly as `discover_commands` drops a colliding command.
+    #[test]
+    fn a_template_colliding_with_a_builtin_is_dropped_with_a_warning() {
+        let base = std::env::temp_dir().join(format!("eps-pt-collide-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&base);
+        let user = base.join("user").join("prompts");
+        let project = base.join("ws").join(".epsilon").join("prompts");
+        std::fs::create_dir_all(&user).unwrap();
+        std::fs::create_dir_all(&project).unwrap();
+        std::fs::write(user.join("trust.md"), "MALICIOUS-USER-BODY.\n").unwrap();
+        std::fs::write(project.join("trust.md"), "MALICIOUS-PROJECT-BODY.\n").unwrap();
+        std::fs::write(project.join("review.md"), "Review $1.\n").unwrap();
+
+        let found = discover_templates(&[
+            (user.clone(), TemplateScope::User),
+            (project.clone(), TemplateScope::Project),
+        ]);
+        let names: Vec<&str> = found.files.iter().map(|f| f.name.as_str()).collect();
+        assert_eq!(
+            names,
+            vec!["review"],
+            "neither colliding file may load: {names:?}"
+        );
+        assert_eq!(
+            found.notices.len(),
+            2,
+            "one warning per dropped file: {:?}",
+            found.notices
+        );
+        for n in &found.notices {
+            assert!(
+                n.contains("trust") && n.contains("builtin"),
+                "the warning names the file and the reason: {n}"
+            );
+        }
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    /// The merged cache never carries a builtin-named template either: the TUI
+    /// pipeline scans with the silent `load_from_dir`, so the announced drop
+    /// on that path fires here, where the notices already reach the UI — and
+    /// the RPC listing, which ignores them exactly like the command ones.
+    #[test]
+    fn merge_kinds_drops_a_builtin_named_template_with_a_notice() {
+        let mk = |scope| PromptTemplate {
+            name: "trust".to_string(),
+            description: "shadow".to_string(),
+            argument_hint: None,
+            content: "MALICIOUS-BODY.".to_string(),
+            scope,
+            kind: PromptFileKind::Template,
+            file_path: PathBuf::from("trust.md"),
+        };
+        for scope in [TemplateScope::User, TemplateScope::Project] {
+            let (merged, notices) = merge_kinds(vec![mk(scope)], vec![]);
+            assert!(
+                merged.is_empty(),
+                "a builtin-named template never survives the merge ({scope:?})"
+            );
+            assert!(
+                notices
+                    .iter()
+                    .any(|n| n.contains("trust") && n.contains("builtin")),
+                "the drop is announced ({scope:?}): {notices:?}"
+            );
+        }
+    }
+
+    /// Best-effort symlink creation: Windows demands a privilege this runner
+    /// may not hold — then the test says it skips instead of failing on the OS.
+    #[cfg(unix)]
+    fn try_symlink(target: &Path, link: &Path) -> bool {
+        std::os::unix::fs::symlink(target, link).is_ok()
+    }
+
+    /// Best-effort symlink creation (see the unix twin): without the
+    /// privilege the test skips loudly rather than asserting nothing.
+    #[cfg(windows)]
+    fn try_symlink(target: &Path, link: &Path) -> bool {
+        std::os::windows::fs::symlink_file(target, link).is_ok()
+    }
+
+    /// A symlink inside a `commands/` dir never loads — and says so, naming
+    /// the link. A link answers to a path outside the dir the trust gate
+    /// approved, so following it would be an escape, not a load.
+    #[test]
+    fn a_symlinked_command_is_rejected_with_a_notice_naming_the_link() {
+        let base = std::env::temp_dir().join(format!("eps-cmd-link-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&base);
+        let user = base.join("user").join("commands");
+        std::fs::create_dir_all(&user).unwrap();
+        std::fs::write(user.join("real.md"), "Real body.\n").unwrap();
+        if !try_symlink(&user.join("real.md"), &user.join("evil.md")) {
+            eprintln!("SKIP: this runner may not create symlinks");
+            let _ = std::fs::remove_dir_all(&base);
+            return;
+        }
+
+        let found = discover_commands(&[(user.clone(), TemplateScope::User)]);
+        assert!(
+            found.files.iter().all(|f| f.name != "evil"),
+            "a link never loads: {:?}",
+            found.files
+        );
+        assert!(
+            found
+                .notices
+                .iter()
+                .any(|n| n.contains("evil") && n.contains("symlink")),
+            "the rejection names the link: {:?}",
+            found.notices
+        );
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    /// A broken symlink is rejected with a notice too, not silence: today the
+    /// commands/ scan swallows it, and "my command does nothing" is unfixable.
+    #[test]
+    fn a_broken_command_symlink_is_rejected_with_a_notice_not_silence() {
+        let base = std::env::temp_dir().join(format!("eps-cmd-blink-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&base);
+        let user = base.join("user").join("commands");
+        std::fs::create_dir_all(&user).unwrap();
+        if !try_symlink(&user.join("missing-target.md"), &user.join("ghost.md")) {
+            eprintln!("SKIP: this runner may not create symlinks");
+            let _ = std::fs::remove_dir_all(&base);
+            return;
+        }
+
+        let found = discover_commands(&[(user.clone(), TemplateScope::User)]);
+        assert!(
+            found.files.iter().all(|f| f.name != "ghost"),
+            "a broken link never loads: {:?}",
+            found.files
+        );
+        assert!(
+            found.notices.iter().any(|n| n.contains("ghost")),
+            "the rejection names the link instead of staying silent: {:?}",
+            found.notices
+        );
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    /// The same gate on the prompts/ side, through the noticed API.
+    #[test]
+    fn a_symlinked_template_is_rejected_with_a_notice_naming_the_link() {
+        let base = std::env::temp_dir().join(format!("eps-pt-link-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&base);
+        let user = base.join("user").join("prompts");
+        std::fs::create_dir_all(&user).unwrap();
+        std::fs::write(user.join("real.md"), "Real body.\n").unwrap();
+        if !try_symlink(&user.join("real.md"), &user.join("evil.md")) {
+            eprintln!("SKIP: this runner may not create symlinks");
+            let _ = std::fs::remove_dir_all(&base);
+            return;
+        }
+
+        let found = discover_templates(&[(user.clone(), TemplateScope::User)]);
+        assert!(
+            found.files.iter().all(|f| f.name != "evil"),
+            "a link never loads: {:?}",
+            found.files
+        );
+        assert!(
+            found
+                .notices
+                .iter()
+                .any(|n| n.contains("evil") && n.contains("symlink")),
+            "the rejection names the link: {:?}",
+            found.notices
+        );
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    /// A broken template link is announced too: silence is what makes "my
+    /// template does nothing" unfixable, on this tier like the other.
+    #[test]
+    fn a_broken_template_symlink_is_rejected_with_a_notice_not_silence() {
+        let base = std::env::temp_dir().join(format!("eps-pt-blink-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&base);
+        let user = base.join("user").join("prompts");
+        std::fs::create_dir_all(&user).unwrap();
+        if !try_symlink(&user.join("missing-target.md"), &user.join("ghost.md")) {
+            eprintln!("SKIP: this runner may not create symlinks");
+            let _ = std::fs::remove_dir_all(&base);
+            return;
+        }
+
+        let found = discover_templates(&[(user.clone(), TemplateScope::User)]);
+        assert!(
+            found.files.iter().all(|f| f.name != "ghost"),
+            "a broken link never loads: {:?}",
+            found.files
+        );
+        assert!(
+            found.notices.iter().any(|n| n.contains("ghost")),
+            "the rejection names the link instead of staying silent: {:?}",
             found.notices
         );
         let _ = std::fs::remove_dir_all(&base);
