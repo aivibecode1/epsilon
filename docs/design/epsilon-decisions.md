@@ -3888,3 +3888,71 @@ the struct, and then it moves onto it.
 **Revisit trigger.** The panel needs multi-row expansion, a diff the read cap
 refuses to render, or restore from outside the key handler (which would want
 the per-path mutation queue, not a synchronous arm).
+
+---
+
+**Amendment (2026-10-16, usage-accounting audit wave) — three accounting fixes on ADR-042.**
+
+This amends ADR-042 (the usage/cost ADR: reasoning is a subset of output,
+cost on `output` only). Three audit findings are fixed below; tiered
+pricing is deferred by design (not overlooked); finding 5 is pinned as-is.
+
+**Fix 1 — one `total_or_sum()` fallback for every seed path**
+(`crates/epsilon-llm/src/providers/mod.rs`). The four seed paths disagreed
+about a missing wire total: Anthropic recomputed the four-bucket sum, compat
+fell to 0, Bedrock kept input + output, Mistral kept input + output +
+cache_read. All trust-wire-else-sum-four-buckets now through one helper;
+Anthropic's recompute stays untouched (it already sums). Verified first-hand
+that no bill moves: nothing in the pricing path reads `total_tokens`
+(`crates/epsilon-tui/src/ui/cost.rs` prices the four buckets only; the
+gauges anchor on `input + cache_read + cache_write`) — the stored total just
+stops dropping cache traffic. Pinned by Bedrock-no-total (120 → 135) and
+Mistral-no-total (cache traffic survives) tests.
+
+**Fix 2 — one `flag_from_keys()` predicate so parse lists and flag lists
+cannot diverge** (same file). Each wire names its cache shapes once in an
+associated const (`BEDROCK_CACHE_KEYS`, `MISTRAL_CACHE_POINTERS` /
+`MISTRAL_CACHE_KEYS`, `COMPAT_CACHE_POINTERS` / `COMPAT_CACHE_KEYS`); the
+parse reads the const and the K1 flag reads the const. One deliberate
+narrowing inside the unification: the compat flag no longer lists
+`/input_tokens_details/cached_tokens`, a shape the parse never reads —
+claiming it turned an unparsed shape into a measured zero, the K1 lie in
+reverse. Both helpers live in `providers/mod.rs`, not in
+`epsilon-contracts::message`: the `Usage` shape belongs to contracts, but
+the decoding rule (which wire key wins, what silence means) belongs at the
+wire boundary, and the contract crate keeps zero internal dependencies.
+Pinned by per-wire key-set tests (each shape present → flag, absent → no
+flag, enumerated from the same consts).
+
+**Fix 3 — unknown spend is visible as volume** (`ui/cost.rs` +
+`/session`). `CostBreakdown` gains `unpriced_tokens`: models the registry
+cannot price — an unpriced catalog row, or the `(model not reported)` row a
+subagent's unattributed tool usage lands in — accumulate all four buckets
+there in the same `None` branch that sets the floor, so the two cannot
+disagree about which rows are unknown. The dollars stay floor-honest (the
+total still counts priced tokens only; no rate is invented), and
+`cost_summary` renders `· unpriced N tokens` only when nonzero. Frame-pinned
+at 80x24 and 100x30 with UNICODE pins, present and absent.
+
+**Deferred by design (not built): tiered / service-tier / 1h-write
+pricing.** The registry publishes one rate per bucket; provider service
+tiers and the 1-hour cache-write TTL price are real money this wave does not
+model. The rule applied instead is the same one as Fix 3: never invent a
+rate — unpriced volume floors the total and names its tokens rather than
+pricing them at the wrong tier.
+
+**Finding 5 stays as-is:** reasoning-header rendering is unchanged
+(ADR-042's deferred display work stands; parse/store/aggregate only).
+
+**Known boundaries, not fixed here:** the Responses reshaper
+(`openai_responses.rs`) defaults an absent `total_tokens` to 0 before the
+compat decoder sees it, so the Fix 1 fallback cannot fire on that wire;
+the stored-session `/session` arm renders no cost summary at all (only the
+no-file arm pushes `cost_summary`). Both are recorded for a later wave, not
+silently left.
+
+**Revisit trigger.** The registry publishes tiered rates (then the deferral
+above — not the floor rule — is the behaviour being changed), a wire sends
+a total that disagrees with its buckets (then trust-wire is the behaviour
+being changed), or a provider bills thinking at a distinct rate (ADR-042's
+own trigger).

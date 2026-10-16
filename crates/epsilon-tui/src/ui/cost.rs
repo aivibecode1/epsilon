@@ -66,6 +66,12 @@ pub struct CostBreakdown {
     scaled: [u64; 4],
     /// See [`CostBreakdown::is_floor`].
     floor: bool,
+    /// Tokens the session moved on models the registry does not price, summed
+    /// across all four buckets. Dollars for these tokens are unknown — pricing
+    /// them at zero would be the silently-smaller bill this module exists to
+    /// prevent — so they are carried as volume for `/session` to name
+    /// (`unpriced N tokens`) while the total counts only priced tokens.
+    unpriced: u64,
 }
 
 /// Index of the uncached-input component in [`CostBreakdown::scaled`].
@@ -118,6 +124,19 @@ impl CostBreakdown {
     pub fn is_floor(&self) -> bool {
         self.floor
     }
+
+    /// Tokens moved on models the registry does not price, across all four
+    /// buckets — the volume behind the floor marker when the floor comes from
+    /// an unknown model rather than an unpriced bucket.
+    ///
+    /// Zero means there is nothing unattributed: `/session` renders no line
+    /// for it, because a line reading "unpriced 0 tokens" would be noise the
+    /// reader has to decode. Nonzero is rendered as volume only, never priced:
+    /// inventing a rate for these tokens would turn a lower bound back into a
+    /// precise-looking total.
+    pub fn unpriced_tokens(&self) -> u64 {
+        self.unpriced
+    }
 }
 
 /// Cost these counts at these prices, component by component.
@@ -136,6 +155,11 @@ pub fn breakdown(counts: TokenCounts, prices: TokenPrices) -> CostBreakdown {
             counts.cache_write * prices.cache_write,
         ],
         floor: priced_somewhere && moved_unpriced,
+        // The single-model shape has no unknown-model row: its caller names
+        // one model and its prices together. Bucket-level gaps stay floor-only
+        // (see `is_floor`); only `breakdown_per_model` can meet a model the
+        // registry never heard of.
+        unpriced: 0,
     }
 }
 
@@ -176,6 +200,7 @@ pub fn breakdown_per_model(
 ) -> CostBreakdown {
     let mut scaled = [0u64; 4];
     let mut floor = false;
+    let mut unpriced = 0u64;
     for (model_id, counts) in usage_by_model {
         match prices_for(model_id) {
             Some(prices) => {
@@ -187,12 +212,21 @@ pub fn breakdown_per_model(
             }
             None => {
                 // The registry does not price this model. Its tokens are real money of an
-                // unknown amount, so the whole session becomes a lower bound.
+                // unknown amount, so the whole session becomes a lower bound — and the
+                // tokens are carried as visible volume rather than dropped, so the
+                // `+` marker never has to stand alone without saying by how much.
+                // This is the same `None` branch that sets the floor: the two
+                // cannot disagree about which rows are unknown.
                 floor = true;
+                unpriced += counts.input + counts.output + counts.cache_read + counts.cache_write;
             }
         }
     }
-    CostBreakdown { scaled, floor }
+    CostBreakdown {
+        scaled,
+        floor,
+        unpriced,
+    }
 }
 
 #[cfg(test)]
@@ -329,6 +363,86 @@ mod tests {
         assert!(
             result.is_floor(),
             "an unpriced model must show as `$…+`, never as a confidently smaller total"
+        );
+    }
+
+    /// Unknown spend is visible as volume, not as dollars. A model the registry
+    /// cannot price (an unpriced catalog row, or the `(model not reported)`
+    /// row a subagent's unattributed tool usage lands in) contributes its
+    /// tokens to `unpriced_tokens` while the dollars stay floor-honest: the
+    /// total still counts only priced tokens, and no rate is invented for the
+    /// rest. `/session` renders this count beside the cost; a `+` alone says
+    /// the total is short without saying by how much.
+    #[test]
+    fn an_unpriced_model_contributes_its_volume_never_its_dollars() {
+        let usage = by_model(&[
+            ("cheap", counts(1_000_000, 100_000)),
+            ("mystery", counts(5_000_000, 500_000)),
+        ]);
+        let result = breakdown_per_model(&usage, |id| (id == "cheap").then(prices));
+
+        assert_eq!(
+            result.total(),
+            4_500_000,
+            "only the priced model's tokens contribute to a known total"
+        );
+        assert!(result.is_floor());
+        assert_eq!(
+            result.unpriced_tokens(),
+            5_500_000,
+            "5M in + 500k out on the mystery model are real tokens a reader can see"
+        );
+    }
+
+    /// Cache traffic on an unpriced model counts too: volume is volume, and a
+    /// subagent that burned cached prefix must not vanish from the line.
+    #[test]
+    fn unpriced_volume_sums_all_four_buckets() {
+        let mystery = TokenCounts {
+            input: 1_000,
+            output: 100,
+            cache_read: 5_000,
+            cache_write: 200,
+        };
+        let usage = by_model(&[("mystery", mystery)]);
+        let result = breakdown_per_model(&usage, |_| None);
+
+        assert_eq!(
+            result.total(),
+            0,
+            "nothing priced, nothing counted in dollars"
+        );
+        assert!(result.is_floor());
+        assert_eq!(
+            result.unpriced_tokens(),
+            1_000 + 100 + 5_000 + 200,
+            "every bucket on an unpriced row is visible volume"
+        );
+    }
+
+    /// A fully priced session has no unpriced volume, so the `/session` line
+    /// stays exactly as today: the extra fragment is absent, not zero.
+    #[test]
+    fn a_fully_priced_session_has_no_unpriced_volume() {
+        let usage = by_model(&[("cheap", counts(1_000_000, 100_000))]);
+        let result = breakdown_per_model(&usage, |id| (id == "cheap").then(prices));
+
+        assert!(!result.is_floor());
+        assert_eq!(
+            result.unpriced_tokens(),
+            0,
+            "no unknown model means no unpriced line"
+        );
+    }
+
+    /// An empty session has no unpriced volume either.
+    #[test]
+    fn an_empty_session_has_no_unpriced_volume() {
+        let result = breakdown_per_model(&std::collections::BTreeMap::new(), |_| None);
+        assert_eq!(result.unpriced_tokens(), 0);
+        assert!(
+            !result.is_floor(),
+            "no tokens means no unpriced tokens; `+` would be noise"
         );
     }
 

@@ -327,8 +327,14 @@ pub(crate) fn responses_usage(usage: &serde_json::Value) -> serde_json::Value {
     let mut out = json!({
         "input_tokens": usage.get("input_tokens").cloned().unwrap_or(json!(0)),
         "output_tokens": usage.get("output_tokens").cloned().unwrap_or(json!(0)),
-        "total_tokens": usage.get("total_tokens").cloned().unwrap_or(json!(0)),
     });
+    // `total_tokens` stays ABSENT when the wire omits it (not zero): a
+    // present 0 reads as "the provider measured nothing" and would pin the
+    // fallback to 0, while absent lets `total_or_sum` sum the four buckets.
+    // Same D5 discipline as the details objects below.
+    if let Some(total) = usage.get("total_tokens") {
+        out["total_tokens"] = total.clone();
+    }
     // Forwarded verbatim when present; `seed_usage_compat` reads the cached and
     // written counts out of it. Absent on a reply with no cache activity — and
     // left absent here, because inventing zero keys would turn silence into a

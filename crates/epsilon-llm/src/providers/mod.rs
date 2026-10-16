@@ -223,6 +223,51 @@ pub struct HttpEventStream {
     mistral_ids: BTreeMap<String, String>,
 }
 
+/// Trust the wire's total when it sends a number, else sum the four buckets.
+///
+/// Every seed path takes the same fallback so it cannot drift per wire.
+/// Anthropic's `seed_usage` and `update_usage_tail` already recompute exactly
+/// this sum inline and stay as they are (they never trust a wire total);
+/// compat, Mistral and Bedrock pass their wire's total — `None` when the block
+/// carries no numeric total — and take the same sum otherwise.
+///
+/// Cost never reads `total_tokens` (the header prices the four buckets, and
+/// the gauges anchor on `input + cache_read + cache_write`), so this changes
+/// no bill: it keeps the stored total honest about traffic the fallback used
+/// to drop (compat fell to 0; Bedrock kept input + output only).
+///
+/// Home: this module, not `epsilon-contracts::message`. `Usage` owns the
+/// shape; the *decoding rule* (which wire key wins, what silence means)
+/// belongs at the wire boundary beside the seed paths that read it.
+/// `contracts` has zero internal dependencies and must not learn provider key
+/// shapes — that is also why `flag_from_keys` lives here.
+fn total_or_sum(
+    wire_total: Option<u64>,
+    input: u64,
+    output: u64,
+    cache_read: u64,
+    cache_write: u64,
+) -> u64 {
+    wire_total.unwrap_or_else(|| input + output + cache_read + cache_write)
+}
+
+/// Did this wire's usage block speak about caching at all (K1)?
+///
+/// Presence, never value: a key carrying 0 is a measured zero, a missing key
+/// is silence, and only the block knows which. Each wire names the exact
+/// shapes its parse reads in the associated consts beside
+/// `MISTRAL_CACHE_POINTERS`; the flag is computed FROM those lists, never from
+/// a hand-rewritten second list — a second list is how the compat flag once
+/// claimed a shape (`input_tokens_details`) the parse never read, turning an
+/// unparsed shape into a measured zero.
+///
+/// Same home rationale as [`total_or_sum`]: a wire-decoding rule, not a type
+/// rule, so it lives at the wire boundary rather than in `contracts`.
+fn flag_from_keys(usage: &serde_json::Value, pointers: &[&str], keys: &[&str]) -> bool {
+    pointers.iter().any(|p| usage.pointer(p).is_some())
+        || keys.iter().any(|k| usage.get(*k).is_some())
+}
+
 impl HttpEventStream {
     /// Fresh accumulator for one provider response (`provider` is the wire's
     /// static name; `prefer_tail_usage` picks which usage shape wins when a wire
@@ -374,34 +419,31 @@ impl HttpEventStream {
             .or_else(|| usage.get("thoughtsTokenCount").and_then(|v| v.as_u64()));
         // K1: did the body actually *carry* a cache key? Detection, not arithmetic —
         // `cache_read == 0` is equally what a wire that never mentions caching
-        // produces, and only the key's presence tells the two apart.
-        let cache_reported = [
-            "/prompt_tokens_details/cached_tokens",
-            "/prompt_tokens_details/cache_write_tokens",
-            "/input_tokens_details/cached_tokens",
-        ]
-        .iter()
-        .any(|p| usage.pointer(p).is_some())
-            || [
-                "prompt_cache_hit_tokens",
-                "cached_tokens",
-                "cache_read_input_tokens",
-                "cache_creation_input_tokens",
-                "cachedContentTokenCount",
-            ]
-            .iter()
-            .any(|k| usage.get(*k).is_some());
+        // produces, and only the key's presence tells the two apart. Read from
+        // the same lists the parse above reads (`COMPAT_CACHE_POINTERS` /
+        // `COMPAT_CACHE_KEYS`), never from a second hand-written list.
+        let cache_reported =
+            flag_from_keys(usage, Self::COMPAT_CACHE_POINTERS, Self::COMPAT_CACHE_KEYS);
+        let input = prompt
+            .saturating_sub(cache_read)
+            .saturating_sub(cache_write);
+        // Gemini only: candidates + thoughts (see above). Every other wire
+        // has no `thoughtsTokenCount` key, so this adds zero there.
+        let output = get_u64(&["completion_tokens", "output_tokens", "candidatesTokenCount"])
+            .saturating_add(thoughts);
+        // A present-but-malformed total (`"8500"` from a proxy) is unparseable,
+        // not zero: like every other count on this path it falls back to the
+        // buckets rather than coercing to a trusted 0.
+        let wire_total = usage
+            .get("total_tokens")
+            .or_else(|| usage.get("totalTokenCount"))
+            .and_then(|v| v.as_u64());
         let u = Usage {
-            input: prompt
-                .saturating_sub(cache_read)
-                .saturating_sub(cache_write),
-            // Gemini only: candidates + thoughts (see above). Every other wire
-            // has no `thoughtsTokenCount` key, so this adds zero there.
-            output: get_u64(&["completion_tokens", "output_tokens", "candidatesTokenCount"])
-                .saturating_add(thoughts),
+            input,
+            output,
             cache_read,
             cache_write,
-            total_tokens: get_u64(&["total_tokens", "totalTokenCount"]),
+            total_tokens: total_or_sum(wire_total, input, output, cache_read, cache_write),
             cache_reported,
             reasoning,
         };
@@ -571,24 +613,26 @@ impl HttpEventStream {
         let mut u = Usage::default();
         u.input = get("inputTokens");
         u.output = get("outputTokens");
-        u.cache_read = get("cacheReadInputTokens");
-        u.cache_write = get("cacheWriteInputTokens");
+        // Parsed through the shared list so the flag below cannot drift from
+        // the counts: index 0 is the read bucket, index 1 the write bucket.
+        u.cache_read = get(Self::BEDROCK_CACHE_KEYS[0]);
+        u.cache_write = get(Self::BEDROCK_CACHE_KEYS[1]);
         // **The presence of the keys is the signal, not a non-zero count** (K1). Bedrock
         // always speaks about caching when it speaks at all, so a usage block carrying
         // `cacheReadInputTokens` is a provider that reports cache traffic — and the header
         // printing `CH n/a` beside a live `R184k W12k` is the exact lie K1 was written to
         // end, reintroduced for the one parser that was not in that fix.
         //
-        // The two sibling parsers (Anthropic `:277-281`, the compat family `:334-349`)
-        // both set this. This one parsed the counts and forgot the flag, which is exactly
-        // how a per-parser boolean rots: there is no trait member for it, so each wire
-        // decides alone and only the ones someone thought about are right.
-        u.cache_reported = usage.get("cacheReadInputTokens").is_some()
-            || usage.get("cacheWriteInputTokens").is_some();
-        u.total_tokens = usage
-            .get("totalTokens")
-            .and_then(|v| v.as_u64())
-            .unwrap_or_else(|| u.input + u.output);
+        // Computed FROM the same list the parse reads, via `flag_from_keys`:
+        // a per-parser hand-written boolean is how this flag rotted last time.
+        u.cache_reported = flag_from_keys(usage, &[], Self::BEDROCK_CACHE_KEYS);
+        u.total_tokens = total_or_sum(
+            usage.get("totalTokens").and_then(|v| v.as_u64()),
+            u.input,
+            u.output,
+            u.cache_read,
+            u.cache_write,
+        );
         if u.input + u.output > 0 {
             self.usage_tail = Some(u);
         }
@@ -683,6 +727,43 @@ impl HttpEventStream {
         "/promptTokenDetails/cached_tokens",
     ];
 
+    /// The top-level key shapes `seed_usage_mistral` reads alongside the
+    /// pointers above. One list, read twice: the parse iterates it for the
+    /// first shape carrying a number, `flag_from_keys` reads it for presence.
+    const MISTRAL_CACHE_KEYS: &[&str] = &["num_cached_tokens", "numCachedTokens"];
+
+    /// Top-level key shapes carrying Converse cache traffic. Read twice like
+    /// the Mistral lists: `seed_usage_bedrock` parses through this list and
+    /// `flag_from_keys` checks presence through it, so the two cannot diverge.
+    const BEDROCK_CACHE_KEYS: &[&str] = &["cacheReadInputTokens", "cacheWriteInputTokens"];
+
+    /// Pointer shapes carrying compat cache traffic
+    /// (`seed_usage_compat`'s `prompt_tokens_details` reads).
+    ///
+    /// Deliberately NOT a superset: `/input_tokens_details/*` is absent
+    /// because the parse never reads it — `responses_usage` forwards that
+    /// object *as* `prompt_tokens_details`, so a raw `input_tokens_details`
+    /// on the compat input is a shape the parse does not understand, and the
+    /// old hand-written flag listed it, turning an unparsed shape into a
+    /// measured zero (the K1 lie in reverse). Read twice with
+    /// [`COMPAT_CACHE_KEYS`](Self::COMPAT_CACHE_KEYS) via `flag_from_keys`.
+    const COMPAT_CACHE_POINTERS: &[&str] = &[
+        "/prompt_tokens_details/cached_tokens",
+        "/prompt_tokens_details/cache_write_tokens",
+    ];
+
+    /// Top-level key shapes carrying compat cache traffic (DeepSeek's
+    /// `prompt_cache_hit_tokens`, Kimi's `cached_tokens`, Gemini's
+    /// `cachedContentTokenCount`, and the Anthropic-spelled fallbacks the
+    /// parse accepts). Same one-list-read-twice rule as above.
+    const COMPAT_CACHE_KEYS: &[&str] = &[
+        "prompt_cache_hit_tokens",
+        "cached_tokens",
+        "cache_read_input_tokens",
+        "cache_creation_input_tokens",
+        "cachedContentTokenCount",
+    ];
+
     /// Mistral cached-token usage (pi `getMistralCachedPromptTokens`): reads
     /// every key shape Mistral has used — `prompt_tokens_details.cached_tokens`
     /// (plus the camelCase twins `cachedTokens` / `promptTokensDetails` and
@@ -705,7 +786,7 @@ impl HttpEventStream {
             }
         }
         if raw == 0 {
-            for key in ["num_cached_tokens", "numCachedTokens"] {
+            for key in Self::MISTRAL_CACHE_KEYS.iter().copied() {
                 if let Some(v) = usage.get(key).and_then(|v| v.as_u64()) {
                     raw = v;
                     break;
@@ -727,18 +808,20 @@ impl HttpEventStream {
         // so a session with a working prompt cache printed `CH n/a` next to the tokens it
         // had just moved. The flag says the provider *speaks about* caching, which is a
         // property of its usage shape and not of whether this particular turn hit the cache.
-        // D4: the parse above also reads `num_cached_tokens`/`numCachedTokens`, so the
-        // flag reads them too — one list, read twice, kept in step.
-        u.cache_reported = Self::MISTRAL_CACHE_POINTERS
-            .iter()
-            .any(|p| usage.pointer(p).is_some())
-            || ["num_cached_tokens", "numCachedTokens"]
-                .iter()
-                .any(|k| usage.get(*k).is_some());
-        u.total_tokens = usage
-            .get("total_tokens")
-            .and_then(|v| v.as_u64())
-            .unwrap_or_else(|| u.input + u.output + u.cache_read);
+        // Read from the same two lists the parse reads, via `flag_from_keys` —
+        // one list, read twice, kept in step.
+        u.cache_reported = flag_from_keys(
+            usage,
+            Self::MISTRAL_CACHE_POINTERS,
+            Self::MISTRAL_CACHE_KEYS,
+        );
+        u.total_tokens = total_or_sum(
+            usage.get("total_tokens").and_then(|v| v.as_u64()),
+            u.input,
+            u.output,
+            u.cache_read,
+            u.cache_write,
+        );
         if u.input + u.output > 0 {
             self.usage_tail = Some(u);
         }
@@ -1797,6 +1880,239 @@ pub mod test_support {
         st.seed_usage_mistral(usage);
         st.usage_tail
             .expect("a usage block with tokens yields a tail")
+    }
+
+    /// Run a raw Bedrock Converse `usage` object through the Bedrock decoder.
+    ///
+    /// Exists for the same reason as [`mistral_usage_from_json`]: the
+    /// total-fallback and the cache flag are decided inside `seed_usage_bedrock`,
+    /// long before any `AssistantMessage` exists, so only a seed-level helper
+    /// can pin them.
+    pub fn bedrock_usage_from_json(usage: &serde_json::Value) -> epsilon_contracts::message::Usage {
+        let mut st = super::HttpEventStream::new("test-model", "test", false);
+        st.seed_usage_bedrock(usage);
+        st.usage_tail
+            .expect("a usage block with tokens yields a tail")
+    }
+}
+
+/// Usage-accounting audit fixes 1+2: the total fallback and the cache flag.
+///
+/// Fix 1 pins `total_or_sum` (trust the wire's total, else sum all four
+/// buckets) on every seed path whose fallback used to disagree. Fix 2 pins
+/// `flag_from_keys` on every wire: each test enumerates that wire's key set
+/// FROM the same consts the parse reads, asserting present → flag and absent
+/// → no flag, so a shape added to one side without the other goes red here.
+#[cfg(test)]
+mod total_fallback_and_cache_flag_tests {
+    use super::test_support::{
+        bedrock_usage_from_json, compat_usage_from_json, mistral_usage_from_json,
+    };
+    use serde_json::json;
+
+    // ---- Fix 1: one shared total_or_sum() ----
+
+    #[test]
+    fn total_or_sum_trusts_the_wire_else_sums_four_buckets() {
+        assert_eq!(super::total_or_sum(Some(120), 100, 20, 10, 5), 120);
+        assert_eq!(
+            super::total_or_sum(None, 100, 20, 10, 5),
+            135,
+            "no wire total: every bucket survives, including cache traffic"
+        );
+        assert_eq!(super::total_or_sum(None, 0, 0, 0, 0), 0);
+    }
+
+    #[test]
+    fn bedrock_without_a_wire_total_sums_all_four_buckets() {
+        let u = bedrock_usage_from_json(&json!({
+            "inputTokens": 100,
+            "outputTokens": 20,
+            "cacheReadInputTokens": 10,
+            "cacheWriteInputTokens": 5,
+        }));
+        assert_eq!(
+            (u.input, u.output, u.cache_read, u.cache_write),
+            (100, 20, 10, 5),
+            "the buckets are parsed regardless of the total"
+        );
+        assert_eq!(
+            u.total_tokens, 135,
+            "the fallback must keep cache traffic, not just input + output (120)"
+        );
+    }
+
+    #[test]
+    fn mistral_without_a_wire_total_keeps_cache_traffic_in_the_fallback() {
+        let u = mistral_usage_from_json(&json!({
+            "prompt_tokens": 100,
+            "completion_tokens": 10,
+            "prompt_tokens_details": { "cached_tokens": 30 },
+        }));
+        assert_eq!(u.input, 70, "100 prompt minus 30 cached");
+        assert_eq!(u.cache_read, 30);
+        assert_eq!(
+            u.total_tokens, 110,
+            "70 + 10 + 30 (+ 0 write): reducing this to input + output (80) must fail"
+        );
+    }
+
+    #[test]
+    fn compat_without_a_wire_total_sums_instead_of_zero() {
+        let u = compat_usage_from_json(&json!({
+            "prompt_tokens": 8_000,
+            "completion_tokens": 500,
+            "prompt_tokens_details": { "cached_tokens": 6_000 },
+        }));
+        assert_eq!(
+            (u.input, u.output, u.cache_read),
+            (2_000, 500, 6_000),
+            "the buckets are parsed regardless of the total"
+        );
+        assert_eq!(
+            u.total_tokens, 8_500,
+            "a missing wire total recomputes from the buckets, never 0"
+        );
+    }
+
+    #[test]
+    fn a_wire_total_is_trusted_when_present() {
+        let u = compat_usage_from_json(&json!({
+            "prompt_tokens": 8_000,
+            "completion_tokens": 500,
+            "total_tokens": 8_500,
+            "prompt_tokens_details": { "cached_tokens": 6_000 },
+        }));
+        assert_eq!(u.total_tokens, 8_500, "a numeric wire total wins");
+    }
+
+    // ---- Fix 2: one flag_from_keys(), parse list and flag list can't diverge ----
+
+    #[test]
+    fn flag_from_keys_reads_pointers_and_keys_by_presence_not_value() {
+        let body = json!({ "top": 1, "nested": { "cached": 2 } });
+        assert!(super::flag_from_keys(&body, &["/nested/cached"], &[]));
+        assert!(super::flag_from_keys(&body, &[], &["top"]));
+        assert!(!super::flag_from_keys(&body, &["/missing"], &["missing"]));
+        // A zero count is still a measurement: presence is the signal.
+        let zero = json!({ "nested": { "cached": 0 } });
+        assert!(super::flag_from_keys(&zero, &["/nested/cached"], &[]));
+        // Present-but-malformed is presence too: the key appeared on the wire.
+        let malformed = json!({ "top": "lots" });
+        assert!(super::flag_from_keys(&malformed, &[], &["top"]));
+    }
+
+    #[test]
+    fn bedrock_flag_fires_for_each_cache_key_and_silence_stays_silent() {
+        for key in super::HttpEventStream::BEDROCK_CACHE_KEYS {
+            let mut body = serde_json::Map::new();
+            body.insert("inputTokens".to_string(), json!(100));
+            body.insert("outputTokens".to_string(), json!(20));
+            body.insert((*key).to_string(), json!(7));
+            let u = bedrock_usage_from_json(&serde_json::Value::Object(body));
+            assert!(
+                u.cache_reported,
+                "{key} present must report caching, even at a zero-adjacent count"
+            );
+        }
+        let silent = bedrock_usage_from_json(&json!({ "inputTokens": 100, "outputTokens": 20 }));
+        assert!(
+            !silent.cache_reported,
+            "no cache key on the wire is silence, not a measured zero"
+        );
+    }
+
+    /// Every Mistral shape, enumerated FROM the lists the parse reads: each
+    /// one present alone must set the flag, and none present must not.
+    #[test]
+    fn mistral_flag_fires_for_every_cached_shape() {
+        for ptr in super::HttpEventStream::MISTRAL_CACHE_POINTERS {
+            let parts: Vec<&str> = ptr.split('/').filter(|s| !s.is_empty()).collect();
+            assert_eq!(
+                parts.len(),
+                2,
+                "all Mistral pointers nest exactly once: {ptr}"
+            );
+            let mut inner = serde_json::Map::new();
+            inner.insert(parts[1].to_string(), json!(5));
+            let mut map = serde_json::Map::new();
+            map.insert("prompt_tokens".to_string(), json!(100));
+            map.insert("completion_tokens".to_string(), json!(10));
+            map.insert(parts[0].to_string(), serde_json::Value::Object(inner));
+            let u = mistral_usage_from_json(&serde_json::Value::Object(map));
+            assert!(u.cache_reported, "{ptr} present must report caching");
+            assert_eq!(u.cache_read, 5, "{ptr} present must also parse");
+        }
+        for key in super::HttpEventStream::MISTRAL_CACHE_KEYS {
+            let mut map = serde_json::Map::new();
+            map.insert("prompt_tokens".to_string(), json!(100));
+            map.insert("completion_tokens".to_string(), json!(10));
+            map.insert((*key).to_string(), json!(30));
+            let u = mistral_usage_from_json(&serde_json::Value::Object(map));
+            assert!(u.cache_reported, "{key} present must report caching");
+        }
+        let silent = mistral_usage_from_json(&json!({
+            "prompt_tokens": 100,
+            "completion_tokens": 10,
+        }));
+        assert!(
+            !silent.cache_reported,
+            "no cache key on the wire is silence, not a measured zero"
+        );
+    }
+
+    /// Every compat shape, enumerated FROM the lists the parse reads.
+    #[test]
+    fn compat_flag_fires_for_every_parsed_shape() {
+        for ptr in super::HttpEventStream::COMPAT_CACHE_POINTERS {
+            let parts: Vec<&str> = ptr.split('/').filter(|s| !s.is_empty()).collect();
+            assert_eq!(parts.len(), 2, "compat pointers nest exactly once: {ptr}");
+            let mut inner = serde_json::Map::new();
+            inner.insert(parts[1].to_string(), json!(1_000));
+            let mut map = serde_json::Map::new();
+            map.insert("prompt_tokens".to_string(), json!(8_000));
+            map.insert("completion_tokens".to_string(), json!(500));
+            map.insert(parts[0].to_string(), serde_json::Value::Object(inner));
+            let u = compat_usage_from_json(&serde_json::Value::Object(map));
+            assert!(u.cache_reported, "{ptr} present must report caching");
+        }
+        for key in super::HttpEventStream::COMPAT_CACHE_KEYS {
+            let mut map = serde_json::Map::new();
+            map.insert("prompt_tokens".to_string(), json!(8_000));
+            map.insert("completion_tokens".to_string(), json!(500));
+            map.insert((*key).to_string(), json!(1_000));
+            let u = compat_usage_from_json(&serde_json::Value::Object(map));
+            assert!(u.cache_reported, "{key} present must report caching");
+        }
+        let silent = compat_usage_from_json(&json!({
+            "prompt_tokens": 8_000,
+            "completion_tokens": 500,
+        }));
+        assert!(
+            !silent.cache_reported,
+            "no cache key on the wire is silence, not a measured zero"
+        );
+    }
+
+    /// The shape the old flag claimed but the parse never read: a raw
+    /// `input_tokens_details` on the compat input. Zero counts with the flag
+    /// set would print a measured `CH 0%` for traffic never parsed — the K1
+    /// lie in reverse — so the flag must stay silent here.
+    #[test]
+    fn compat_flag_ignores_a_shape_the_parse_does_not_read() {
+        let u = compat_usage_from_json(&json!({
+            "prompt_tokens": 8_000,
+            "completion_tokens": 500,
+            "input_tokens_details": { "cached_tokens": 6_000 },
+        }));
+        assert_eq!(
+            u.cache_read, 0,
+            "the parse does not read this shape, so nothing is counted"
+        );
+        assert!(
+            !u.cache_reported,
+            "and the flag must not claim a measurement the parse never made"
+        );
     }
 }
 

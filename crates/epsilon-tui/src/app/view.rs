@@ -370,13 +370,30 @@ impl App {
         });
         let total = crate::ui::format::format_cost(b.total());
         let floor = if b.is_floor() { "+" } else { "" };
-        format!(
-            "cost: {total}{floor} · in {} · out {} · cache read {} · cache write {}",
-            crate::ui::format::format_cost(b.input()),
-            crate::ui::format::format_cost(b.output()),
-            crate::ui::format::format_cost(b.cache_read()),
-            crate::ui::format::format_cost(b.cache_write()),
-        )
+        // Unpriced volume is text, never accounting: the count comes from
+        // `CostBreakdown::unpriced_tokens` (models the registry cannot price,
+        // including subagent spend billed to no model) and is rendered as
+        // tokens only — inventing dollars for it would turn the floor back
+        // into a precise-looking total. Absent when zero, not "unpriced 0".
+        let unpriced = b.unpriced_tokens();
+        if unpriced > 0 {
+            format!(
+                "cost: {total}{floor} · in {} · out {} · cache read {} · cache write {} · unpriced {} tokens",
+                crate::ui::format::format_cost(b.input()),
+                crate::ui::format::format_cost(b.output()),
+                crate::ui::format::format_cost(b.cache_read()),
+                crate::ui::format::format_cost(b.cache_write()),
+                crate::ui::format::format_tokens(unpriced),
+            )
+        } else {
+            format!(
+                "cost: {total}{floor} · in {} · out {} · cache read {} · cache write {}",
+                crate::ui::format::format_cost(b.input()),
+                crate::ui::format::format_cost(b.output()),
+                crate::ui::format::format_cost(b.cache_read()),
+                crate::ui::format::format_cost(b.cache_write()),
+            )
+        }
     }
 
     /// Mirror the agent's context estimate onto the frame's input.
@@ -1030,5 +1047,134 @@ mod footer_question_tests {
             "Esc stays dismiss: {footer}\n{whole}"
         );
         crate::app::ask::clear_for_test(&mut app);
+    }
+}
+
+/// `/session` cost frame with and without unpriced (unknown-model/subagent) volume.
+///
+/// The accounting lives in `ui::cost` (this file only renders its answer), so
+/// these tests pin the rendered frame, not the numbers: the frame is what the
+/// operator reads, and a state assertion cannot catch a line that never
+/// reaches the screen. Asserted at both live sizes with the UNICODE
+/// repertoire, like every frame test in this file.
+#[cfg(test)]
+mod unpriced_volume_frame_tests {
+    use super::super::tests_support::{render_rows, test_app};
+    use epsilon_contracts::content::ContentBlock;
+    use epsilon_contracts::message::{AssistantMessage, Message, StopReason, Usage};
+
+    fn assistant_on(model_id: &str, input: u64, output: u64) -> Message {
+        Message::Assistant(AssistantMessage {
+            id: "m-cost".into(),
+            timestamp_ms: 0,
+            provider: "test".into(),
+            model_id: model_id.into(),
+            content: vec![ContentBlock::Text {
+                text: "done".into(),
+            }],
+            stop_reason: StopReason::EndTurn,
+            error_message: None,
+            usage: Usage {
+                input,
+                output,
+                cache_read: 0,
+                cache_write: 0,
+                total_tokens: input + output,
+                cache_reported: false,
+                reasoning: None,
+            },
+        })
+    }
+
+    /// Fragments are asserted as single tokens, never as spaced phrases: the
+    /// transcript renderer may join a notice's words with the row (the
+    /// `/session` tokens line reads `tokens100/500` on screen for a `tokens
+    /// 100/500` notice), so a spaced expectation would pin the renderer's
+    /// whitespace rather than this line's content.
+    fn cost_row(rows: &[String]) -> &str {
+        rows.iter()
+            .find(|r| r.contains("cost:"))
+            .map(String::as_str)
+            .expect("the cost summary must reach the screen")
+    }
+
+    /// Unknown spend is visible as volume on the real frame: a turn on a model
+    /// the registry cannot price (here `definitely-not-a-model-id`, which the
+    /// catalog pins as missing) gains an `unpriced N tokens` fragment, while
+    /// the dollars stay floor-honest (`$0+`: nothing priced, nothing invented).
+    #[test]
+    fn a_session_with_unpriced_volume_names_it_on_the_frame() {
+        let (mut app, _agent, _rx) = test_app();
+        app.theme.glyphs = crate::ui::theme::UNICODE;
+        app.ui
+            .hydrate_from_history(&[assistant_on("definitely-not-a-model-id", 1_500, 300)]);
+        app.ui.push_notice(app.cost_summary());
+
+        for (w, h) in [(80u16, 24u16), (100u16, 30u16)] {
+            let rows = render_rows(&mut app, w, h);
+            let screen = rows.join("\n");
+            if std::env::var_os("EPSILON_FRAME_EVIDENCE").is_some() {
+                println!("--- unpriced at {w}x{h} ---\n{screen}\n--- end ---");
+            }
+            let row = cost_row(&rows);
+            assert!(
+                row.contains("unpriced"),
+                "1,800 unknown tokens must be named at {w}x{h}:\n{screen}"
+            );
+            assert!(
+                row.contains("1.8k"),
+                "the volume reads as tokens, never as invented dollars, at {w}x{h}:\n{screen}"
+            );
+            assert!(
+                row.contains("$0+"),
+                "the dollars stay a floor-honest $0+ at {w}x{h}:\n{screen}"
+            );
+            // UNICODE pin: the summary joins its fragments with a middle dot.
+            assert!(
+                row.contains("·"),
+                "the frame must carry its unicode joins at {w}x{h}:\n{screen}"
+            );
+        }
+    }
+
+    /// No unknown volume, no line: an untouched session renders its summary
+    /// with no `unpriced` fragment at either size.
+    #[test]
+    fn a_session_with_no_usage_has_no_unpriced_line() {
+        let (mut app, _agent, _rx) = test_app();
+        app.theme.glyphs = crate::ui::theme::UNICODE;
+        app.ui.push_notice(app.cost_summary());
+
+        for (w, h) in [(80u16, 24u16), (100u16, 30u16)] {
+            let rows = render_rows(&mut app, w, h);
+            let screen = rows.join("\n");
+            cost_row(&rows);
+            assert!(
+                !screen.contains("unpriced"),
+                "no unknown volume means no line at {w}x{h}:\n{screen}"
+            );
+        }
+    }
+
+    /// No unknown volume, no line — the priced case: a turn on a catalogued
+    /// model (`gpt-4o`, pinned present by the catalog's own tests) renders its
+    /// cost with no `unpriced` fragment at either size.
+    #[test]
+    fn a_fully_priced_session_has_no_unpriced_line() {
+        let (mut app, _agent, _rx) = test_app();
+        app.theme.glyphs = crate::ui::theme::UNICODE;
+        app.ui
+            .hydrate_from_history(&[assistant_on("gpt-4o", 1_000_000, 100_000)]);
+        app.ui.push_notice(app.cost_summary());
+
+        for (w, h) in [(80u16, 24u16), (100u16, 30u16)] {
+            let rows = render_rows(&mut app, w, h);
+            let screen = rows.join("\n");
+            cost_row(&rows);
+            assert!(
+                !screen.contains("unpriced"),
+                "a priced session must not gain the line at {w}x{h}:\n{screen}"
+            );
+        }
     }
 }

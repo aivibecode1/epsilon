@@ -247,6 +247,27 @@ fn responses_silent_stays_silent() {
     );
 }
 
+/// A Responses reply omitting `total_tokens` falls back to the four-bucket
+/// sum: the reshape must leave the key ABSENT (not zero), or the fallback
+/// reads a present 0 as "measured nothing" and pins the total there.
+#[test]
+fn responses_missing_total_sums_instead_of_zero() {
+    let u = epsilon_llm::providers::test_support::responses_usage_from_json(&json!({
+        "input_tokens": 8_000,
+        "output_tokens": 500,
+        "input_tokens_details": {
+            "cached_tokens": 6_000,
+        },
+    }));
+
+    assert_eq!(u.input, 2_000, "8,000 input minus 6,000 cached");
+    assert_eq!(u.output, 500);
+    assert_eq!(
+        u.total_tokens, 8_500,
+        "absent total falls back to 2,000 + 500 + 6,000, not 0"
+    );
+}
+
 // --- Wave C: the separately-reported reasoning-token bucket (criterion 6/7) ---
 //
 // Pi's `Usage.reasoning` (`references/pi-1.0.0/packages/ai/src/types.ts:427-448`):
