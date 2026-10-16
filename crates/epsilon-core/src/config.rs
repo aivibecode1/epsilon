@@ -1008,21 +1008,36 @@ fn live_cache_path(config_dir: &Path) -> PathBuf {
 
 /// Parse a persisted cache file; `None` when it is corrupt or an old shape
 /// (fail-open reads, matching [`load_model_id_in`]).
+///
+/// Row-level, not file-level: one hand-edited bad row skips itself and keeps
+/// the good providers — deleting the whole file over one row would throw
+/// away listings a fetch already paid for. Only a file with rows but zero
+/// parseable ones reads as `None` (nothing usable to keep); a valid empty
+/// array reads as an empty vec and keeps the file.
 fn parse_live_cache(raw: &str) -> Option<Vec<LiveModelCacheEntry>> {
     let value: serde_json::Value = serde_json::from_str(raw).ok()?;
     let rows = value.as_array()?;
     let mut out = Vec::with_capacity(rows.len());
     for row in rows {
+        let (Some(provider), Some(ids), Some(fetched_at_ms)) = (
+            row.get("provider").and_then(|v| v.as_str()),
+            row.get("ids").and_then(|v| v.as_array()).and_then(|a| {
+                a.iter()
+                    .map(|id| id.as_str().map(str::to_string))
+                    .collect::<Option<Vec<_>>>()
+            }),
+            row.get("fetched_at_ms").and_then(|v| v.as_u64()),
+        ) else {
+            continue;
+        };
         out.push(LiveModelCacheEntry {
-            provider: row.get("provider")?.as_str()?.to_string(),
-            ids: row
-                .get("ids")?
-                .as_array()?
-                .iter()
-                .map(|id| id.as_str().map(str::to_string))
-                .collect::<Option<Vec<_>>>()?,
-            fetched_at_ms: row.get("fetched_at_ms")?.as_u64()?,
+            provider: provider.to_string(),
+            ids,
+            fetched_at_ms,
         });
+    }
+    if out.is_empty() && !rows.is_empty() {
+        return None;
     }
     Some(out)
 }
@@ -2022,6 +2037,30 @@ fn corrupt_live_cache_deletes_and_continues() {
     std::fs::write(&path, r#"[{"provider": "deepseek", "ids": ["a"]}]"#).unwrap();
     assert!(load_live_cache_in(dir.path()).is_empty());
     assert!(!path.exists());
+}
+
+/// One bad row skips itself and keeps the good providers: deleting the whole
+/// file over a hand-edited row would throw away listings a fetch paid for.
+#[test]
+fn mixed_live_cache_rows_keep_the_good_ones() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("live-models.json");
+    std::fs::write(
+        &path,
+        r#"[{"provider": "deepseek", "ids": ["a"], "fetched_at_ms": 7}, {"provider": "x", "ids": "not-an-array", "fetched_at_ms": 8}]"#,
+    )
+    .unwrap();
+    let loaded = load_live_cache_in(dir.path());
+    assert_eq!(
+        loaded.len(),
+        1,
+        "the bad row skips, the good row stays: {loaded:?}"
+    );
+    assert_eq!(loaded[0].provider, "deepseek");
+    assert!(
+        path.exists(),
+        "a file with usable rows is kept, not deleted"
+    );
 }
 
 /// Every `.rs` under `dir`, skipping build output.

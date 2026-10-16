@@ -51,6 +51,23 @@ pub struct LiveCacheEntry {
     pub from_cache: bool,
 }
 
+/// What a live-listing request should do once past the endpoint and
+/// credential gates (see `decide_live_refresh`): fetch it, skip it as
+/// fresh or as already-answered, or wait for the in-flight same-provider
+/// request. A named outcome rather than nested booleans, so the order of
+/// the rules is readable — and testable without credentials.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum LiveRefreshDecision {
+    /// Go fetch (stale or absent entry, or manual refresh).
+    Fetch,
+    /// Auto path with a fresh entry: the normal state, not news.
+    SkipFresh,
+    /// Auto path, no entry, answered before (failed — nothing to age-check).
+    SkipAnswered,
+    /// Same provider already in flight: wait, do not double.
+    WaitInFlight,
+}
+
 /// Everything the frontend needs: an agent to drive and its approval queue.
 pub struct TuiConfig {
     /// The composed session runtime.
@@ -296,9 +313,16 @@ pub(crate) struct App {
     customs: Vec<epsilon_llm::custom::CustomProvider>,
     live: Option<LiveFetcher>,
     prefs: crate::state::RenderPrefs,
-    fetching_hint: Option<String>,
+    /// Providers with a live fetch currently in flight (criterion 6).
+    ///
+    /// Per-provider, not one global flag: an auto-fetch for A must not eat a
+    /// manual Ctrl+G for B, and a second request for the SAME provider gets a
+    /// notice naming it instead of vanishing silently.
+    live_fetching: std::collections::BTreeSet<String>,
     /// M20: providers whose live listing already landed this session (auto-fetch
-    /// runs once per provider; Ctrl+F force-refreshes regardless).
+    /// runs once per provider for providers with NO entry; entries with an
+    /// age use the 60-minute rule instead, so a stale listing refetches even
+    /// though this session answered once. Ctrl+F force-refreshes regardless).
     live_fetched: std::collections::BTreeSet<String>,
     fetched_tx: tokio::sync::mpsc::UnboundedSender<(String, Result<Vec<String>, String>)>,
     notices_tx: tokio::sync::mpsc::UnboundedSender<String>,
@@ -1631,14 +1655,47 @@ impl App {
     /// Whether an auto-fetch for `provider` may skip: the cache holds an
     /// entry younger than [`epsilon_llm::catalog::LIVE_CACHE_TTL_MS`].
     /// Pure (time injected) so the 60-minute rule is pinned without a network.
-    /// A manual refresh (`force`, Ctrl+G) never skips.
+    /// A manual refresh (`force`, Ctrl+G) never skips. A timestamp in the
+    /// future (clock skew, hand-edited file) reads as stale, never as
+    /// fresh-forever: `now <= fetched` skips nothing.
     fn should_skip_live_refresh(&self, provider: &str, force: bool, now_ms: u64) -> bool {
         !force
             && self.live_cache.iter().any(|e| {
                 e.provider == provider
-                    && now_ms.saturating_sub(e.fetched_at_ms)
-                        < epsilon_llm::catalog::LIVE_CACHE_TTL_MS
+                    && now_ms > e.fetched_at_ms
+                    && now_ms - e.fetched_at_ms < epsilon_llm::catalog::LIVE_CACHE_TTL_MS
             })
+    }
+
+    /// What a refresh request should do, after the endpoint and credential
+    /// gates: fetch, skip, or wait. Pure over the cache/answered/in-flight
+    /// state (no network, no credentials) so the ORDER is pinned without a
+    /// key: a stale entry refetches even though this session already
+    /// answered once (`live_fetched` covers only providers with no entry —
+    /// failed before, nothing to age-check); an in-flight same-provider
+    /// request waits even when forced, rather than doubling.
+    fn decide_live_refresh(&self, provider: &str, force: bool, now_ms: u64) -> LiveRefreshDecision {
+        if self.live_fetching.contains(provider) {
+            return LiveRefreshDecision::WaitInFlight;
+        }
+        if force {
+            return LiveRefreshDecision::Fetch;
+        }
+        // An entry decides by age, answered-or-not: a stale entry refetches
+        // even though this session already answered once. Only providers with
+        // NO entry consult `live_fetched` (failed before — nothing to
+        // age-check).
+        if self.live_cache.iter().any(|e| e.provider == provider) {
+            return if self.should_skip_live_refresh(provider, false, now_ms) {
+                LiveRefreshDecision::SkipFresh
+            } else {
+                LiveRefreshDecision::Fetch
+            };
+        }
+        if self.live_fetched.contains(provider) {
+            return LiveRefreshDecision::SkipAnswered;
+        }
+        LiveRefreshDecision::Fetch
     }
 
     /// Request the provider's live listing (M13 Ctrl+F; M20 auto-fetch on open).
@@ -1650,8 +1707,9 @@ impl App {
     ///
     /// `force` = explicit user action (Ctrl+F): retries even if this provider
     /// already answered, and surfaces failures as notices. Auto-fetch stays
-    /// silent on failure and never refetches a provider that already replied —
-    /// a stale bundled row beats nagging on every keystroke path.
+    /// silent on failure and refetches only stale entries (older than the
+    /// 60-minute rule) — a stale bundled row beats nagging on every
+    /// keystroke path.
     fn request_live(&mut self, force: bool) {
         let Some(fetcher) = self.live.clone() else {
             if force {
@@ -1700,20 +1758,25 @@ impl App {
             }
             return;
         }
-        if self.live_fetched.contains(&provider) && !force {
-            return;
-        }
         // Criterion 6: auto-fetch skips entries younger than 60 minutes (the
         // persisted cache makes "already landed this session" survive a
         // restart); manual refresh always refetches. Silent, like the check
-        // above — a skipped refresh is the normal state, not news.
-        if self.should_skip_live_refresh(&provider, force, now_ms()) {
-            return;
+        // above — a skipped refresh is the normal state, not news. The order
+        // lives in `decide_live_refresh` (pinned by its own tests); this
+        // match only acts on it.
+        match self.decide_live_refresh(&provider, force, now_ms()) {
+            LiveRefreshDecision::SkipFresh | LiveRefreshDecision::SkipAnswered => return,
+            LiveRefreshDecision::WaitInFlight => {
+                // Same provider already in flight — even a manual refresh
+                // waits rather than doubling the request. A different
+                // provider proceeds below; one global flag here would eat it
+                // silently.
+                self.notice(format!("already fetching live models for '{provider}'…"));
+                return;
+            }
+            LiveRefreshDecision::Fetch => {}
         }
-        if self.fetching_hint.is_some() {
-            return; // one fetch in flight; Ctrl+F again after it lands
-        }
-        self.fetching_hint = Some(provider.clone());
+        self.live_fetching.insert(provider.clone());
         if force {
             self.notice(format!("fetching live models for '{provider}'…"));
         } else {
@@ -1739,8 +1802,27 @@ impl App {
         provider: String,
         result: Result<Vec<String>, String>,
     ) -> Option<String> {
-        self.fetching_hint = None;
+        self.live_fetching.remove(&provider);
         match result {
+            Ok(names) if names.is_empty() => {
+                // An empty page is not a listing: clobbering the last-known-good
+                // entry (and persisting the emptiness) would trade a stale
+                // truth for a fresh lie. Keep the old entry with its real age.
+                match self.live_cache.iter().find(|e| e.provider == provider) {
+                    Some(old) => Some(format!(
+                        "live listing for '{provider}' came back empty — kept the previous {} {}",
+                        old.ids.len(),
+                        if old.ids.len() == 1 {
+                            "model"
+                        } else {
+                            "models"
+                        },
+                    )),
+                    None => Some(format!(
+                        "live listing for '{provider}' came back empty — nothing cached"
+                    )),
+                }
+            }
             Ok(names) => {
                 let n = names.len();
                 let stamped = LiveCacheEntry {
@@ -1753,11 +1835,13 @@ impl App {
                     Some(entry) => *entry = stamped,
                     None => self.live_cache.push(stamped),
                 }
-                self.persist_live_cache();
+                let persist_note = self.persist_live_cache();
                 self.invalidate_picker();
                 self.live_fetched.insert(provider);
                 let noun = if n == 1 { "model" } else { "models" };
-                Some(format!("live listing: {n} {noun} merged into /models"))
+                Some(format!(
+                    "live listing: {n} {noun} merged into /models{persist_note}"
+                ))
             }
             Err(e) => Some(format!("live listing failed: {e}")),
         }
@@ -1765,18 +1849,22 @@ impl App {
 
     /// Persist the live cache after a successful fetch (criterion 6).
     ///
-    /// Best-effort and silent: the fetch already reported, and a disk failure
-    /// must not nag on top of it — the next successful fetch retries. Faux
-    /// (non-`real`) builds never fetch, so they never write: the file is
-    /// ignored there and the bundle is the whole listing.
+    /// Best-effort: Faux (non-`real`) builds never fetch, so they never
+    /// write — the file is ignored there and the bundle is the whole
+    /// listing. A disk failure is reported back (not silent: without it the
+    /// next launch refetches with no explanation of why the cache went
+    /// missing), and the next successful fetch retries.
+    ///
+    /// Returns the notice suffix for the merge line: empty when the write
+    /// landed, naming the failure when it did not.
     #[cfg(feature = "real")]
-    fn persist_live_cache(&self) {
+    fn persist_live_cache(&self) -> String {
         let Some(dir) = self
             .config_dir_override
             .clone()
             .or_else(epsilon_core::config::global_dir)
         else {
-            return;
+            return String::new();
         };
         let snapshot: Vec<epsilon_core::config::LiveModelCacheEntry> = self
             .live_cache
@@ -1787,12 +1875,17 @@ impl App {
                 fetched_at_ms: e.fetched_at_ms,
             })
             .collect();
-        let _ = epsilon_core::config::save_live_cache_in(&dir, &snapshot);
+        match epsilon_core::config::save_live_cache_in(&dir, &snapshot) {
+            Ok(_) => String::new(),
+            Err(e) => format!(" (couldn't save the listing for next launch: {e})"),
+        }
     }
 
     /// Non-`real` builds have no fetcher, so there is nothing to persist.
     #[cfg(not(feature = "real"))]
-    fn persist_live_cache(&self) {}
+    fn persist_live_cache(&self) -> String {
+        String::new()
+    }
 
     /// Run a `!` shell command off the key handler and show the result.
     ///
@@ -2757,7 +2850,9 @@ mod live_cache_tests {
     }
 
     /// Criterion 6: a successful fetch stamps the entry — last-known-good
-    /// becomes explicit rather than implied by presence.
+    /// becomes explicit rather than implied by presence. Reads back through
+    /// the real loader (not just the in-memory cache), or a broken persist
+    /// would stay green.
     #[test]
     fn ok_result_stamps_the_entry() {
         let mut app = harness();
@@ -2775,13 +2870,29 @@ mod live_cache_tests {
         assert!((before..=now_ms()).contains(&entry.fetched_at_ms));
         assert!(!entry.from_cache, "a fresh fetch is not from the cache");
         assert_eq!(entry.ids, vec!["deepseek-new".to_string()]);
+        // Persisting is real-gated (faux builds never fetch, so never
+        // write): the file round-trip only runs where the write runs.
+        if cfg!(feature = "real") {
+            let on_disk = epsilon_core::config::load_live_cache_in(dir.path());
+            assert_eq!(
+                on_disk.len(),
+                1,
+                "the fetch persists, not just the memory: {on_disk:?}"
+            );
+            assert_eq!(on_disk[0].ids, vec!["deepseek-new".to_string()]);
+            assert_eq!(on_disk[0].fetched_at_ms, entry.fetched_at_ms);
+        }
     }
 
     /// Criterion 6: a failed fetch leaves the entry AND its timestamp
     /// untouched — the last-known-good listing stays, with its real age.
+    /// Asserts the file too: an Err path that wrote would regress green
+    /// on the memory checks alone.
     #[test]
     fn err_result_leaves_entry_and_timestamp_untouched() {
         let mut app = harness();
+        let dir = tempfile::tempdir().expect("a config dir");
+        app.config_dir_override = Some(dir.path().to_path_buf());
         app.live_cache = vec![LiveCacheEntry {
             provider: "deepseek".to_string(),
             ids: vec!["deepseek-old".to_string()],
@@ -2798,6 +2909,10 @@ mod live_cache_tests {
         assert_eq!(entry.ids, vec!["deepseek-old".to_string()]);
         assert_eq!(entry.fetched_at_ms, 1_700_000_000_000);
         assert!(entry.from_cache);
+        assert!(
+            epsilon_core::config::load_live_cache_in(dir.path()).is_empty(),
+            "a failed fetch writes nothing"
+        );
     }
 
     /// Criterion 6: auto-fetch skips entries younger than 60 minutes;
@@ -2850,6 +2965,82 @@ mod live_cache_tests {
                 1_000_000 + epsilon_llm::catalog::LIVE_CACHE_TTL_MS
             ),
             "the boundary refetches"
+        );
+    }
+
+    /// The decision order, pinned without credentials or network: a stale
+    /// entry refetches even though this session already answered once;
+    /// answered-without-entry skips; in-flight waits even when forced.
+    #[test]
+    fn refresh_decision_orders_stale_over_answered() {
+        let mut app = harness();
+        let now = 1_700_000_000_000;
+        let ttl = epsilon_llm::catalog::LIVE_CACHE_TTL_MS;
+        app.live_cache = vec![LiveCacheEntry {
+            provider: "stale".to_string(),
+            ids: vec![],
+            fetched_at_ms: now - ttl - 1,
+            from_cache: true,
+        }];
+        app.live_fetched.insert("stale".to_string());
+        app.live_fetched.insert("failed".to_string());
+        assert_eq!(
+            app.decide_live_refresh("stale", false, now),
+            LiveRefreshDecision::Fetch,
+            "stale refetches despite a previous answer"
+        );
+        assert_eq!(
+            app.decide_live_refresh("stale", true, now),
+            LiveRefreshDecision::Fetch
+        );
+        assert_eq!(
+            app.decide_live_refresh("failed", false, now),
+            LiveRefreshDecision::SkipAnswered,
+            "failed before with nothing to age-check: skip"
+        );
+        assert_eq!(
+            app.decide_live_refresh("failed", true, now),
+            LiveRefreshDecision::Fetch,
+            "manual retries a failure"
+        );
+        assert_eq!(
+            app.decide_live_refresh("fresh-unknown", false, now),
+            LiveRefreshDecision::Fetch,
+            "no entry and never answered: fetch"
+        );
+        app.live_fetching.insert("stale".to_string());
+        assert_eq!(
+            app.decide_live_refresh("stale", true, now),
+            LiveRefreshDecision::WaitInFlight,
+            "even a manual refresh waits rather than doubling"
+        );
+        // A timestamp in the future (clock skew, hand-edited file) reads as
+        // stale, never as fresh-forever.
+        app.live_cache.push(LiveCacheEntry {
+            provider: "future".to_string(),
+            ids: vec![],
+            fetched_at_ms: now + 60_000,
+            from_cache: true,
+        });
+        assert_eq!(
+            app.decide_live_refresh("future", false, now),
+            LiveRefreshDecision::Fetch,
+            "future timestamps must not skip forever"
+        );
+        // Fresh entries skip auto but not manual.
+        app.live_cache.push(LiveCacheEntry {
+            provider: "fresh".to_string(),
+            ids: vec![],
+            fetched_at_ms: now - 60_000,
+            from_cache: false,
+        });
+        assert_eq!(
+            app.decide_live_refresh("fresh", false, now),
+            LiveRefreshDecision::SkipFresh
+        );
+        assert_eq!(
+            app.decide_live_refresh("fresh", true, now),
+            LiveRefreshDecision::Fetch
         );
     }
 }

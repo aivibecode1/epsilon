@@ -61,12 +61,18 @@ impl App {
         // Criterion 6: persisted live listings load at startup and read as
         // cached until a fetch replaces them. Corrupt files delete-and-continue
         // inside the loader, never an error; faux (non-`real`) builds ignore
-        // the file entirely and browse the bundle only.
+        // the file entirely and browse the bundle only. Reads the global dir
+        // directly (not `config_dir_override`): the override is test-only and
+        // always `None` in production, so load and persist resolve the same
+        // dir wherever it matters. A zero stamp means "never" (pre-epoch
+        // clocks, hand-edited files), not "just now" — those rows are dropped
+        // here so no age line can claim a fresh fetch that never happened.
         #[cfg(feature = "real")]
         let live_cache: Vec<LiveCacheEntry> = epsilon_core::config::global_dir()
             .map(|dir| epsilon_core::config::load_live_cache_in(&dir))
             .unwrap_or_default()
             .into_iter()
+            .filter(|e| e.fetched_at_ms > 0)
             .map(|e| LiveCacheEntry {
                 provider: e.provider,
                 ids: e.ids,
@@ -116,7 +122,7 @@ impl App {
             customs: epsilon_llm::custom::custom_providers(),
             live: None,
             prefs: crate::state::RenderPrefs::default(),
-            fetching_hint: None,
+            live_fetching: std::collections::BTreeSet::new(),
             live_fetched: std::collections::BTreeSet::new(),
             fetched_tx,
             notices_tx,

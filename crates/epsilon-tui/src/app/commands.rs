@@ -2653,18 +2653,25 @@ impl App {
                 // cached providers, plus the not-fetched line for the current
                 // provider when it has a listing endpoint but no entry. The
                 // wording comes from `picker::live_status`, the same helper
-                // the picker footer reads, so the two cannot disagree.
+                // the picker footer reads, so the two cannot disagree. An
+                // entry for a provider with no endpoint (removed upstream,
+                // stale file) is named as kept-from-cache, not silently
+                // listed as live: `request_live` will never refresh it.
                 for entry in &self.live_cache {
-                    self.ui.push_notice(crate::picker::live_status(
-                        &entry.provider,
-                        Some(entry),
-                        now,
-                    ));
+                    let mut line = crate::picker::live_status(&entry.provider, Some(entry), now);
+                    if !epsilon_llm::catalog::live_listing_available(&entry.provider) {
+                        line.push_str(" (no listing endpoint — kept from cache)");
+                    }
+                    self.ui.push_notice(line);
                 }
                 let current_provider = epsilon_llm::catalog::lookup_model(&self.model_id)
                     .map(|m| m.provider.to_string());
+                // Gated on a fetcher as well as an endpoint: faux builds never
+                // fetch, so "not fetched yet — opening refreshes" would be a
+                // promise nothing keeps.
                 if let Some(provider) = current_provider
                     && epsilon_llm::catalog::live_listing_available(&provider)
+                    && self.live.is_some()
                     && !self.live_cache.iter().any(|e| e.provider == provider)
                 {
                     self.ui
@@ -4311,11 +4318,18 @@ mod tests {
     /// Criterion 6: with nothing cached, `/catalog` names the unfetched
     /// provider rather than staying silent about it.
     /// Before: `(not fetched)`; after: `(not fetched yet — opening refreshes)`.
+    /// A fetcher is injected because the line only prints where a fetch could
+    /// actually happen — faux builds never fetch, so they must not promise one.
     #[tokio::test]
     async fn catalog_names_not_fetched_for_the_current_provider() {
         let (mut app, agent, (_f, _n)) = test_app();
         app.theme.glyphs = crate::ui::theme::UNICODE;
         app.model_id = "deepseek-v4-pro".to_string();
+        app.live = Some(std::sync::Arc::new(
+            |_: String| -> futures_util::future::BoxFuture<'static, Result<Vec<String>, String>> {
+                Box::pin(async { Ok(vec![]) })
+            },
+        ));
         assert!(app.live_cache.is_empty());
         assert!(!type_and_enter(&mut app, &agent, "/catalog"));
         let screen = frame(&mut app, 100, 40);
