@@ -260,8 +260,9 @@ const CP437_HIGH: &str = "ÇüéâäàåçêëèïîìÄÅÉæÆôöòûùÿÖÜ
 /// **`…` is not drawable**, which is the surprise worth writing down: it is at 0x85 in
 /// Windows-1252, where every modern terminal learned it, and DOS put `à` there instead. A
 /// console that falls back to a font substitution will show it; a console that does not —
-/// which is the case this test exists for — shows a box. `·` (0xFA) and `—` (0x97) *are*
-/// in CP437, so prose may keep them.
+/// which is the case this test exists for — shows a box. `·` (0xFA) *is* in CP437, so
+/// prose may keep it; `—` is *not* (0x97 there is `ù` — `—` is 0x97 in Windows-1252),
+/// so repertoire-gated rows map it (the derived palette titles do).
 fn cp437_can_draw(c: char) -> bool {
     c.is_ascii() || CP437_MARKS.contains(c) || CP437_HIGH.contains(c)
 }

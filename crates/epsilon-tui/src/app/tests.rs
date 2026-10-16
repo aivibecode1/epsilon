@@ -1815,15 +1815,30 @@ async fn a_bound_key_does_not_produce_a_not_bound_notice() {
     );
 }
 
+/// Every command head is reachable from the palette, and every palette row runs.
+///
+/// AGENTS.md §2.4: palette entries derive from `COMMAND_HEADS`. This holds
+/// both directions at once. Every row names a command the parser can run — the
+/// old hand list once carried a `\u{1}expand` pseudo-command, so choosing it
+/// closed the palette, cleared the composer, and ran nothing. And every head
+/// has exactly one row, spelled and described by the `SLASH_ITEMS` row the
+/// slash popup reads. A per-entry assert would pass on a palette that lists 7
+/// of 42 commands; this fails the moment registry and palette drift apart in
+/// either direction.
+///
+/// Rendered at 80x24 and 100x30 with UNICODE pins: a 43-row palette must
+/// scroll and filter sanely on the frame, not just exist as data — and
+/// filtering must narrow it.
 #[tokio::test]
-async fn every_palette_entry_names_a_command_that_parses() {
-    let (app, _agent, _rx) = test_app();
-    for entry in crate::picker::palette_entries(&app.keybindings) {
-        // An entry that carries a direct action has no command to parse: the
-        // workspace file tree (`app.tree.toggle`) is a chord with no command
-        // head, and inventing a spelling the parser would refuse is what would
-        // make choosing it a silent no-op. Such an entry is held to its action
-        // instead — see `the_palette_tree_entry_opens_the_tree`.
+async fn every_command_head_is_reachable_from_the_palette() {
+    let (mut app, _agent, _rx) = test_app();
+    let entries = crate::picker::palette_entries(&app.keybindings);
+    // Direction 1: every row runs. An entry that carries a direct action has
+    // no command to parse: the workspace file tree (`app.tree.toggle`) is a
+    // chord with no command head, and inventing a spelling the parser would
+    // refuse is what would make choosing it a silent no-op. Such an entry is
+    // held to its action instead.
+    for entry in &entries {
         if entry.action.is_some() {
             continue;
         }
@@ -1833,6 +1848,76 @@ async fn every_palette_entry_names_a_command_that_parses() {
              choosing it would close the palette and do nothing",
             entry.title,
             entry.command
+        );
+    }
+    // Direction 2: every head has exactly one row, spelled by the head.
+    let heads = crate::picker::COMMAND_HEADS;
+    let slash_rows: Vec<_> = entries.iter().filter(|e| e.action.is_none()).collect();
+    assert_eq!(
+        slash_rows.len(),
+        heads.len(),
+        "one palette row per command head, no more, no fewer: {:?}",
+        entries.iter().map(|e| &e.command).collect::<Vec<_>>()
+    );
+    for head in heads {
+        let rows: Vec<_> = slash_rows
+            .iter()
+            .filter(|e| {
+                e.command
+                    .trim()
+                    .strip_prefix('/')
+                    .and_then(|s| s.split([' ', ':']).next())
+                    == Some(*head)
+            })
+            .collect();
+        assert_eq!(
+            rows.len(),
+            1,
+            "/{head} must have exactly one palette row: {:?}",
+            rows.iter().map(|e| &e.command).collect::<Vec<_>>()
+        );
+    }
+    // The frame: 43 rows scroll sanely at both sizes, with UNICODE pins. The
+    // fragments are palette-row text (`set model by id` is the `/model`
+    // description), never welcome-screen words, so the asserts cannot pass on
+    // the screen behind the overlay.
+    app.theme.glyphs = crate::ui::theme::UNICODE;
+    app.palette_open = true;
+    for (width, height) in [(80u16, 24u16), (100u16, 30u16)] {
+        let frame = render_rows(&mut app, width, height).join("\n");
+        assert!(
+            frame.contains("/model · set model by id"),
+            "{width}x{height}: the first palette row is on screen:\n{frame}"
+        );
+        // Scrolled to the end: the last row names the file tree, the first
+        // has scrolled away, and the draw did not panic on a 43-row list in
+        // a ~10-row box.
+        app.picker_index = entries.len() - 1;
+        let frame = render_rows(&mut app, width, height).join("\n");
+        assert!(
+            frame.contains("Files · workspace tree"),
+            "{width}x{height}: the scrolled palette names the file tree:\n{frame}"
+        );
+        assert!(
+            !frame.contains("set model by id"),
+            "{width}x{height}: the first row scrolled away:\n{frame}"
+        );
+        app.picker_index = 0;
+    }
+    // Filtering narrows on the frame, not just in the vec.
+    let all = crate::picker::filter_palette("", &app.keybindings).len();
+    let narrowed = crate::picker::filter_palette("hotkeys", &app.keybindings);
+    assert!(
+        !narrowed.is_empty() && narrowed.len() < all,
+        "filtering narrows the {all}-row palette: {narrowed:?}"
+    );
+    app.input = "hotkeys".into();
+    app.cursor_chars = app.input.chars().count();
+    for (width, height) in [(80u16, 24u16), (100u16, 30u16)] {
+        let frame = render_rows(&mut app, width, height).join("\n");
+        assert!(
+            frame.contains("/hotkeys · show all keyboard shortcuts"),
+            "{width}x{height}: the filtered palette names the match:\n{frame}"
         );
     }
 }
@@ -1888,7 +1973,10 @@ fn the_catch_alls_other_arm_tells_the_user_instead_of_failing_silently() {
 /// The previous test asserted `normalized != "x"` — a blacklist of one value. It passed on a
 /// palette that advertised `Some("/login")` in the **key** column: a slash command shown where
 /// a reader looks for a chord, for an action that has no key at all. One bad literal out of
-/// seven, and the guard could only see the one it had been told about.
+/// a hand-written eight, and the guard could only see the one it had been told about.
+/// The palette is now derived from `COMMAND_HEADS` (one row per head plus the
+/// tree action), so the loop below covers all forty-odd rows rather than the
+/// eight this was written for.
 ///
 /// # What the shape now makes impossible
 ///
@@ -5068,6 +5156,57 @@ async fn no_slash_command_panics_when_typed() {
             before
         );
     }
+    // The palette executes through this same dispatch, so every row's own
+    // spelling clears the same bar: a palette entry that types fine but runs
+    // silent is the M194 shape (`\u{1}expand` closed the palette and ran
+    // nothing). The spellings are the registry's own — each trims to a head
+    // the loop above already drove — and this drives the exact strings, so a
+    // row can never name a command the loop never ran. Action rows carry no
+    // command and run through the key path instead, held to F6's own call.
+    let (probe, _, _) = test_app();
+    let palette: Vec<String> = super::super::picker::palette_entries(&probe.keybindings)
+        .into_iter()
+        .filter(|e| e.action.is_none())
+        .map(|e| e.command)
+        .collect();
+    assert_eq!(
+        palette.len(),
+        super::super::picker::COMMAND_HEADS.len(),
+        "one palette spelling per head — the drift half lives in \
+         `every_command_head_is_reachable_from_the_palette`"
+    );
+    for cmd in &palette {
+        let (mut app, agent, (_f, _n)) = test_app();
+        let before = app.ui.lines().len();
+        let should_quit = type_and_enter(&mut app, &agent, cmd);
+        if cmd.trim() == "/exit" {
+            assert!(should_quit, "`/exit` did not report the quit signal");
+            continue;
+        }
+        assert!(
+            !should_quit,
+            "`{cmd}` reported the quit signal, which would end the sweep's own session"
+        );
+        let after: Vec<String> = app.ui.lines().iter().map(|l| l.text.clone()).collect();
+        let opened_something = app.timeline_open
+            || app.session_browser.is_some()
+            || app.picker_open
+            || app.auth_pick_open
+            || app.think_pick_open
+            || app.scope_open
+            || app.changes_open
+            || app.settings_open
+            || app.auth_prompt_open
+            || app.palette_open
+            || app.trust_review_pending;
+        assert!(
+            after.len() > before || opened_something,
+            "palette row `{cmd}` produced no notice and opened no overlay - it may have \
+             done nothing at all, which is how the M168 defect hid: after.len()={} before.len()={}",
+            after.len(),
+            before
+        );
+    }
 }
 
 /// `/open` in the terminal names the window instead of failing unknown (D-046/S-105).
@@ -5085,6 +5224,30 @@ async fn open_in_the_terminal_names_the_window() {
             .iter()
             .any(|t| t.contains("/open") && t.contains("desktop window")),
         "the refusal must name the command and where it works: {texts:?}"
+    );
+    assert!(
+        texts.iter().any(|t| t.contains("/resume")),
+        "and offer the terminal's nearest door: {texts:?}"
+    );
+    // And the palette row — `/open` is now listed, where the hand-written
+    // palette never offered it — refuses by name through the real key path,
+    // not just when typed: open the palette, move to its row, press Enter.
+    let (mut app, agent, _rx) = test_app();
+    assert!(!handle_key(&mut app, &agent, ctrl(KeyCode::Char('p'))));
+    assert!(app.palette_open, "the palette opens");
+    let entries = crate::picker::filter_palette("", &app.keybindings);
+    app.picker_index = entries
+        .iter()
+        .position(|e| e.command.trim() == "/open")
+        .expect("/open has a palette row");
+    assert!(!handle_key(&mut app, &agent, key(KeyCode::Enter)));
+    assert!(!app.palette_open, "choosing the row closes the palette");
+    let texts: Vec<String> = app.ui.lines().iter().map(|l| l.text.clone()).collect();
+    assert!(
+        texts
+            .iter()
+            .any(|t| t.contains("/open") && t.contains("desktop window")),
+        "the palette row must refuse by name too: {texts:?}"
     );
     assert!(
         texts.iter().any(|t| t.contains("/resume")),

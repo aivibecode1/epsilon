@@ -918,92 +918,93 @@ pub enum PaletteAction {
 
 /// All palette commands (slash commands + direct actions), in display order.
 ///
+/// Derived from [`COMMAND_HEADS`] — one row per head, with the display name
+/// and description taken from the [`SLASH_ITEMS`] row the slash popup reads,
+/// so the two surfaces cannot drift apart (AGENTS.md §2.4: palette entries
+/// are derived from the registry, not a second hand-maintained list). A head
+/// with no `SLASH_ITEMS` row fails loud here rather than shipping a row the
+/// popup never names. The trailing workspace-tree row keeps its direct action:
+/// it has no command head (`/tree` is the *session* tree, a different
+/// feature), and inventing a spelling the parser would refuse is what would
+/// make choosing it a silent no-op.
+///
 /// `kb` is read for every hint, so a user who rebinds a key sees the new chord here and
 /// an entry whose action has no binding shows none — which is the only honest thing to
 /// print, and what ``KeybindingsManager::key_text`` already promises when it returns
 /// `None`.
 pub fn palette_entries(kb: &crate::keybindings::KeybindingsManager) -> Vec<PaletteEntry> {
-    vec![
-        PaletteEntry {
-            title: "Models — switch model".into(),
-            command: "/models".into(),
-            key_id: Some("app.model.select"),
-            binding: None,
-            action: None,
-        },
-        PaletteEntry {
-            title: "Connect provider — set API key (paste, masked)".into(),
-            command: "/login ".into(),
-            // **No binding, and now it says so.** This used to advertise `Some("/login")`
-            // in the key column: a slash command in the place a reader looks for a chord,
-            // for an action that has no key at all. Pressing it did nothing.
-            key_id: None,
-            binding: None,
-            action: None,
-        },
-        PaletteEntry {
-            title: "Skills — list discovered skills".into(),
-            command: "/skills".into(),
-            key_id: None,
-            binding: None,
-            action: None,
-        },
-        PaletteEntry {
-            title: "Clear transcript".into(),
-            command: "/clear".into(),
-            key_id: None,
-            binding: None,
-            action: None,
-        },
-        PaletteEntry {
-            title: "Help — command reference".into(),
-            command: "/help".into(),
-            key_id: None,
-            binding: None,
-            action: None,
-        },
-        PaletteEntry {
-            title: "Quit session".into(),
-            command: "/quit".into(),
-            key_id: None,
-            binding: None,
-            action: None,
-        },
-        PaletteEntry {
-            // **Invariant 7, in both directions.** F6 has opened the workspace
-            // tree since Phase 3 and no screen named it: not the first screen,
-            // not the palette, not the footer, not `/help`. A key nobody can
-            // find is a key nobody presses, and the entry below is the fix —
-            // the chord is resolved from the table, so a rebinding moves the
-            // hint with it.
-            title: "Files — workspace tree".into(),
-            // No command head: `/tree` is the *session* tree, and pointing at
-            // it would run a different feature than the entry names.
-            command: String::new(),
-            key_id: Some("app.tree.toggle"),
-            binding: None,
-            action: Some(PaletteAction::ToggleFileTree),
-        },
-        PaletteEntry {
-            title: "Toggle tool output expand".into(),
-            // A real command. The old `\u{1}expand` was not a spelling this parser
-            // accepts (it requires a leading `/`), so choosing this entry closed the
-            // palette, cleared the composer, and ran nothing.
-            command: "/expand".into(),
-            // The chord is `ctrl+x`, not a bare `x`. A bare `x` is the binding the
-            // editor deliberately removed because it made the letter untypable, and
-            // the palette was advertising it anyway.
-            key_id: Some("app.tools.expand"),
-            binding: None,
-            action: None,
-        },
-    ]
-    .into_iter()
-    .map(|mut e| {
-        e.binding = e.key_id.and_then(|id| kb.key_text(id));
-        e
-    })
-    .collect()
+    let mut entries: Vec<PaletteEntry> = COMMAND_HEADS
+        .iter()
+        .map(|head| {
+            let item = SLASH_ITEMS
+                .iter()
+                .find(|item| item.value.trim() == format!("/{head}"))
+                .unwrap_or_else(|| {
+                    panic!(
+                        "COMMAND_HEADS entry /{head} has no SLASH_ITEMS row, \
+                         so the palette cannot name it the way the popup does"
+                    )
+                });
+            PaletteEntry {
+                // Words from the registry, punctuation from the repertoire.
+                // Six descriptions carry an em dash, which is not in CP437 —
+                // a literal here drew as a box on a legacy console (the M219
+                // shape; `transcript::welcome` takes its dash from the glyph
+                // table for the same reason, and the ASCII golden gate fails
+                // any frame that draws one). The middle dot is in the CP437
+                // repertoire, so the title keeps every word and changes only
+                // the punctuation a legacy console cannot draw.
+                title: format!(
+                    "{} · {}",
+                    item.value.trim(),
+                    item.description.replace('—', "·")
+                ),
+                command: item.value.to_string(),
+                key_id: palette_key_id(head),
+                binding: None,
+                action: None,
+            }
+        })
+        .collect();
+    entries.push(PaletteEntry {
+        // **Invariant 7, in both directions.** F6 has opened the workspace
+        // tree since Phase 3 and no screen named it: not the first screen,
+        // not the palette, not the footer, not `/help`. A key nobody can
+        // find is a key nobody presses, and the entry below is the fix —
+        // the chord is resolved from the table, so a rebinding moves the
+        // hint with it.
+        title: "Files · workspace tree".into(),
+        // No command head: `/tree` is the *session* tree, and pointing at
+        // it would run a different feature than the entry names.
+        command: String::new(),
+        key_id: Some("app.tree.toggle"),
+        binding: None,
+        action: Some(PaletteAction::ToggleFileTree),
+    });
+    entries
+        .into_iter()
+        .map(|mut e| {
+            e.binding = e.key_id.and_then(|id| kb.key_text(id));
+            e
+        })
+        .collect()
+}
+
+/// Keybinding hints for the derived palette rows that have bindings.
+///
+/// Hint data only, never a command list: every head named here is a row the
+/// derivation above already produced, so this can neither add nor drop a
+/// command — it only says which chord the key column prints, resolved through
+/// the table rather than typed (which is how `/login` once sat in the key
+/// column for an action that has no key at all).
+fn palette_key_id(head: &str) -> Option<&'static str> {
+    match head {
+        // Ctrl+M opens the model picker, which is what a bare `/model` runs.
+        "model" => Some("app.model.select"),
+        // Ctrl+X expands tool output, which is what `/expand` toggles.
+        "expand" => Some("app.tools.expand"),
+        _ => None,
+    }
 }
 
 /// Fuzzy-filtered palette entries; empty query returns everything.
@@ -2249,5 +2250,106 @@ mod tests {
         assert_eq!(surfaced.len(), 1);
         assert_eq!(surfaced[0].id, "brand-new-model");
         assert_eq!(surfaced[0].provider, "deepseek");
+    }
+
+    /// AGENTS.md §2.4 drift guard: every `COMMAND_HEADS` entry gets exactly
+    /// one palette row, with name + description from the `SLASH_ITEMS` row the
+    /// slash popup reads — one source, not a second list.
+    ///
+    /// RED: the hand-written palette names a handful of commands while the
+    /// registry holds ~40, so most heads fail the coverage half below.
+    #[test]
+    fn palette_covers_every_command_head_from_the_registry() {
+        let kb = crate::keybindings::KeybindingsManager::from_map(std::collections::HashMap::new());
+        let entries = palette_entries(&kb);
+        // One row per head, plus the workspace-tree action that has no head
+        // (`/tree` is the *session* tree, a different feature).
+        let slash_rows: Vec<&PaletteEntry> =
+            entries.iter().filter(|e| e.action.is_none()).collect();
+        assert_eq!(
+            slash_rows.len(),
+            COMMAND_HEADS.len(),
+            "one palette row per command head, no more, no fewer: {:?}",
+            entries
+                .iter()
+                .map(|e| e.command.clone())
+                .collect::<Vec<_>>()
+        );
+        for head in COMMAND_HEADS {
+            let item = SLASH_ITEMS
+                .iter()
+                .find(|item| item.value.trim() == format!("/{head}"))
+                .unwrap_or_else(|| panic!("/{head} has no SLASH_ITEMS row"));
+            let rows: Vec<&&PaletteEntry> = slash_rows
+                .iter()
+                .filter(|e| {
+                    e.command
+                        .trim()
+                        .strip_prefix('/')
+                        .and_then(|s| s.split([' ', ':']).next())
+                        == Some(*head)
+                })
+                .collect();
+            assert_eq!(
+                rows.len(),
+                1,
+                "/{head} must have exactly one palette row: {:?}",
+                rows.iter().map(|e| &e.command).collect::<Vec<_>>()
+            );
+            // The same source the popup reads: the row carries the registry's
+            // own spelling and every word of its description, not a second
+            // copy of them. The one exception is punctuation: an em dash is
+            // not in CP437 (see the `palette_entries` note), so the title
+            // carries the repertoire-safe rendering of the same words.
+            assert_eq!(
+                rows[0].command, item.value,
+                "/{head} carries a reworded spelling"
+            );
+            assert!(
+                rows[0].title.contains(item.value.trim())
+                    && rows[0].title.contains(&item.description.replace('—', "·")),
+                "/{head} names the registry row: {:?}",
+                rows[0].title
+            );
+        }
+        // Repertoire guard at the derivation point: a registry edit that adds
+        // a character no legacy console draws must fail here, not as a box on
+        // the frame (M219; the ASCII golden gate holds the drawn rows, this
+        // holds every row). Titles are ASCII plus the middle dot, by
+        // construction above.
+        for entry in &entries {
+            assert!(
+                entry.title.chars().all(|c| c.is_ascii() || c == '·'),
+                "palette title draws outside the repertoire: {:?}",
+                entry.title
+            );
+        }
+    }
+
+    /// `filter_palette` keeps its behavior over the derived rows: an empty
+    /// query lists everything, a narrowing query returns a strict subset that
+    /// still names the match, and nonsense matches nothing.
+    #[test]
+    fn filter_palette_narrows_the_derived_rows() {
+        let kb = crate::keybindings::KeybindingsManager::from_map(std::collections::HashMap::new());
+        let all = filter_palette("", &kb);
+        assert_eq!(
+            all.len(),
+            COMMAND_HEADS.len() + 1,
+            "empty query lists every head plus the tree action"
+        );
+        let narrowed = filter_palette("hotkeys", &kb);
+        assert!(
+            !narrowed.is_empty() && narrowed.len() < all.len(),
+            "a narrowing query returns a strict subset: {narrowed:?}"
+        );
+        assert!(
+            narrowed.iter().any(|e| e.command.trim() == "/hotkeys"),
+            "the subset still names the match: {narrowed:?}"
+        );
+        assert!(
+            filter_palette("zzz-no-such-command", &kb).is_empty(),
+            "nonsense matches nothing"
+        );
     }
 }
