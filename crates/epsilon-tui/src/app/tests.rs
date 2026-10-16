@@ -10090,6 +10090,10 @@ fn a_scrolled_back_view_fills_the_body_from_the_top() {
     for index in 0..60 {
         app.ui.push_notice(format!("ROW-{index:03}"));
     }
+    // Bench content is notices; without a dispatched command the welcome
+    // block would pin above them and shift every scrolled row. Past
+    // first-run is the precondition this scroll math is measured under.
+    app.has_run_command = true;
     let rows = render_rows(&mut app, 60, 20);
     app.scroll_from_bottom = 5;
     let scrolled = render_rows(&mut app, 60, 20);

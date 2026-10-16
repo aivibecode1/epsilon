@@ -241,6 +241,18 @@ fn phase_spans(theme: &Theme, state: &RunState, budget: usize) -> Vec<Span<'stat
 /// to need it, and the frame read `… · R0 W0 CH n/a · Faux (offline scripted)` with
 /// `offline` dropped and the model next. That is why the pin is a field on the part
 /// and not an inference from how it is drawn.
+/// Whether the session has moved any billable traffic yet: tokens in or
+/// out, cache volume either way, or a priced turn. Reads the public counters —
+/// the collapse lives in the draw, not in the measurements, so [`Metrics`]
+/// keeps every gauge and [`Metrics::parts`] keeps its order.
+fn has_traffic(metrics: &Metrics) -> bool {
+    metrics.tokens_in > 0
+        || metrics.tokens_out > 0
+        || metrics.cache_read_session > 0
+        || metrics.cache_write_session > 0
+        || metrics.cost_micro_usd.is_some()
+}
+
 fn metric_spans(theme: &Theme, metrics: &Metrics, room: usize) -> Vec<Span<'static>> {
     // The parts are joined by a three-column separator, so a set of `n` costs
     // `sum(widths) + 3 * (n - 1)`. The count is recomputed after every drop
@@ -252,6 +264,32 @@ fn metric_spans(theme: &Theme, metrics: &Metrics, room: usize) -> Vec<Span<'stat
     };
 
     let mut keep: Vec<&crate::ui::metrics::MetricPart> = parts.iter().collect();
+    // A session with no traffic yet shows one quiet segment instead of the
+    // usage cluster: `↑0 ↓0 · R0 W0 CH n/a` is five counters saying nothing,
+    // and pi gates each of its footer counters on nonzero for the same reason
+    // (`footer.ts:181-184`). The context gauge and every pinned part survive —
+    // ctx, the model, `offline`, the plan chip — so "what is this" never
+    // collapses, only "what has it cost so far". The first traffic restores
+    // the full cluster; no gauge is removed, only deferred.
+    let quiet;
+    if !has_traffic(metrics) {
+        let context = metrics.context_gauge();
+        keep.retain(|p| p.pinned || p.text == context);
+        quiet = Some(crate::ui::metrics::MetricPart {
+            text: "no usage yet".to_string(),
+            role: MetricRole::Label,
+            pinned: false,
+        });
+        // The quiet segment reads directly after the context gauge: what room
+        // is left, then what has been spent (nothing). Pinned parts keep their
+        // order behind it.
+        let at = keep
+            .iter()
+            .position(|p| p.text == context)
+            .map(|i| i + 1)
+            .unwrap_or(keep.len());
+        keep.insert(at, quiet.as_ref().expect("just built"));
+    }
     // Drop the least important measurement: the last part that is not pinned.
     // Re-measured every step, so the budget can never drift from the text the loop
     // is about to emit.
@@ -585,10 +623,16 @@ mod tests {
             model_label: "Faux (offline scripted)".into(),
             context_used: None,
             context_window: Some(1_000_000),
-            tokens_in: 0,
-            tokens_out: 0,
-            cache_read_session: 0,
-            cache_write_session: 0,
+            // Traffic, so the cluster exists to be dropped: a zero session
+            // collapses to `no usage yet` before the budget runs at all, and
+            // this test is about what the budget drops, not the collapse.
+            tokens_in: 12_400,
+            tokens_out: 3_400,
+            cache_read_session: 36_000,
+            cache_write_session: 2_000,
+            cache_read_last: 36_000,
+            prompt_tokens_last: Some(48_000),
+            cache_reported: true,
             ..Metrics::default()
         };
         for width in [40u16, 46, 52, 60, 72, 80, 100] {
@@ -597,9 +641,9 @@ mod tests {
                 !line.contains("0 ↓0") || line.contains("↑0 ↓0"),
                 "width {width} printed a token gauge with no ↑ marker: {line:?}"
             );
-            // `R0 W0 CH n/a` is one gauge, not three, and it is the first to go.
+            // `R36k W2.0k CH …` is one gauge, not three, and it is the first to go.
             assert!(
-                !(line.contains("R0") && !line.contains("W0")),
+                !(line.contains("R36k") && !line.contains("W2.0k")),
                 "width {width} printed a cache gauge with only some of its fields: {line:?}"
             );
             assert!(
@@ -700,6 +744,78 @@ mod tests {
             "{} cells: {line:?}",
             crate::ui::layout::display_width(&line)
         );
+    }
+
+    /// **A fresh session shows one quiet segment, not every gauge at zero.**
+    ///
+    /// `↑0 ↓0 · R0 W0 CH n/a` is five counters saying nothing: no prompt has
+    /// run, so there is no traffic to measure — and pi prints only the counters
+    /// that moved (`footer.ts:181-184`: each part gated on nonzero). The usage
+    /// cluster collapses to `no usage yet` until any counter moves, while ctx,
+    /// the model and `offline` always survive. After the first traffic the full
+    /// cluster returns — every gauge still exists, it just stays out of the way
+    /// until it has something to say.
+    #[test]
+    fn an_empty_session_collapses_the_usage_cluster_to_one_quiet_segment() {
+        let metrics = Metrics {
+            model_label: "Faux (offline scripted)".into(),
+            offline: true,
+            context_window: Some(1_000_000),
+            ..Metrics::default()
+        };
+        for width in [80u16, 100] {
+            let line = render(width, &RunState::Idle, &metrics);
+            assert!(
+                line.contains("no usage yet"),
+                "width {width}: an empty session must collapse its gauges: {line:?}"
+            );
+            for loud in ["↑", "↓", "CH", "R0", "W0", "$"] {
+                assert!(
+                    !line.contains(loud),
+                    "width {width}: quiet means quiet ({loud} leaked): {line:?}"
+                );
+            }
+            assert!(
+                line.contains("?/1.0M"),
+                "width {width}: the context window survives the collapse: {line:?}"
+            );
+            assert!(
+                line.contains("Faux (offline scripted)") && line.ends_with("offline"),
+                "width {width}: model + qualifier survive the collapse: {line:?}"
+            );
+        }
+    }
+
+    /// The other half of the collapse: the first traffic brings every gauge back.
+    #[test]
+    fn first_traffic_restores_the_full_usage_cluster() {
+        let metrics = Metrics {
+            model_label: "DeepSeek V3.1".into(),
+            context_used: Some(48_000),
+            context_window: Some(200_000),
+            tokens_in: 1_200,
+            tokens_out: 300,
+            cache_read_session: 600,
+            cache_write_session: 100,
+            cache_read_last: 600,
+            prompt_tokens_last: Some(2_000),
+            cache_reported: true,
+            cost_micro_usd: Some(1_420),
+            ..Metrics::default()
+        };
+        for width in [80u16, 100] {
+            let line = render(width, &RunState::Idle, &metrics);
+            assert!(
+                !line.contains("no usage yet"),
+                "width {width}: traffic retires the quiet segment: {line:?}"
+            );
+            for gauge in ["↑", "↓", "CH", "$"] {
+                assert!(
+                    line.contains(gauge),
+                    "width {width}: the {gauge} gauge must be back: {line:?}"
+                );
+            }
+        }
     }
 
     #[test]

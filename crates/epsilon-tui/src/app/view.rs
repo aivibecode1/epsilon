@@ -651,14 +651,32 @@ impl App {
             || self.pending_ask.is_some()
     }
 
-    /// Whether the transcript has nothing to show yet.
-    ///
-    /// Streaming text counts: a run that has started producing output must not
-    /// have the welcome screen painted over it.
-    pub(super) fn transcript_is_empty(&self) -> bool {
-        self.ui.lines().is_empty()
-            && self.ui.streaming_text().is_empty()
-            && self.ui.streaming_thinking().is_empty()
+    /// Whether any conversation exists yet: a user, assistant, thinking, tool,
+    /// or card line. System notices (startup lines, fetch reports, warnings)
+    /// are orientation, not conversation — the welcome block stays up above
+    /// them until the first real turn, or a notice-heavy workspace would
+    /// suppress it on every launch and it would never be seen. Streaming
+    /// text counts: a run that has started producing output must not have
+    /// the welcome screen painted over it. Dispatching a slash command
+    /// counts too (see `has_run_command`): command output must never share
+    /// the screen with the block that pointed at it.
+    pub(super) fn conversation_started(&self) -> bool {
+        use crate::state::LineKind;
+        self.has_run_command
+            || !self.ui.streaming_text().is_empty()
+            || !self.ui.streaming_thinking().is_empty()
+            || self.ui.lines().iter().any(|l| {
+                matches!(
+                    l.kind,
+                    LineKind::User
+                        | LineKind::Assistant
+                        | LineKind::Thinking
+                        | LineKind::ToolCall
+                        | LineKind::ToolResultOk
+                        | LineKind::ToolResultErr
+                        | LineKind::CardBody
+                )
+            })
     }
 
     // ---- D11: where the view is ---------------------------------------------
@@ -868,6 +886,67 @@ impl App {
                     .sum::<usize>()
             })
             .sum::<usize>()
+    }
+}
+
+#[cfg(test)]
+mod welcome_frame_tests {
+    use super::super::tests_support::{render_rows, test_app};
+
+    /// Empty shows the first-run block; the first real line replaces it.
+    ///
+    /// Asserted on the frame at both live sizes — not on
+    /// `conversation_started`, which only decides *which* branch the shell
+    /// takes. A state flag that is true while the block is not on screen is
+    /// exactly the shipped-but-unreachable shape this repo keeps catching.
+    #[test]
+    fn empty_transcript_shows_the_first_run_block_and_content_replaces_it() {
+        let (mut app, _agent, _rx) = test_app();
+        app.theme.glyphs = crate::ui::theme::UNICODE;
+        for (w, h) in [(80u16, 24u16), (100u16, 30u16)] {
+            let screen = render_rows(&mut app, w, h).join("\n");
+            assert!(
+                screen.contains("E P S I L O N"),
+                "empty {w}x{h} must show the first-run block:\n{screen}"
+            );
+            assert!(
+                screen.contains("/help"),
+                "empty {w}x{h} must say where help lives:\n{screen}"
+            );
+            assert!(
+                screen.contains("/login"),
+                "empty {w}x{h} must show one example command:\n{screen}"
+            );
+            // UNICODE pin: the steps join with an em dash, the prefixes with
+            // a middle dot — ASCII rendering would drop both.
+            assert!(
+                screen.contains("—") && screen.contains("·"),
+                "the welcome frame must carry its unicode joins at {w}x{h}:\n{screen}"
+            );
+        }
+        // Notices are orientation, not conversation: the welcome stays pinned
+        // above them instead of being suppressed by them (a notice-heavy
+        // launch would otherwise never show it). Only a real turn banishes it.
+        app.ui.push_notice("a real line");
+        for (w, h) in [(80u16, 24u16), (100u16, 30u16)] {
+            let screen = render_rows(&mut app, w, h).join("\n");
+            assert!(
+                screen.contains("E P S I L O N"),
+                "notices must not suppress the block at {w}x{h}:\n{screen}"
+            );
+            assert!(
+                screen.contains("a real line"),
+                "the notices below the block must be on screen at {w}x{h}:\n{screen}"
+            );
+        }
+        app.ui.push_local_input("a first turn");
+        for (w, h) in [(80u16, 24u16), (100u16, 30u16)] {
+            let screen = render_rows(&mut app, w, h).join("\n");
+            assert!(
+                !screen.contains("E P S I L O N"),
+                "the block must vanish once the transcript has content at {w}x{h}:\n{screen}"
+            );
+        }
     }
 }
 

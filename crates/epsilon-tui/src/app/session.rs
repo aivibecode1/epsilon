@@ -230,6 +230,7 @@ impl App {
             // Criterion 4 mirror for the settings panel's plan row (see
             // `settings_preset` above); synced when `/settings` opens.
             settings_plan: false,
+            has_run_command: false,
             scope_open: false,
             scope_index: 0,
             scope_snapshot: Vec::new(),

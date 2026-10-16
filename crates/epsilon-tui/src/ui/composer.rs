@@ -9,7 +9,7 @@
 //!
 //! ```text
 //! ──────────────────────────────────────────────────────────────
-//! ❯ ask anything
+//! ❯ describe a task, or / for commands
 //! ```
 //!
 //! Two behaviours are non-negotiable, because both have bitten users:
@@ -28,7 +28,7 @@ use ratatui::widgets::Paragraph;
 use crate::ui::theme::{Glyphs, Theme};
 
 /// What the composer shows when the draft is empty.
-pub const PLACEHOLDER: &str = "ask anything";
+pub const PLACEHOLDER: &str = "describe a task, or / for commands";
 
 /// Draw the rule that separates the transcript from the composer.
 ///

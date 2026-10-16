@@ -42,8 +42,11 @@ pub struct Shell<'a> {
     pub caret: (usize, usize),
     /// Whether the composer owns the keyboard; false while an overlay is open.
     pub composer_focused: bool,
-    /// Whether there is anything to show in the transcript.
-    pub transcript_empty: bool,
+    /// Welcome lines pinned above the transcript while no conversation exists
+    /// yet (empty once conversation started). Decided by the caller — the
+    /// shell only supplies the viewport split, so both sides measure the
+    /// same rectangles (see [`split_welcome`]).
+    pub welcome: Vec<ratatui::text::Line<'static>>,
 
     /// Shown on the welcome panel: where this session lives. Empty is fine and
     /// means "unnamed" — the panel drops the row rather than printing a blank.
@@ -85,9 +88,19 @@ where
 
     header::draw(f, regions.header, theme, &shell.run, &shell.metrics);
 
-    if shell.transcript_empty {
-        let lines = crate::ui::transcript::welcome(theme, shell.session_label);
-        f.render_widget(ratatui::widgets::Paragraph::new(lines), regions.transcript);
+    if !shell.welcome.is_empty() {
+        // No conversation yet: the welcome stays pinned above whatever
+        // notices exist (or nothing, on a clean launch) instead of being
+        // suppressed by them. The body rectangle comes from the same split
+        // the caller measured (see `split_welcome`), so the viewport the
+        // transcript draws always matches its geometry.
+        let draft_rows = shell.draft.len().max(1) as u16;
+        let (welcome_rect, body_rect) = split_welcome(area, draft_rows, shell.welcome.len() as u16);
+        f.render_widget(
+            ratatui::widgets::Paragraph::new(shell.welcome.clone()),
+            welcome_rect,
+        );
+        draw_transcript(f, body_rect);
     } else {
         draw_transcript(f, regions.transcript);
     }
@@ -126,6 +139,24 @@ where
     }
 }
 
+/// Split the transcript rectangle into a welcome prefix and the body below.
+///
+/// The one home for the split: `paint` renders it and the caller measures
+/// the body's sub-viewport through this same function, so the geometry the
+/// footer badge reads always describes the rectangle actually drawn. The
+/// welcome is capped to the available height (a zero-height body draws
+/// nothing — see `draw_transcript`'s viewport guard).
+pub fn split_welcome(area: Rect, draft_rows: u16, welcome_rows: u16) -> (Rect, Rect) {
+    let regions = Regions::split(area, draft_rows);
+    let take = (welcome_rows as usize).min(regions.transcript.height as usize) as u16;
+    let mut welcome_rect = regions.transcript;
+    welcome_rect.height = take;
+    let mut body_rect = regions.transcript;
+    body_rect.y += take;
+    body_rect.height = body_rect.height.saturating_sub(take);
+    (welcome_rect, body_rect)
+}
+
 /// The one line shown when the window cannot hold the layout.
 pub fn paint_too_small(f: &mut Frame<'_>, area: Rect, theme: &Theme, _glyphs: &Glyphs) {
     f.render_widget(
@@ -152,7 +183,7 @@ mod tests {
     use ratatui::Terminal;
     use ratatui::backend::TestBackend;
 
-    fn shell(theme: &Theme, empty: bool) -> Shell<'_> {
+    fn shell<'a>(theme: &'a Theme, welcome: Vec<ratatui::text::Line<'static>>) -> Shell<'a> {
         Shell {
             theme,
             run: RunState::Idle,
@@ -174,15 +205,20 @@ mod tests {
             draft: vec![String::new()],
             caret: (0, 0),
             composer_focused: true,
-            transcript_empty: empty,
+            welcome,
             session_label: "",
         }
     }
 
-    fn render(width: u16, height: u16, empty: bool) -> Vec<String> {
+    fn render(width: u16, height: u16, welcome: bool) -> Vec<String> {
         let theme = Theme::new(ColorMode::Ansi16, ASCII);
+        let lines = if welcome {
+            crate::ui::transcript::welcome(&theme, "")
+        } else {
+            Vec::new()
+        };
+        let sh = shell(&theme, lines);
         let mut terminal = Terminal::new(TestBackend::new(width, height)).expect("test terminal");
-        let sh = shell(&theme, empty);
         terminal
             .draw(|f| {
                 paint(f, f.area(), &sh, |f, area| {
@@ -234,7 +270,28 @@ mod tests {
         let rows = render(90, 24, true);
         let body = rows.join("\n");
         assert!(body.contains("E P S I L O N"), "{body}");
-        assert!(!body.contains("BODY ROW"), "welcome and body both drawn");
+    }
+
+    /// Notices but no conversation: the welcome pins above the body instead
+    /// of being suppressed by it. The shell test's BODY ROW stands in for
+    /// the notice rows — what matters is the ORDER (welcome first) and that
+    /// both reach the frame.
+    #[test]
+    fn welcome_pins_above_the_body_it_shares_the_region_with() {
+        let rows = render(90, 24, true);
+        let body = rows.join("\n");
+        let welcome_at = rows
+            .iter()
+            .position(|r| r.contains("E P S I L O N"))
+            .expect("welcome renders: {body}");
+        let body_at = rows
+            .iter()
+            .position(|r| r.contains("BODY ROW"))
+            .expect("body still renders below: {body}");
+        assert!(
+            welcome_at < body_at,
+            "welcome must pin above the body:\n{body}"
+        );
     }
 
     #[test]
@@ -257,7 +314,7 @@ mod tests {
             let sh = Shell {
                 draft: draft.clone(),
                 caret: (0, text_width),
-                ..shell(&theme, false)
+                ..shell(&theme, Vec::new())
             };
             let mut terminal = Terminal::new(TestBackend::new(width, 12)).expect("test terminal");
             terminal

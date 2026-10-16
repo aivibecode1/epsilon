@@ -398,13 +398,19 @@ fn the_screen_reports_what_the_harness_is_doing() {
     // only once there is one, because a fabricated `$0.00` is a lie, and the cache
     // became a volume/rate form (`R0 W0 CH -`). Asserting the current contract is the
     // fix; the stale assertion was the bug.
+    //
+    // Polish wave: a zero-traffic session collapses the whole usage cluster
+    // (`↑0 ↓0 · R0 W0 CH n/a` + cost) into one quiet `no usage yet` segment —
+    // the same honesty rule as the cost above (no fabricated zeros), so the
+    // first frame names neither CH nor R/W. The cluster returns with the
+    // first traffic (asserted after the turn below, where `$` reappears).
     assert!(
         !screen.contains('$'),
         "a cost is shown before any turn has run, so it must be fabricated:\n{screen}"
     );
     assert!(
-        screen.contains("CH"),
-        "no cache indicator on the first frame:\n{screen}"
+        screen.contains("no usage yet"),
+        "an empty session must collapse its zero gauges, not print them:\n{screen}"
     );
     assert!(
         screen.contains("DeepSeek") || screen.contains("Faux") || screen.contains("offline"),

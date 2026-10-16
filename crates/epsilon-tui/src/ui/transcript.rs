@@ -349,6 +349,13 @@ fn fold_case(text: &str) -> (Vec<char>, Vec<usize>) {
 /// So the space goes to what no other row says: what to do, and the three prefixes
 /// the composer reads. One left edge, and a body weight for the instruction rather
 /// than the same faint style as the decoration around it.
+///
+/// The instruction is three numbered steps — what to type first, where help
+/// lives, one example command — because a welcome that only says "describe a
+/// task" leaves a new operator asking where the commands are, while a longer
+/// one duplicates the footer or the `/help` guide. Shaped like opencode's
+/// placeholder-with-an-example (`footer.prompt.tsx:284-293`): a hint plus a
+/// concrete string to copy.
 pub fn welcome(theme: &Theme, session_label: &str) -> Vec<Line<'static>> {
     let mut lines: Vec<Line<'static>> = Vec::new();
     // A plain, wide-tracked wordmark. Not ASCII art: art breaks on a narrow
@@ -365,14 +372,32 @@ pub fn welcome(theme: &Theme, session_label: &str) -> Vec<Line<'static>> {
         theme.dim(),
     )));
     lines.push(Line::from(""));
-    // The one instruction on the screen, and the only sentence drawn in a body
-    // weight. An instruction rendered in the same style as the data above it is
-    // not a call to action, it is another datum.
+    // Step one is the only sentence in a body weight: an instruction rendered
+    // in the same style as the data above it is another datum, not a call.
     lines.push(Line::from(vec![
+        Span::styled("1 ", theme.faint()),
         Span::styled("Describe a task", theme.dim_strong()),
         Span::styled(", then press ", theme.dim()),
         Span::styled("enter", theme.dim_strong()),
         Span::styled(".", theme.dim()),
+    ]));
+    lines.push(Line::from(vec![
+        Span::styled("2 ", theme.faint()),
+        Span::styled("/help", theme.dim_strong()),
+        Span::styled(" lists every command", theme.dim()),
+        // The dash comes from the repertoire table, not a literal: an em
+        // dash is not in CP437, and a literal here drew as a box on a legacy
+        // console (the M219 shape). The middle dot below stays a literal —
+        // it IS in CP437.
+        Span::styled(format!(" {} ", theme.glyphs.dash), theme.faint()),
+        Span::styled("start there.", theme.dim()),
+    ]));
+    lines.push(Line::from(vec![
+        Span::styled("3 ", theme.faint()),
+        Span::styled("e.g. ", theme.dim()),
+        Span::styled("/login anthropic", theme.dim_strong()),
+        Span::styled(format!(" {} ", theme.glyphs.dash), theme.faint()),
+        Span::styled("connect a provider.", theme.dim()),
     ]));
     // The three prefixes the composer reads (`app.rs` dispatches all three), which
     // no other row on screen states.
@@ -723,6 +748,51 @@ mod tests {
             .map(|s| crate::ui::layout::display_width(&s.content))
             .sum();
         assert_eq!(total, GUTTER + 2);
+    }
+
+    /// The first-run block is three steps: what to type, where help lives,
+    /// one example command. A welcome that only says "describe a task" leaves
+    /// a new operator asking where the commands are; one that lists keys
+    /// duplicates the footer. Borrowed from opencode's one-line placeholder
+    /// with an example (`footer.prompt.tsx:284-293`: `Ask anything...
+    /// "Fix a TODO in the codebase"`) — a hint plus a concrete string to copy.
+    #[test]
+    fn the_welcome_screen_is_three_steps_with_help_and_an_example() {
+        let theme = Theme::new(ColorMode::Ansi16, ASCII);
+        let text = screen(welcome(&theme, ""), 80, 20);
+        assert!(text.contains("E P S I L O N"), "{text}");
+        assert!(
+            text.contains("/help"),
+            "step two must name where help lives: {text}"
+        );
+        assert!(
+            text.contains("/login"),
+            "step three must show one example command: {text}"
+        );
+    }
+
+    /// The block fits the smallest transcript it can appear in: every row one
+    /// line, no wrapping at 80 columns, rows to spare.
+    #[test]
+    fn the_welcome_block_fits_a_small_transcript_without_scrolling() {
+        let theme = Theme::new(ColorMode::Ansi16, ASCII);
+        let lines = welcome(&theme, "cli");
+        assert!(
+            lines.len() <= 10,
+            "the block must leave a small transcript mostly empty: {} rows",
+            lines.len()
+        );
+        for line in &lines {
+            let width: usize = line
+                .spans
+                .iter()
+                .map(|s| crate::ui::layout::display_width(&s.content))
+                .sum();
+            assert!(
+                width <= 78,
+                "a welcome row must not wrap at 80 columns ({width}): {line:?}"
+            );
+        }
     }
 
     #[test]

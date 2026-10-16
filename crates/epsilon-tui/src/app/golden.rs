@@ -464,7 +464,7 @@ fn a_long_transcript_never_pushes_the_composer_off_the_screen() {
     assert!(
         rows[rows.len() - 2..]
             .iter()
-            .any(|r| r.contains("enter") || r.contains("ask anything")),
+            .any(|r| r.contains("enter") || r.contains("describe a task")),
         "the composer and footer were pushed off the frame: {:?}",
         &rows[rows.len() - 4..]
     );
@@ -515,7 +515,7 @@ fn an_empty_session_gets_the_first_run_screen_inside_a_well_formed_frame() {
     let screen = rows.join("\n");
     assert!(screen.contains("E P S I L O N"), "{screen}");
     assert!(
-        screen.contains("ask anything"),
+        screen.contains("describe a task, or / for commands"),
         "the composer placeholder is missing: {screen}"
     );
     for (index, row) in rows.iter().enumerate() {
@@ -1035,6 +1035,10 @@ fn paging_up_a_running_view_shows_it_is_frozen_and_where() {
     for index in 0..10 {
         app.ui.push_notice(format!("ROW-{index:03}"));
     }
+    // Bench content is notices; without a dispatched command the welcome
+    // block would pin above them and shift every scrolled row. Past
+    // first-run is the precondition this scroll math is measured under.
+    app.has_run_command = true;
     let before = render_rows(&mut app, 60, 12);
     assert!(before.join("\n").contains("ROW-009"), "{before:#?}");
 
@@ -1087,6 +1091,10 @@ fn the_jump_to_live_key_returns_the_view_to_the_tail() {
     for index in 0..10 {
         app.ui.push_notice(format!("ROW-{index:03}"));
     }
+    // Bench content is notices; without a dispatched command the welcome
+    // block would pin above them and shift every scrolled row. Past
+    // first-run is the precondition this scroll math is measured under.
+    app.has_run_command = true;
     assert!(!super::keys::handle_key(
         &mut app,
         &agent,
@@ -1195,6 +1203,9 @@ fn the_light_palette_changes_the_body_text_the_frame_draws() {
         let mut app = bench_app(UiState::new());
         app.theme = Theme::with_palette(ThemeColorMode::Truecolor, crate::ui::theme::UNICODE, mode);
         app.ui.push_notice(prose);
+        // Single-notice bench content: banish the welcome or it pins above
+        // the one row this colour assertion reads.
+        app.has_run_command = true;
         let (buffer, _rows) = render_buffer(&mut app, 60, 12);
         fg_of(&buffer, prose)
     };
@@ -1488,7 +1499,7 @@ fn the_one_rule_sits_between_the_transcript_and_the_composer() {
     // there, at 80x24 on row 19, and this frame's transcript ended above it.
     let composer_row = rule_row - 1;
     assert!(
-        rows[composer_row].contains("ask anything"),
+        rows[composer_row].contains("describe a task, or / for commands"),
         "the one rule must sit directly below the composer, found it on row \
          {rule_row} with {:?} above it: {rows:#?}",
         rows[composer_row]
@@ -1728,6 +1739,10 @@ fn search_matches_are_marked_on_the_transcript_and_the_current_one_more_so() {
 fn stepping_through_matches_moves_what_is_on_screen() {
     let mut app = bench_app(UiState::new());
     pin_theme(&mut app, ThemeColorMode::Ansi16);
+    // Bench content is notices; without a dispatched command the welcome
+    // block would pin above them and shift every scrolled row. Past
+    // first-run is the precondition this search math is measured under.
+    app.has_run_command = true;
     for i in 0..80 {
         app.ui.push_notice(format!("row {i}"));
     }

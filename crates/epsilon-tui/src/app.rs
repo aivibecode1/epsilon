@@ -567,6 +567,11 @@ pub(crate) struct App {
     /// panel opens alongside `settings_preset` and refreshed when Enter
     /// changes it. Same reason: the draw path carries no agent.
     settings_plan: bool,
+    /// Whether the operator has dispatched a slash command yet. Typing a
+    /// command means the orientation served its purpose — the welcome block
+    /// banishes on the first dispatch exactly like on the first turn, so a
+    /// `/help` screen is never crowded by the block that pointed at it.
+    has_run_command: bool,
     /// P-047: `/scoped-models` checklist over the F2 cycle scope. Staged ==
     /// `favorites` (the cycle list reads it, so Space rescopes live); the
     /// file moves only on Ctrl+S. `scope_snapshot` is the pre-open list Esc
@@ -2414,12 +2419,31 @@ fn draw(f: &mut Frame<'_>, app: &mut App) {
         // state in the application where you typed into a field with no cursor in it. A
         // writer who cannot see where they are typing deletes the wrong thing.
         composer_focused: app.guidance_mode || !app.overlay_open(),
-        transcript_empty: app.transcript_is_empty(),
+        // The welcome stays up until the first real turn — system notices
+        // are orientation, not conversation, so a notice-heavy launch still
+        // shows it pinned above them rather than suppressed by them.
+        welcome: if app.conversation_started() {
+            Vec::new()
+        } else {
+            crate::ui::transcript::welcome(&theme, &session_label)
+        },
         // Session first, branch second: a session label is the thing a user can
         // act on, and the branch is context for it. Falls back to the branch alone.
         session_label: &session_label,
     };
-    let geometry = app.geometry;
+    // When the welcome is up, the transcript draws in the sub-viewport below
+    // it (same split `paint` renders — see `split_welcome`), and the footer
+    // badge reads that sub-viewport's geometry: measuring the full area
+    // would undercount the rows below the fold.
+    let geometry = if shell.welcome.is_empty() || crate::ui::layout::Regions::too_small(main) {
+        app.geometry
+    } else {
+        let draft_rows = shell.draft.len().max(1) as u16;
+        let (_, body) =
+            crate::ui::shell::split_welcome(main, draft_rows, shell.welcome.len() as u16);
+        app.measure_transcript(body)
+    };
+    app.geometry = geometry;
     let painted = crate::ui::shell::paint(f, main, &shell, |f, transcript_area| {
         draw_transcript(f, app, transcript_area, geometry);
     });

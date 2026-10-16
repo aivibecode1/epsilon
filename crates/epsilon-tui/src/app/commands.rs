@@ -763,6 +763,11 @@ impl App {
         agent: &Arc<Agent>,
         command: crate::picker::Command,
     ) -> bool {
+        // A dispatched slash command banishes the welcome block (see
+        // `has_run_command`): typing a command means the orientation served
+        // its purpose, so command output never shares the screen with the
+        // block that pointed at it.
+        self.has_run_command = true;
         match &command {
             // Who answers, and how hard they think.
             crate::picker::Command::Models
@@ -2660,49 +2665,131 @@ impl App {
     fn run_view_command(&mut self, agent: &Arc<Agent>, command: crate::picker::Command) -> bool {
         match command {
             crate::picker::Command::Help => {
-                for item in crate::picker::SLASH_ITEMS {
-                    self.ui.push_notice(format!(
-                        "{} — {}",
-                        item.value.trim_end(),
-                        item.description
-                    ));
+                // One concept per row: the registry's own names, grouped by
+                // what they are about, fragments not sentences. Pi's registry
+                // is one line per command (`slash-commands.ts:19-44`); the `/`
+                // popup already shows every name with its description, so this
+                // index carries names only and stays on one screen.
+                //
+                // The groups name registry values, resolved below so the
+                // spellings cannot drift from `SLASH_ITEMS` — the set stays
+                // declared once, the grouping is only layout. The debug
+                // assertion beside them fails on an ungrouped command rather
+                // than silently dropping it from the index.
+                const GROUPS: &[(&str, &[&str])] = &[
+                    (
+                        "session",
+                        &["/new", "/resume", "/sessions", "/clone", "/fork", "/name"],
+                    ),
+                    (
+                        "history",
+                        &[
+                            "/session",
+                            "/tree",
+                            "/timeline",
+                            "/branch",
+                            "/clear",
+                            "/compact",
+                        ],
+                    ),
+                    (
+                        "model",
+                        &["/models", "/model", "/think", "/scoped-models", "/catalog"],
+                    ),
+                    ("auth", &["/login", "/logout", "/connect", "/auth"]),
+                    (
+                        "files",
+                        &["/editor", "/export", "/import", "/share", "/copy"],
+                    ),
+                    (
+                        "files",
+                        &["/changes", "/restore", "/trust", "/reload", "/open"],
+                    ),
+                    (
+                        "agent",
+                        &[
+                            "/skills",
+                            "/skill",
+                            "/tasks",
+                            "/goal",
+                            "/plan",
+                            "/preset",
+                            "/templates",
+                        ],
+                    ),
+                    (
+                        "meta",
+                        &["/help", "/hotkeys", "/settings", "/theme", "/expand"],
+                    ),
+                    (
+                        "meta",
+                        &["/search", "/changelog", "/quit", "/exit", "/scoped_models"],
+                    ),
+                ];
+                #[cfg(debug_assertions)]
+                {
+                    let mut seen = std::collections::HashSet::new();
+                    for (_, names) in GROUPS {
+                        for name in *names {
+                            assert!(seen.insert(*name), "help groups {name} twice");
+                        }
+                    }
+                    for item in crate::picker::SLASH_ITEMS {
+                        assert!(
+                            seen.contains(item.value.trim()),
+                            "help drops {}: group it or say why",
+                            item.value.trim()
+                        );
+                    }
+                }
+                for (label, names) in GROUPS {
+                    let row: Vec<&str> = names
+                        .iter()
+                        .map(|name| {
+                            crate::picker::SLASH_ITEMS
+                                .iter()
+                                .find(|item| item.value.trim() == *name)
+                                .map(|item| item.value.trim())
+                                .unwrap_or(name)
+                        })
+                        .collect();
+                    self.ui
+                        .push_notice(format!("{label} — {}", row.join(" · ")));
                 }
                 // `String`, because the F-key line is resolved from the binding
                 // table rather than written (see the format! below).
                 let mut guide: Vec<String> = vec![
-                    "auth: /login anthropic sk-...  (paste inside TUI, masked) · /logout anthropic · keys saved to ~/.config/epsilon/auth.json",
-                    "subscription login: /login anthropic oauth · /login xai oauth (device code) · /login openrouter oauth — browser round-trip, same store",
-                    "also: /connect /auth are aliases for /login — same masked prompt, paste works inside it",
-                    "thinking: Ctrl+T cycles · current level in the status bar",
+                    "auth — /login <provider> (masked paste) · keys → ~/.config/epsilon/auth.json",
+                    "auth — /login <provider> oauth — same store, browser round-trip",
+                    "thinking — Ctrl+T cycles · current level in the status bar",
                 ]
                 .into_iter()
                 .map(String::from)
                 .collect();
-                // The header is the harness's own report on itself, and a report with
-                // no legend is only transparent to the person who wrote it.
-                //
-                // The legend lives in `ui::metrics` rather than here, and that is the
-                // fix for this row: the three lines that used to sit here described
-                // `42%/200k` and `cache 87%`, neither of which the header has printed
-                // since the `ctx` label and the cache volume landed. The three tokens a
-                // reader actually cannot decode — `ctx ?`, `CH n/a`, and the trailing
-                // `offline` — appeared in none of them. A legend kept beside the
-                // formatters is held to them by a test; a legend kept beside the help
-                // text is held to nothing.
-                guide.extend(crate::ui::metrics::LEGEND.iter().map(|s| s.to_string()));
+                // The header legend used to be reprinted here in full
+                // sentences; it now lives only in `ui::metrics::LEGEND`, held
+                // to the formatters by its own test. The header labels its own
+                // tokens live (ctx · ↑↓ · CH · $ · plan · model · offline), so
+                // reprinting the decodes here cost half the help budget to say
+                // what the row above already shows.
                 guide.extend([
-                    "goal: /goal <objective> parks one long-running objective in this session; the header line shows its phase and rounds".to_string(),
-                    "      /goal shows it · edit · pause · resume · complete · blocked <code> <reason> · clear · the model has the same controls as tools".to_string(),
-                    "keys: Enter submit · Esc aborts a run (quits when idle) · Ctrl+X expands tool output".to_string(),
-                    "      PgUp/PgDn scroll transcript · Ctrl+M model picker · Ctrl+P command palette".to_string(),
+                    "goal — /goal <objective> parks one objective · bare shows it".to_string(),
+                    "goal — edit · pause · resume · complete · blocked <code> <reason> · clear"
+                        .to_string(),
+                    "keys — Enter submit · Esc stops run (quits idle) · Ctrl+X expands output"
+                        .to_string(),
+                    "keys — PgUp/PgDn scroll · Ctrl+M model · Ctrl+P palette · Ctrl+T think"
+                        .to_string(),
                     // F6 opens the workspace file tree (Phase 3, `app.tree.toggle`),
                     // and until now no screen named it — the chord was real and
                     // undiscoverable, which is invariant 7 read the other way
                     // round. Resolved from the table rather than written, so a
                     // rebinding moves this line with it.
                     format!(
-                        "      {} opens the file tree · Enter opens a file · Esc closes",
-                        self.keybindings.key_text("app.tree.toggle").unwrap_or_default()
+                        "tree — {} opens the file tree · Enter opens a file · Esc closes",
+                        self.keybindings
+                            .key_text("app.tree.toggle")
+                            .unwrap_or_default()
                     ),
                 ]);
                 for line in guide {
@@ -2913,8 +3000,8 @@ impl App {
             }
             crate::picker::Command::Hotkeys => {
                 for line in [
-                    "hotkeys: Enter submit · Esc aborts run (quits when idle) · Ctrl+X expands tool output",
-                    "         PgUp/PgDn scroll · Ctrl+M model picker · Ctrl+P command palette · Ctrl+T think",
+                    "hotkeys: Enter submit · Esc stops run (quits idle) · Ctrl+X expands output",
+                    "         PgUp/PgDn scroll · Ctrl+M model · Ctrl+P palette · Ctrl+T think",
                     "         Ctrl+U kill to start · Ctrl+W kill word · Ctrl+Y yank · Ctrl+F favorite",
                     "         /help lists slash commands · /models switches model",
                 ] {
@@ -4651,6 +4738,87 @@ mod tests {
             joined.contains("did you mean '/epsprobe-deploy'?"),
             "the hint must name the custom command: {joined:?}"
         );
+    }
+
+    /// `/help` fits without scrolling at both live sizes: every notice it
+    /// emits is on the same screen, first row to last.
+    ///
+    /// Today's help is ~70 notices of prose — the command list one row per
+    /// command, a full-sentence legend for every header gauge — and the tail
+    /// a reader needs (keys, tree, custom commands) scrolls off before it is
+    /// read. Borrowed from pi's one-line registry rows
+    /// (`slash-commands.ts:19-44`: name plus a fragment description): one
+    /// concept per row, fragments not sentences.
+    #[tokio::test]
+    async fn help_fits_without_scrolling_at_both_sizes() {
+        let (mut app, agent, _receivers) = test_app();
+        app.theme.glyphs = crate::ui::theme::UNICODE;
+        assert!(!type_and_enter(&mut app, &agent, "/help"));
+        let notices: Vec<String> = app.ui.lines().iter().map(|l| squeezed(&l.text)).collect();
+        assert!(
+            notices.len() <= 19,
+            "help emits {} rows; an 80x24 transcript shows 19: {notices:#?}",
+            notices.len()
+        );
+        for (w, h) in [(80u16, 24u16), (100u16, 30u16)] {
+            let screen = frame(&mut app, w, h);
+            for n in &notices {
+                assert!(
+                    screen.contains(n),
+                    "help row scrolled off at {w}x{h}: {n}\n{screen}"
+                );
+            }
+            // UNICODE pin: concept rows join with an em dash, fields with a
+            // middle dot — ASCII rendering would drop both.
+            assert!(
+                screen.contains("—") && screen.contains("·"),
+                "the help frame must carry its unicode joins at {w}x{h}: {screen}"
+            );
+        }
+    }
+
+    /// Short rows, no lost facts: every slash name, every guide claim, each
+    /// on one unwrapped line.
+    ///
+    /// Descriptions move to the surface that already labels them — the `/`
+    /// popup shows every command with its description — but names, stores,
+    /// verbs and chords stay, each pinned here.
+    #[tokio::test]
+    async fn help_keeps_every_fact_in_short_rows() {
+        let (mut app, agent, _receivers) = test_app();
+        app.theme.glyphs = crate::ui::theme::UNICODE;
+        assert!(!type_and_enter(&mut app, &agent, "/help"));
+        let lines: Vec<String> = app.ui.lines().iter().map(|l| l.text.clone()).collect();
+        let joined = lines.join("\n");
+        // Every slash command the registry offers is named.
+        for item in crate::picker::SLASH_ITEMS {
+            let name = item.value.trim();
+            assert!(joined.contains(name), "/help lost {name}: {joined:?}");
+        }
+        // Every guide fact survives the cut.
+        for fact in [
+            "~/.config/epsilon/auth.json",
+            "masked",
+            "oauth",
+            "Ctrl+T",
+            "status bar",
+            "/goal",
+            "blocked",
+            "Ctrl+X",
+            "Ctrl+M",
+            "Ctrl+P",
+            "opens the file tree",
+        ] {
+            assert!(joined.contains(fact), "/help lost {fact:?}: {joined:?}");
+        }
+        // And every row is short enough to survive an 80-column transcript
+        // (78 body columns) without wrapping mid-phrase.
+        for line in &lines {
+            assert!(
+                crate::ui::layout::display_width(line) <= 78,
+                "a help row wraps at 80 columns: {line:?}"
+            );
+        }
     }
 
     /// `/help` indexes custom commands with their scope tags — the same
