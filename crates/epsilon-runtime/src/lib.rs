@@ -2381,6 +2381,421 @@ pub struct ChangeRow {
     pub tool: String,
 }
 
+/// One anchored turn, as a front end may list it (turn-scoped undo).
+///
+/// The store type stays in `epsilon-tools` and the anchor type stays in the
+/// session file; this is the row both carry, so neither front end names
+/// either store type — the same rule [`describe_checkpoint`] exists to keep.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TurnRow {
+    /// 1-based turn number, as the anchor recorded it.
+    pub turn: u64,
+    /// Distinct files the turn's ledger range holds captures for.
+    pub files: usize,
+    /// First checkpoint-ledger seq of the turn.
+    pub ledger_start: u64,
+    /// Last checkpoint-ledger seq of the turn (`< start` means no files).
+    pub ledger_end: u64,
+}
+
+/// Turns with an anchor, oldest first.
+///
+/// Reads the attached session's anchors (whole file, not the active branch —
+/// an undo hides later anchors from the branch but must not forget them) and
+/// counts distinct files per turn through the ledger range read. A session
+/// with no store, or with no anchors, is an empty list, not an error: there
+/// is simply nothing to undo.
+pub fn list_turns(agent: &epsilon_core::Agent, workspace: &Path) -> Vec<TurnRow> {
+    let Some(handle) = agent.session_store() else {
+        return Vec::new();
+    };
+    let Ok(st) = handle.lock() else {
+        return Vec::new();
+    };
+    let anchors = st.turn_anchor_entries().unwrap_or_default();
+    let ledger = epsilon_tools::checkpoint::CheckpointStore::open(workspace);
+    let mut out = Vec::new();
+    for entry in &anchors {
+        let Some((turn, ledger_start, ledger_end, _)) =
+            epsilon_session::SessionStore::parse_turn_anchor(entry)
+        else {
+            continue;
+        };
+        let files = ledger
+            .entries_between(ledger_start, ledger_end)
+            .iter()
+            .map(|e| e.path.clone())
+            .collect::<std::collections::BTreeSet<_>>()
+            .len();
+        out.push(TurnRow {
+            turn,
+            files,
+            ledger_start,
+            ledger_end,
+        });
+    }
+    out.sort_by_key(|r| r.turn);
+    out
+}
+
+/// What `/undo-turn N` says **before** it changes anything.
+///
+/// The preview is a separate call for the same reason [`describe_checkpoint`]
+/// is: the sentence that lets a reader decide whether to rewind has to be
+/// obtainable without rewinding. Asking for the plan must not carry the power
+/// to act on it.
+pub fn describe_turn_undo(
+    agent: &epsilon_core::Agent,
+    workspace: &Path,
+    turn: u64,
+) -> Result<String, String> {
+    let (_, paths) = turn_plan(agent, workspace, turn)?;
+    if paths.is_empty() {
+        return Ok(format!(
+            "turn {turn} touched no files — undoing it only rewinds the transcript to \
+             before the turn. Nothing has changed yet. Run `/undo-turn {turn} yes` to apply."
+        ));
+    }
+    let shown: Vec<&str> = paths.iter().take(5).map(|s| s.as_str()).collect();
+    let more = paths.len().saturating_sub(shown.len());
+    Ok(format!(
+        "would undo turn {turn}: {} file(s) ({}{}) back to before the turn, and rewind \
+         the transcript to before it. Nothing has changed yet. Run `/undo-turn {turn} yes` \
+         to apply.",
+        paths.len(),
+        shown.join(", "),
+        if more == 0 {
+            String::new()
+        } else {
+            format!(" · and {more} more")
+        }
+    ))
+}
+
+/// Undo turn `turn`: put its files back and rewind the transcript to before
+/// it, atomically.
+///
+/// # All or nothing
+///
+/// Every file the turn touched is checked BEFORE any byte moves, with the
+/// same guard [`epsilon_tools::checkpoint::CheckpointStore::restore`] asks: a
+/// file the user edited since, a capture that was skipped, or a checkpoint
+/// that predates verification refuses, and the FIRST refusal aborts the whole
+/// undo — no file written, the leaf unmoved. A mid-restore I/O failure rolls
+/// back the files already written from memory snapshots, then likewise leaves
+/// the leaf alone. Either way a refusal names the file and leaves the
+/// workspace exactly as it was.
+///
+/// # Append-only transcript
+///
+/// The rewind is a leaf move (`navigate_to`), never a truncation: the undone
+/// suffix stays in the file off-branch, the model view excludes it because it
+/// walks from the leaf, and the next append branches from the restored point.
+/// A turn that began on an empty session (`leaf_before: None`) is refused —
+/// there is no entry to navigate to, and re-adding a `resetLeaf` is out of
+/// scope (M221 removed it; `/new` owns the empty branch).
+///
+/// # Busy guard
+///
+/// A run in flight owns the workspace's files. Refusing while one runs is the
+/// same guard `/restore` uses, and it lives here — in the composition shared
+/// by every mode — rather than in one front end, so headless, HTTP and RPC
+/// get it too. The TUI repeats the check before the call so the notice lands
+/// in its own transcript style; the second check here is what makes it true
+/// for the modes with no transcript.
+///
+/// # What is NOT rewound
+///
+/// Files only, plus the transcript leaf. No approval, usage, goal or shell
+/// history moves — undoing a turn does not unspend its tokens, unask its
+/// questions, or unrun its commands. Untracked files (never checkpointed)
+/// are untouched, and there is no redo: the suffix stays, but nothing points
+/// at it again.
+pub fn undo_turn(
+    agent: &epsilon_core::Agent,
+    workspace: &Path,
+    turn: u64,
+) -> Result<String, String> {
+    if agent.is_running() {
+        return Err(
+            "undo-turn: busy — wait for the current run to finish, then /undo-turn again"
+                .to_string(),
+        );
+    }
+    let Some(handle) = agent.session_store() else {
+        return Err("undo-turn: no session store attached".to_string());
+    };
+    // Resolve the anchor and the turn's ledger entries under one lock, then
+    // release it before touching the filesystem: two different locks, and
+    // holding both at once is how a future caller deadlocks this.
+    //
+    // Per path the entries replay NEWEST-first through the store's own
+    // `restore`, so each step's guard sees the bytes the previous step left:
+    // the newest entry carries the post-image the current file must still
+    // match, and the oldest entry's blob is the pre-turn state the replay
+    // ends at. Restoring only the oldest would refuse every real edit (a
+    // `record` carries no post-image); restoring only the newest would stop
+    // at the turn's second edit instead of before its first.
+    let (anchor_id, leaf_before, targets): (
+        String,
+        Option<String>,
+        Vec<epsilon_tools::checkpoint::Entry>,
+    ) = {
+        let st = handle
+            .lock()
+            .map_err(|_| "undo-turn: session store unavailable".to_string())?;
+        let Some(anchor) = st
+            .turn_anchor_for(turn)
+            .map_err(|e| format!("undo-turn: cannot read the session: {e}"))?
+        else {
+            let have = st.turn_anchor_entries().unwrap_or_default().len();
+            return Err(if have == 0 {
+                "undo-turn: no turn has been recorded yet — nothing to undo".to_string()
+            } else {
+                format!(
+                    "undo-turn: no turn {turn} — {have} turn(s) recorded; /undo-turn with no number lists them"
+                )
+            });
+        };
+        let Some((_, ledger_start, ledger_end, leaf_before)) =
+            epsilon_session::SessionStore::parse_turn_anchor(&anchor)
+        else {
+            return Err(format!(
+                "undo-turn: turn {turn}'s anchor cannot be read — the file is unchanged"
+            ));
+        };
+        let ledger = epsilon_tools::checkpoint::CheckpointStore::open(workspace);
+        let mut range = ledger.entries_between(ledger_start, ledger_end);
+        range.sort_by_key(|e| (e.path.clone(), std::cmp::Reverse(e.seq)));
+        let targets = range;
+        (anchor.id.clone(), leaf_before, targets)
+    };
+    let _ = anchor_id;
+    // Pre-check every file before any byte moves. The arms below repeat the
+    // store's own `check_unchanged` plus its skipped-capture refusal, because
+    // the check itself is private and the atomicity has to live somewhere: a
+    // refusal here aborts before the leaf moves AND before any file is
+    // written, which calling `restore` in a loop could not promise. Only the
+    // newest entry per path faces the current file — older ones in the same
+    // turn face the bytes the replay itself will have put back by then.
+    let ledger = epsilon_tools::checkpoint::CheckpointStore::open(workspace);
+    {
+        let mut seen: std::collections::BTreeSet<&str> = std::collections::BTreeSet::new();
+        for entry in &targets {
+            if seen.insert(entry.path.as_str())
+                && let Err(why) = turn_target_guard(workspace, entry)
+            {
+                return Err(format!(
+                    "undo-turn turn {turn} refused: {why} Nothing was undone."
+                ));
+            }
+        }
+    }
+    // Snapshot current bytes per distinct path so a mid-restore I/O failure
+    // can roll back.
+    let mut snapshots: Vec<(std::path::PathBuf, Option<Vec<u8>>)> = Vec::new();
+    {
+        let mut seen: std::collections::BTreeSet<&str> = std::collections::BTreeSet::new();
+        for entry in &targets {
+            if seen.insert(entry.path.as_str()) {
+                let target = workspace.join(entry.path.replace('/', std::path::MAIN_SEPARATOR_STR));
+                let current = std::fs::read(&target).ok();
+                snapshots.push((target, current));
+            }
+        }
+    }
+    let restored = snapshots.len();
+    for entry in &targets {
+        if let Err(why) = ledger.restore(workspace, entry) {
+            for (target, back) in snapshots {
+                match back {
+                    Some(bytes) => {
+                        let _ = std::fs::write(&target, &bytes);
+                    }
+                    None => {
+                        let _ = std::fs::remove_file(&target);
+                    }
+                }
+            }
+            return Err(format!(
+                "undo-turn turn {turn} failed on {}: {why}. Nothing was undone.",
+                entry.path
+            ));
+        }
+    }
+    // All files back: move the leaf, then reproject the live transcript.
+    let leaf_before = leaf_before.ok_or_else(|| {
+        "undo-turn: turn 1 began on an empty session — there is no entry to rewind to. \
+         The files were left alone; /new starts the empty branch."
+            .to_string()
+    })?;
+    // Files already moved and the leaf has nowhere to go: roll the files back
+    // rather than leave a half-undo behind.
+    if let Err(why) = (|| -> Result<(), String> {
+        let mut st = handle
+            .lock()
+            .map_err(|_| "session store unavailable".to_string())?;
+        st.navigate_to(&leaf_before)
+            .map_err(|e| format!("cannot rewind the transcript: {e}"))?;
+        Ok(())
+    })() {
+        for (target, back) in snapshots {
+            match back {
+                Some(bytes) => {
+                    let _ = std::fs::write(&target, &bytes);
+                }
+                None => {
+                    let _ = std::fs::remove_file(&target);
+                }
+            }
+        }
+        return Err(format!(
+            "undo-turn turn {turn} refused: {why} Nothing was undone."
+        ));
+    }
+    match agent.reproject_current_branch() {
+        Ok(_) => Ok(format!(
+            "undid turn {turn}: {restored} file(s) back to before the turn; the transcript \
+             suffix stays in the file off-branch"
+        )),
+        Err(why) => Err(format!(
+            "undo-turn turn {turn}: files restored but the transcript could not be reprojected \
+             ({why}) — the leaf was moved; resume the session to re-read it"
+        )),
+    }
+}
+
+/// The anchor plus the sorted distinct paths its ledger range touches.
+fn turn_plan(
+    agent: &epsilon_core::Agent,
+    workspace: &Path,
+    turn: u64,
+) -> Result<(TurnRow, Vec<String>), String> {
+    let Some(handle) = agent.session_store() else {
+        return Err("undo-turn: no session store attached".to_string());
+    };
+    let st = handle
+        .lock()
+        .map_err(|_| "undo-turn: session store unavailable".to_string())?;
+    let Some(anchor) = st
+        .turn_anchor_for(turn)
+        .map_err(|e| format!("undo-turn: cannot read the session: {e}"))?
+    else {
+        let have = st.turn_anchor_entries().unwrap_or_default().len();
+        return Err(if have == 0 {
+            "undo-turn: no turn has been recorded yet — nothing to undo".to_string()
+        } else {
+            format!(
+                "undo-turn: no turn {turn} — {have} turn(s) recorded; /undo-turn with no number lists them"
+            )
+        });
+    };
+    let Some((t, ledger_start, ledger_end, _)) =
+        epsilon_session::SessionStore::parse_turn_anchor(&anchor)
+    else {
+        return Err(format!(
+            "undo-turn: turn {turn}'s anchor cannot be read — the file is unchanged"
+        ));
+    };
+    drop(st);
+    let ledger = epsilon_tools::checkpoint::CheckpointStore::open(workspace);
+    let mut paths = ledger
+        .entries_between(ledger_start, ledger_end)
+        .iter()
+        .map(|e| e.path.clone())
+        .collect::<std::collections::BTreeSet<_>>()
+        .into_iter()
+        .collect::<Vec<_>>();
+    paths.sort();
+    Ok((
+        TurnRow {
+            turn: t,
+            files: paths.len(),
+            ledger_start,
+            ledger_end,
+        },
+        paths,
+    ))
+}
+
+/// Whether restoring `entry` would be safe, without restoring anything.
+///
+/// Mirrors `CheckpointStore::restore`'s refusals (the guard is private to the
+/// tools crate): skipped captures, missing verification, and files that moved
+/// since the harness wrote them all refuse here first, so the undo can abort
+/// before any byte moves.
+fn turn_target_guard(
+    workspace: &Path,
+    entry: &epsilon_tools::checkpoint::Entry,
+) -> Result<(), String> {
+    let target = workspace.join(entry.path.replace('/', std::path::MAIN_SEPARATOR_STR));
+    let Some(blob) = &entry.blob else {
+        if entry.existed {
+            let why = entry
+                .skipped
+                .as_deref()
+                .unwrap_or("the reason was not recorded");
+            return Err(format!(
+                "cannot restore {}: nothing was captured for it ({why}). The file is untouched \
+                 rather than removed — revert it by hand.",
+                entry.path
+            ));
+        }
+        // Undoing a creation deletes: guarded by the post-image like the store.
+        if target.exists() {
+            return turn_check_unchanged(&target, entry);
+        }
+        return Ok(());
+    };
+    let _ = blob;
+    if !target.exists() {
+        return Ok(());
+    }
+    turn_check_unchanged(&target, entry)
+}
+
+/// Content guard for one undo target: the file must still be what the harness
+/// left behind (or what it was before capture, for unamended entries).
+fn turn_check_unchanged(
+    target: &Path,
+    entry: &epsilon_tools::checkpoint::Entry,
+) -> Result<(), String> {
+    let current = std::fs::read(target).map_err(|e| format!("read before restore: {e}"))?;
+    let now = epsilon_tools::checkpoint::blob_name(&current);
+    match (
+        entry.post_image.as_deref(),
+        entry.digest.as_deref(),
+        entry.blob.as_deref(),
+    ) {
+        (Some(post), _, _) if post == now => Ok(()),
+        (Some(_), _, _) => Err(format!(
+            "cannot restore {}: the file changed after this harness wrote it ({} bytes now). \
+             Reverting would discard that work — read the file first, and delete it if you \
+             really want the older content back.",
+            entry.path,
+            current.len(),
+        )),
+        (None, Some(digest), _) if digest == now => Ok(()),
+        (None, Some(_), _) => Err(format!(
+            "cannot restore {}: this checkpoint does not record what the harness left behind, \
+             so a later edit cannot be told from your own. The file is untouched — read it \
+             first, and delete it if you really want the older content back.",
+            entry.path,
+        )),
+        (None, None, Some(_)) => Err(format!(
+            "cannot restore {}: this checkpoint predates content verification, so overwriting \
+             the file cannot be shown to be safe. Remove the file first to force it.",
+            entry.path,
+        )),
+        (None, None, None) => Err(format!(
+            "cannot restore {}: this checkpoint records no content to check the file against, \
+             so deleting it could throw away work done since. The file is untouched — read it \
+             first, and delete it by hand if you really want it gone.",
+            entry.path,
+        )),
+    }
+}
+
 /// Files with a checkpoint at or after `since_unix` (0 = every one).
 ///
 /// Newest entry per path, newest first — the same selection [`describe_checkpoint`]
@@ -2416,6 +2831,313 @@ pub fn checkpoint_save(
     std::fs::write(path, bytes).map_err(|e| e.to_string())?;
     store.amend_with_post_image(workspace, path, tool);
     Ok(bytes.len() as u64)
+}
+
+#[cfg(test)]
+mod undo_turn_tests {
+    use super::*;
+    use epsilon_contracts::content::UserContent;
+    use epsilon_contracts::message::{Message, UserMessage};
+
+    fn user_msg(text: &str) -> Message {
+        Message::User(UserMessage {
+            id: epsilon_contracts::new_id("msg"),
+            timestamp_ms: 0,
+            content: vec![UserContent::Text { text: text.into() }],
+        })
+    }
+
+    fn bare_agent(dir: &std::path::Path) -> Arc<epsilon_core::Agent> {
+        let approvals = Arc::new(epsilon_safety::ChannelApprovalUi::new());
+        let gate = Arc::new(epsilon_safety::RulesetGate::new(
+            approvals as Arc<dyn epsilon_safety::ApprovalUi>,
+        ));
+        epsilon_core::Agent::new(
+            epsilon_core::LoopLimits::default(),
+            Arc::new(epsilon_llm::PanicGuard(epsilon_llm::FauxProvider::new(
+                vec![],
+            ))),
+            Arc::new(epsilon_core::ToolRegistry::new()),
+            gate,
+            dir.to_path_buf(),
+        )
+    }
+
+    /// Attach a session store holding `prompt0` (so turn 1 has a leaf-before),
+    /// then append `prompt` + assistant marker for the turn under test.
+    fn agent_with_turn(ws: &std::path::Path, session_rel: &str) -> Arc<epsilon_core::Agent> {
+        let agent = bare_agent(ws);
+        let path = ws.join(session_rel);
+        let mut store = epsilon_session::SessionStore::open_in(&path, ws).expect("session opens");
+        let prompt0 = store
+            .append(epsilon_contracts::session_entry::EntryKind::Message {
+                message: user_msg("before"),
+                api_request_sha256: None,
+            })
+            .expect("prompt0 appends");
+        let _ = prompt0;
+        agent.attach_session_store(Arc::new(std::sync::Mutex::new(store)));
+        agent
+    }
+
+    /// One tool-shaped mutation: pre-image, new bytes, post-image amendment —
+    /// exactly the order `tools/files.rs` performs.
+    fn mutate(ws: &std::path::Path, rel: &str, after: &str) {
+        let file = ws.join(rel);
+        if let Some(parent) = file.parent() {
+            std::fs::create_dir_all(parent).unwrap();
+        }
+        let store = epsilon_tools::checkpoint::CheckpointStore::open(ws);
+        store.record(ws, &file, "edit");
+        std::fs::write(&file, after).unwrap();
+        store.amend_with_post_image(ws, &file, "edit");
+    }
+
+    fn create(ws: &std::path::Path, rel: &str, content: &str) {
+        let file = ws.join(rel);
+        if let Some(parent) = file.parent() {
+            std::fs::create_dir_all(parent).unwrap();
+        }
+        let store = epsilon_tools::checkpoint::CheckpointStore::open(ws);
+        store.record(ws, &file, "write");
+        std::fs::write(&file, content).unwrap();
+        store.amend_with_post_image(ws, &file, "write");
+    }
+
+    fn ledger_seq_range(ws: &std::path::Path) -> (u64, u64) {
+        let entries = epsilon_tools::checkpoint::CheckpointStore::open(ws).entries();
+        let first = entries.first().map(|e| e.seq).unwrap_or(1);
+        let last = entries.last().map(|e| e.seq).unwrap_or(0);
+        (first, last)
+    }
+
+    fn anchor_turn(agent: &Arc<epsilon_core::Agent>, turn: u64, start: u64, end: u64) {
+        let handle = agent.session_store().expect("store attached");
+        let leaf_before = handle.lock().unwrap().leaf_id();
+        // The turn's own transcript entries, so the leaf has somewhere to go
+        // back to and something to hide.
+        {
+            let mut st = handle.lock().unwrap();
+            st.append(epsilon_contracts::session_entry::EntryKind::Message {
+                message: user_msg(&format!("turn {turn} prompt")),
+                api_request_sha256: None,
+            })
+            .unwrap();
+        }
+        {
+            let mut st = handle.lock().unwrap();
+            st.append_turn_anchor(turn, start, end, leaf_before)
+                .unwrap();
+        }
+    }
+
+    /// RED-first: fails while `undo_turn` does not exist; afterwards pins the
+    /// 3-file happy path — bytes, deletion, leaf move, suffix retained,
+    /// model view excludes the undone suffix.
+    #[test]
+    fn a_turn_with_three_files_undoes_bytes_deletion_and_leaf_atomically() {
+        let ws = tempfile::tempdir().unwrap();
+        std::fs::write(ws.path().join("a.txt"), "a-before\n").unwrap();
+        std::fs::write(ws.path().join("b.txt"), "b-before\n").unwrap();
+        let agent = agent_with_turn(ws.path(), ".epsilon/sessions/u1.jsonl");
+        // Turn 1: edit a, edit b, create c.
+        mutate(ws.path(), "a.txt", "a-after\n");
+        mutate(ws.path(), "b.txt", "b-after\n");
+        create(ws.path(), "c.txt", "c-created\n");
+        let (_, end) = ledger_seq_range(ws.path());
+        anchor_turn(&agent, 1, 1, end);
+
+        let before_leaf = agent.session_store().unwrap().lock().unwrap().leaf_id();
+        let preview = describe_turn_undo(&agent, ws.path(), 1).expect("preview describes");
+        assert!(preview.contains("turn 1"), "{preview}");
+        assert!(preview.contains("Nothing has changed yet"), "{preview}");
+        assert_eq!(
+            std::fs::read_to_string(ws.path().join("a.txt")).unwrap(),
+            "a-after\n"
+        );
+
+        let done = undo_turn(&agent, ws.path(), 1).expect("undo applies");
+        assert!(done.contains("turn 1"), "{done}");
+        assert_eq!(
+            std::fs::read_to_string(ws.path().join("a.txt")).unwrap(),
+            "a-before\n",
+            "edited file goes back byte for byte"
+        );
+        assert_eq!(
+            std::fs::read_to_string(ws.path().join("b.txt")).unwrap(),
+            "b-before\n",
+            "second file goes back too"
+        );
+        assert!(
+            !ws.path().join("c.txt").exists(),
+            "undoing a creation removes the file"
+        );
+        // Leaf moved back; the suffix (turn entries + anchor) stays in the file.
+        let st = agent.session_store().unwrap();
+        let guard = st.lock().unwrap();
+        assert_ne!(guard.leaf_id(), before_leaf, "the leaf moved");
+        let all = guard.read_all().unwrap();
+        assert!(
+            all.len() >= 3,
+            "suffix retained off-branch, not truncated: {n} entries",
+            n = all.len()
+        );
+        let branch_ids: Vec<String> = guard
+            .branch_entries()
+            .unwrap()
+            .iter()
+            .map(|e| e.id.clone())
+            .collect();
+        assert!(
+            !branch_ids.contains(&before_leaf.clone().unwrap_or_default()),
+            "the undone suffix is off-branch"
+        );
+        drop(guard);
+        // And the live transcript no longer shows the undone turn.
+        let history = agent.history();
+        assert!(
+            !history.iter().any(|m| match m {
+                Message::User(u) => u.content.iter().any(|c| match c {
+                    UserContent::Text { text } => text.contains("turn 1 prompt"),
+                    _ => false,
+                }),
+                _ => false,
+            }),
+            "reprojection dropped the undone turn from history"
+        );
+    }
+
+    /// Atomicity: a post-turn user edit to ANY file in the range refuses the
+    /// WHOLE undo — nothing moved, leaf included.
+    #[test]
+    fn a_post_turn_user_edit_refuses_the_whole_undo() {
+        let ws = tempfile::tempdir().unwrap();
+        std::fs::write(ws.path().join("a.txt"), "a0\n").unwrap();
+        std::fs::write(ws.path().join("b.txt"), "b0\n").unwrap();
+        let agent = agent_with_turn(ws.path(), ".epsilon/sessions/u2.jsonl");
+        mutate(ws.path(), "a.txt", "a1\n");
+        mutate(ws.path(), "b.txt", "b1\n");
+        let (_, end) = ledger_seq_range(ws.path());
+        anchor_turn(&agent, 1, 1, end);
+        let leaf = agent.session_store().unwrap().lock().unwrap().leaf_id();
+
+        // The user's later work on ONE of the two files.
+        std::fs::write(ws.path().join("b.txt"), "user work\n").unwrap();
+
+        let err = undo_turn(&agent, ws.path(), 1).expect_err("must refuse");
+        assert!(err.contains("changed after this harness wrote it"), "{err}");
+        assert_eq!(
+            std::fs::read_to_string(ws.path().join("a.txt")).unwrap(),
+            "a1\n",
+            "the untouched file is also left alone — total refusal"
+        );
+        assert_eq!(
+            std::fs::read_to_string(ws.path().join("b.txt")).unwrap(),
+            "user work\n"
+        );
+        assert_eq!(
+            agent.session_store().unwrap().lock().unwrap().leaf_id(),
+            leaf,
+            "the leaf did not move"
+        );
+    }
+
+    /// A skipped capture (oversized file) refuses instead of deleting.
+    #[test]
+    fn a_skipped_capture_refuses_the_turn_undo() {
+        let ws = tempfile::tempdir().unwrap();
+        let big = ws.path().join("big.bin");
+        std::fs::write(
+            &big,
+            vec![7u8; (epsilon_tools::checkpoint::MAX_FILE_BYTES + 1) as usize],
+        )
+        .unwrap();
+        let agent = agent_with_turn(ws.path(), ".epsilon/sessions/u3.jsonl");
+        let store = epsilon_tools::checkpoint::CheckpointStore::open(ws.path());
+        store.record(ws.path(), &big, "write");
+        let (_, end) = ledger_seq_range(ws.path());
+        anchor_turn(&agent, 1, 1, end.max(1));
+
+        let err = undo_turn(&agent, ws.path(), 1).expect_err("skipped capture refuses");
+        assert!(err.contains("nothing was captured"), "{err}");
+        assert!(big.exists(), "the file survives the refusal");
+    }
+
+    /// Older-turn range correctness: undoing turn 1 touches only turn 1's
+    /// files; turn 2's file is left alone.
+    #[test]
+    fn undoing_an_older_turn_leaves_newer_turns_files_alone() {
+        let ws = tempfile::tempdir().unwrap();
+        std::fs::write(ws.path().join("one.txt"), "one-0\n").unwrap();
+        std::fs::write(ws.path().join("two.txt"), "two-0\n").unwrap();
+        let agent = agent_with_turn(ws.path(), ".epsilon/sessions/u4.jsonl");
+        mutate(ws.path(), "one.txt", "one-1\n");
+        let (_, end1) = ledger_seq_range(ws.path());
+        anchor_turn(&agent, 1, 1, end1);
+        mutate(ws.path(), "two.txt", "two-1\n");
+        let entries = epsilon_tools::checkpoint::CheckpointStore::open(ws.path()).entries();
+        let start2 = entries.last().map(|e| e.seq).unwrap_or(1);
+        anchor_turn(&agent, 2, start2, start2);
+
+        undo_turn(&agent, ws.path(), 1).expect("turn 1 undoes");
+        assert_eq!(
+            std::fs::read_to_string(ws.path().join("one.txt")).unwrap(),
+            "one-0\n"
+        );
+        assert_eq!(
+            std::fs::read_to_string(ws.path().join("two.txt")).unwrap(),
+            "two-1\n",
+            "turn 2's file is outside turn 1's range and stays"
+        );
+        let turns = list_turns(&agent, ws.path());
+        assert_eq!(turns.len(), 2, "both anchors still list after one undo");
+    }
+
+    /// Busy refusal: a running agent refuses before anything moves.
+    #[test]
+    fn undo_refuses_while_a_run_is_in_flight() {
+        let ws = tempfile::tempdir().unwrap();
+        let agent = agent_with_turn(ws.path(), ".epsilon/sessions/u5.jsonl");
+        agent.set_running_for_tests(true);
+        let err = undo_turn(&agent, ws.path(), 1).expect_err("busy refuses");
+        assert!(err.contains("busy"), "{err}");
+        agent.set_running_for_tests(false);
+    }
+
+    /// Restart durability: anchors survive a reopen; the undo works on the
+    /// freshly opened store's file.
+    #[test]
+    fn anchors_survive_a_restart_and_undo_there() {
+        let ws = tempfile::tempdir().unwrap();
+        std::fs::write(ws.path().join("r.txt"), "before\n").unwrap();
+        let rel = ".epsilon/sessions/u6.jsonl";
+        {
+            let agent = agent_with_turn(ws.path(), rel);
+            mutate(ws.path(), "r.txt", "after\n");
+            let (_, end) = ledger_seq_range(ws.path());
+            anchor_turn(&agent, 1, 1, end);
+        } // agent + lease dropped here
+        let agent2 = bare_agent(ws.path());
+        let path = ws.path().join(rel);
+        let store = epsilon_session::SessionStore::open(&path).expect("reopens");
+        agent2.attach_session_store(Arc::new(std::sync::Mutex::new(store)));
+        undo_turn(&agent2, ws.path(), 1).expect("undo after restart");
+        assert_eq!(
+            std::fs::read_to_string(ws.path().join("r.txt")).unwrap(),
+            "before\n"
+        );
+    }
+
+    /// Unknown turns are named, not applied.
+    #[test]
+    fn an_unknown_turn_names_what_exists() {
+        let ws = tempfile::tempdir().unwrap();
+        let agent = agent_with_turn(ws.path(), ".epsilon/sessions/u7.jsonl");
+        let err = undo_turn(&agent, ws.path(), 9).expect_err("unknown refuses");
+        assert!(err.contains("no turn"), "{err}");
+        let desc = describe_turn_undo(&agent, ws.path(), 9).expect_err("preview refuses too");
+        assert!(desc.contains("no turn"), "{desc}");
+    }
 }
 
 #[cfg(test)]

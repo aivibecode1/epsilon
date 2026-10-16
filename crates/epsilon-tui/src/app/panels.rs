@@ -45,6 +45,29 @@ fn safe_to_show(text: &str) -> String {
     safe.into_owned()
 }
 
+/// Turn rows for `/undo-turn`'s bare listing, in the same words the changes
+/// panel uses for its own rows.
+///
+/// A pure formatter — no store, no ledger, no diff — so the command (which
+/// owns the workspace and the agent) calls it with numbers both already know,
+/// and the panel never grows a second diff renderer to answer a question the
+/// byte counts already answer. One row per turn, oldest first:
+/// `turn 2 · 3 files`.
+pub(super) fn format_turn_rows(turns: &[(u64, usize)]) -> Vec<String> {
+    turns
+        .iter()
+        .map(|(turn, files)| {
+            let files = if *files == 1 {
+                "1 file"
+            } else {
+                &format!("{files} files")
+            };
+            format!("turn {turn} · {files} — /undo-turn {turn} previews it")
+        })
+        .map(|row| safe_to_show(&row))
+        .collect()
+}
+
 /// `/models` overlay: filter-driven list with provider grouping hints and an auth
 /// column. The active model floats to the top (picker::build_rows).
 pub(super) fn draw_picker(f: &mut Frame<'_>, app: &mut App, outer: Rect) {
@@ -2248,11 +2271,11 @@ pub(super) fn draw_changes(f: &mut Frame<'_>, app: &App, outer: Rect) {
             }
         }
     }
-    // Fit: two hint rows + blank + confirm + expanded + at least one list row.
+    // Fit: three hint rows + blank + confirm + expanded + at least one list row.
     // The hints are never sacrificed — a footer that costs a visible entry is
     // worse than a shorter diff, and a dropped hint is an undiscoverable key.
     let min_list = usize::from(!app.changes_rows.is_empty());
-    let room = h.saturating_sub(3 + confirm_lines.len());
+    let room = h.saturating_sub(4 + confirm_lines.len());
     let max_expanded = room.saturating_sub(min_list);
     if expanded_lines.len() > max_expanded {
         let keep = max_expanded.saturating_sub(1);
@@ -2329,6 +2352,13 @@ pub(super) fn draw_changes(f: &mut Frame<'_>, app: &App, outer: Rect) {
             (&apply_label, "restore"),
             (&close_hint, "close"),
         ],
+    ));
+    // Turn-scoped undo lives beside per-file restore, not inside it: one line,
+    // no new renderer, so a reader who wants the whole turn back learns the
+    // command without opening a second panel.
+    lines.push(overlay::hint_row(
+        theme,
+        &[("/undo-turn N", "rewind a whole turn")],
     ));
     f.render_widget(Paragraph::new(lines), inner);
 }
@@ -2750,6 +2780,59 @@ mod changes_panel_tests {
             assert!(
                 !screen.contains("^S"),
                 "the hardcoded ^S must be gone at {w}x{h}: {screen}"
+            );
+        }
+    }
+
+    /// Turn rows format one row per turn in the changes panel's own words, and
+    /// the panel teaches the whole-turn command beside the per-file keys — no
+    /// second diff renderer anywhere.
+    ///
+    /// RED-first: fails while `format_turn_rows` does not exist, which is the
+    /// panel half turn-scoped undo is built on.
+    #[test]
+    fn turn_rows_format_and_the_panel_teaches_undo_turn() {
+        use super::format_turn_rows;
+        let rows = format_turn_rows(&[(1, 1), (2, 3)]);
+        assert_eq!(rows.len(), 2, "one row per turn: {rows:?}");
+        assert!(rows[0].contains("turn 1"), "{rows:?}");
+        assert!(rows[0].contains("1 file"), "{rows:?}");
+        assert!(rows[1].contains("turn 2"), "{rows:?}");
+        assert!(rows[1].contains("3 files"), "{rows:?}");
+        assert!(
+            rows.iter().all(|r| r.contains("/undo-turn")),
+            "every row teaches its own command: {rows:?}"
+        );
+        assert_eq!(
+            format_turn_rows(&[]),
+            Vec::<String>::new(),
+            "no turns, no rows"
+        );
+    }
+
+    /// The changes panel draws the `/undo-turn` hint on the real frame at both
+    /// evidence widths, UNICODE pinned — read, not only asserted on state.
+    #[test]
+    fn the_changes_panel_teaches_whole_turn_undo_at_both_widths() {
+        let (mut app, agent, _rx) = test_app();
+        app.theme.glyphs = crate::ui::theme::UNICODE;
+        let dir = tempfile::tempdir().expect("a temporary workspace");
+        app.workspace_root = dir.path().to_path_buf();
+        edited(dir.path(), "src/a.rs", "beforeline\n", "afterline\n");
+        open_changes(&mut app, &agent);
+
+        for (w, h) in [(80u16, 24u16), (100u16, 30u16)] {
+            let rows = render_rows(&mut app, w, h);
+            let has = |needle: &str| rows.iter().any(|r| r.contains(needle));
+            assert!(
+                has("/undo-turn N"),
+                "the whole-turn command must be taught at {w}x{h}: {}",
+                rows.join("\n")
+            );
+            assert!(
+                has("rewind a whole turn"),
+                "and what it does, at {w}x{h}: {}",
+                rows.join("\n")
             );
         }
     }

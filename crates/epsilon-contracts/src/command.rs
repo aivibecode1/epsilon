@@ -193,6 +193,10 @@ pub const SLASH_ITEMS: &[SlashItem] = &[
         description: "files this session changed — enter previews; `/changes all` is the workspace",
     },
     SlashItem {
+        value: "/undo-turn ",
+        description: "rewind a whole turn — preview, then `/undo-turn <N> yes`",
+    },
+    SlashItem {
         value: "/share",
         description: "share session as a secret GitHub gist",
     },
@@ -404,6 +408,12 @@ pub enum Command {
     /// session; `all` means every checkpoint in the workspace. Anything else is
     /// refused by name rather than treated as a path — a path belongs to `/restore`.
     Changes(String),
+    /// Rewind a whole turn (`/undo-turn`, `/undo-turn <N> [yes]`).
+    ///
+    /// The tail carries the turn number plus the optional confirming `yes`,
+    /// whole like `/restore` — `run_undo_turn` splits them. Empty lists the
+    /// anchored turns instead of doing anything.
+    UndoTurn(String),
     /// Share session as a gist.
     Share,
     /// Copy last agent message to clipboard.
@@ -475,6 +485,7 @@ pub const COMMAND_HEADS: &[&str] = &[
     // head this list carries — that is what the reverse drift check below enforces.
     "restore",
     "changes",
+    "undo-turn",
     "share",
     "copy",
     "name",
@@ -620,6 +631,7 @@ pub fn parse_command(input: &str) -> Option<Command> {
         "open" => Some(Command::Open(tail.to_string())),
         "restore" => Some(Command::Restore(tail.to_string())),
         "changes" => Some(Command::Changes(tail.to_string())),
+        "undo-turn" => Some(Command::UndoTurn(tail.to_string())),
         "share" => Some(Command::Share),
         "copy" => Some(Command::Copy),
         "name" => Some(Command::Name(if tail.is_empty() {

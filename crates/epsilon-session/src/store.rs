@@ -2172,7 +2172,108 @@ impl SessionStore {
         self.append(EntryKind::TurnEnd { reason })?;
         Ok(())
     }
+
+    /// Append a turn anchor: the immutable map from turn N to its workspace
+    /// footprint (turn-scoped undo substrate).
+    ///
+    /// The anchor is an [`EntryKind::Custom`] entry with `custom_type`
+    /// [`TURN_ANCHOR_CUSTOM_TYPE`], so it needs **no schema change**: per-file
+    /// checkpoint entries keep their shape, and the session file stays readable
+    /// by any build that knows `Custom`. The payload is a complete snapshot
+    /// (turn, ledger seq range, leaf-before), which is what makes the undo fold
+    /// a lookup rather than a replay.
+    ///
+    /// `ledger_start..=ledger_end` names the checkpoint-ledger seqs this turn
+    /// wrote (`ledger_start > ledger_end` means the turn touched no files).
+    /// `leaf_before` is the active-branch tip before the turn's first append;
+    /// `None` only when the turn began on an empty session. The anchor itself
+    /// lands on the active lane and becomes the new leaf, like every append.
+    ///
+    /// Anchors are invisible to [`SessionStore::model_view`]: the projection
+    /// ignores `Custom` entries, so an anchor never reaches the provider.
+    pub fn append_turn_anchor(
+        &mut self,
+        turn: u64,
+        ledger_start: u64,
+        ledger_end: u64,
+        leaf_before: Option<String>,
+    ) -> Result<SessionEntry, StoreError> {
+        let data = serde_json::json!({
+            "turn": turn,
+            "ledger_start": ledger_start,
+            "ledger_end": ledger_end,
+            "leaf_before": leaf_before,
+        });
+        self.append(EntryKind::Custom {
+            custom_type: TURN_ANCHOR_CUSTOM_TYPE.to_string(),
+            data: Some(data),
+        })
+    }
+
+    /// Every turn anchor in the file, oldest first.
+    ///
+    /// Reads the whole file rather than the active branch on purpose: an undo
+    /// moves the leaf back past later anchors, and a listing that walked the
+    /// branch would forget the turns it just hid. A goal folds the same way
+    /// for the same reason.
+    pub fn turn_anchor_entries(&self) -> Result<Vec<SessionEntry>, StoreError> {
+        Ok(self
+            .read_all()?
+            .into_iter()
+            .filter(|e| matches!(&e.kind, EntryKind::Custom { custom_type, .. } if custom_type == TURN_ANCHOR_CUSTOM_TYPE))
+            .collect())
+    }
+
+    /// Parse a turn-anchor entry into `(turn, ledger_start, ledger_end,
+    /// leaf_before)`. `None` when the entry is not an anchor or its payload
+    /// does not carry the four fields in the expected shapes.
+    pub fn parse_turn_anchor(entry: &SessionEntry) -> Option<(u64, u64, u64, Option<String>)> {
+        let EntryKind::Custom { custom_type, data } = &entry.kind else {
+            return None;
+        };
+        if custom_type != TURN_ANCHOR_CUSTOM_TYPE {
+            return None;
+        }
+        let data = data.as_ref()?;
+        let turn = data.get("turn")?.as_u64()?;
+        let ledger_start = data.get("ledger_start")?.as_u64()?;
+        let ledger_end = data.get("ledger_end")?.as_u64()?;
+        let leaf_before = match data.get("leaf_before") {
+            None | Some(serde_json::Value::Null) => None,
+            Some(serde_json::Value::String(s)) => Some(s.clone()),
+            Some(_) => return None,
+        };
+        Some((turn, ledger_start, ledger_end, leaf_before))
+    }
+
+    /// The anchor for turn `turn`, when one was recorded.
+    pub fn turn_anchor_for(&self, turn: u64) -> Result<Option<SessionEntry>, StoreError> {
+        Ok(self
+            .turn_anchor_entries()?
+            .into_iter()
+            .find(|e| Self::parse_turn_anchor(e).is_some_and(|(t, ..)| t == turn)))
+    }
+
+    /// The next turn number: one past the highest anchored turn, `1` when no
+    /// turn was ever anchored. Gaps never occur in practice (every run
+    /// anchors), so the count and the max agree; the max is what matters.
+    pub fn next_turn_number(&self) -> Result<u64, StoreError> {
+        let mut max = 0u64;
+        for e in self.turn_anchor_entries()? {
+            if let Some((t, ..)) = Self::parse_turn_anchor(&e) {
+                max = max.max(t);
+            }
+        }
+        Ok(max + 1)
+    }
 }
+
+/// The `custom_type` of a turn-anchor entry (turn-scoped undo).
+///
+/// One new append-only kind, and the only one this change adds: per-file
+/// checkpoint entries are reused untouched, so there is deliberately no
+/// second constant here.
+pub const TURN_ANCHOR_CUSTOM_TYPE: &str = "turn_anchor";
 
 impl ModelViewEntry {
     /// Convert to provider-visible messages (a summary becomes a user-role context message).
@@ -3136,5 +3237,81 @@ fn rename_hook_message_role(message: &mut Message) {
             payload: serde_json::json!({"text": a.text()}),
         });
         *message = replacement;
+    }
+}
+
+#[cfg(test)]
+mod turn_anchor_tests {
+    use super::*;
+
+    fn tmp_store() -> (tempfile::TempDir, SessionStore) {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("s.jsonl");
+        let store = SessionStore::open_in(&path, dir.path()).expect("a fresh session opens");
+        (dir, store)
+    }
+
+    /// RED-first: fails while no turn-anchor kind exists (`turn_anchor_entries`
+    /// unresolved), which is the shape under test.
+    #[test]
+    fn an_anchor_round_trips_and_lists_in_file_order() {
+        let (_dir, mut st) = tmp_store();
+        assert_eq!(st.next_turn_number().unwrap(), 1, "no anchors yet");
+        let leaf_before = st.leaf_id();
+        let first = st
+            .append_turn_anchor(1, 7, 9, leaf_before.clone())
+            .expect("anchor appends");
+        assert_eq!(
+            SessionStore::parse_turn_anchor(&first),
+            Some((1, 7, 9, leaf_before)),
+            "the appended entry parses back to what was written"
+        );
+        st.append(EntryKind::Custom {
+            custom_type: "session_name".into(),
+            data: None,
+        })
+        .unwrap();
+        st.append_turn_anchor(2, 10, 10, Some(first.id.clone()))
+            .unwrap();
+        let anchors = st.turn_anchor_entries().unwrap();
+        assert_eq!(anchors.len(), 2, "only anchors list, in file order");
+        assert_eq!(st.next_turn_number().unwrap(), 3);
+        assert_eq!(
+            st.turn_anchor_for(2).unwrap().expect("turn 2 anchored").id,
+            anchors[1].id
+        );
+        assert!(st.turn_anchor_for(9).unwrap().is_none());
+    }
+
+    /// An anchor never reaches the provider: the model view skips `Custom`.
+    #[test]
+    fn an_anchor_is_excluded_from_the_model_view() {
+        let (_dir, mut st) = tmp_store();
+        st.append_turn_anchor(1, 1, 0, None).unwrap();
+        let view = st.model_view().unwrap();
+        assert!(
+            view.is_empty(),
+            "an anchor-only branch shows nothing: {view:?}"
+        );
+    }
+
+    /// A non-anchor `Custom` entry is not an anchor, and a mangled payload is
+    /// not parsed rather than misread.
+    #[test]
+    fn only_well_formed_anchors_parse() {
+        let (_dir, mut st) = tmp_store();
+        let other = st
+            .append(EntryKind::Custom {
+                custom_type: "session_name".into(),
+                data: None,
+            })
+            .unwrap();
+        assert_eq!(SessionStore::parse_turn_anchor(&other), None);
+        let mut mangled = st.append_turn_anchor(1, 1, 1, None).unwrap();
+        mangled.kind = EntryKind::Custom {
+            custom_type: TURN_ANCHOR_CUSTOM_TYPE.into(),
+            data: Some(serde_json::json!({"turn": "one"})),
+        };
+        assert_eq!(SessionStore::parse_turn_anchor(&mangled), None);
     }
 }

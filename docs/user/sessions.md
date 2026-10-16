@@ -96,7 +96,8 @@ exists: **`/restore <path>`** previews the restore and applies it only after a t
 inline diff of checkpoint-before vs current disk, `r` stages that file's restore sentence
 and `y` applies exactly it (any other key cancels), `q`/`Esc` closes. A file touched
 after its checkpoint refuses through `y` with the file untouched, like
-`/restore <path> yes` does. The ceiling, stated plainly: `/restore` reverts one file at a time and shows no
-diff, so a turn's whole footprint is not one undo away — the session tree (`/tree`, `/fork`) is
-the conversation-side tool. Keep sessions under private backup for recovery; do not commit
+`/restore <path> yes` does. Whole turns are one undo away too: **`/undo-turn`** lists the
+anchored turns, previews one (`/undo-turn <N>`), and rewinds its files plus
+the transcript with `/undo-turn <N> yes` — all-or-nothing (any refusal
+aborts before anything moves). Keep sessions under private backup for recovery; do not commit
 sensitive session transcripts to a public repository.

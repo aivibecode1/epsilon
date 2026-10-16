@@ -3196,14 +3196,16 @@ async fn an_aborted_turn_lost_to_the_store_refuses_the_next_request() {
         "the run's own error names the durable failure: {err}"
     );
     // The sequence the fault plan claims, asserted rather than assumed: the prompt append that
-    // succeeded, the salvage append that failed, and no third writer — and no armed failure left
-    // unspent, which would mean the abort never reached the salvage path at all.
+    // succeeded, the salvage append that failed, the turn anchor that landed anyway (a failed
+    // turn still anchors — its files changed before the abort, so undo must reach them) — and
+    // no armed failure left unspent, which would mean the abort never reached the salvage path
+    // at all.
     {
         let st = handle.lock().unwrap();
         assert_eq!(
             st.appends(),
-            2,
-            "one append for the prompt and one for the aborted turn's answer, in that order"
+            3,
+            "one append for the prompt, one for the aborted turn's answer, one for its turn anchor, in that order"
         );
         assert!(
             !st.write_fault_pending_for_tests(),
@@ -3217,12 +3219,27 @@ async fn an_aborted_turn_lost_to_the_store_refuses_the_next_request() {
         "and the user is told the session may be missing the turn: {notices:?}"
     );
 
-    // The divergence is real and visible from the store: the prompt, no answer.
+    // The divergence is real and visible from the store: the prompt, no
+    // answer — plus the turn anchor, which lands even for the failed turn
+    // (its files may still need undoing). The anchor is a Custom entry, so
+    // it never reaches the provider; the answer is still the missing piece.
     assert_eq!(
         handle.lock().unwrap().len(),
-        1,
-        "the prompt was recorded; the aborted turn was not"
+        2,
+        "the prompt was recorded, the aborted turn was not, and its anchor was"
     );
+    {
+        let st = handle.lock().unwrap();
+        let entries = st.read_all().expect("the store reads back");
+        assert_eq!(entries.len(), 2, "prompt plus anchor: {entries:?}");
+        assert!(
+            matches!(
+                entries[1].kind,
+                epsilon_contracts::session_entry::EntryKind::Custom { .. }
+            ),
+            "the second entry is the turn anchor, not an answer: {entries:?}"
+        );
+    }
     assert!(
         agent
             .history()

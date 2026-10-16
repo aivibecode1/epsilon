@@ -2359,6 +2359,9 @@ impl App {
             crate::picker::Command::Changes(argument) => {
                 self.open_changes(agent, argument);
             }
+            crate::picker::Command::UndoTurn(argument) => {
+                self.run_undo_turn(agent, argument);
+            }
             // A variant that reached the catch-all without an arm of its own.
             //
             // `run_command` sends everything it does not route by name to *this*
@@ -2687,6 +2690,103 @@ impl App {
         }
     }
 
+    /// `/undo-turn N` — rewind turn N's files and the transcript to before it.
+    ///
+    /// ## Two presses, same shape as `/restore`
+    ///
+    /// The first press (`/undo-turn 2`) names the turn, counts its files and
+    /// says what will happen, changing nothing. The confirming press repeats
+    /// the number and ends in `yes` (`/undo-turn 2 yes`), which a
+    /// tab-completion or a muscle-memory Enter cannot produce — and it lands
+    /// directly under the preview it confirms. Bare `/undo-turn` lists the
+    /// anchored turns instead, formatted by the panels helper so the rows read
+    /// like the panel they belong to.
+    ///
+    /// No diff is drawn, for `/restore`'s reason: the preview says what will
+    /// change (files, transcript rewind), not how, and synthesising an
+    /// old-vs-new text means inventing a second diff implementation.
+    /// (`ponytail:` the ceiling is "the preview names the turn and its files";
+    /// the upgrade trigger is a request for per-file before/after text.)
+    ///
+    /// ## The refusals have to leave everything alone
+    ///
+    /// `epsilon_runtime::undo_turn` checks every file before any byte moves
+    /// and moves the leaf only after every file is back; this passes its
+    /// sentence through verbatim behind the `undo-turn:` marker. A reader
+    /// whose later work would have been discarded is told so instead of being
+    /// shown a success.
+    ///
+    /// ## Why it names no store type
+    ///
+    /// The turn list, the preview and the apply all run through
+    /// `epsilon_runtime::{list_turns, describe_turn_undo, undo_turn}`, not
+    /// through `epsilon-tools` or `epsilon-session` directly: the same rule
+    /// `/restore` keeps about the tool crate applies here about both crates.
+    ///
+    /// `ponytail:` the ceiling is "one synchronous executor, guarded on the
+    /// agent being idle"; the busy notice below repeats the runtime's own
+    /// wording so the TUI answers before it calls, in its own transcript
+    /// style, while headless modes get the same refusal from the shared
+    /// implementation.
+    fn run_undo_turn(&mut self, agent: &Arc<Agent>, argument: String) {
+        let tail = argument.trim();
+        if tail.is_empty() {
+            let turns = epsilon_runtime::list_turns(agent, &self.workspace_root);
+            if turns.is_empty() {
+                self.ui.push_notice(
+                    "undo-turn: no turn has been recorded yet — run once, then /undo-turn lists it",
+                );
+                return;
+            }
+            for line in super::panels::format_turn_rows(
+                &turns.iter().map(|r| (r.turn, r.files)).collect::<Vec<_>>(),
+            ) {
+                self.ui.push_notice(format!("undo-turn: {line}"));
+            }
+            self.ui.push_notice(
+                "usage: /undo-turn <N> — preview turn N, then `/undo-turn <N> yes` to rewind it",
+            );
+            return;
+        }
+        // A run in flight owns the workspace's files: the same guard
+        // `/restore` uses, answered here so the notice lands in this
+        // transcript's style. The runtime repeats it for the modes with no
+        // transcript.
+        if self.ui.running() || agent.is_running() {
+            self.ui.push_notice(
+                "undo-turn: busy — wait for the current run to finish, then /undo-turn again",
+            );
+            return;
+        }
+        // The trailing `yes` is the confirmation and has to be the LAST word,
+        // mirroring `/restore`'s split (a path with no space never splits;
+        // here the head is always a number, so the split is unambiguous).
+        let (num, confirmed) = match tail.rsplit_once(char::is_whitespace) {
+            Some((n, word)) if word.eq_ignore_ascii_case("yes") => (n.trim(), true),
+            _ => (tail, false),
+        };
+        let Ok(n) = num.parse::<u64>() else {
+            self.ui.push_notice(format!(
+                "undo-turn: '{num}' is not a turn number — bare /undo-turn lists the turns"
+            ));
+            return;
+        };
+        if n == 0 {
+            self.ui
+                .push_notice("undo-turn: turns count from 1 — bare /undo-turn lists them");
+            return;
+        }
+        let answer = if confirmed {
+            epsilon_runtime::undo_turn(agent, &self.workspace_root, n)
+        } else {
+            epsilon_runtime::describe_turn_undo(agent, &self.workspace_root, n)
+        };
+        match answer {
+            Ok(sentence) => self.ui.push_notice(format!("undo-turn: {sentence}")),
+            Err(why) => self.ui.push_notice(format!("undo-turn: {why}")),
+        }
+    }
+
     /// `/timeline` and `/tree` are the same picker, opened by the same code.
     ///
     /// pi parity: `/branch` is an alias for the timeline view, and so is `/tree`.
@@ -2863,7 +2963,14 @@ impl App {
                     ),
                     (
                         "files",
-                        &["/changes", "/restore", "/trust", "/reload", "/open"],
+                        &[
+                            "/changes",
+                            "/restore",
+                            "/undo-turn",
+                            "/trust",
+                            "/reload",
+                            "/open",
+                        ],
                     ),
                     (
                         "agent",
@@ -5760,5 +5867,202 @@ mod tests {
                 "the filter chord must be on screen at {w}x{h}: {screen}"
             );
         }
+    }
+
+    /// Fixture: an app + agent sharing one workspace, one anchored turn that
+    /// edited `notes.txt`, recorded the tool way (pre-image, write,
+    /// post-image amendment).
+    fn undo_turn_fixture() -> (App, Arc<Agent>, tempfile::TempDir) {
+        let (mut app, agent, _rx) = test_app();
+        let dir = tempfile::tempdir().unwrap();
+        app.workspace_root = dir.path().to_path_buf();
+        let file = dir.path().join("notes.txt");
+        std::fs::write(&file, "before\n").unwrap();
+        let store = epsilon_tools::checkpoint::CheckpointStore::open(dir.path());
+        store.record(dir.path(), &file, "edit");
+        std::fs::write(&file, "after\n").unwrap();
+        store.amend_with_post_image(dir.path(), &file, "edit");
+        let session = super::super::tests_support::open_workspace_session(dir.path(), "u.jsonl");
+        agent.attach_session_store(Arc::new(std::sync::Mutex::new(session)));
+        // Align the agent's workspace with the app's: the TUI builds both on
+        // the same root in production, while `test_app` points the agent at
+        // the system temp dir. The ledger and the session must live in one
+        // tree or the anchor names a range the agent cannot see.
+        {
+            let handle = agent.session_store().expect("store attached");
+            let mut st = handle.lock().unwrap();
+            st.append(epsilon_contracts::session_entry::EntryKind::Message {
+                message: epsilon_contracts::message::Message::User(
+                    epsilon_contracts::message::UserMessage {
+                        id: epsilon_contracts::new_id("msg"),
+                        timestamp_ms: 0,
+                        content: vec![epsilon_contracts::content::UserContent::Text {
+                            text: "hello".into(),
+                        }],
+                    },
+                ),
+                api_request_sha256: None,
+            })
+            .unwrap();
+            let leaf_before = st.leaf_id();
+            let end = epsilon_tools::checkpoint::CheckpointStore::open(dir.path())
+                .entries()
+                .last()
+                .map(|e| e.seq)
+                .unwrap_or(0);
+            st.append_turn_anchor(1, 1, end, leaf_before).unwrap();
+        }
+        // Rebuild the agent on the fixture workspace so the shared runtime
+        // reads the same ledger the TUI writes. `Agent::new` mirrors
+        // `test_app`'s construction with only the root changed.
+        let approvals = Arc::new(epsilon_safety::ChannelApprovalUi::new());
+        let gate = Arc::new(epsilon_safety::RulesetGate::new(
+            approvals as Arc<dyn epsilon_safety::ApprovalUi>,
+        ));
+        let agent2 = Agent::new(
+            epsilon_core::LoopLimits::default(),
+            Arc::new(epsilon_llm::PanicGuard(epsilon_llm::FauxProvider::new(
+                vec![],
+            ))),
+            Arc::new(epsilon_core::ToolRegistry::new()),
+            gate,
+            dir.path().to_path_buf(),
+        );
+        let old = agent.session_store().expect("store attached");
+        agent2.attach_session_store(old);
+        (app, agent2, dir)
+    }
+
+    fn notices(app: &App) -> Vec<String> {
+        app.ui.lines().iter().map(|l| l.text.clone()).collect()
+    }
+
+    /// Bare `/undo-turn` lists the anchored turn on the real frame at both
+    /// evidence widths, UNICODE pinned — and the listing is read, not only
+    /// asserted on state.
+    #[test]
+    fn bare_undo_turn_lists_the_anchored_turn_on_the_frame() {
+        let (mut app, agent, _dir) = undo_turn_fixture();
+        app.theme.glyphs = crate::ui::theme::UNICODE;
+        // Through the real key path: bare `/undo-turn` parses as
+        // `UndoTurn("")` (registered head) and the executor serves the
+        // listing from the same arm `/restore` uses.
+        assert!(!type_and_enter(&mut app, &agent, "/undo-turn"));
+        assert!(
+            notices(&app).iter().any(|l| l.contains("turn 1")),
+            "the listing names turn 1: {:?}",
+            notices(&app)
+        );
+        for (w, h) in [(80u16, 24u16), (100u16, 30u16)] {
+            let screen = frame(&mut app, w, h);
+            assert!(
+                screen.contains("turn1"),
+                "the frame must show turn 1 at {w}x{h}: {screen}"
+            );
+            assert!(
+                screen.contains("/undo-turn"),
+                "the frame must teach the grammar at {w}x{h}: {screen}"
+            );
+        }
+    }
+
+    /// The `N`/`yes` forms travel the same registered path — no
+    /// tail-dropping `Unknown` shape stands between the composer and the
+    /// executor anymore.
+    #[test]
+    fn undo_turn_tails_travel_the_registered_path() {
+        let (mut app, agent, dir) = undo_turn_fixture();
+        assert!(!type_and_enter(&mut app, &agent, "/undo-turn 1"));
+        assert!(
+            notices(&app)
+                .iter()
+                .any(|l| l.contains("Nothing has changed yet")),
+            "the preview travels the key path: {:?}",
+            notices(&app)
+        );
+        assert!(!type_and_enter(&mut app, &agent, "/undo-turn 1 yes"));
+        assert_eq!(
+            std::fs::read_to_string(dir.path().join("notes.txt")).unwrap(),
+            "before\n",
+            "the confirmed rewind lands through the key path"
+        );
+    }
+
+    /// Two-press undo through the executor directly (full tails bypass the
+    /// `Unknown` head-only shape): preview changes nothing, `yes` rewinds the
+    /// file and the leaf.
+    #[test]
+    fn undo_turn_previews_then_applies_on_yes() {
+        let (mut app, agent, dir) = undo_turn_fixture();
+        app.run_undo_turn(&agent, "1".to_string());
+        assert!(
+            notices(&app)
+                .iter()
+                .any(|l| l.contains("Nothing has changed yet")),
+            "the preview must promise nothing moved: {:?}",
+            notices(&app)
+        );
+        assert_eq!(
+            std::fs::read_to_string(dir.path().join("notes.txt")).unwrap(),
+            "after\n",
+            "the preview writes nothing"
+        );
+        app.run_undo_turn(&agent, "1 yes".to_string());
+        assert_eq!(
+            std::fs::read_to_string(dir.path().join("notes.txt")).unwrap(),
+            "before\n",
+            "the confirming press puts the bytes back"
+        );
+        assert!(
+            notices(&app).iter().any(|l| l.contains("undid turn 1")),
+            "the success names the turn: {:?}",
+            notices(&app)
+        );
+    }
+
+    /// Busy, bad numbers and unknown turns are refused with the file untouched.
+    #[test]
+    fn undo_turn_refuses_busy_bad_and_unknown() {
+        let (mut app, agent, dir) = undo_turn_fixture();
+        app.run_undo_turn(&agent, "nope".to_string());
+        assert!(
+            notices(&app)
+                .iter()
+                .any(|l| l.contains("not a turn number")),
+            "a non-number is named: {:?}",
+            notices(&app)
+        );
+        app.run_undo_turn(&agent, "9".to_string());
+        assert!(
+            notices(&app).iter().any(|l| l.contains("no turn 9")),
+            "an unknown turn names itself: {:?}",
+            notices(&app)
+        );
+        agent.set_running_for_tests(true);
+        app.run_undo_turn(&agent, "1 yes".to_string());
+        assert!(
+            notices(&app).iter().any(|l| l.contains("busy")),
+            "a run in flight refuses: {:?}",
+            notices(&app)
+        );
+        agent.set_running_for_tests(false);
+        assert_eq!(
+            std::fs::read_to_string(dir.path().join("notes.txt")).unwrap(),
+            "after\n",
+            "every refusal above left the file alone"
+        );
+    }
+
+    /// An unknown `/word` still reads as unknown — registering `undo-turn`
+    /// changed nothing about the fallback arm.
+    #[test]
+    fn other_unknown_commands_still_read_as_unknown() {
+        let (mut app, agent, _rx) = test_app();
+        assert!(!type_and_enter(&mut app, &agent, "/frobnicate"));
+        assert!(
+            notices(&app).iter().any(|l| l.contains("unknown command")),
+            "non-undo unknowns are unchanged: {:?}",
+            notices(&app)
+        );
     }
 }

@@ -26,6 +26,16 @@ impl Agent {
         self.running.load(Ordering::SeqCst)
     }
 
+    /// Set the running flag (test seam for the turn-undo busy guard).
+    ///
+    /// Test-facing by construction — nothing in the product calls it: a real
+    /// run sets the flag in `run()`, and a test that needs "a run in flight"
+    /// without running one has no other honest way to hold it.
+    #[doc(hidden)]
+    pub fn set_running_for_tests(&self, running: bool) {
+        self.running.store(running, Ordering::SeqCst);
+    }
+
     /// The real provider stream, wrapped in ADR-010's retry policy (M60).
     ///
     /// The policy existed — classification, backoff, a tested executor — but
@@ -152,6 +162,11 @@ impl Agent {
         // every later run in a long-lived TUI/server session.
         self.overflow_retried.store(false, Ordering::SeqCst);
         self.compact_suppressed.store(false, Ordering::SeqCst);
+        // Turn anchor's pre-state, captured before the turn's first append: the
+        // leaf the undo rewinds to and the ledger seq the turn starts at. Taken
+        // before the prompt lands so the anchor names the true pre-turn state;
+        // the turn number itself is read after the run, when the anchor lands.
+        let (leaf_before, ledger_start) = self.turn_anchor_start();
         // F07: the prompt's own append is the first durable write of the run, and a turn whose
         // prompt never reached the file must not start — the store's projection would be missing
         // the very message the run is answering.
@@ -165,6 +180,16 @@ impl Agent {
                 .map(|o| o.produced.clone())
                 .unwrap_or_default(),
         });
+        // The turn happened — prompt appended, loop ran — so it gets an anchor
+        // whether the outcome is Ok or Err: a failed turn is still a turn the
+        // transcript describes, and undoing it is still meaningful. The number
+        // is one past the highest anchored turn; the emission reports rather
+        // than fails, so it never changes this return.
+        let turn = self
+            .store()
+            .and_then(|h| h.lock().ok().and_then(|st| st.next_turn_number().ok()))
+            .unwrap_or(1);
+        self.emit_turn_anchor(turn, ledger_start, leaf_before);
         outcome
     }
 

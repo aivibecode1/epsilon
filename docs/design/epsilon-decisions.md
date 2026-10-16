@@ -4043,3 +4043,90 @@ needs the startup footer mirror to read the project file (then `session.rs`
 is in scope with its own frame test), or login needs provider-specific
 validation beyond "known" (then the check moves to the credential seam,
 not the command arm).
+
+---
+
+## ADR-052: Turn-scoped undo ("undo turn N")
+
+**Status: accepted (behaviour change, 2026-10-16).**
+
+**The problem.** A model edits three files and the change is wrong: the
+*session* could be resumed but the *workspace* could only be rewound one file
+at a time (`/restore <path>`), and the transcript could only be rewound by
+abandoning it (`/tree` navigation hides nothing on disk). There was no single
+"put turn N back" — files and transcript had to be unwound separately, with
+nothing checking they agreed afterwards.
+
+**Decision: anchors map turn N to its footprint; undo replays the ledger and
+moves the leaf.**
+
+- *Anchor (one new append-only kind, no schema change).* Each completed
+`Agent::run()` appends a `Custom { "turn_anchor" }` entry carrying `turn`,
+the checkpoint-ledger seq range the run wrote (`ledger_start..=ledger_end`,
+empty when it wrote none), and the `leaf_before` it started from. Per-file
+checkpoint entries are reused untouched; the anchor is invisible to
+`model_view` (which skips `Custom`), listed whole-file rather than
+branch-walked (an undo hides later anchors from the branch but must not
+forget them), and numbered one past the highest anchored turn. Emission
+reports rather than fails — a completed turn that cannot record its map says
+so instead of failing the run it already finished.
+- *Range read (one new reader, ledger still append-only).* `entries_between`
+returns the inclusive seq range oldest-first; the ledger gains no writer and
+no field.
+- *Undo (shared, beside `restore_checkpoint`).* `undo_turn` checks the
+newest entry per path against the file on disk with the store's own guard,
+refusing the WHOLE undo on the first refusal before any byte moves and
+before the leaf moves; replays each path newest-first through the store's
+own `restore` (so a turn that edited one file twice lands before its first
+edit, and a later turn's work on the same file refuses rather than being
+clobbered); snapshots current bytes per path and rolls back on a mid-replay
+I/O failure; then moves the leaf to `leaf_before` (never a truncation — the
+suffix stays in the file off-branch) and reprojects the live transcript.
+`describe_turn_undo` previews without changing anything; `list_turns` lists
+anchors oldest-first. The busy guard lives in the shared implementation
+(`is_running` refuses), repeated in the TUI so the notice lands in its own
+style — headless, HTTP and RPC get the same refusal with no transcript.
+- *TUI (`/undo-turn N`, two-press, panel rows without a new renderer).*
+`/undo-turn` lists anchored turns, `/undo-turn N` previews, `/undo-turn N
+yes` rewinds. The bare form is served from `Unknown("undo-turn")` until the
+registry learns the head (the parser drops the tail on `Unknown`, so only
+the tail-less form is complete there; the `N`/`yes` forms run through the
+same executor directly). The changes panel gains one static hint row naming
+the command — the existing `hint_row` renderer, no new diff renderer — and
+the listing rows reuse the panel's own words via a pure formatter.
+
+**Alternatives.** (a) Per-file `/restore` in a loop with no anchor: no map
+from turn to files, so "turn N" is a question nobody can answer. (b) A shadow
+git store: rewinds files the harness never touched, needs git on PATH, and
+fails when its index goes bad — the failure being fixed is the unundoable
+*harness* edit. (c) Truncating the session file to the pre-turn length:
+destroys the suffix the audit trail needs and disagrees with every branch
+reader. (d) Rewinding approvals/usage/goals/shell history alongside: undoing
+a turn does not unspend its tokens, unask its questions, or unrun its
+commands — that way is fiction, not undo.
+
+**Why best for Epsilon.** One core means one undo: the anchor is emitted by
+the loop every mode runs, and the rewind lives in the composition every mode
+calls — a capability one mode has, every mode has, because it is the same
+machinery behind a different draw call (AGENTS.md §2.1–2.2). Append-only
+everywhere (ledger, session file) keeps the refusal paths honest: nothing a
+refusal leaves behind is lost, and nothing an undo hides is deleted.
+
+**Deliberately NOT built:** redo; cross-session undo; resurrecting untracked
+files; shell rollback; shadow-git; truncation; per-message granularity;
+auto-undo; approval/usage/goal rewind; a TUI-only implementation; any ledger
+schema change; silent partial success (any refusal aborts before the leaf
+moves). A turn that began on an empty session (`leaf_before: None`) is
+refused — there is no entry to navigate to, and re-adding `resetLeaf` is out
+of scope (M221 removed it; `/new` owns the empty branch).
+
+**Best possible?** Yes within the append-only constraint. The registry caveat
+from the first cut is now closed: `undo-turn` is a registered head
+(`COMMAND_HEADS`, `parse_command`, palette derivation), the `Unknown`
+carve-out is gone, and the `N`/`yes` forms travel the key path like every
+other command.
+
+**Revisit trigger.** Undo needs to mean more than one turn (then the anchor
+— not the replay — is the behaviour being changed), or a
+second writer needs the leaf-before of an empty session (then `navigate_to`
+grows a pre-first form with its own ADR, not a quiet re-add).

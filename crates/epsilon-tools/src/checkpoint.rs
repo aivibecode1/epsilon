@@ -173,6 +173,24 @@ impl CheckpointStore {
             .collect()
     }
 
+    /// Entries with `seq` in `start..=end`, oldest first (turn-scoped undo's
+    /// range read).
+    ///
+    /// The ONLY new read this change adds: the ledger stays append-only, its
+    /// schema is untouched, and no writer is added. A turn anchor names its
+    /// ledger range; the undo answers "which captures belong to turn N" with
+    /// this and nothing else. `start > end` (a turn that touched no files) is
+    /// an empty range, not an error.
+    pub fn entries_between(&self, start: u64, end: u64) -> Vec<Entry> {
+        if start > end {
+            return Vec::new();
+        }
+        self.entries()
+            .into_iter()
+            .filter(|e| e.seq >= start && e.seq <= end)
+            .collect()
+    }
+
     /// Record `path`'s current content as the state to return to.
     ///
     /// `path` must already be inside the workspace; callers pass the validated path. Returns what
@@ -1041,5 +1059,36 @@ mod tests {
         assert_ne!(blob_name(b"abc"), blob_name(b"abd"));
         assert_ne!(blob_name(b"abc"), blob_name(b"abcd"));
         assert_eq!(blob_name(b"abc").len(), 32);
+    }
+
+    /// RED-first: fails while `entries_between` does not exist, which is the
+    /// range read turn-scoped undo is built on.
+    #[test]
+    fn entries_between_returns_the_inclusive_seq_range_oldest_first() {
+        let dir = ws();
+        let file = dir.path().join("src/lib.rs");
+        let store = CheckpointStore::open(dir.path());
+        for content in ["one\n", "two\n", "three\n"] {
+            std::fs::write(&file, content).unwrap();
+            store.record(dir.path(), &file, "edit");
+        }
+        let all = store.entries();
+        assert_eq!(all.len(), 3);
+        let mid = store.entries_between(all[1].seq, all[1].seq);
+        assert_eq!(mid.len(), 1, "a single-seq range holds one entry");
+        assert_eq!(mid[0].seq, all[1].seq);
+        let pair = store.entries_between(all[0].seq, all[1].seq);
+        assert_eq!(pair.len(), 2, "the range is inclusive on both ends");
+        assert!(pair[0].seq < pair[1].seq, "oldest first");
+        assert!(
+            store.entries_between(90, 10).is_empty(),
+            "an inverted range (a turn that touched no files) is empty, not an error"
+        );
+        assert!(
+            store
+                .entries_between(all[2].seq + 1, all[2].seq + 99)
+                .is_empty(),
+            "a range past the ledger is empty"
+        );
     }
 }

@@ -449,6 +449,86 @@ impl Agent {
         Ok(())
     }
 
+    /// Capture a turn's pre-state for its anchor: the active-branch tip before
+    /// the turn's first append, and the next checkpoint-ledger seq.
+    ///
+    /// The ledger seq is read from the ledger file directly (max `seq` + 1, or
+    /// 1 when there is none) rather than through the tools crate: the core
+    /// owns the loop and must not grow an edge into the tool that writes the
+    /// ledger. A missing or unreadable ledger is an empty range, not an error.
+    pub(crate) fn turn_anchor_start(&self) -> (Option<String>, u64) {
+        let leaf_before = self
+            .store()
+            .and_then(|h| h.lock().ok().and_then(|st| st.leaf_id()));
+        (leaf_before, self.checkpoint_ledger_next_seq())
+    }
+
+    /// Next checkpoint-ledger seq (one past the max `seq` in the workspace
+    /// ledger, `1` when the ledger is absent or unreadable).
+    pub(crate) fn checkpoint_ledger_next_seq(&self) -> u64 {
+        self.checkpoint_ledger_max_seq().saturating_add(1)
+    }
+
+    /// Max checkpoint-ledger `seq` in this workspace, `0` when absent.
+    fn checkpoint_ledger_max_seq(&self) -> u64 {
+        let path = self
+            .workspace_root
+            .join(".epsilon")
+            .join("checkpoints")
+            .join("ledger.jsonl");
+        let Ok(text) = std::fs::read_to_string(&path) else {
+            return 0;
+        };
+        let mut max = 0u64;
+        for line in text.lines() {
+            let line = line.trim();
+            if line.is_empty() {
+                continue;
+            }
+            // Lenient like the store's own reader: a corrupt line is skipped,
+            // because the seq is a boundary marker, not history under audit.
+            if let Ok(v) = serde_json::from_str::<serde_json::Value>(line)
+                && let Some(seq) = v.get("seq").and_then(|s| s.as_u64())
+            {
+                max = max.max(seq);
+            }
+        }
+        max
+    }
+
+    /// Append the turn anchor for one completed `run()` (turn-scoped undo).
+    ///
+    /// The anchor maps `turn` to the ledger range the run wrote
+    /// (`ledger_start..=ledger_end`, empty when it wrote none) plus the
+    /// `leaf_before` captured at its start. Reported, never fatal: the turn
+    /// already happened and is visible in the transcript, so a store that
+    /// cannot record the map must say so rather than fail a completed run —
+    /// the same shape as the model-change record above it.
+    pub(crate) fn emit_turn_anchor(
+        &self,
+        turn: u64,
+        ledger_start: u64,
+        leaf_before: Option<String>,
+    ) {
+        let ledger_end = self.checkpoint_ledger_max_seq();
+        let Some(store) = self.store() else { return };
+        let outcome: Result<(), String> = match store.lock() {
+            Ok(mut guard) => guard
+                .append_turn_anchor(turn, ledger_start, ledger_end, leaf_before)
+                .map(|_| ())
+                .map_err(|e| e.to_string()),
+            Err(_) => Err("the session store's lock is poisoned".to_string()),
+        };
+        if let Err(e) = outcome {
+            self.emit(AgentEvent::Notice {
+                text: format!(
+                    "turn {turn} ran, but this session could not record its undo anchor ({e}) — \
+                     /undo-turn {turn} will not be available"
+                ),
+            });
+        }
+    }
+
     /// Current transcript snapshot (all roles, including harness-only messages).
     ///
     /// Returns an owned `Vec` because most callers want to keep or filter it, and
@@ -558,5 +638,67 @@ impl Agent {
             self.push_message(&m)?;
         }
         Ok(closed)
+    }
+}
+
+#[cfg(test)]
+mod turn_anchor_emission_tests {
+    use super::*;
+    use epsilon_contracts::content::UserContent;
+
+    fn test_agent(workspace: &std::path::Path) -> std::sync::Arc<Agent> {
+        Agent::new(
+            crate::LoopLimits::default(),
+            std::sync::Arc::new(epsilon_llm::PanicGuard(epsilon_llm::FauxProvider::new(
+                Vec::<epsilon_llm::FauxStep>::new(),
+            ))),
+            std::sync::Arc::new(crate::ToolRegistry::new()),
+            std::sync::Arc::new(crate::AutoAllow),
+            workspace.to_path_buf(),
+        )
+    }
+
+    fn user_msg(text: &str) -> Message {
+        Message::User(epsilon_contracts::message::UserMessage {
+            id: epsilon_contracts::new_id("msg"),
+            timestamp_ms: 0,
+            content: vec![UserContent::Text { text: text.into() }],
+        })
+    }
+
+    /// RED-first: fails while `run()` emits no anchor — the loop half of
+    /// turn-scoped undo. Two runs anchor turns 1 and 2 with the second one's
+    /// `leaf_before` pointing inside the first turn's transcript.
+    #[tokio::test]
+    async fn each_run_appends_its_turn_anchor() {
+        let dir = tempfile::tempdir().unwrap();
+        let agent = test_agent(dir.path());
+        let path = dir.path().join("s.jsonl");
+        let store = SessionStore::open_in(&path, dir.path()).expect("session opens");
+        agent.attach_session_store(std::sync::Arc::new(std::sync::Mutex::new(store)));
+
+        agent.run(user_msg("first")).await.expect("run 1 completes");
+        agent
+            .run(user_msg("second"))
+            .await
+            .expect("run 2 completes");
+
+        let handle = agent.session_store().expect("store attached");
+        let st = handle.lock().unwrap();
+        let anchors = st.turn_anchor_entries().unwrap();
+        assert_eq!(anchors.len(), 2, "one anchor per run");
+        let first = SessionStore::parse_turn_anchor(&anchors[0]).expect("turn 1 parses");
+        let second = SessionStore::parse_turn_anchor(&anchors[1]).expect("turn 2 parses");
+        assert_eq!((first.0, second.0), (1, 2), "turns number from 1 in order");
+        assert!(first.3.is_none(), "turn 1 began on an empty session");
+        assert!(second.3.is_some(), "turn 2 began on a live branch");
+        assert_eq!(st.next_turn_number().unwrap(), 3);
+        // Anchors never enter the provider view.
+        let view = st.model_view().unwrap();
+        let rendered = format!("{view:?}");
+        assert!(
+            !rendered.contains("turn_anchor"),
+            "no anchor leaks into the model view: {rendered}"
+        );
     }
 }
