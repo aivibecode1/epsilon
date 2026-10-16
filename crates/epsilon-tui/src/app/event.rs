@@ -243,6 +243,11 @@ pub(crate) async fn drive(cfg: TuiConfig, terminal: &mut ratatui::DefaultTermina
             // rather than when an event arrives is what makes the number describe
             // the same history the frame is about to show.
             app.mirror_context_size(&agent);
+            // Same boundary, same reason, for the plan-mode chip: the settings
+            // mirror can lag a `--plan` launch (nothing has opened the panel
+            // yet), and a header that misses plan mode misstates the safety
+            // posture. One lock read per frame, like the context mirror.
+            app.mirror_plan_mode(&agent);
             if goal_dirty {
                 app.refresh_goal(&agent);
                 goal_dirty = false;

@@ -134,6 +134,14 @@ pub struct Metrics {
     /// fresh count arrives the flag is cleared and the gauge goes back to
     /// describing an ordinary measurement. See [`Metrics::CONTEXT_UNKNOWN_COMPACTED`].
     pub compacted: bool,
+    /// Whether plan mode is on: writes, edits and shell are denied.
+    ///
+    /// Absent (off) prints no part — the normal state needs no chip. Present
+    /// (on) prints a pinned `plan` part beside the model: a safety-relevant
+    /// state must survive a narrow row, the way the model and `offline` do.
+    /// Fed from the app's gate mirror (`settings_plan`, synced per frame),
+    /// never read from the agent by the draw path.
+    pub plan_mode: bool,
 }
 
 /// A share as the gauge prints it, keeping the difference between "small" and
@@ -352,6 +360,8 @@ impl Metrics {
             offline: false,
             // Nothing has been compacted, so the `?` has its ordinary meaning.
             compacted: false,
+            // The empty state has no posture to announce.
+            plan_mode: false,
         }
     }
 
@@ -509,6 +519,13 @@ impl Metrics {
         // role is `Warn` rather than `Model` while offline — the model name is
         // something to notice when no provider is configured — which is exactly why
         // the pin is a field and not a role.
+        if self.plan_mode {
+            parts.push(MetricPart {
+                text: "plan".to_string(),
+                role: MetricRole::Warn,
+                pinned: true,
+            });
+        }
         parts.push(MetricPart {
             text: self.model_label_with_thinking(),
             role: if self.offline {
@@ -550,6 +567,7 @@ pub const LEGEND: &[&str] = &[
     "header: ↑12k ↓3.4k = tokens in and out this session · R18k W2.0k = cache tokens read and written this session",
     "header: CH 75% = the share of the LAST prompt that came from cache · CH n/a = the provider does not report cache traffic, so the rate is unknowable rather than zero · CH — = it does report it and nothing is cached yet",
     "header: $1.42 = estimated cost at list prices; $1.42+ is a lower bound, because the session moved tokens the model registry does not price",
+    "header: plan = plan mode is on: writes, edits and shell are denied; absent means mutations are allowed",
     "header: the last segment is the model; a final offline means no provider credentials are configured and the scripted provider is answering",
 ];
 
@@ -685,6 +703,22 @@ mod tests {
         }
         // The trailing segment, which the previous legend never mentioned at all.
         assert!(legend.contains("offline"), "the offline tail has no line");
+        // And the plan chip: a legend line must decode it, and the part must
+        // exist only when the mode is on.
+        let plan_on = Metrics {
+            plan_mode: true,
+            ..fixture.clone()
+        };
+        let plan_parts: Vec<String> = plan_on.parts().iter().map(|p| p.text.clone()).collect();
+        assert!(
+            plan_parts.iter().any(|t| t == "plan"),
+            "plan mode prints its chip: {plan_parts:?}"
+        );
+        assert!(legend.contains("plan"), "the plan chip has no legend line");
+        assert!(
+            !fixture.parts().iter().any(|p| p.text == "plan"),
+            "plan off prints no chip: absence is the normal state"
+        );
     }
 
     /// A context size that is unknown is one of three different facts, and the

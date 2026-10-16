@@ -330,6 +330,11 @@ impl App {
             cost_micro_usd,
             cost_is_floor,
             compacted: self.ui.is_compacted(),
+            // The gate mirror, synced from the agent on every frame boundary
+            // (event.rs, beside the context mirror) and by every command path
+            // that switches the mode — the draw path holds no agent, so the
+            // header reads the mirror like every other live figure here.
+            plan_mode: self.settings_plan,
         }
     }
 
@@ -392,6 +397,16 @@ impl App {
         // where it is a guess — turn one, after a compaction, after `/resume` — are
         // exactly the moments a user is watching it.
         self.ui.context_estimated = agent.context_is_estimated();
+    }
+
+    /// Mirror the gate's plan posture for the header chip, beside the context
+    /// mirror and for the same reason: the draw path holds no agent. Called on
+    /// the same frame boundary, so a `--plan` launch names its posture on the
+    /// first frame — the settings mirror alone would lag until the panel
+    /// opens, and a header that misses plan mode misstates the safety posture.
+    /// One lock read per frame, like the context mirror.
+    pub(crate) fn mirror_plan_mode(&mut self, agent: &Agent) {
+        self.settings_plan = agent.in_plan_mode();
     }
 
     /// Footer hints for the current state.

@@ -416,6 +416,49 @@ mod tests {
         );
     }
 
+    /// **Plan mode prints a pinned chip, and only when it is on.**
+    ///
+    /// The chip is safety-relevant state (mutations denied), so it rides the
+    /// pinned tail with the model — a posture that appears only when the
+    /// terminal is wide is a posture nobody reads. Off prints nothing:
+    /// absence is the normal state, and a permanent `plan off` chip would
+    /// teach the reader to stop seeing the row.
+    #[test]
+    fn plan_mode_prints_a_pinned_chip_only_when_on() {
+        let base = Metrics {
+            model_label: "DeepSeek V3.1".into(),
+            context_used: Some(48_000),
+            context_window: Some(200_000),
+            ..Metrics::default()
+        };
+        let on = render(
+            140,
+            &RunState::Idle,
+            &Metrics {
+                plan_mode: true,
+                ..base.clone()
+            },
+        );
+        assert!(
+            on.contains("plan"),
+            "plan mode names itself on the row.\n{on}"
+        );
+        let off = render(140, &RunState::Idle, &base);
+        assert!(!off.contains("plan"), "plan off prints no chip.\n{off}");
+        let narrow = render(
+            60,
+            &RunState::Idle,
+            &Metrics {
+                plan_mode: true,
+                ..base
+            },
+        );
+        assert!(
+            narrow.contains("plan"),
+            "the chip must survive the budget the gauges yield to.\n{narrow}"
+        );
+    }
+
     /// **A retry countdown is emitted whole or not at all (P-189).**
     ///
     /// The phase is the fragment on this row with no length of its own, so it is

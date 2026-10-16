@@ -3988,6 +3988,42 @@ mod tests {
         assert!(!agent.in_plan_mode(), "reporting switches nothing");
     }
 
+    /// `/plan on` puts the chip on the header row: the frame, not the state —
+    /// a posture the reader cannot see is a posture the product does not have.
+    /// The test drives the real key path and reads the first row, where the
+    /// header draws.
+    #[test]
+    fn plan_on_puts_its_chip_on_the_header_row() {
+        let (mut app, agent, _rx) = test_app();
+        app.theme.glyphs = crate::ui::theme::UNICODE;
+        assert!(!type_and_enter(&mut app, &agent, "/plan on"));
+        assert!(agent.in_plan_mode());
+        let screen = frame(&mut app, 80, 24);
+        let header = screen.lines().next().unwrap_or_default();
+        assert!(
+            header.contains("plan"),
+            "the header names plan mode once enabled:\n{screen}"
+        );
+    }
+
+    /// A `--plan` launch names its posture on the first frame: the settings
+    /// mirror lags until the panel opens, so the frame-boundary mirror is what
+    /// carries the gate state to the header. No key path involved — the gate
+    /// is switched directly, then mirrored exactly as the event loop does.
+    #[test]
+    fn a_plan_launch_names_its_posture_on_the_first_frame() {
+        let (mut app, agent, _rx) = test_app();
+        app.theme.glyphs = crate::ui::theme::UNICODE;
+        assert!(agent.set_plan_mode(true));
+        app.mirror_plan_mode(&agent);
+        let screen = frame(&mut app, 80, 24);
+        let header = screen.lines().next().unwrap_or_default();
+        assert!(
+            header.contains("plan"),
+            "a plan launch shows its chip immediately:\n{screen}"
+        );
+    }
+
     /// `/plan on` enables immediately (the restricting direction asks
     /// nothing) and names the outcome; unknown tails are usage.
     #[test]
