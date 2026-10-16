@@ -179,6 +179,14 @@ filed with provenance headers, audit/history/15-17), and the fourth was verified
   as runs — the pre-battery focused suites re-polluted ambient favorites the hermetic
   battery then could not have touched, and the file was restored byte-identical from
   the hash-verified backup a second time.
+- **Live console probes, 2026-10-16** — the round26 binary driven in real
+  conhost windows (fake HOME, hermetic; evidence
+  `audit/evidence/console-probe-*-round27.json`): `/plan on` prints the
+  notice and the header carries the `plan` chip; a fresh process's
+  `/settings` shows `plan: off` (session-scoped, matching the user guide —
+  evaluated as designed, not a defect); `/catalog` prints the
+  snapshot-first order with the dev-only line; `/models` opens the
+  stage-1 provider panel. Ambient config hash unchanged throughout.
 - **`round26 (2026-10-16)`** — LANDED, green battery above (14/14, 2,319/0/15,
   hermetic fake-HOME; +23 over round25, all named in the log): MCP
   StreamableHTTP transport (connector, config, trust dispatch, CLI flag,
