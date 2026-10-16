@@ -265,8 +265,21 @@ pub fn lookup_model(id: &str) -> Option<&'static ModelInfo> {
 /// branch (`StandardEffort`), Mistral keeps today's silence (`None`) — so
 /// unknown/custom models behave exactly as they did before this field
 /// existed (documented, not silently changed).
+///
+/// A request id may carry its provider segment (`mistral/magistral-medium`
+/// for the `magistral-medium` row): the old substring branches matched
+/// through such prefixes, so an exact miss retries once with the first
+/// segment stripped. The remainder must still match a row id exactly — a
+/// `foo/bar` with no `bar` row stays a miss — which bounds the looseness to
+/// what the prefix-matching it replaces already allowed.
 pub fn reasoning_shape_for(model_id: &str) -> Option<ReasoningShape> {
-    lookup_model(model_id).map(|m| m.reasoning_shape)
+    if let Some(row) = lookup_model(model_id) {
+        return Some(row.reasoning_shape);
+    }
+    model_id
+        .split_once('/')
+        .and_then(|(_, rest)| lookup_model(rest))
+        .map(|m| m.reasoning_shape)
 }
 
 /// First bundled row for `provider` (P-063: the model a fresh login selects).

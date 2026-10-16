@@ -5396,13 +5396,17 @@ pub async fn build_runtime_and_gate_runner(
     // Wave 20: the preset persists across restarts — a switch the TUI wrote
     // down is the project's file first, then the global one, and only an
     // explicit `--preset` flag outranks both. Unknown file names fall through
-    // to `auto` inside the resolver, never inventing a policy.
-    let effective_preset = resolve_effective_preset(
-        preset,
-        project.preset.as_deref(),
-        epsilon_core::config::load_preset().as_deref(),
-    );
+    // to `auto` inside the resolver, never inventing a policy — and the fall
+    // is announced below, because a typo that silently runs a different policy
+    // than asked for is the failure the resolver's own doc disowns.
+    let global_preset = epsilon_core::config::load_preset();
+    let effective_preset =
+        resolve_effective_preset(preset, project.preset.as_deref(), global_preset.as_deref());
     gate.set_preset(effective_preset.name(), workspace);
+    for ignored in ignored_preset_names(preset, project.preset.as_deref(), global_preset.as_deref())
+    {
+        notices.push(ignored);
+    }
     // `Agent::new` already returns an `Arc`, which is why the extension hooks below can be
     // installed through it without unwrapping or re-wrapping.
     let agent = Agent::new(
@@ -6110,6 +6114,37 @@ pub fn resolve_effective_preset(
         .unwrap_or_default()
 }
 
+/// Names a preset value falls through *past*, for the composition notice.
+///
+/// The resolver above is deliberately silent (a pure function of three
+/// strings), but a typo that runs a different policy than asked for must not
+/// be silent at the surface: `read-onli` in the project file falling through
+/// to global-or-`auto` with no word anywhere is the failure the resolver's
+/// own doc disowns. Each returned line names its layer, so the reader knows
+/// which file to fix. An explicit flag short-circuits both files, so neither
+/// is reported then (nothing was skipped — the flag outranks by design).
+pub fn ignored_preset_names(
+    flag: epsilon_safety::Preset,
+    project_preset: Option<&str>,
+    global_preset: Option<&str>,
+) -> Vec<String> {
+    if flag != epsilon_safety::Preset::Auto {
+        return Vec::new();
+    }
+    let mut out = Vec::new();
+    for (layer, name) in [("project", project_preset), ("global", global_preset)] {
+        if let Some(raw) = name
+            && epsilon_safety::Preset::parse(raw).is_err()
+        {
+            out.push(format!(
+                "ignoring unknown permission preset '{raw}' in {layer} config \
+                 (expected one of: auto, workspace-write, read-only, danger-full-access)"
+            ));
+        }
+    }
+    out
+}
+
 /// The thinking level a resumed session recorded, if it recorded one.
 ///
 /// **`None` is not "off".** A session that never said is on the config default;
@@ -6640,6 +6675,36 @@ mod thinking_resume_tests {
             resolve_effective_preset(Preset::Auto, None, Some("banana")),
             Preset::Auto,
             "an unknown global name is not a setting either"
+        );
+    }
+
+    /// Falling through is silent in the resolver and announced at the surface:
+    /// each ignored name is reported with its layer, and an explicit flag
+    /// reports nothing (it outranks both files, so nothing was skipped).
+    #[test]
+    fn ignored_preset_names_announce_the_layer_to_fix() {
+        use epsilon_safety::Preset;
+        let reported = ignored_preset_names(Preset::Auto, Some("read-onli"), Some("banana"));
+        assert_eq!(
+            reported.len(),
+            2,
+            "both layers name their typo: {reported:?}"
+        );
+        assert!(
+            reported[0].contains("read-onli") && reported[0].contains("project"),
+            "project typo names the project file: {reported:?}"
+        );
+        assert!(
+            reported[1].contains("banana") && reported[1].contains("global"),
+            "global typo names the global file: {reported:?}"
+        );
+        assert!(
+            ignored_preset_names(Preset::Auto, Some("read-only"), None).is_empty(),
+            "known names are settings, not typos"
+        );
+        assert!(
+            ignored_preset_names(Preset::ReadOnly, Some("banana"), Some("banana")).is_empty(),
+            "an explicit flag outranks both files, so neither is reported"
         );
     }
 

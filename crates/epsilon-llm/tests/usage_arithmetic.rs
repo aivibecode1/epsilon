@@ -355,6 +355,47 @@ fn anthropic_measured_zero_thinking_is_some_zero() {
     );
 }
 
+/// A present-but-malformed split is unparseable, not zero: a proxy that
+/// sends `"thinking_tokens": "200"` (a string) must not produce a measured
+/// 0, which would claim the provider answered zero.
+#[test]
+fn anthropic_malformed_thinking_is_silence_not_zero() {
+    let u = epsilon_llm::providers::test_support::anthropic_usage_from_json(&json!({
+        "input_tokens": 1_000,
+        "output_tokens": 500,
+        "output_tokens_details": { "thinking_tokens": "200" },
+    }));
+
+    assert_eq!(
+        u.reasoning, None,
+        "a string where a count belongs is unknown, not a measured zero"
+    );
+}
+
+/// ...and a malformed delta overwrites nothing: the seed's measured split
+/// survives a delta whose thinking value is not a number.
+#[test]
+fn anthropic_malformed_delta_thinking_keeps_the_seed() {
+    let u = epsilon_llm::providers::test_support::anthropic_delta_usage_from_json(
+        &json!({
+            "input_tokens": 1_000,
+            "output_tokens": 500,
+            "output_tokens_details": { "thinking_tokens": 200 },
+        }),
+        &json!({
+            "output_tokens": 600,
+            "output_tokens_details": { "thinking_tokens": "lots" },
+        }),
+    );
+
+    assert_eq!(u.output, 600);
+    assert_eq!(
+        u.reasoning,
+        Some(200),
+        "a malformed delta must not erase the seed's split with a coerced zero"
+    );
+}
+
 /// Chat-Completions reasoning arrives inside `completion_tokens_details`, and
 /// `completion_tokens` already includes it (pi `openai-completions.ts:1539`):
 /// parsing must record the split WITHOUT growing `output`.
@@ -396,6 +437,23 @@ fn completions_measured_zero_is_some_zero() {
     }));
 
     assert_eq!(u.reasoning, Some(0));
+}
+
+/// Same rule on the compat path: a string `reasoning_tokens` is silence,
+/// not a measured zero.
+#[test]
+fn completions_malformed_reasoning_tokens_are_silence_not_zero() {
+    let u = epsilon_llm::providers::test_support::compat_usage_from_json(&json!({
+        "prompt_tokens": 8_000,
+        "completion_tokens": 500,
+        "completion_tokens_details": { "reasoning_tokens": "150" },
+    }));
+
+    assert_eq!(u.output, 500);
+    assert_eq!(
+        u.reasoning, None,
+        "a string where a count belongs is unknown, not a measured zero"
+    );
 }
 
 /// The Responses API nests the split in `output_tokens_details`; the reshaping

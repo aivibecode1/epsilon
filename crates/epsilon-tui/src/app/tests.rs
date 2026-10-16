@@ -9443,6 +9443,51 @@ fn preset_full_access_asks_and_only_yes_switches() {
     assert_eq!(agent.current_preset(), "danger-full-access");
 }
 
+/// A second privilege-raising question never clobbers a pending one: with a
+/// danger-preset ask open, `/plan off` is refused (the earlier question
+/// survives), and answering `yes` applies the preset while plan mode stays
+/// exactly as it was.
+#[test]
+fn a_second_confirmation_waits_for_the_first() {
+    let (mut app, agent, _rx) = test_app();
+    let cfg = tempfile::tempdir().expect("a config dir");
+    app.config_dir_override = Some(cfg.path().to_path_buf());
+    assert!(!type_and_enter(&mut app, &agent, "/plan on"));
+    assert!(agent.in_plan_mode(), "plan on for the test");
+
+    app.run_command(
+        &agent,
+        crate::picker::parse_command("/preset danger-full-access").expect("/preset parses"),
+    );
+    let pending = app.pending_preset.clone();
+    assert!(pending.is_some(), "the preset question is open");
+
+    app.run_command(
+        &agent,
+        crate::picker::parse_command("/plan off").expect("/plan parses"),
+    );
+    assert_eq!(
+        app.pending_preset, pending,
+        "the plan question must not clobber the preset one"
+    );
+    assert!(
+        app.ui
+            .lines()
+            .iter()
+            .any(|l| l.text.contains("already pending")),
+        "the refusal names the pending question: {:?}",
+        app.ui.lines().iter().map(|l| &l.text).collect::<Vec<_>>()
+    );
+
+    app.input = "yes".to_string();
+    app.submit_editor(&agent, false);
+    assert_eq!(agent.current_preset(), "danger-full-access");
+    assert!(
+        agent.in_plan_mode(),
+        "answering the preset question leaves plan mode untouched"
+    );
+}
+
 /// Wave 20: `/preset read-only` writes `[permissions] preset` through, so a
 /// restart reads it back instead of returning to `auto` with no notice.
 #[test]

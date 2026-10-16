@@ -1401,10 +1401,10 @@ impl App {
                         let (tin, tout) = self.ui.usage();
                         // The live accumulator is the only truth without a
                         // file; `None` renders the bare figure (K1 silent wire).
-                        let out = crate::ui::metrics::output_with_reasoning(
-                            tout,
-                            agent.session_usage().reasoning,
-                        );
+                        // Same impossibility guard as the stored arm: two live
+                        // counters can still disagree across a reset boundary.
+                        let reasoning = agent.session_usage().reasoning.filter(|&r| r <= tout);
+                        let out = crate::ui::metrics::output_with_reasoning(tout, reasoning);
                         self.ui.push_notice(format!(
                             "session: no durable session file attached \u{b7} tokens {tin}/{out} \u{b7} model {}",
                             self.model_id
@@ -1424,7 +1424,17 @@ impl App {
                 };
                 let (tin, tout) = self.ui.usage();
                 // Subset note on the output half only; `None` keeps the exact
-                // shape the line always had.
+                // shape the line always had. The `r <= tout` guard is load-bearing:
+                // `tout` is the live accumulator (this run plus hydrated history)
+                // while `reasoning` folds the session file, and those two answers
+                // can disagree after resume/compaction the way any two counters
+                // maintained in different places can. A split larger than its own
+                // total is an accounting skew, not a display fact — printing
+                // "100 (incl. 200 reasoning)" would assert an impossibility, so
+                // the line falls back to the bare figure and the reconciliation
+                // stays an open investigation (see STATUS backlog), not a number
+                // shown with confidence.
+                let reasoning = reasoning.filter(|&r| r <= tout);
                 let out = crate::ui::metrics::output_with_reasoning(tout, reasoning);
                 if let Some(n) = self.session_name.as_deref() {
                     self.ui.push_notice(format!(
@@ -1497,6 +1507,15 @@ impl App {
             return false;
         };
         if preset.raises_privilege() {
+            // One pending question at a time: overwriting it would drop the
+            // earlier one with no cancellation notice (safe direction — deny —
+            // but lost UX). Answer or dismiss it first.
+            if self.pending_preset.is_some() {
+                self.ui.push_notice(
+                    "a confirmation is already pending — answer it (yes/no) before starting another",
+                );
+                return false;
+            }
             self.pending_preset = Some(preset.name().to_string());
             self.ui.push_notice(format!(
                 "Switch permission preset to '{}'? This allows everything nothing forbids. (yes/no)",
@@ -1563,6 +1582,12 @@ impl App {
             "off" => {
                 if !on {
                     self.ui.push_notice("plan mode: already off");
+                } else if self.pending_preset.is_some() {
+                    // Same one-pending-question rule as the preset path above:
+                    // clobbering drops the earlier question silently.
+                    self.ui.push_notice(
+                        "a confirmation is already pending — answer it (yes/no) before starting another",
+                    );
                 } else {
                     self.pending_preset = Some(Self::PENDING_PLAN_DISABLE.to_string());
                     self.ui.push_notice(
@@ -3866,6 +3891,65 @@ mod tests {
         assert!(
             !screen.contains("tokens100/700"),
             "the split is never added to the total: {screen}"
+        );
+    }
+
+    /// A split larger than its own total renders the bare figure, not an
+    /// impossibility: the tokens line mixes the live accumulator with a
+    /// session-file fold, and those two answers can disagree after
+    /// resume/compaction the way any two counters maintained in different
+    /// places can. "100 (incl. 200 reasoning)" would assert that reasoning
+    /// both is and is not inside output — so the note is withheld and the
+    /// reconciliation stays an open investigation, not a number shown
+    /// with confidence.
+    #[tokio::test]
+    async fn a_skewed_reasoning_split_falls_back_to_the_bare_figure() {
+        use epsilon_contracts::content::ContentBlock;
+        use epsilon_contracts::message::{AssistantMessage, Message, StopReason, Usage};
+        use epsilon_contracts::session_entry::EntryKind;
+
+        let (mut app, agent, (_f, _n), _dir) = test_app_with_store();
+        let usage = Usage {
+            input: 100,
+            output: 100,
+            reasoning: Some(200),
+            cache_read: 0,
+            cache_write: 0,
+            total_tokens: 200,
+            cache_reported: false,
+        };
+        let message = Message::Assistant(AssistantMessage {
+            id: "m-skew".into(),
+            timestamp_ms: 0,
+            provider: "faux".into(),
+            model_id: "faux-1".into(),
+            content: vec![ContentBlock::Text {
+                text: "done".into(),
+            }],
+            stop_reason: StopReason::EndTurn,
+            error_message: None,
+            usage,
+        });
+        {
+            let store = agent.session_store().expect("test store attached");
+            let mut st = store.lock().expect("store lock");
+            st.append(EntryKind::Message {
+                message: message.clone(),
+                api_request_sha256: None,
+            })
+            .expect("append");
+        }
+        app.ui.hydrate_from_history(&[message]);
+
+        assert!(!type_and_enter(&mut app, &agent, "/session"));
+        let screen = frame(&mut app, 80, 24);
+        assert!(
+            screen.contains("tokens100/100"),
+            "the output total still reads: {screen}"
+        );
+        assert!(
+            !screen.contains("reasoning"),
+            "an impossible split is withheld, not printed: {screen}"
         );
     }
 

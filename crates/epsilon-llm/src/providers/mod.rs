@@ -282,9 +282,15 @@ impl HttpEventStream {
         // Reasoning is a SUBSET of output (pi `anthropic-messages.ts:850-853`):
         // `output_tokens` already includes the thinking tokens, so they are
         // recorded separately and never added to `output`. Presence is the key,
-        // not the count (K1): `thinking_tokens: 0` is a measured zero.
-        if let Some(v) = usage.pointer("/output_tokens_details/thinking_tokens") {
-            u.reasoning = Some(v.as_u64().unwrap_or(0));
+        // not the count (K1): `thinking_tokens: 0` is a measured zero — but a
+        // present-but-malformed value is unparseable, not zero, so only a
+        // successful `as_u64` records the split (a `"200"` string from a proxy
+        // must not become a measured 0 any more than silence may).
+        if let Some(n) = usage
+            .pointer("/output_tokens_details/thinking_tokens")
+            .and_then(|v| v.as_u64())
+        {
+            u.reasoning = Some(n);
         }
         if u.input + u.output > 0 {
             self.usage_seed = Some(u);
@@ -352,7 +358,11 @@ impl HttpEventStream {
         //   recorded as the split. Wires without the key add zero.
         //
         // Presence is the key, not the count (K1): a reported 0 is `Some(0)`,
-        // a silent wire is `None`.
+        // a silent wire is `None` — and a present-but-malformed value is
+        // unparseable, not zero (same rule as the Anthropic seed above). The
+        // `thoughts` sum below keeps its own zero default: `output` is a
+        // counted total where an unparseable fragment contributes nothing,
+        // while `reasoning` is a measurement where it means unknown.
         let thoughts = usage
             .get("thoughtsTokenCount")
             .and_then(|v| v.as_u64())
@@ -360,13 +370,8 @@ impl HttpEventStream {
         let reasoning = usage
             .pointer("/completion_tokens_details/reasoning_tokens")
             .or_else(|| usage.pointer("/output_tokens_details/reasoning_tokens"))
-            .map(|v| v.as_u64().unwrap_or(0))
-            .or_else(|| {
-                usage
-                    .get("thoughtsTokenCount")
-                    .is_some()
-                    .then_some(thoughts)
-            });
+            .and_then(|v| v.as_u64())
+            .or_else(|| usage.get("thoughtsTokenCount").and_then(|v| v.as_u64()));
         // K1: did the body actually *carry* a cache key? Detection, not arithmetic —
         // `cache_read == 0` is equally what a wire that never mentions caching
         // produces, and only the key's presence tells the two apart.
@@ -434,9 +439,13 @@ impl HttpEventStream {
         // Same present-overwrites rule for the thinking split: a delta that
         // carries `output_tokens_details.thinking_tokens` replaces the seed's
         // split, one that does not keeps it. (The seed path reads the same key;
-        // see `seed_usage`.)
-        if let Some(v) = usage.pointer("/output_tokens_details/thinking_tokens") {
-            u.reasoning = Some(v.as_u64().unwrap_or(0));
+        // see `seed_usage`.) Malformed overwrites nothing: a `"250"` string
+        // must not erase the seed's measured split with a coerced zero.
+        if let Some(n) = usage
+            .pointer("/output_tokens_details/thinking_tokens")
+            .and_then(|v| v.as_u64())
+        {
+            u.reasoning = Some(n);
             any = true;
         }
         u.total_tokens = u.input + u.output + u.cache_read + u.cache_write;

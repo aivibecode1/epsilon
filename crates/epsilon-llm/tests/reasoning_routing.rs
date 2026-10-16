@@ -308,3 +308,22 @@ fn unknown_ids_keep_the_default_branch() {
     assert!(off.get("reasoning").is_none(), "{off}");
     assert!(off.get("reasoning_effort").is_none(), "{off}");
 }
+
+/// A provider-prefixed request id still finds its row: the old substring
+/// branches matched through prefixes (mistral's short_model), so an exact
+/// miss retries once with the first segment stripped. The remainder must
+/// still match exactly — a miss stays a miss, never a guess.
+#[test]
+fn provider_prefixed_ids_resolve_through_the_prefix() {
+    let body = mistral_wire()
+        .request_body(
+            "mistral/magistral-medium-latest",
+            &ctx_at(ThinkingLevel::Medium),
+        )
+        .expect("body");
+    assert_eq!(
+        body.get("prompt_mode").and_then(|v| v.as_str()),
+        Some("reasoning"),
+        "prefixed magistral id keeps prompt_mode: {body}"
+    );
+}
