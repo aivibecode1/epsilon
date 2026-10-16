@@ -814,6 +814,13 @@ fn listing_endpoint(provider: &str) -> Option<(&'static str, &'static str)> {
         "moonshot" => Some(("https://api.moonshot.ai/v1/models", "MOONSHOT_API_KEY")),
         "zai" => Some(("https://api.z.ai/api/paas/v4/models", "ZAI_API_KEY")),
         "openrouter" => Some(("https://openrouter.ai/api/v1/models", "OPENROUTER_API_KEY")),
+        // Mistral speaks the same OpenAI-shaped `/v1/models` the parser
+        // reads, with Bearer auth like the rest of this table.
+        "mistral" => Some(("https://api.mistral.ai/v1/models", "MISTRAL_API_KEY")),
+        // Deliberately absent, not overlooked: bedrock needs SigV4 list
+        // calls, vertex needs the AI Platform shape, copilot publishes a
+        // fixed set, and ollama answers a different shape (`/api/tags`).
+        // A second parser is a second feature, not a table row.
         _ => None,
     }
 }
@@ -1597,6 +1604,29 @@ mod tests {
     #[test]
     fn live_cache_ttl_is_sixty_minutes() {
         assert_eq!(LIVE_CACHE_TTL_MS, 60 * 60 * 1000);
+    }
+
+    /// Mistral exposes the same OpenAI-shaped `GET /v1/models` the table
+    /// already parses (`{"object":"list","data":[{"id":...}]}` + Bearer), so
+    /// it belongs in the table; bedrock/vertex/copilot have no compatible
+    /// listing endpoint (SigV4 list calls, AI Platform shape, fixed set) and
+    /// stay absent by design, not by omission.
+    ///
+    /// `real`-gated like the table itself: without the feature the table is
+    /// a constant `None` and there is nothing to pin.
+    #[cfg(feature = "real")]
+    #[test]
+    fn mistral_has_a_live_listing_endpoint() {
+        let (url, env) = listing_endpoint("mistral").expect("mistral lists live models");
+        assert!(url.contains("mistral.ai"), "the vendor endpoint: {url}");
+        assert_eq!(env, "MISTRAL_API_KEY");
+        assert!(live_listing_available("mistral"));
+        for provider in ["amazon-bedrock", "google-vertex", "github-copilot", "nope"] {
+            assert!(
+                listing_endpoint(provider).is_none(),
+                "{provider} has no compatible endpoint"
+            );
+        }
     }
 
     /// Criterion 6: retired ids are bundle-dropped, never catalog rows. The
