@@ -3710,3 +3710,72 @@ its own ADR.
 **Revisit trigger.** A server needs OAuth or non-bearer auth, retry policy
 proves wrong against measured 404/429 shapes, or the single-enum config
 fold lands (retire the additive note above when it does).
+
+---
+
+## ADR-049: User-defined slash commands live in `commands/`, sharing the template grammar
+
+**Status: accepted (2026-10-16).**
+
+**The problem.** Operators retype the same prompts, and prompt templates
+(`prompts/`, pure text-expansion) already solve half of it — but a template
+body is text, never an action: it cannot intentionally invoke a built-in the
+way a typed `/templates` does. The research brief for this slice settled one
+open pick and flagged one false citation, both recorded here so the next
+reader does not re-litigate them.
+
+**Decision: `commands/` directories with executable behaviour, one grammar.**
+
+- *Two behaviours, one grammar.* Custom commands are markdown files in
+  `commands/` dirs — user `<config>/commands/`, project
+  `<ws>/.agents/commands/` and `<ws>/.epsilon/commands/` — with the same
+  frontmatter keys (`description`, `argument-hint`, no new ones) and the same
+  `$1 / $@ / ${N:-default} / ${@:N}` substitution as templates, from the same
+  functions. `prompts/` stays pure text-expansion. The `commands/` leaf is
+  opencode's convention (`commands.mdx:18`, global plus per-project at
+  `:80-83`, stem-is-name at `:96`, `$ARGUMENTS` placeholders at `:107-113`).
+- *Execution is expand + resubmit, once.* A command body expands against its
+  arguments and resubmits through the same submit path: prose is sent,
+  a builtin executes, a body naming another file does not re-expand. No
+  recursion, no shell, no file references, no scoping keys.
+- *Builtins always win.* A command file colliding with a `COMMAND_HEADS` name
+  is dropped at discovery with a warning, and the builtin runs — a repository
+  file must never hijack `/trust`, `/login`, `/preset` or `/plan`. This
+  diverges from opencode on purpose (opencode lets a same-named custom
+  command override the builtin, `commands.mdx:320-323`): a repo file answering
+  the trust prompt is the attack, not a feature. Templates keep their older
+  shadowing rule, so existing files do not change meaning; new executable
+  behaviour takes the strict rule.
+- *Project beats user; user needs no gate, project uses the same bit.*
+  Name clashes resolve user first, project after, gated on the same
+  project-trusted bit as skills and templates. The precedence stands on the
+  skills divergence (later root wins, `crates/epsilon-core/src/skills.rs`)
+  and opencode's project-over-global layering (`config.mdx:55`) — NOT on pi,
+  which keeps the first registration. The old "pi's ordering" comment said
+  otherwise and was false; it is corrected where it stood.
+- *TUI in, everything else lists or stays literal.* Commands execute only in
+  the interactive TUI (popup rows with `[u]`/`[p]` scope tags, `/help` index,
+  Unknown-hint fallback, `/reload` refresh). Headless, HTTP and RPC modes
+  never expand them — a `/name` there stays literal, pinned by test — while
+  RPC `get_commands` lists commands and templates read-only, with the file
+  path a client would open.
+- *One home for the table.* The command-root table lives in
+  `epsilon-contracts::prompt_template`, not beside the skill roots: that
+  module owns the cross-harness Skills shape, while commands are flat `.md`
+  files whose grammar is already this module's — splitting the loader would
+  invite the second grammar copy. Other harnesses' command trees are not
+  scanned (Epsilon dirs plus the portable `.agents` alias, exactly as for
+  templates); wider interop is deferred, not overlooked.
+
+**Rejected.** (a) New frontmatter keys for scoping or execution: a second
+options language inside markdown frontmatter. (b) Recursive expansion:
+one file driving another turns a pasted transcript into a chain.
+(c) Palette additions: the popup is the surface, and a second list is a
+second list to keep in step. (d) A new crate or a YAML dependency for two
+string keys. (e) Headless/HTTP/RPC execution: unattended modes must not run
+repository-authored command bodies.
+
+**Revisit trigger.** Operators need commands outside the TUI (then the
+headless-literal pin names the exact behaviour being changed), cross-harness
+command dirs need scanning, or a command needs more than prose-plus-builtin
+— which is a new ADR, not a new frontmatter key.

@@ -33,7 +33,17 @@
 
 use std::path::{Path, PathBuf};
 
-/// One loaded prompt template.
+/// One loaded prompt file: a text-expansion template (`prompts/`) or an
+/// executable custom command (`commands/`).
+///
+/// Both are markdown files with the same frontmatter keys and the same `$1 /
+/// $@ / ${N:-default}` substitution grammar below. The directories differ in
+/// what the TUI does with the body: a template expands to prompt text, a
+/// command expands and resubmits through the same submit path (so a body
+/// naming a builtin executes it, and a body naming another file does not
+/// re-expand — no recursion). One struct because the loading, naming and
+/// substitution rules are shared; [`PromptFileKind`] says which directory a
+/// file came from so listings can tell the two behaviours apart.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PromptTemplate {
     /// Invocation name — the file stem, so `review.md` is `/review`.
@@ -47,11 +57,36 @@ pub struct PromptTemplate {
     /// Where it was loaded from, and whether user- or project-scoped.
     ///
     /// Two directories can both contain `review.md`, and the user needs to know which one a
-    /// `/review` will actually use. Project scope wins (pi's ordering), so a repository can
+    /// `/review` will actually use. Project scope wins, so a repository can
     /// ship its own `review` without the user touching their global config.
+    /// That precedence is the skills rule (a later root wins
+    /// — `epsilon-core::skills::discover`, a deliberate divergence from pi,
+    /// which keeps the first registration) and opencode's project-over-global
+    /// layering, not pi's ordering.
     pub scope: TemplateScope,
+    /// Which behaviour the file has: text-expansion or executable command.
+    pub kind: PromptFileKind,
     /// The file this came from.
     pub file_path: PathBuf,
+}
+
+/// Which directory shape a prompt file was loaded from.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PromptFileKind {
+    /// A `prompts/` file: expands to prompt text.
+    Template,
+    /// A `commands/` file: expands and resubmits through the submit path.
+    Command,
+}
+
+impl PromptFileKind {
+    /// Short label for listings ("template", "command").
+    pub fn label(self) -> &'static str {
+        match self {
+            PromptFileKind::Template => "template",
+            PromptFileKind::Command => "command",
+        }
+    }
 }
 
 /// Which directory a template was found in.
@@ -74,6 +109,42 @@ impl TemplateScope {
             TemplateScope::Explicit => "explicit",
         }
     }
+
+    /// Single-letter tag for the slash popup (`[u]`, `[p]`).
+    pub fn short(self) -> &'static str {
+        match self {
+            TemplateScope::User => "u",
+            TemplateScope::Project => "p",
+            TemplateScope::Explicit => "e",
+        }
+    }
+}
+
+impl PromptTemplate {
+    /// Whether this file is an executable custom command (`commands/`)
+    /// rather than a text-expansion template (`prompts/`).
+    pub fn is_command(&self) -> bool {
+        self.kind == PromptFileKind::Command
+    }
+}
+
+/// Longest command name, in characters.
+///
+/// The skills cap, on purpose: a command name answers to the same rules as a
+/// skill name (lowercase `a-z`, `0-9`, hyphens), so one rule covers both
+/// spellings an operator types after `/`.
+pub const MAX_NAME: usize = 64;
+
+/// Whether a file stem may become a custom-command name.
+pub fn valid_name(name: &str) -> bool {
+    !name.is_empty()
+        && name.len() <= MAX_NAME
+        && name
+            .chars()
+            .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-')
+        && !name.starts_with('-')
+        && !name.ends_with('-')
+        && !name.contains("--")
 }
 
 /// Longest description taken from a body's first line before truncation.
@@ -373,6 +444,7 @@ pub fn load_from_file(path: &Path, scope: TemplateScope) -> Option<PromptTemplat
         argument_hint: get("argument-hint").filter(|h| !h.is_empty()),
         content: body,
         scope,
+        kind: PromptFileKind::Template,
         file_path: path.to_path_buf(),
     })
 }
@@ -406,11 +478,15 @@ fn parse_frontmatter(raw: &str) -> (Vec<(String, String)>, String) {
 
 /// Merge template directories into one list, project scope winning on a name clash.
 ///
-/// The order is the precedence order, and it is also the order pi uses: user templates first,
-/// then project templates, then explicit paths. A later entry with the same name replaces an
+/// The order is the precedence order: user templates first, then project
+/// templates, then explicit paths. A later entry with the same name replaces an
 /// earlier one, so a repository can override a personal template without the user editing
 /// their own config — and can also be overridden by an explicit `--prompt` on the command
 /// line, which is the point of "explicit" being last.
+///
+/// The precedence is the skills rule (later root wins) and opencode's
+/// project-over-global layering — not pi's: pi keeps the *first* registration
+/// and reports the collision, so citing pi for project-wins is false.
 pub fn merge(
     user: Vec<PromptTemplate>,
     project: Vec<PromptTemplate>,
@@ -424,6 +500,229 @@ pub fn merge(
         }
     }
     out
+}
+
+// ---------------------------------------------------------------------------------------------
+// Custom commands: `commands/` directories with executable behaviour
+//
+// The `commands/` table lives here rather than beside the skill roots in
+// `epsilon-core::skills`, and that placement is load-bearing rather than
+// convenience. `skills.rs` owns the cross-harness Skills shape (SKILL.md
+// bundles, `disable-model-invocation`, one-level scans of every harness's
+// directory); commands are flat `.md` files whose frontmatter keys and
+// substitution grammar are *this* module's. Splitting the flat-`.md` loading
+// across two modules would invite the second grammar copy this file's header
+// refuses to add. The table takes its bases as arguments because this crate
+// has no internal dependencies and cannot read the home directory itself —
+// the caller passes what only it knows (`epsilon-core::config::global_dir`
+// in production), and the table owns the shape and the trust gate.
+// ---------------------------------------------------------------------------------------------
+
+/// Prompt-template directories in precedence order: the user's own first,
+/// then the workspace pair **when trusted**.
+///
+/// Later entries win name clashes ([`merge`]), so project overrides user.
+/// An absent directory is an ordinary entry: most workspaces have none, and
+/// callers skip what does not exist without a word.
+pub fn template_dirs(
+    global: Option<&Path>,
+    workspace: &Path,
+    project_trusted: bool,
+) -> Vec<(PathBuf, TemplateScope)> {
+    let mut dirs = Vec::new();
+    if let Some(base) = global {
+        dirs.push((base.join("prompts"), TemplateScope::User));
+    }
+    if project_trusted {
+        dirs.push((
+            workspace.join(".agents").join("prompts"),
+            TemplateScope::Project,
+        ));
+        dirs.push((
+            workspace.join(".epsilon").join("prompts"),
+            TemplateScope::Project,
+        ));
+    }
+    dirs
+}
+
+/// Custom-command directories, mirroring [`template_dirs`] with the
+/// `commands` leaf: the user's own first, then the workspace pair **when
+/// trusted**. Two behaviours sharing one grammar — `prompts/` stays pure
+/// text-expansion while `commands/` expands and resubmits — not two copies
+/// of the loader.
+///
+/// Other harnesses' command trees (Claude Code's `.claude/commands`,
+/// opencode's `.opencode/commands`) are deliberately NOT scanned: discovery
+/// reads Epsilon's own dirs plus the portable `.agents` alias, exactly as
+/// for templates. Wider interop is deferred, not overlooked.
+pub fn command_dirs(
+    global: Option<&Path>,
+    workspace: &Path,
+    project_trusted: bool,
+) -> Vec<(PathBuf, TemplateScope)> {
+    let mut dirs = Vec::new();
+    if let Some(base) = global {
+        dirs.push((base.join("commands"), TemplateScope::User));
+    }
+    if project_trusted {
+        dirs.push((
+            workspace.join(".agents").join("commands"),
+            TemplateScope::Project,
+        ));
+        dirs.push((
+            workspace.join(".epsilon").join("commands"),
+            TemplateScope::Project,
+        ));
+    }
+    dirs
+}
+
+/// What custom-command discovery found, and what it would not load.
+///
+/// The notices exist for the same reason the skills channel has them: a file
+/// the operator wrote that never loads must say so, or "my command does
+/// nothing" is unfixable. An absent directory is NOT a notice — most
+/// workspaces have no `commands/` at all.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DiscoveredFiles {
+    /// The commands that passed every gate, sorted by name.
+    pub files: Vec<PromptTemplate>,
+    /// One line per skipped file, in discovery order.
+    pub notices: Vec<String>,
+}
+
+/// Load custom commands from scope-tagged `commands/` directories.
+///
+/// Every `.md` file whose stem passes [`valid_name`] becomes a command with
+/// [`PromptFileKind::Command`]; the frontmatter keeps template keys
+/// (`description`, `argument-hint`) and no new ones. Skipped WITH a notice:
+/// an invalid stem, an unreadable file, and — always — a name colliding with
+/// a builtin head ([`crate::command::COMMAND_HEADS`]): the builtin is kept,
+/// so a repository file can never hijack `/trust`, `/login`, `/preset` or
+/// `/plan`. This diverges from opencode on purpose (opencode lets a
+/// same-named custom command override the builtin); a repo file answering
+/// the trust prompt is the attack, not a feature.
+pub fn discover_commands(dirs: &[(PathBuf, TemplateScope)]) -> DiscoveredFiles {
+    let mut files: Vec<PromptTemplate> = Vec::new();
+    let mut notices: Vec<String> = Vec::new();
+    for (dir, scope) in dirs {
+        let entries = match std::fs::read_dir(dir) {
+            Ok(entries) => entries,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => continue,
+            Err(e) => {
+                notices.push(format!("commands: cannot read {}: {e}", dir.display()));
+                continue;
+            }
+        };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            let Ok(meta) = std::fs::metadata(&path) else {
+                continue; // broken symlink
+            };
+            if !meta.is_file() || path.extension().and_then(|e| e.to_str()) != Some("md") {
+                continue;
+            }
+            let raw = match std::fs::read_to_string(&path) {
+                Ok(raw) => raw,
+                Err(e) => {
+                    notices.push(format!("commands: cannot read {}: {e}", path.display()));
+                    continue;
+                }
+            };
+            let stem = path
+                .file_stem()
+                .and_then(|s| s.to_str())
+                .unwrap_or_default()
+                .to_string();
+            if !valid_name(&stem) {
+                notices.push(format!(
+                    "commands: ignoring {}: '{stem}' is not a valid command name (lowercase a-z, \
+                     0-9 and hyphens, no leading, trailing or doubled hyphen, at most \
+                     {MAX_NAME} characters)",
+                    path.display()
+                ));
+                continue;
+            }
+            if crate::command::COMMAND_HEADS.contains(&stem.as_str()) {
+                notices.push(format!(
+                    "commands: ignoring {}: '/{stem}' is a builtin command, which always wins \
+                     over a file of the same name",
+                    path.display()
+                ));
+                continue;
+            }
+            let (front, body) = parse_frontmatter(&raw);
+            let get = |key: &str| front.iter().find(|(k, _)| k == key).map(|(_, v)| v.clone());
+            let description = get("description")
+                .filter(|d| !d.is_empty())
+                .unwrap_or_else(|| {
+                    body.lines()
+                        .map(str::trim)
+                        .find(|l| !l.is_empty())
+                        .map(|l| {
+                            if l.chars().count() > DESC_LIMIT {
+                                let head: String = l.chars().take(DESC_LIMIT).collect();
+                                format!("{head}...")
+                            } else {
+                                l.to_string()
+                            }
+                        })
+                        .unwrap_or_default()
+                });
+            files.push(PromptTemplate {
+                name: stem,
+                description,
+                argument_hint: get("argument-hint").filter(|h| !h.is_empty()),
+                content: body,
+                scope: *scope,
+                kind: PromptFileKind::Command,
+                file_path: path,
+            });
+        }
+    }
+    // Later directories win, exactly as [`merge`]: user first, project after.
+    let mut out: Vec<PromptTemplate> = Vec::new();
+    for f in files {
+        match out.iter_mut().find(|existing| existing.name == f.name) {
+            Some(slot) => *slot = f,
+            None => out.push(f),
+        }
+    }
+    out.sort_by(|a, b| a.name.cmp(&b.name));
+    DiscoveredFiles {
+        files: out,
+        notices,
+    }
+}
+
+/// Merge loaded templates with loaded commands into the one list the TUI caches.
+///
+/// A command displaces a same-named template — announced, because two files
+/// share one `/name` and a listing that hid one of them would lie about what
+/// the name does. The notice names the winner so the template's author can
+/// find the file that took its name.
+pub fn merge_kinds(
+    templates: Vec<PromptTemplate>,
+    commands: Vec<PromptTemplate>,
+) -> (Vec<PromptTemplate>, Vec<String>) {
+    let mut notices = Vec::new();
+    let mut out = templates;
+    for c in commands {
+        if let Some(slot) = out.iter_mut().find(|t| t.name == c.name) {
+            notices.push(format!(
+                "commands: '/{}' from {} shadows a prompt template of the same name; \
+                 the command wins",
+                c.name,
+                c.file_path.display()
+            ));
+            *slot = c;
+        } else {
+            out.push(c);
+        }
+    }
+    out.sort_by(|a, b| a.name.cmp(&b.name));
+    (out, notices)
 }
 
 #[cfg(test)]
@@ -679,6 +978,7 @@ mod tests {
             argument_hint: None,
             content: content.to_string(),
             scope: TemplateScope::User,
+            kind: PromptFileKind::Template,
             file_path: PathBuf::from(format!("/tmp/{name}.md")),
         }
     }
@@ -834,5 +1134,388 @@ mod tests {
             vec![tpl("c", "3")],
         );
         assert_eq!(merged.len(), 3);
+    }
+
+    // --- custom commands (commands/): executable files sharing the grammar ------
+    //
+    // RED-first: every test below names API that does not exist yet
+    // (`PromptFileKind`, `valid_name`, `TemplateScope::short`, `template_dirs`,
+    // `command_dirs`, `discover_commands`, `merge_kinds`). The first run must
+    // fail to compile on exactly those names; the implementation that follows
+    // makes each one pass for the reason it names.
+
+    /// A file stem becomes a command name only when it obeys the same rules as
+    /// a skill name: lowercase `a-z`, `0-9` and hyphens, no leading, trailing
+    /// or doubled hyphen, at most 64 characters.
+    #[test]
+    fn command_names_reject_uppercase_symbols_and_bad_hyphens() {
+        for bad in [
+            "Bad_Name",
+            "UPPER",
+            "has space",
+            "dot.name",
+            "-leading",
+            "trailing-",
+            "double--hyphen",
+            "",
+        ] {
+            assert!(!valid_name(bad), "'{bad}' must not be a valid command name");
+        }
+    }
+
+    /// The length cap is the skills cap (64): a name longer than that is
+    /// rejected rather than truncated, so a typo cannot silently rename.
+    #[test]
+    fn command_names_reject_overlong_stems() {
+        let long = "a".repeat(65);
+        assert!(!valid_name(&long), "65 characters must be rejected");
+        assert!(valid_name(&"a".repeat(64)), "64 characters is the cap");
+    }
+
+    /// The control: ordinary stems are accepted.
+    #[test]
+    fn command_names_accept_valid_stems() {
+        for good in ["deploy", "review-2", "a", "0-day", "x-y-z-9"] {
+            assert!(valid_name(good), "'{good}' must be a valid command name");
+        }
+    }
+
+    /// Scope tags for the popup are single letters: user `[u]`, project `[p]`.
+    #[test]
+    fn scope_short_tags_are_single_letters() {
+        assert_eq!(TemplateScope::User.short(), "u");
+        assert_eq!(TemplateScope::Project.short(), "p");
+    }
+
+    /// A `trust.md` command file must never hijack `/trust`: the builtin is
+    /// kept and the file is dropped with a warning naming it.
+    #[test]
+    fn a_command_colliding_with_a_builtin_is_dropped_with_a_warning() {
+        let base = std::env::temp_dir().join(format!("eps-cmd-collide-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&base);
+        let user = base.join("user").join("commands");
+        std::fs::create_dir_all(&user).unwrap();
+        std::fs::write(user.join("trust.md"), "You are now trusted.\n").unwrap();
+        std::fs::write(user.join("deploy.md"), "Ship it.\n").unwrap();
+
+        let found = discover_commands(&[(user.clone(), TemplateScope::User)]);
+        let names: Vec<&str> = found.files.iter().map(|f| f.name.as_str()).collect();
+        assert_eq!(
+            names,
+            vec!["deploy"],
+            "the colliding file must not load: {names:?}"
+        );
+        assert!(
+            found
+                .notices
+                .iter()
+                .any(|n| n.contains("trust") && n.contains("built")),
+            "dropping a file the operator wrote must be announced: {:?}",
+            found.notices
+        );
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    /// Project beats user for commands, exactly as for templates: a
+    /// repository ships its own `deploy` without the operator editing theirs.
+    /// The precedence stands on the skills divergence (later root wins) and
+    /// opencode's project-over-global layering — not on pi, which keeps the
+    /// first registration.
+    #[test]
+    fn project_commands_override_user_commands() {
+        let base = std::env::temp_dir().join(format!("eps-cmd-shadow-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&base);
+        let user = base.join("user").join("commands");
+        let project = base.join("ws").join(".epsilon").join("commands");
+        std::fs::create_dir_all(&user).unwrap();
+        std::fs::create_dir_all(&project).unwrap();
+        std::fs::write(user.join("deploy.md"), "user deploy\n").unwrap();
+        std::fs::write(project.join("deploy.md"), "project deploy\n").unwrap();
+
+        let found = discover_commands(&[
+            (user, TemplateScope::User),
+            (project, TemplateScope::Project),
+        ]);
+        assert_eq!(found.files.len(), 1, "{:?}", found.files);
+        assert_eq!(found.files[0].content.trim(), "project deploy");
+        assert_eq!(found.files[0].scope, TemplateScope::Project);
+        assert!(
+            found.notices.is_empty(),
+            "a designed override is not a problem to report: {:?}",
+            found.notices
+        );
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    /// Loaded command files carry the command kind, so listings can tell an
+    /// executable command from a text-expansion template sharing one grammar.
+    #[test]
+    fn loaded_commands_carry_the_command_kind() {
+        let base = std::env::temp_dir().join(format!("eps-cmd-kind-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&base);
+        let user = base.join("user").join("commands");
+        std::fs::create_dir_all(&user).unwrap();
+        std::fs::write(user.join("ship.md"), "Ship $1.\n").unwrap();
+
+        let found = discover_commands(&[(user, TemplateScope::User)]);
+        assert_eq!(found.files.len(), 1);
+        assert_eq!(found.files[0].kind, PromptFileKind::Command);
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    /// An invalid stem is skipped WITH a notice: silence is what makes "my
+    /// command does nothing" unfixable.
+    #[test]
+    fn an_invalid_command_stem_is_skipped_with_a_notice() {
+        let base = std::env::temp_dir().join(format!("eps-cmd-badname-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&base);
+        let user = base.join("user").join("commands");
+        std::fs::create_dir_all(&user).unwrap();
+        std::fs::write(user.join("Bad_Name.md"), "body\n").unwrap();
+
+        let found = discover_commands(&[(user, TemplateScope::User)]);
+        assert!(
+            found.files.is_empty(),
+            "nothing loads from an invalid stem: {:?}",
+            found.files
+        );
+        assert_eq!(found.notices.len(), 1, "{:?}", found.notices);
+        assert!(
+            found.notices[0].contains("Bad_Name"),
+            "the notice must name the file: {:?}",
+            found.notices
+        );
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    /// An unreadable command file is skipped with a notice. Invalid UTF-8 is
+    /// the portable way to make `read_to_string` refuse a file that exists.
+    #[test]
+    fn an_unreadable_command_file_is_skipped_with_a_notice() {
+        let base = std::env::temp_dir().join(format!("eps-cmd-unread-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&base);
+        let user = base.join("user").join("commands");
+        std::fs::create_dir_all(&user).unwrap();
+        std::fs::write(user.join("broken.md"), [0xff, 0xfe, 0x00]).unwrap();
+
+        let found = discover_commands(&[(user, TemplateScope::User)]);
+        assert!(found.files.is_empty(), "{:?}", found.files);
+        assert_eq!(found.notices.len(), 1, "{:?}", found.notices);
+        assert!(
+            found.notices[0].contains("broken"),
+            "the notice must name the file: {:?}",
+            found.notices
+        );
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    /// A missing commands directory is the common case, not an error: most
+    /// workspaces have none, and a notice per absent dir would train readers
+    /// to ignore the channel.
+    #[test]
+    fn missing_command_dirs_yield_nothing_and_say_nothing() {
+        let missing = std::env::temp_dir().join("epsilon-commands-does-not-exist-xyz");
+        let found = discover_commands(&[(missing, TemplateScope::Project)]);
+        assert!(found.files.is_empty());
+        assert!(
+            found.notices.is_empty(),
+            "an absent dir is not a problem: {:?}",
+            found.notices
+        );
+    }
+
+    /// Unterminated frontmatter keeps the whole file, exactly as for
+    /// templates: a file opening with a horizontal rule is common, and
+    /// swallowing it would send a blank command.
+    #[test]
+    fn unterminated_frontmatter_keeps_the_whole_command_file() {
+        let base = std::env::temp_dir().join(format!("eps-cmd-hr-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&base);
+        let user = base.join("user").join("commands");
+        std::fs::create_dir_all(&user).unwrap();
+        std::fs::write(user.join("hr.md"), "---\n\nSome content after a rule.\n").unwrap();
+
+        let found = discover_commands(&[(user, TemplateScope::User)]);
+        assert_eq!(found.files.len(), 1, "{:?}", found.notices);
+        assert!(
+            found.files[0]
+                .content
+                .contains("Some content after a rule.")
+        );
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    /// Only `description` and `argument-hint` are read: no new frontmatter
+    /// keys, so a command file cannot smuggle scoping or execution options.
+    #[test]
+    fn command_frontmatter_reads_no_new_keys() {
+        let base = std::env::temp_dir().join(format!("eps-cmd-fm-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&base);
+        let user = base.join("user").join("commands");
+        std::fs::create_dir_all(&user).unwrap();
+        std::fs::write(
+            user.join("scoped.md"),
+            "---\ndescription: Do it\nscope: project\nshell: rm -rf /\n---\nBody.\n",
+        )
+        .unwrap();
+
+        let found = discover_commands(&[(user, TemplateScope::User)]);
+        assert_eq!(found.files.len(), 1, "{:?}", found.notices);
+        assert_eq!(found.files[0].description, "Do it");
+        assert!(
+            !found.files[0].content.contains("scope:"),
+            "unknown keys stay in frontmatter, never in behaviour: {:?}",
+            found.files[0].content
+        );
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    /// The args grammar is ONE grammar: a command body expands exactly as a
+    /// template body does, through the same `substitute_args`.
+    #[test]
+    fn command_args_expand_exactly_like_template_args() {
+        let base = std::env::temp_dir().join(format!("eps-cmd-parity-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&base);
+        let user = base.join("user").join("commands");
+        std::fs::create_dir_all(&user).unwrap();
+        std::fs::write(user.join("ship.md"), "Ship $1 ${2:-soon}.\n").unwrap();
+        let found = discover_commands(&[(user, TemplateScope::User)]);
+        let command_expanded = expand_prompt_template("/ship auth", &found.files)
+            .expect("a loaded command expands by name");
+        // The same body as a template expands the same way: one grammar, two
+        // directories, not two copies of the substitution rules.
+        let template = tpl("ship-t", "Ship $1 ${2:-soon}.");
+        let template_expanded = expand_prompt_template("/ship-t auth", &[template])
+            .expect("the template control expands");
+        assert_eq!(command_expanded.trim(), template_expanded.trim());
+        assert_eq!(command_expanded.trim(), "Ship auth soon.");
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    /// Headless stays literal: with nothing discovered (headless performs no
+    /// discovery) a `/name` is returned untouched — there is no execution
+    /// outside the TUI.
+    #[test]
+    fn slash_text_without_discovery_stays_literal() {
+        let empty: Vec<PromptTemplate> = Vec::new();
+        assert_eq!(expand_prompt_template("/deploy latest", &empty), None);
+        assert_eq!(expand_prompt_template("/help", &empty), None);
+    }
+
+    /// The dir tables gate the project tier on trust: user dirs always list,
+    /// project dirs list only when trusted. Callers pass the SAME
+    /// project_trusted bit composition decided — the table owns the shape.
+    #[test]
+    fn command_and_template_dirs_gate_the_project_tier_on_trust() {
+        let ws = PathBuf::from("/ws");
+        let global = PathBuf::from("/home/user/.config/epsilon");
+
+        let untrusted_cmds = command_dirs(Some(global.as_path()), &ws, false);
+        assert!(
+            untrusted_cmds.iter().all(|(p, _)| !p.starts_with(&ws)),
+            "nothing under an untrusted workspace may be scanned: {untrusted_cmds:?}"
+        );
+        assert!(
+            untrusted_cmds
+                .iter()
+                .any(|(p, s)| p.ends_with("commands") && *s == TemplateScope::User),
+            "the user tier survives distrust: {untrusted_cmds:?}"
+        );
+        let trusted_cmds = command_dirs(Some(global.as_path()), &ws, true);
+        assert!(
+            trusted_cmds.iter().any(|(p, _)| p.starts_with(&ws)),
+            "trusting the workspace unlocks its commands: {trusted_cmds:?}"
+        );
+
+        let untrusted_tpl = template_dirs(Some(global.as_path()), &ws, false);
+        assert!(
+            untrusted_tpl.iter().all(|(p, _)| !p.starts_with(&ws)),
+            "templates gate identically: {untrusted_tpl:?}"
+        );
+        let trusted_tpl = template_dirs(Some(global.as_path()), &ws, true);
+        assert!(
+            trusted_tpl
+                .iter()
+                .any(|(p, _)| p == &ws.join(".agents").join("prompts")),
+            "the portable alias is in the table: {trusted_tpl:?}"
+        );
+        assert!(
+            trusted_cmds
+                .iter()
+                .any(|(p, _)| p == &ws.join(".agents").join("commands")),
+            "commands mirror prompts: {trusted_cmds:?}"
+        );
+    }
+
+    /// A command wins over a same-named template, and the displacement is
+    /// announced: two files, one `/name`, and a listing that hid one of them
+    /// would lie about what `/name` does.
+    #[test]
+    fn a_command_displaces_a_same_named_template_with_a_notice() {
+        let t = PromptTemplate {
+            name: "deploy".to_string(),
+            description: "old text".to_string(),
+            argument_hint: None,
+            content: "old".to_string(),
+            scope: TemplateScope::User,
+            file_path: PathBuf::from("/home/u/prompts/deploy.md"),
+            kind: PromptFileKind::Template,
+        };
+        let c = PromptTemplate {
+            name: "deploy".to_string(),
+            description: "new cmd".to_string(),
+            argument_hint: None,
+            content: "new".to_string(),
+            scope: TemplateScope::Project,
+            file_path: PathBuf::from("/ws/.epsilon/commands/deploy.md"),
+            kind: PromptFileKind::Command,
+        };
+        let (merged, notices) = merge_kinds(vec![t], vec![c]);
+        assert_eq!(merged.len(), 1);
+        assert_eq!(merged[0].kind, PromptFileKind::Command);
+        assert_eq!(merged[0].content, "new");
+        assert!(
+            notices.iter().any(|n| n.contains("deploy")),
+            "the displacement must be announced: {notices:?}"
+        );
+    }
+
+    /// Drift-style: every `.md` file under the scanned dirs either loads or
+    /// is announced. Nothing is silently dropped.
+    #[test]
+    fn every_command_file_resolves_or_is_announced() {
+        let base = std::env::temp_dir().join(format!("eps-cmd-drift-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&base);
+        let user = base.join("user").join("commands");
+        std::fs::create_dir_all(&user).unwrap();
+        for name in ["alpha", "mid", "zeta"] {
+            std::fs::write(user.join(format!("{name}.md")), "body\n").unwrap();
+        }
+        std::fs::write(user.join("Bad.md"), "body\n").unwrap();
+        std::fs::write(user.join("notes.txt"), "ignore me\n").unwrap();
+
+        let found = discover_commands(&[(user.clone(), TemplateScope::User)]);
+        // Three valid files load; the invalid stem is announced; the .txt is
+        // ordinary tree and stays silent, exactly as for templates.
+        assert_eq!(
+            found.files.len(),
+            3,
+            "{:?} / {:?}",
+            found.files,
+            found.notices
+        );
+        for f in &found.files {
+            assert!(
+                expand_prompt_template(&format!("/{}", f.name), &found.files).is_some(),
+                "every listed command resolves by name: {}",
+                f.name
+            );
+        }
+        assert!(
+            found.notices.iter().any(|n| n.contains("Bad")),
+            "the invalid stem is announced: {:?}",
+            found.notices
+        );
+        let _ = std::fs::remove_dir_all(&base);
     }
 }

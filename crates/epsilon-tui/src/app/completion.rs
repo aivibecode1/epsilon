@@ -18,16 +18,28 @@ use super::*;
 
 impl App {
     /// Merged slash-popup rows (P-043): the static registry plus discovered
-    /// skills (`/skill <name>`) and prompt templates (`/<name>`), templates
+    /// skills (`/skill <name>`) and prompt files (`/<name>`), templates
     /// listed last so a template shadowing a head carries its own
     /// description. Head-mode half of [`Self::popup_candidates`].
+    ///
+    /// File rows carry their scope tag (`[u]` user, `[p]` project) ahead of
+    /// the description, so a `/deploy` that behaves differently per
+    /// repository answers "which one is this" on the row itself. The tag is
+    /// on the description, never the value: Tab applies the value, and a tag
+    /// in the value would be typed into the composer.
     pub(super) fn slash_candidates(&self) -> Vec<crate::picker::SlashCandidate> {
         let mut extra: Vec<(String, String)> = Vec::new();
         for skill in &self.skills_cache {
             extra.push((format!("/skill {}", skill.name), skill.description.clone()));
         }
         for template in &self.prompt_templates {
-            extra.push((format!("/{}", template.name), template.description.clone()));
+            let tag = template.scope.short();
+            let description = if template.description.is_empty() {
+                format!("[{tag}]")
+            } else {
+                format!("[{tag}] {}", template.description)
+            };
+            extra.push((format!("/{}", template.name), description));
         }
         crate::picker::slash_candidates(&self.input, &extra)
     }
@@ -262,5 +274,86 @@ impl App {
         // bare commands close it too — pi closes the menu on selection.
         self.slash_open = false;
         self.slash_index = 0;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::super::tests_support::test_app;
+
+    fn file(
+        name: &str,
+        scope: epsilon_contracts::prompt_template::TemplateScope,
+        kind: epsilon_contracts::prompt_template::PromptFileKind,
+        description: &str,
+    ) -> epsilon_contracts::prompt_template::PromptTemplate {
+        epsilon_contracts::prompt_template::PromptTemplate {
+            name: name.to_string(),
+            description: description.to_string(),
+            argument_hint: None,
+            content: "body".to_string(),
+            scope,
+            kind,
+            file_path: std::path::PathBuf::from(format!("/tmp/{name}.md")),
+        }
+    }
+
+    /// File rows carry `[u]`/`[p]` ahead of the description, for commands and
+    /// templates alike — both have a scope, and the popup is where "which
+    /// file is this" gets answered. The tag never touches the value Tab
+    /// applies.
+    #[test]
+    fn file_rows_carry_scope_tags_ahead_of_the_description() {
+        let (mut app, _agent, _rx) = test_app();
+        use epsilon_contracts::prompt_template::{PromptFileKind, TemplateScope};
+        app.prompt_templates = vec![
+            file(
+                "deploy",
+                TemplateScope::Project,
+                PromptFileKind::Command,
+                "Ship it",
+            ),
+            file(
+                "greet",
+                TemplateScope::User,
+                PromptFileKind::Template,
+                "Say hi",
+            ),
+        ];
+        app.input = "/".to_string();
+        let rows = app.slash_candidates();
+
+        let deploy = rows
+            .iter()
+            .find(|r| r.value == "/deploy")
+            .expect("command row");
+        assert_eq!(deploy.description, "[p] Ship it");
+        let greet = rows
+            .iter()
+            .find(|r| r.value == "/greet")
+            .expect("template row");
+        assert_eq!(greet.description, "[u] Say hi");
+    }
+
+    /// A file with no description still carries its tag rather than an empty
+    /// row: an empty description renders nothing, and a row with no words at
+    /// all reads as a rendering bug.
+    #[test]
+    fn a_description_less_row_still_carries_its_tag() {
+        let (mut app, _agent, _rx) = test_app();
+        use epsilon_contracts::prompt_template::{PromptFileKind, TemplateScope};
+        app.prompt_templates = vec![file(
+            "bare",
+            TemplateScope::User,
+            PromptFileKind::Command,
+            "",
+        )];
+        app.input = "/".to_string();
+        let rows = app.slash_candidates();
+        let bare = rows
+            .iter()
+            .find(|r| r.value == "/bare")
+            .expect("command row");
+        assert_eq!(bare.description, "[u]");
     }
 }

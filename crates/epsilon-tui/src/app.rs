@@ -1114,35 +1114,64 @@ impl App {
     /// `trust_review_pending` is the same signal the sibling `agents` reload path uses
     /// (`commands.rs`), because it is what this frontend already carries: the composition
     /// crate's `project_trusted` reaches the window, and this is its spelling here.
+    /// Custom commands beside prompt templates, on the same trust bit.
+    ///
+    /// `commands/` files are executable (expand + resubmit); `prompts/` files
+    /// stay pure text-expansion. Both share the substitution grammar in
+    /// `epsilon-contracts::prompt_template`, and both land in the one cached
+    /// list — a command displaces a same-named template with a notice, and a
+    /// name colliding with a builtin never loads at all (the builtin wins, so
+    /// a repository file can never hijack `/trust`). Called from
+    /// [`Self::discover_prompt_templates`], which is the single startup call
+    /// site, so `/reload` refreshes both together.
+    pub(super) fn discover_custom_commands(
+        &mut self,
+        templates: Vec<epsilon_contracts::prompt_template::PromptTemplate>,
+    ) {
+        use epsilon_contracts::prompt_template as pt;
+
+        let global = epsilon_core::config::global_dir();
+        let trusted = !self.trust_review_pending;
+        let found = pt::discover_commands(&pt::command_dirs(
+            global.as_deref(),
+            &self.workspace_root,
+            trusted,
+        ));
+        let (merged, mut notices) = pt::merge_kinds(templates, found.files);
+        notices.extend(found.notices);
+        for notice in notices {
+            self.ui.push_notice(notice);
+        }
+        self.prompt_templates = merged;
+    }
+
     pub(super) fn discover_prompt_templates(&mut self) -> usize {
         use epsilon_contracts::prompt_template as pt;
 
-        let mut user = Vec::new();
-        if let Some(dir) = epsilon_core::config::global_dir() {
-            user = pt::load_from_dir(&dir.join("prompts"), pt::TemplateScope::User);
-        }
+        let global = epsilon_core::config::global_dir();
         // Untrusted project: the user's own templates still load, so a personal `/deploy`
         // keeps working while the repository's cannot answer a question about the repo.
-        let project = if self.trust_review_pending {
-            Vec::new()
-        } else {
-            [
-                pt::load_from_dir(
-                    &self.workspace_root.join(".agents").join("prompts"),
-                    pt::TemplateScope::Project,
-                ),
-                pt::load_from_dir(
-                    &self.workspace_root.join(".epsilon").join("prompts"),
-                    pt::TemplateScope::Project,
-                ),
-            ]
-            .concat()
-        };
+        // The SAME bit gates `commands/` (see `discover_custom_commands`).
+        let trusted = !self.trust_review_pending;
+        let mut user = Vec::new();
+        let mut project = Vec::new();
+        for (dir, scope) in pt::template_dirs(global.as_deref(), &self.workspace_root, trusted) {
+            let loaded = pt::load_from_dir(&dir, scope);
+            if scope == pt::TemplateScope::Project {
+                project.extend(loaded);
+            } else {
+                user.extend(loaded);
+            }
+        }
 
         // Project wins on a name clash, so a repository can ship its own `review` without
         // the user editing their personal config. Explicit paths would go last; the CLI
         // has no `--prompt` flag yet, so there is nothing to append.
-        self.prompt_templates = pt::merge(user, project, Vec::new());
+        let templates = pt::merge(user, project, Vec::new());
+        // Custom commands merge into the same cached list (displacing a
+        // same-named template with a notice); the startup call site in
+        // `event.rs` refreshes both through this one function.
+        self.discover_custom_commands(templates);
         self.prompt_templates.len()
     }
 

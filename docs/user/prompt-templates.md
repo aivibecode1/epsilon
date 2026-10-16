@@ -104,3 +104,39 @@ showing the command list — rename it if you want both.
   split on whitespace, and quotes group. A template body is a prompt, not a command.
 - **There is no `--prompt` flag yet**, so a template cannot be expanded from the command
   line; it works in the interactive session only.
+
+## Custom commands
+
+A custom command is a markdown file in a `commands/` directory. It uses the same
+file shape and the same argument grammar as a template (`$1`, `$@`,
+`${1:-default}`, `${@:2}` — see Arguments above), but the TUI treats the body
+differently: it expands the body and resubmits it through the same submit path
+as typed text. A body that is plain prose is sent as a prompt; a body that
+names a built-in command runs it. A body naming another command or template
+file is not expanded again — one expansion per submit, never a chain.
+
+| Location | Scope |
+|---|---|
+| `<your config dir>/commands/` | yours, in every project |
+| `<workspace>/.agents/commands/` | this repository |
+| `<workspace>/.epsilon/commands/` | this repository |
+
+Project directories load only in a trusted project, like templates and skills.
+`/reload` picks up changes since startup. The popup shows each file with its
+scope (`[u]` yours, `[p]` the project's), `/help` indexes the commands, an
+unknown `/name` suggests the nearest one, and RPC `get_commands` lists
+commands and templates without executing either.
+
+Three rules keep commands safe. First, **a built-in always wins over a
+same-named command file**: a `commands/trust.md` is ignored with a warning and
+`/trust` runs the built-in, so a repository file can never hijack `/trust`,
+`/login`, `/preset` or `/plan`. (Templates keep the older rule from "Which
+wins" above — a `prompts/help.md` still shadows `/help` — because changing it
+would break existing files; new executable behaviour takes the strict rule.)
+Second, **project beats user** on a name clash in both directories. Third,
+commands run in the interactive TUI only: headless, HTTP and RPC modes never
+expand them, so a `/name` there stays literal text.
+
+What a command file cannot do: no new frontmatter keys (only `description` and
+`argument-hint` are read), no shell execution, no file references, no scoping
+keys, no recursion into other files.

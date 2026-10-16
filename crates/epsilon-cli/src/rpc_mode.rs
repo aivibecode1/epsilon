@@ -364,6 +364,77 @@ fn model_value(info: &epsilon_llm::catalog::ModelInfo) -> serde_json::Value {
     })
 }
 
+/// Whether an RPC listing may name the workspace's own prompt files.
+///
+/// The same decision composition makes (`resolve_launch`: a remembered denial
+/// wins, remembered trust wins, otherwise the config hash decides — absent or
+/// unchanged trusts, changed curtails), answered read-only. `load_project_config`
+/// cannot be reused here: it records the first-sight hash on disk, and a
+/// listing must not write trust state — so the hash comparison is done here
+/// against the recorded file, with no write on any path.
+fn project_trusted_for_listing(workspace: &std::path::Path) -> bool {
+    if let Some(store) = epsilon_runtime::ProjectTrustStore::open() {
+        match store.get(workspace) {
+            Some(false) => return false,
+            Some(true) => return true,
+            None => {}
+        }
+    }
+    let Ok(raw) = std::fs::read_to_string(workspace.join(".epsilon").join("config.toml")) else {
+        return true; // no config: nothing could have changed (Absent trusts)
+    };
+    let Ok(saved) = std::fs::read_to_string(workspace.join(".epsilon").join("trust.json")) else {
+        return true; // first sight trusts, without recording it here
+    };
+    let recorded = serde_json::from_str::<serde_json::Value>(&saved)
+        .ok()
+        .and_then(|v| {
+            v.get("config_sha256")
+                .and_then(|h| h.as_str())
+                .map(str::to_string)
+        });
+    let Some(previous) = recorded else {
+        return true; // no recorded hash: same as first sight
+    };
+    // The trust-hash primitive both cli and tui share — not a second copy of
+    // the hex loop (config.rs owns it).
+    epsilon_core::config::sha256_hex(raw.as_bytes()) == previous
+}
+
+/// The prompt files `get_commands` may list: user tier always, project tier
+/// only when [`project_trusted_for_listing`] says so.
+///
+/// The same tables and the same merge the TUI caches (user, then project,
+/// commands displacing same-named templates), so the RPC list and the
+/// terminal popup cannot describe different sets of names. Builtin
+/// collisions never load — `discover_commands` drops them — so the listing
+/// cannot offer a file that the TUI would refuse to run.
+fn listable_prompt_files(
+    workspace: &std::path::Path,
+) -> Vec<epsilon_contracts::prompt_template::PromptTemplate> {
+    use epsilon_contracts::prompt_template as pt;
+
+    let global = epsilon_core::config::global_dir();
+    let trusted = project_trusted_for_listing(workspace);
+    let mut user = Vec::new();
+    let mut project = Vec::new();
+    for (dir, scope) in pt::template_dirs(global.as_deref(), workspace, trusted) {
+        let loaded = pt::load_from_dir(&dir, scope);
+        if scope == pt::TemplateScope::Project {
+            project.extend(loaded);
+        } else {
+            user.extend(loaded);
+        }
+    }
+    let templates = pt::merge(user, project, Vec::new());
+    let found = pt::discover_commands(&pt::command_dirs(global.as_deref(), workspace, trusted));
+    // Notices are a TUI transcript channel; RPC has nowhere to put them, and
+    // the listing names only what loaded — which is exactly what the drift
+    // rule ("every listed name resolves") needs.
+    let (merged, _) = pt::merge_kinds(templates, found.files);
+    merged
+}
+
 /// Point pi's `type` tag at `op` so one enum reads both wire dialects (`rpc-types.ts:20-73`).
 ///
 /// `type` is removed as it is copied. Leaving it in place would make a pi-shaped frame look
@@ -1243,6 +1314,25 @@ async fn dispatch_line(
                     "description": skill.description,
                     "sourceInfo": serde_json::json!({
                         "path": skill.dir.to_string_lossy(),
+                        "line": 0,
+                        "endLine": serde_json::Value::Null,
+                    }),
+                }));
+            }
+            // Custom commands and prompt templates: the same file tiers the
+            // TUI reads, listed read-only. Bodies never cross the wire and no
+            // op executes a file — a client learns names, descriptions and
+            // paths, nothing it could run. The project tier uses the same
+            // trust decision composition made for this session, answered
+            // without recording anything (listing must not write trust state).
+            for f in listable_prompt_files(agent.workspace_root()) {
+                commands.push(serde_json::json!({
+                    "name": f.name,
+                    "description": f.description,
+                    "kind": f.kind.label(),
+                    "scope": f.scope.label(),
+                    "sourceInfo": serde_json::json!({
+                        "path": f.file_path.to_string_lossy(),
                         "line": 0,
                         "endLine": serde_json::Value::Null,
                     }),
@@ -2773,6 +2863,176 @@ mod tests {
                 c["name"]
             );
         }
+    }
+
+    // --- custom commands + prompt templates over RPC ---------------------------
+    //
+    // RED-first: `get_commands` lists only builtins, skills and `!define`
+    // today, so every presence assertion below fails until the handler reads
+    // the file tiers. The listing is read-only — bodies never cross the wire
+    // and no op executes a file — which the last two tests pin.
+
+    /// An agent rooted at a workspace, for file-tier listing tests.
+    ///
+    /// `agent_with` roots at the shared temp dir, which other tests' fixtures
+    /// could pollute; a per-test workspace keeps the file set exact.
+    fn agent_in(workspace: std::path::PathBuf) -> Arc<Agent> {
+        epsilon_core::Agent::new(
+            epsilon_core::LoopLimits::default(),
+            Arc::new(epsilon_llm::PanicGuard(
+                epsilon_core::testing::SlowProvider::new(epsilon_llm::FauxProvider::new(vec![]), 0),
+            )),
+            Arc::new(epsilon_core::ToolRegistry::new()),
+            Arc::new(epsilon_core::AutoAllow),
+            workspace,
+        )
+    }
+
+    fn command_names(reply: &serde_json::Value) -> Vec<String> {
+        reply["data"]
+            .as_array()
+            .unwrap_or_else(|| panic!("data must BE the array: {reply}"))
+            .iter()
+            .filter_map(|c| c["name"].as_str().map(str::to_string))
+            .collect()
+    }
+
+    /// `get_commands` lists project custom commands AND prompt templates with
+    /// the file path a client would open — and carries no bodies.
+    #[tokio::test]
+    async fn get_commands_lists_custom_commands_and_templates() {
+        let ws = tempfile::tempdir().unwrap();
+        let commands = ws.path().join(".epsilon").join("commands");
+        std::fs::create_dir_all(&commands).unwrap();
+        std::fs::write(
+            commands.join("ship.md"),
+            "---\ndescription: Ship it\n---\nShip $1.\n",
+        )
+        .unwrap();
+        let prompts = ws.path().join(".agents").join("prompts");
+        std::fs::create_dir_all(&prompts).unwrap();
+        std::fs::write(prompts.join("review.md"), "Review $1.\n").unwrap();
+
+        let agent = agent_in(ws.path().to_path_buf());
+        let reply = parse(&dispatch_line(r#"{"op":"get_commands"}"#, &agent, &approvals()).await);
+        assert_eq!(reply["success"], true, "{reply}");
+        let names = command_names(&reply);
+        assert!(
+            names.contains(&"ship".to_string()),
+            "the command: {names:?}"
+        );
+        assert!(
+            names.contains(&"review".to_string()),
+            "the template: {names:?}"
+        );
+
+        let rows = reply["data"].as_array().expect("the array");
+        for want in ["ship", "review"] {
+            let row = rows.iter().find(|c| c["name"] == want).expect(want);
+            assert!(
+                row["sourceInfo"]["path"].is_string(),
+                "{want} carries no source path: {reply}"
+            );
+            assert!(
+                row["sourceInfo"]["path"]
+                    .as_str()
+                    .unwrap_or_default()
+                    .ends_with(&format!("{want}.md")),
+                "{want} points at its file: {reply}"
+            );
+            assert!(
+                row.get("content").is_none() && row.get("body").is_none(),
+                "{want} must not carry its body over the wire: {reply}"
+            );
+        }
+        let ship = rows.iter().find(|c| c["name"] == "ship").expect("ship");
+        assert_eq!(ship["kind"], "command", "kind tells clients apart: {reply}");
+        assert_eq!(ship["scope"], "project", "scope tells tiers apart: {reply}");
+    }
+
+    /// A changed project config curtails the project file tiers: an
+    /// untrusted checkout names no commands and no templates, while builtins
+    /// keep listing. The trust state is a changed hash (workspace-local
+    /// `trust.json` recording a stale hash), so the fixture touches no real
+    /// trust memory.
+    #[tokio::test]
+    async fn get_commands_hides_project_files_when_the_config_changed() {
+        let ws = tempfile::tempdir().unwrap();
+        let epsilon = ws.path().join(".epsilon");
+        std::fs::create_dir_all(epsilon.join("commands")).unwrap();
+        std::fs::write(epsilon.join("commands").join("ship.md"), "Ship it.\n").unwrap();
+        std::fs::create_dir_all(ws.path().join(".agents").join("prompts")).unwrap();
+        std::fs::write(
+            ws.path().join(".agents").join("prompts").join("review.md"),
+            "Review it.\n",
+        )
+        .unwrap();
+        // A config the recorded hash no longer matches: the Changed decision.
+        std::fs::write(epsilon.join("config.toml"), "[model]\nid = \"x\"\n").unwrap();
+        std::fs::write(
+            epsilon.join("trust.json"),
+            r#"{"config_sha256": "0000000000000000000000000000000000000000000000000000000000000000"}"#,
+        )
+        .unwrap();
+
+        let agent = agent_in(ws.path().to_path_buf());
+        let reply = parse(&dispatch_line(r#"{"op":"get_commands"}"#, &agent, &approvals()).await);
+        assert_eq!(reply["success"], true, "{reply}");
+        let names = command_names(&reply);
+        assert!(
+            !names.contains(&"ship".to_string()),
+            "an untrusted project names no commands: {names:?}"
+        );
+        assert!(
+            !names.contains(&"review".to_string()),
+            "an untrusted project names no templates: {names:?}"
+        );
+        assert!(
+            names.contains(&"help".to_string()),
+            "builtins keep listing: {names:?}"
+        );
+    }
+
+    /// RPC never executes a file: a `prompt` task naming a custom command is
+    /// queued verbatim — the literal text reaches the agent, unexpanded.
+    /// Custom commands are a TUI behaviour; headless, HTTP and RPC stay
+    /// literal.
+    #[tokio::test]
+    async fn rpc_prompt_with_a_slash_name_stays_literal() {
+        let ws = tempfile::tempdir().unwrap();
+        let commands = ws.path().join(".epsilon").join("commands");
+        std::fs::create_dir_all(&commands).unwrap();
+        std::fs::write(commands.join("ship.md"), "EXPANDED MARKER $1.\n").unwrap();
+
+        let agent = agent_in(ws.path().to_path_buf());
+        let approvals = approvals();
+        let mut events = agent.subscribe();
+        let reply = parse(
+            &dispatch_line(r#"{"op":"prompt","task":"/ship .env"}"#, &agent, &approvals).await,
+        );
+        assert_eq!(reply["success"], true, "{reply}");
+        wait_for_end(&mut events).await;
+
+        let literal = agent.history().iter().find_map(|m| match m {
+            epsilon_contracts::Message::User(u) => Some(
+                u.content
+                    .iter()
+                    .filter_map(|c| match c {
+                        epsilon_contracts::content::UserContent::Text { text } => {
+                            Some(text.clone())
+                        }
+                        _ => None,
+                    })
+                    .collect::<Vec<_>>()
+                    .join(" "),
+            ),
+            _ => None,
+        });
+        assert_eq!(
+            literal.as_deref(),
+            Some("/ship .env"),
+            "the task must arrive verbatim, never expanded: {literal:?}"
+        );
     }
 
     /// `clear_queue` empties BOTH queues and reports both counts.
