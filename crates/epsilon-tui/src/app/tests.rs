@@ -1297,6 +1297,43 @@ async fn new_command_refuses_while_a_run_is_in_flight() {
     );
 }
 
+/// **Quitting mid-run refuses instead of orphaning the turn.**
+///
+/// Both `/quit` and Ctrl+Q used to return the quit signal unconditionally —
+/// a run in flight would be orphaned (and a pending ask dropped, resolving
+/// to deny) with no word said. The guard names the way out: Esc aborts the
+/// run first, then quit lands.
+#[tokio::test]
+async fn quit_while_busy_refuses_and_names_esc() {
+    use crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyEventState, KeyModifiers};
+    let (mut app, agent, (_f, _n)) = test_app();
+    app.ui
+        .apply(&epsilon_contracts::agent_event::AgentEvent::AgentStart);
+    assert!(app.ui.running(), "the premise: a turn is in flight");
+    assert!(
+        !type_and_enter(&mut app, &agent, "/quit"),
+        "/quit mid-run must refuse, not orphan the turn"
+    );
+    assert!(
+        !super::keys::handle_key(
+            &mut app,
+            &agent,
+            KeyEvent {
+                code: KeyCode::Char('q'),
+                modifiers: KeyModifiers::CONTROL,
+                kind: KeyEventKind::Press,
+                state: KeyEventState::NONE,
+            }
+        ),
+        "Ctrl+Q mid-run must refuse through the same guard, not quit directly"
+    );
+    let texts: Vec<String> = app.ui.lines().iter().map(|l| l.text.clone()).collect();
+    assert!(
+        texts.join("\n").contains("Esc aborts it"),
+        "the refusal must name the way out: {texts:?}"
+    );
+}
+
 #[tokio::test]
 async fn sessions_command_says_when_there_is_nothing_to_browse() {
     let (mut app, agent, (_f, _n)) = test_app();

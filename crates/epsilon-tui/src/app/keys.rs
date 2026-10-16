@@ -1439,14 +1439,15 @@ pub(crate) fn handle_key(app: &mut App, agent: &Arc<Agent>, key: KeyEvent) -> bo
     // so Ctrl+C quit the process and discarded the draft while `/hotkeys` advertised
     // "Clear editor" for that same chord. pi's own defaults separate them: `app.clear`
     // is ctrl+c and `app.exit` is ctrl+d. Epsilon keeps ctrl+d for forward-delete, so
-    // `app.exit` stays on ctrl+c/ctrl+q — but it must only win when there is nothing
-    // to clear, which is the behaviour a user pressing Ctrl+C in an editor expects.
+    // `app.clear` owns ctrl+c and `app.exit` keeps ctrl+q alone — matched first,
+    // ctrl+c empties the draft; ctrl+q is the way out, through the same busy
+    // guard as `/quit` (a mid-run quit would orphan the turn).
     if app.keybindings.matches("app.clear", &key) {
         app.clear_editor();
         return false;
     }
     if app.keybindings.matches("app.exit", &key) {
-        return true;
+        return app.run_command(agent, crate::picker::Command::Quit);
     }
 
     // Plan 009: timeline picker — Enter navigates, Esc dismisses, arrows move.

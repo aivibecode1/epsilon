@@ -2217,7 +2217,17 @@ impl App {
                 // viewport, but it could not show you what it found.
                 self.search_own_transcript(&query);
             }
-            crate::picker::Command::Quit => return true,
+            crate::picker::Command::Quit => {
+                // Quitting mid-run would orphan the turn (and drop a pending
+                // ask, which resolves to deny) — refuse with the way out
+                // named instead. Esc aborts the run; then quit lands.
+                if self.ui.running() || agent.is_running() {
+                    self.ui
+                        .push_notice("quit: a run is in flight — Esc aborts it, then quit again");
+                    return false;
+                }
+                return true;
+            }
             crate::picker::Command::Theme(arg) => {
                 // The palette is a **view** choice, not session state, so it is applied to the
                 // live theme and not written to config: a cosmetic toggle should not quietly
