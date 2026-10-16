@@ -179,6 +179,16 @@ filed with provenance headers, audit/history/15-17), and the fourth was verified
   as runs — the pre-battery focused suites re-polluted ambient favorites the hermetic
   battery then could not have touched, and the file was restored byte-identical from
   the hash-verified backup a second time.
+- **`round13 (2026-10-16)`** — usage-reconciliation investigation, closed with
+  evidence (no code change): traced all four bill-carrying kinds (Assistant,
+  ToolResult, Compaction, BranchSummary) through both counters — the session-file
+  fold and the UI flats cover the same kinds in both live and resume paths
+  (`hydrate_from_history` folds message usage, `add_usage_accounts` folds
+  bills after it by tested order, live arms record both); `Usage::combine`
+  sums reasoning with output so aggregation preserves the subset; parse-level
+  malformed values already read as unknown since round12. No systematic skew
+  mechanism exists — the round12 display guard stays as defense-in-depth
+  against legacy/proxy data, not as a mask over a known bug.
 - **`round12 (2026-10-16)`** — LANDED, green battery above (14/14, 2,259/0/15,
   hermetic fake-HOME; +7 over round11b, all named in the log): independent-review
   findings fixed first-hand (preset notice, prefix-strip, malformed-as-unknown,
