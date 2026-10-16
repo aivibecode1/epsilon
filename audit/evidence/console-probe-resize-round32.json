@@ -1,0 +1,241 @@
+{
+  "exe": "C:\\Users\\Hp\\AppData\\Local\\Temp\\epsilon-target\\debug\\epsilon.exe",
+  "typed_text": "/help",
+  "mode": "late",
+  "size": [
+    100,
+    30
+  ],
+  "wait_s": 7.0,
+  "shell": "cmd",
+  "exe_args": "",
+  "host_class": "ConsoleWindowClass",
+  "resize": {
+    "buffer-big": false,
+    "window": true,
+    "buffer-exact": true
+  },
+  "before": {
+    "buffer": [
+      100,
+      30
+    ],
+    "window_origin": [
+      0,
+      0
+    ],
+    "window_cols": 100,
+    "window_rows": 30,
+    "cursor": [
+      0,
+      0
+    ]
+  },
+  "after": {
+    "buffer": [
+      100,
+      30
+    ],
+    "window_origin": [
+      0,
+      0
+    ],
+    "window_cols": 100,
+    "window_rows": 30,
+    "cursor": [
+      2,
+      27
+    ]
+  },
+  "after_screen": [
+    "idle                  ctx 1%*/1.0M \u00b7 no usage yet \u00b7 Faux (offline scripted) \u2022 thinking off \u00b7 offline",
+    "",
+    "E P S I L O N",
+    "a coding agent in your terminal",
+    "",
+    "1 Describe a task, then press enter.",
+    "2 /help lists every command -- start there.",
+    "3 e.g. /login anthropic -- connect a provider.",
+    "@ files \u00b7 ! shell \u00b7 / commands",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "* provider: faux (offline scripted)",
+    "* go real:  epsilon auth login <provider>   (or set the provider's API key env var)",
+    "* skills: ignoring C:\\Users\\Hp\\Desktop\\My Agent Space\\Epsilon\\.agents\\skills\\README.md: 'README' is",
+    "| not a valid skill name (lowercase a-z, 0-9 and hyphens, no leading, trailing or doubled hyphen, at",
+    "| most 64 characters)",
+    "* skills: agent-experience, evidence-guardrails, grill-me, improve, isolate-the-layer,",
+    "| one-three-one-rule, ponytail, ponytail-audit, ponytail-debt, ponytail-gain, ponytail-help,",
+    "| ponytail-review, ratatui-tui, rtl-aware-development, two-stage-review, ux-triage",
+    "* this workspace holds 24 earlier sessions \u2014 `epsilon -c` opens the most recent, `/resume <file>`",
+    "| picks another",
+    "",
+    "> describe a task, or / for commands",
+    "----------------------------------------------------------------------------------------------------",
+    "insert \u00b7 enter send \u00b7 pageup scroll back \u00b7 pagedown scroll forward  ...\\My Agent Space\\Eps... \u00b7 main"
+  ],
+  "typed": {
+    "ok": true,
+    "written": 10,
+    "err": 87
+  },
+  "after_typing": {
+    "buffer": [
+      100,
+      30
+    ],
+    "window_origin": [
+      0,
+      0
+    ],
+    "window_cols": 100,
+    "window_rows": 30,
+    "cursor": [
+      7,
+      27
+    ]
+  },
+  "typed_screen": [
+    "idle                  ctx 1%*/1.0M \u00b7 no usage yet \u00b7 Faux (offline scripted) \u2022 thinking off \u00b7 offline",
+    "",
+    "E P S I L O N",
+    "a coding agent in your terminal",
+    "",
+    "1 Describe a task, then press enter.",
+    "2 /help lists every command -- start there.",
+    "3 e.g. /login anthropic -- connect a provider.",
+    "@ files \u00b7 ! shell \u00b7 / commands",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "* provider: faux (offline scripted)",
+    "* go real:  epsilon auth login <provider>   (or set the provider's API key env var)",
+    "* skills: ignoring C:\\Users\\Hp\\Desktop\\My Agent Space\\Epsilon\\.agents\\skills\\README.md: 'README' is",
+    "| not a valid skill name (lowercase a-z, 0-9 and hyphens, no leading, trailing or doubled hyphen, at",
+    "+ commands --------------------------------------------------------------------+",
+    "| > /help                 command reference                                    |layer,",
+    "|   /skill ponytail-help  >                                                    |nytail-help,",
+    "|                                                                              |ge",
+    "| ^v pick \u00b7 tab apply \u00b7 esc dismiss                                            | `/resume <file>`",
+    "+------------------------------------------------------------------------------+",
+    "",
+    "> /help",
+    "----------------------------------------------------------------------------------------------------",
+    "insert \u00b7 enter send \u00b7 pageup scroll back \u00b7 pagedown scroll forward  ...\\My Agent Space\\Eps... \u00b7 main"
+  ],
+  "enter": {
+    "ok": true,
+    "written": 2,
+    "err": 87
+  },
+  "after_turn": {
+    "buffer": [
+      100,
+      30
+    ],
+    "window_origin": [
+      0,
+      0
+    ],
+    "window_cols": 100,
+    "window_rows": 30,
+    "cursor": [
+      2,
+      27
+    ]
+  },
+  "turn_screen": [
+    "idle                  ctx 1%*/1.0M \u00b7 no usage yet \u00b7 Faux (offline scripted) \u2022 thinking off \u00b7 offline",
+    "* most 64 characters)",
+    "* skills: agent-experience, evidence-guardrails, grill-me, improve, isolate-the-layer,",
+    "| one-three-one-rule, ponytail, ponytail-audit, ponytail-debt, ponytail-gain, ponytail-help,",
+    "| ponytail-review, ratatui-tui, rtl-aware-development, two-stage-review, ux-triage",
+    "* this workspace holds 24 earlier sessions \u2014 `epsilon -c` opens the most recent, `/resume <file>`",
+    "| picks another",
+    "* session \u2014 /new \u00b7 /resume \u00b7 /sessions \u00b7 /clone \u00b7 /fork \u00b7 /name",
+    "* history \u2014 /session \u00b7 /tree \u00b7 /timeline \u00b7 /branch \u00b7 /clear \u00b7 /compact",
+    "* model \u2014 /models \u00b7 /model \u00b7 /think \u00b7 /scoped-models \u00b7 /catalog",
+    "* auth \u2014 /login \u00b7 /logout \u00b7 /connect \u00b7 /auth",
+    "* files \u2014 /editor \u00b7 /export \u00b7 /import \u00b7 /share \u00b7 /copy",
+    "* files \u2014 /changes \u00b7 /restore \u00b7 /trust \u00b7 /reload \u00b7 /open",
+    "* agent \u2014 /skills \u00b7 /skill \u00b7 /tasks \u00b7 /goal \u00b7 /plan \u00b7 /preset \u00b7 /templates",
+    "* meta \u2014 /help \u00b7 /hotkeys \u00b7 /settings \u00b7 /theme \u00b7 /expand",
+    "* meta \u2014 /search \u00b7 /changelog \u00b7 /quit \u00b7 /exit \u00b7 /scoped_models",
+    "* auth \u2014 /login <provider> (masked paste) \u00b7 keys \u2192 ~/.config/epsilon/auth.json",
+    "* auth \u2014 /login <provider> oauth \u2014 same store, browser round-trip",
+    "* thinking \u2014 Ctrl+T cycles \u00b7 current level in the status bar",
+    "* goal \u2014 /goal <objective> parks one objective \u00b7 bare shows it",
+    "* goal \u2014 edit \u00b7 pause \u00b7 resume \u00b7 complete \u00b7 blocked <code> <reason> \u00b7 clear",
+    "* keys \u2014 Enter submit \u00b7 Esc stops run (quits idle) \u00b7 Ctrl+X expands output",
+    "* keys \u2014 PgUp/PgDn scroll \u00b7 Ctrl+M model \u00b7 Ctrl+P palette \u00b7 Ctrl+T think",
+    "* clear \u2014 Ctrl+C clears the draft \u00b7 /clear clears transcript",
+    "* aliases \u2014 q quits, ? helps \u00b7 scoped-models/scoped_models",
+    "* tree \u2014 f6 opens the file tree \u00b7 Enter opens a file \u00b7 Esc closes",
+    "",
+    "> describe a task, or / for commands",
+    "----------------------------------------------------------------------------------------------------",
+    "insert \u00b7 enter send \u00b7 pageup scroll back \u00b7 pagedown scroll forward  ...\\My Agent Space\\Eps... \u00b7 main"
+  ],
+  "mid_resize": {
+    "buffer-big": false,
+    "window": true,
+    "buffer-exact": false
+  },
+  "after_resize": {
+    "buffer": [
+      100,
+      30
+    ],
+    "window_origin": [
+      0,
+      0
+    ],
+    "window_cols": 100,
+    "window_rows": 30,
+    "cursor": [
+      2,
+      27
+    ]
+  },
+  "resized_screen": [
+    "idle                  ctx 1%*/1.0M \u00b7 no usage yet \u00b7 Faux (offline scripted) \u2022 thinking off \u00b7 offline",
+    "* most 64 characters)",
+    "* skills: agent-experience, evidence-guardrails, grill-me, improve, isolate-the-layer,",
+    "| one-three-one-rule, ponytail, ponytail-audit, ponytail-debt, ponytail-gain, ponytail-help,",
+    "| ponytail-review, ratatui-tui, rtl-aware-development, two-stage-review, ux-triage",
+    "* this workspace holds 24 earlier sessions \u2014 `epsilon -c` opens the most recent, `/resume <file>`",
+    "| picks another",
+    "* session \u2014 /new \u00b7 /resume \u00b7 /sessions \u00b7 /clone \u00b7 /fork \u00b7 /name",
+    "* history \u2014 /session \u00b7 /tree \u00b7 /timeline \u00b7 /branch \u00b7 /clear \u00b7 /compact",
+    "* model \u2014 /models \u00b7 /model \u00b7 /think \u00b7 /scoped-models \u00b7 /catalog",
+    "* auth \u2014 /login \u00b7 /logout \u00b7 /connect \u00b7 /auth",
+    "* files \u2014 /editor \u00b7 /export \u00b7 /import \u00b7 /share \u00b7 /copy",
+    "* files \u2014 /changes \u00b7 /restore \u00b7 /trust \u00b7 /reload \u00b7 /open",
+    "* agent \u2014 /skills \u00b7 /skill \u00b7 /tasks \u00b7 /goal \u00b7 /plan \u00b7 /preset \u00b7 /templates",
+    "* meta \u2014 /help \u00b7 /hotkeys \u00b7 /settings \u00b7 /theme \u00b7 /expand",
+    "* meta \u2014 /search \u00b7 /changelog \u00b7 /quit \u00b7 /exit \u00b7 /scoped_models",
+    "* auth \u2014 /login <provider> (masked paste) \u00b7 keys \u2192 ~/.config/epsilon/auth.json",
+    "* auth \u2014 /login <provider> oauth \u2014 same store, browser round-trip",
+    "* thinking \u2014 Ctrl+T cycles \u00b7 current level in the status bar",
+    "* goal \u2014 /goal <objective> parks one objective \u00b7 bare shows it",
+    "* goal \u2014 edit \u00b7 pause \u00b7 resume \u00b7 complete \u00b7 blocked <code> <reason> \u00b7 clear",
+    "* keys \u2014 Enter submit \u00b7 Esc stops run (quits idle) \u00b7 Ctrl+X expands output",
+    "* keys \u2014 PgUp/PgDn scroll \u00b7 Ctrl+M model \u00b7 Ctrl+P palette \u00b7 Ctrl+T think",
+    "* clear \u2014 Ctrl+C clears the draft \u00b7 /clear clears transcript",
+    "* aliases \u2014 q quits, ? helps \u00b7 scoped-models/scoped_models",
+    "* tree \u2014 f6 opens the file tree \u00b7 Enter opens a file \u00b7 Esc closes",
+    "",
+    "> describe a task, or / for commands",
+    "----------------------------------------------------------------------------------------------------",
+    "insert \u00b7 enter send \u00b7 pageup scroll back \u00b7 pagedown scroll forward  ...\\My Agent Space\\Eps... \u00b7 main"
+  ]
+}

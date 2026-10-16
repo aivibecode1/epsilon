@@ -387,6 +387,8 @@ def main():
             "--maximize",
             "--at",
             "--size",
+            "--resize-to",
+            "--resize-settle",
             "--enter",
             "--settle",
             "--keys",
