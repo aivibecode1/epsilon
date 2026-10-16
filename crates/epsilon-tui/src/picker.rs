@@ -770,9 +770,9 @@ pub fn build_models_for_provider(
             // Criterion 6: a bundle-retired id stays struck (it cannot be
             // selected) but badges `retired` — the reader's saved model aged
             // out, which is a different fact from "never heard of it".
-            row.is_retired = catalog::RETIRED_IDS
-                .iter()
-                .any(|retired| retired.eq_ignore_ascii_case(id));
+            // Spelling-tolerant: the configured id and the retired entry may
+            // each be bare or provider-scoped.
+            row.is_retired = catalog::is_retired_model(id, provider);
             scored.push((i64::MAX, row));
         }
     }

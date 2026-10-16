@@ -21,6 +21,39 @@ mod retired_ids;
 
 pub use retired_ids::RETIRED_IDS;
 
+/// Whether `id` names a bundle-retired model, spelling-tolerant (criterion 6).
+///
+/// The picker synthesizes rows for configured ids the bundle does not know,
+/// and those arrive bare (`gpt-4`) or provider-scoped (`openai/gpt-4`) while
+/// a retired entry may be recorded in either form. Exact match first; then
+/// the id with its first segment stripped (scoped → bare); then a bare id
+/// scoped to the asking provider (`vertex` + `gemini-2.5-flash`). Scoping the
+/// bare form to the asking provider is load-bearing, not pedantry: a bare id
+/// retired under one provider may be live under another, and the badge must
+/// not follow the name across that boundary.
+///
+/// One accepted leniency: a `foo/gpt-4` from an unrelated gateway strips to
+/// a retired bare name and badges retired. Same struck treatment either way,
+/// and the word is the closer fact about the bare name — the alternative is
+/// a provider-allowlist the next regen would have to keep in step.
+pub fn is_retired_model(id: &str, provider: &str) -> bool {
+    if RETIRED_IDS.iter().any(|r| r.eq_ignore_ascii_case(id)) {
+        return true;
+    }
+    if let Some((_, rest)) = id.split_once('/')
+        && RETIRED_IDS.iter().any(|r| r.eq_ignore_ascii_case(rest))
+    {
+        return true;
+    }
+    if !id.contains('/') {
+        let scoped = format!("{provider}/{id}");
+        if RETIRED_IDS.iter().any(|r| r.eq_ignore_ascii_case(&scoped)) {
+            return true;
+        }
+    }
+    false
+}
+
 /// The date of the models.dev snapshot this catalog was generated from, as
 /// `YYYY-MM-DD`.
 ///
@@ -871,15 +904,24 @@ pub async fn live_models(provider: &str) -> Result<Vec<String>, String> {
         .json()
         .await
         .map_err(|e| format!("bad listing payload: {e}"))?;
-    let ids: Vec<String> = body
-        .pointer("/data")
+    Ok(parse_listing_ids(&body))
+}
+
+/// Ids out of a live `/models` body: the OpenAI shape
+/// (`{"object":"list","data":[{"id":...}]}`) every table entry speaks.
+/// Anything else reads as empty — a vendor shape drift surfaces as an empty
+/// merge with its age, never as an error and never as invented ids.
+#[cfg(feature = "real")]
+fn parse_listing_ids(body: &serde_json::Value) -> Vec<String> {
+    body.pointer("/data")
         .and_then(|d| d.as_array())
-        .unwrap_or(&Vec::new())
-        .iter()
-        .filter_map(|m| m.get("id").and_then(|i| i.as_str()))
-        .map(str::to_string)
-        .collect();
-    Ok(ids)
+        .map(|rows| {
+            rows.iter()
+                .filter_map(|m| m.get("id").and_then(|i| i.as_str()))
+                .map(str::to_string)
+                .collect()
+        })
+        .unwrap_or_default()
 }
 
 #[cfg(test)]
@@ -1646,5 +1688,63 @@ mod tests {
                 "{id} is still bundled: it must not be retired"
             );
         }
+    }
+
+    /// Spelling tolerance: a configured id and a retired entry may each be
+    /// bare or provider-scoped, and the badge must survive the difference —
+    /// but a bare id retired under one provider must not follow the name
+    /// under another.
+    #[test]
+    fn retired_matching_survives_spelling_but_not_provider() {
+        // Exact either way.
+        assert!(is_retired_model("gpt-4", "openai"));
+        assert!(is_retired_model("vertex/gemini-2.5-flash", "vertex"));
+        // Scoped id, bare entry.
+        assert!(
+            is_retired_model("openai/gpt-4", "openai"),
+            "a scoped saved id matches its bare retired entry"
+        );
+        // Bare id, scoped entry — under the entry's provider.
+        assert!(
+            is_retired_model("gemini-2.5-flash", "vertex"),
+            "a bare saved id matches its scoped retired entry"
+        );
+        // Same bare id under another provider: live there, not retired.
+        assert!(
+            !is_retired_model("gemini-2.5-flash", "google"),
+            "retirement is provider-scoped, not name-scoped"
+        );
+        // Unknown ids stay unknown.
+        assert!(!is_retired_model("deepseek-v4-pro-vanished", "deepseek"));
+        assert!(!is_retired_model("deepseek-v4-pro", "deepseek"));
+    }
+
+    /// The listing parser reads the OpenAI shape every table entry speaks —
+    /// pinned with a mistral-shaped body, since mistral is the newest entry
+    /// and the one whose shape drift would go unnoticed longest. Anything
+    /// else reads as empty: a drifted vendor shape surfaces as an empty
+    /// merge with its age, never as an error and never as invented ids.
+    #[cfg(feature = "real")]
+    #[test]
+    fn listing_parse_reads_mistral_shaped_bodies() {
+        let body: serde_json::Value = serde_json::from_str(
+            r#"{"object":"list","data":[{"id":"mistral-medium-latest","object":"model"},{"id":"mistral-small-latest","object":"model"}]}"#,
+        )
+        .expect("fixture parses");
+        assert_eq!(
+            parse_listing_ids(&body),
+            vec![
+                "mistral-medium-latest".to_string(),
+                "mistral-small-latest".to_string()
+            ]
+        );
+        assert!(
+            parse_listing_ids(&serde_json::json!({"models": [{"name": "x"}]})).is_empty(),
+            "a non-OpenAI shape reads as empty, not as invented ids"
+        );
+        assert!(
+            parse_listing_ids(&serde_json::json!({})).is_empty(),
+            "a missing data key reads as empty"
+        );
     }
 }

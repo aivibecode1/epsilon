@@ -1050,6 +1050,15 @@ pub fn load_live_cache_in(config_dir: &Path) -> Vec<LiveModelCacheEntry> {
 /// Replace the persisted live listings wholesale (criterion 6: save on every
 /// successful fetch). Best-effort like every other writer here — errors are
 /// returned for callers that want to stay silent, never fatal.
+///
+/// Written to a temp file and renamed, not written in place: two TUI
+/// processes sharing a global dir interleave whole-file replaces, and a
+/// torn in-place write would read as corrupt — deleting the other
+/// process's good cache along with the torn half. Rename is atomic on one
+/// filesystem, so readers see the old file or the new file, never half of
+/// either. Last-writer-wins on content (no merge) is accepted: entries are
+/// refetchable fetched data, and merging would invent a union neither
+/// process observed.
 pub fn save_live_cache_in(
     config_dir: &Path,
     entries: &[LiveModelCacheEntry],
@@ -1069,7 +1078,10 @@ pub fn save_live_cache_in(
         .collect();
     let serialized =
         serde_json::to_string(&rows).map_err(|e| format!("serialize live cache: {e}"))?;
-    std::fs::write(&path, serialized).map_err(|e| format!("write {}: {e}", path.display()))?;
+    let staging = path.with_extension("json.tmp");
+    std::fs::write(&staging, serialized)
+        .map_err(|e| format!("write {}: {e}", staging.display()))?;
+    std::fs::rename(&staging, &path).map_err(|e| format!("rename {}: {e}", staging.display()))?;
     Ok(path)
 }
 
@@ -1976,6 +1988,15 @@ fn live_cache_round_trips_ids_and_timestamps() {
     ];
     save_live_cache_in(dir.path(), &entries).expect("save");
     assert_eq!(load_live_cache_in(dir.path()), entries);
+    // Atomic write: no staging file survives a save, so a concurrent
+    // reader never meets half a write.
+    assert!(
+        std::fs::read_dir(dir.path())
+            .expect("read dir")
+            .filter_map(|e| e.ok().map(|e| e.file_name()))
+            .all(|n| n != "live-models.json.tmp"),
+        "the staging file is renamed, never left behind"
+    );
 }
 
 /// Criterion 6: a corrupt (or old-shape) cache file deletes-and-continues —
