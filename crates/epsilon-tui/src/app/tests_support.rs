@@ -247,3 +247,36 @@ pub fn test_app_with_bash() -> (App, Arc<Agent>, TestReceivers, ChannelApprovalU
         (*approvals).clone(),
     )
 }
+
+/// Park a model question on a local hub and seat it in this app, returning
+/// the waiter's handle. Shared by the overlay tests (ask.rs) and the footer
+/// tests (view.rs) so the two cannot drift into different parkings: a local
+/// hub and a per-app slot mean parallel tests never touch each other's
+/// overlays *or* pendings.
+pub async fn park_question(
+    app: &mut App,
+    prompts: Vec<epsilon_contracts::question::QuestionPrompt>,
+) -> (
+    std::sync::Arc<epsilon_runtime::QuestionHub>,
+    tokio::task::JoinHandle<
+        Result<
+            Vec<epsilon_contracts::question::QuestionAnswer>,
+            epsilon_contracts::question::QuestionError,
+        >,
+    >,
+) {
+    let hub = std::sync::Arc::new(epsilon_runtime::QuestionHub::new());
+    hub.set_operator_present(true);
+    let waiter = tokio::spawn({
+        let hub = std::sync::Arc::clone(&hub);
+        async move {
+            use epsilon_contracts::question::QuestionService;
+            hub.ask("s".into(), prompts).await
+        }
+    });
+    while hub.pending_count() == 0 {
+        tokio::task::yield_now().await;
+    }
+    super::ask::seat_for_test(app, hub.take_pending().expect("the parked question"));
+    (hub, waiter)
+}

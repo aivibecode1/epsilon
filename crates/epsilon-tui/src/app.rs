@@ -1272,7 +1272,7 @@ impl App {
                     }
                     _ => {
                         self.ui.push_notice(
-                            "Disable plan mode? Writes, edits and shell will be allowed again. (yes/no)",
+                            "Disable plan mode? Writes, edits and shell will be allowed again. type yes (y) / no (n) — other text is held, not sent",
                         );
                     }
                 }
@@ -1303,7 +1303,7 @@ impl App {
                 }
                 _ => {
                     self.ui.push_notice(format!(
-                        "Switch permission preset to '{name}'? This allows everything nothing forbids. (yes/no)"
+                        "Switch permission preset to '{name}'? This allows everything nothing forbids. type yes (y) / no (n) — other text is held, not sent"
                     ));
                 }
             }
@@ -1756,7 +1756,8 @@ impl App {
                 self.persist_live_cache();
                 self.invalidate_picker();
                 self.live_fetched.insert(provider);
-                Some(format!("live listing: {n} models merged into /models"))
+                let noun = if n == 1 { "model" } else { "models" };
+                Some(format!("live listing: {n} {noun} merged into /models"))
             }
             Err(e) => Some(format!("live listing failed: {e}")),
         }
@@ -2765,7 +2766,7 @@ mod live_cache_tests {
         let before = now_ms();
         let said =
             app.record_live_result("deepseek".to_string(), Ok(vec!["deepseek-new".to_string()]));
-        assert!(said.is_some_and(|s| s.contains("1 models merged")));
+        assert!(said.is_some_and(|s| s.contains("1 model merged")));
         let entry = app
             .live_cache
             .iter()

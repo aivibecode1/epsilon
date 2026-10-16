@@ -106,6 +106,16 @@ impl AskOverlay {
         self.at_review()
     }
 
+    /// Whether the current question takes several answers (footer hint
+    /// switch: `enter` toggles rather than answers). False on the review
+    /// stop, where there is no current question.
+    pub(crate) fn current_is_multi(&self) -> bool {
+        self.pending
+            .prompts
+            .get(self.q_index)
+            .is_some_and(|p| p.multiple)
+    }
+
     fn new(pending: epsilon_runtime::PendingQuestion) -> Self {
         let staged = vec![Vec::new(); pending.prompts.len()];
         Self {
@@ -557,34 +567,6 @@ mod tests {
         ]
     }
 
-    /// Park on a local hub and seat the pending question in this app, returning
-    /// the waiter's handle. Local hub and per-app slot: parallel tests never
-    /// touch each other's overlays *or* pendings.
-    async fn park_and_seat(
-        app: &mut App,
-        prompts: Vec<QuestionPrompt>,
-    ) -> (
-        std::sync::Arc<epsilon_runtime::QuestionHub>,
-        tokio::task::JoinHandle<
-            Result<Vec<QuestionAnswer>, epsilon_contracts::question::QuestionError>,
-        >,
-    ) {
-        let hub = std::sync::Arc::new(epsilon_runtime::QuestionHub::new());
-        hub.set_operator_present(true);
-        let waiter = tokio::spawn({
-            let hub = std::sync::Arc::clone(&hub);
-            async move {
-                use epsilon_contracts::question::QuestionService;
-                hub.ask("s".into(), prompts).await
-            }
-        });
-        while hub.pending_count() == 0 {
-            tokio::task::yield_now().await;
-        }
-        seat_for_test(app, hub.take_pending().expect("the parked question"));
-        (hub, waiter)
-    }
-
     async fn waiter_answers(
         waiter: tokio::task::JoinHandle<
             Result<Vec<QuestionAnswer>, epsilon_contracts::question::QuestionError>,
@@ -602,7 +584,7 @@ mod tests {
         let (mut app, agent, _rx) = test_app();
         // Pin the repertoire: the suite names glyphs, never assumes them.
         app.theme.glyphs = crate::ui::theme::UNICODE;
-        let (_hub, waiter) = park_and_seat(&mut app, two_prompts()).await;
+        let (_hub, waiter) = super::tests_support::park_question(&mut app, two_prompts()).await;
 
         // The frame, not the state: options, tab headers, and the custom row
         // must reach the screen the operator reads.
@@ -666,7 +648,7 @@ mod tests {
     async fn open_question_names_its_keys_in_the_footer() {
         let (mut app, _agent, _rx) = test_app();
         app.theme.glyphs = crate::ui::theme::UNICODE;
-        let (_hub, _waiter) = park_and_seat(&mut app, two_prompts()).await;
+        let (_hub, _waiter) = super::tests_support::park_question(&mut app, two_prompts()).await;
 
         let rows = render_rows(&mut app, 80, 24);
         let footer = rows.last().cloned().unwrap_or_default();
@@ -692,7 +674,7 @@ mod tests {
     async fn multiple_toggle_custom_review_submit_round_trip() {
         let (mut app, agent, _rx) = test_app();
         app.theme.glyphs = crate::ui::theme::UNICODE;
-        let (_hub, waiter) = park_and_seat(&mut app, two_prompts()).await;
+        let (_hub, waiter) = super::tests_support::park_question(&mut app, two_prompts()).await;
 
         // Answer the single-select, landing on the multi-select.
         super::super::keys::handle_key(&mut app, &agent, key(KeyCode::Enter));
@@ -737,7 +719,7 @@ mod tests {
     async fn submitting_with_a_question_unanswered_dismisses() {
         let (mut app, agent, _rx) = test_app();
         app.theme.glyphs = crate::ui::theme::UNICODE;
-        let (_hub, waiter) = park_and_seat(
+        let (_hub, waiter) = super::tests_support::park_question(
             &mut app,
             vec![QuestionPrompt {
                 question: "How fast?".into(),

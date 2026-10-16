@@ -36,6 +36,47 @@ use super::*;
 
 /// The one-line preview the timeline picker shows for a session entry.
 ///
+/// Days since 1970-01-01 for a civil date, std-only (Howard Hinnant
+/// `days_from_civil`, no chrono). Used only for the catalog snapshot age.
+fn days_since_epoch(y: i64, m: i64, d: i64) -> i64 {
+    let y = if m <= 2 { y - 1 } else { y };
+    let era = if y >= 0 { y } else { y - 399 } / 400;
+    let yoe = y - era * 400;
+    let mp = (m + 9) % 12;
+    let doy = (153 * mp + 2) / 5 + d - 1;
+    let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
+    era * 146097 + doe - 719468
+}
+
+/// Age word for `CATALOG_SNAPSHOT_DATE` (`YYYY-MM-DD`) against `now_ms`.
+///
+/// Same-day reads `today`; older reads through [`crate::picker::age_label`]
+/// (std-only, no chrono), so the snapshot and the live lines share one age
+/// vocabulary. Unparseable dates fall back to `today` rather than inventing
+/// an age — the date itself stays on the line.
+fn snapshot_age_label(date: &str, now_ms: u64) -> String {
+    let mut parts = date.split('-');
+    let (Ok(y), Ok(m), Ok(d)) = (
+        parts.next().unwrap_or("").parse::<i64>(),
+        parts.next().unwrap_or("").parse::<i64>(),
+        parts.next().unwrap_or("").parse::<i64>(),
+    ) else {
+        return "today".to_string();
+    };
+    if !(1..=12).contains(&m) || !(1..=31).contains(&d) {
+        return "today".to_string();
+    }
+    let snap_days = days_since_epoch(y, m, d);
+    let today_days = (now_ms / 86_400_000) as i64;
+    if snap_days >= today_days {
+        return "today".to_string();
+    }
+    let snap_ms = (snap_days.max(0) as u64).saturating_mul(86_400_000);
+    crate::picker::age_label(now_ms, snap_ms)
+}
+
+/// The one-line preview the timeline picker shows for a session entry.
+///
 /// Long text is cut at 100 characters and marked with an ellipsis, because a picker's row
 /// width is the terminal's, not the entry's: a 40,000-character assistant message would
 /// push every other row off screen. Whitespace-only text reads `(empty)` rather than
@@ -1518,7 +1559,7 @@ impl App {
             }
             self.pending_preset = Some(preset.name().to_string());
             self.ui.push_notice(format!(
-                "Switch permission preset to '{}'? This allows everything nothing forbids. (yes/no)",
+                "Switch permission preset to '{}'? This allows everything nothing forbids. type yes (y) / no (n) — other text is held, not sent",
                 preset.name()
             ));
             return false;
@@ -1591,7 +1632,7 @@ impl App {
                 } else {
                     self.pending_preset = Some(Self::PENDING_PLAN_DISABLE.to_string());
                     self.ui.push_notice(
-                        "Disable plan mode? Writes, edits and shell will be allowed again. (yes/no)",
+                        "Disable plan mode? Writes, edits and shell will be allowed again. type yes (y) / no (n) — other text is held, not sent",
                     );
                 }
             }
@@ -2589,22 +2630,23 @@ impl App {
                 // The generator writes the date into `catalog_data.rs`'s header and
                 // `CATALOG_SNAPSHOT_DATE` is the one value that carries it; the
                 // row/provider counts come from the same module so a second copy
-                // cannot drift.
+                // cannot drift. The age reuses the std-only picker helper
+                // (`snapshot_age_label` → `age_label`), no chrono.
                 let date = epsilon_llm::catalog::CATALOG_SNAPSHOT_DATE;
                 let (rows, providers) = epsilon_llm::catalog::snapshot_shape();
+                let now = now_ms();
+                let snap_age = snapshot_age_label(date, now);
+                // Snapshot first with its age, then live lines, then the
+                // dev-only regen instruction last — freshness grouped, tooling
+                // separated.
                 self.ui.push_notice(format!(
-                    "model catalog: snapshot {date} — {rows} models across {providers} providers"
+                    "snapshot {date} ({snap_age}, bundled offline) — {rows} models across {providers} providers"
                 ));
-                self.ui.push_notice(
-                    "bundled offline: browsing needs no network. refresh with                      `python scripts/regen_catalog.py`, then run the battery."
-                        .to_string(),
-                );
                 // Criterion 6: live freshness per provider — one line each for
-                // cached providers, plus `not fetched` for the current
+                // cached providers, plus the not-fetched line for the current
                 // provider when it has a listing endpoint but no entry. The
                 // wording comes from `picker::live_status`, the same helper
                 // the picker footer reads, so the two cannot disagree.
-                let now = now_ms();
                 for entry in &self.live_cache {
                     self.ui.push_notice(crate::picker::live_status(
                         &entry.provider,
@@ -2621,6 +2663,10 @@ impl App {
                     self.ui
                         .push_notice(crate::picker::live_status(&provider, None, now));
                 }
+                self.ui.push_notice(
+                    "dev-only: refresh with `python scripts/regen_catalog.py`, then run the battery."
+                        .to_string(),
+                );
             }
             crate::picker::Command::Skills => {
                 // M196: this printed `names.join(", ")`, discarding a description
@@ -3760,6 +3806,16 @@ mod tests {
             whole.contains(date),
             "the frame must name the snapshot date ({date}): {whole}"
         );
+        // Before: `model catalog: snapshot {date} — …`; after:
+        // `snapshot {date} ({age}, bundled offline) — …` with a std-only age.
+        assert!(
+            whole.contains(&squeezed(&format!("snapshot {date}"))),
+            "the snapshot line leads with the word snapshot: {whole}"
+        );
+        assert!(
+            whole.contains("bundledoffline"),
+            "the snapshot line carries its age and offline mark: {whole}"
+        );
         let (rows, providers) = epsilon_llm::catalog::snapshot_shape();
         // `frame()` squeezes runs of spaces away, so the needles are squeezed too —
         // the same helper `/skills` uses. Checking for the spaced form here would
@@ -3773,8 +3829,45 @@ mod tests {
             "and its provider count: {whole}"
         );
         assert!(
-            whole.contains(&squeezed("python scripts/regen_catalog.py")),
+            whole.contains("regen_catalog.py"),
             "and how to refresh it — a date with no way to act on it is trivia: {whole}"
+        );
+        assert!(
+            whole.contains("dev-only"),
+            "the regen instruction is dev-only, not a user step: {whole}"
+        );
+        // Order: snapshot first, regen last (live lines, when any, sit between).
+        let snap = whole.find(date).unwrap_or(usize::MAX);
+        let regen = whole.find("regen_catalog").unwrap_or(0);
+        assert!(
+            snap < regen,
+            "the snapshot leads and the dev-only regen trails: {whole}"
+        );
+    }
+
+    /// `/catalog` groups freshness: snapshot first with its age, then live
+    /// lines, then the dev-only regen last. Before: regen sat second, ahead
+    /// of the live lines it has nothing to do with.
+    #[tokio::test]
+    async fn catalog_orders_snapshot_then_live_then_dev_only_regen() {
+        let (mut app, agent, (_f, _n)) = test_app();
+        app.theme.glyphs = crate::ui::theme::UNICODE;
+        let now = now_ms();
+        app.live_cache = vec![LiveCacheEntry {
+            provider: "deepseek".to_string(),
+            ids: vec!["a".to_string(), "b".to_string()],
+            fetched_at_ms: now,
+            from_cache: false,
+        }];
+        assert!(!type_and_enter(&mut app, &agent, "/catalog"));
+        let whole = frame(&mut app, 100, 40);
+        let date = epsilon_llm::catalog::CATALOG_SNAPSHOT_DATE;
+        let snap = whole.find(date).unwrap_or(usize::MAX);
+        let live = whole.find("live:deepseek").unwrap_or(0);
+        let regen = whole.find("regen_catalog").unwrap_or(0);
+        assert!(
+            snap < live && live < regen,
+            "snapshot first, live in the middle, dev-only regen last: {whole}"
         );
     }
 
@@ -4089,6 +4182,13 @@ mod tests {
             lines.iter().any(|l| l.contains("Disable plan mode?")),
             "must ask before raising: {lines:?}"
         );
+        // Before: `(yes/no)`; after: the held-not-sent wording.
+        assert!(
+            lines
+                .iter()
+                .any(|l| l.contains("type yes (y) / no (n) — other text is held, not sent")),
+            "the disable question must say other text is held, not sent: {lines:?}"
+        );
 
         assert!(!type_and_enter(&mut app, &agent, "no"));
         assert!(app.pending_preset.is_none(), "no closes the question");
@@ -4152,6 +4252,7 @@ mod tests {
 
     /// Criterion 6: `/catalog` gains a live-status line for a fresh entry —
     /// provider, count, and age on a real UNICODE-pinned frame.
+    /// Before: `updated just now`; after: `refreshed just now (this session)`.
     #[tokio::test]
     async fn catalog_draws_updated_line_for_a_fresh_entry() {
         let (mut app, agent, (_f, _n)) = test_app();
@@ -4167,13 +4268,18 @@ mod tests {
         for (w, h) in [(100u16, 40u16), (80u16, 24u16)] {
             let screen = frame(&mut app, w, h);
             assert!(
-                screen.contains(&squeezed("live: deepseek (2 models, updated just now)")),
+                screen.contains(&squeezed(
+                    "live: deepseek (2 models, refreshed just now (this session))"
+                )),
                 "{w}x{h} lost the fresh live line: {screen}"
             );
         }
     }
 
-    /// Criterion 6: a startup-loaded entry reads `cached`, not `updated`.
+    /// Criterion 6: a startup-loaded entry reads the startup-cache wording,
+    /// not the session wording. Before: `1 models, cached 5m ago`; after:
+    /// `1 model, from startup cache, 5m ago — auto-refreshes on open`
+    /// (also the `1 model` singular fix).
     #[tokio::test]
     async fn catalog_draws_cached_line_for_a_startup_entry() {
         let (mut app, agent, (_f, _n)) = test_app();
@@ -4188,13 +4294,16 @@ mod tests {
         assert!(!type_and_enter(&mut app, &agent, "/catalog"));
         let screen = frame(&mut app, 100, 40);
         assert!(
-            screen.contains(&squeezed("live: deepseek (1 models, cached 5m ago)")),
-            "the frame must say cached with the age: {screen}"
+            screen.contains(&squeezed(
+                "live: deepseek (1 model, from startup cache, 5m ago — auto-refreshes on open)"
+            )),
+            "the frame must say startup cache with the age: {screen}"
         );
     }
 
-    /// Criterion 6: with nothing cached, `/catalog` says `not fetched` for
-    /// the current provider rather than staying silent about it.
+    /// Criterion 6: with nothing cached, `/catalog` names the unfetched
+    /// provider rather than staying silent about it.
+    /// Before: `(not fetched)`; after: `(not fetched yet — opening refreshes)`.
     #[tokio::test]
     async fn catalog_names_not_fetched_for_the_current_provider() {
         let (mut app, agent, (_f, _n)) = test_app();
@@ -4204,7 +4313,9 @@ mod tests {
         assert!(!type_and_enter(&mut app, &agent, "/catalog"));
         let screen = frame(&mut app, 100, 40);
         assert!(
-            screen.contains(&squeezed("live: deepseek (not fetched)")),
+            screen.contains(&squeezed(
+                "live: deepseek (not fetched yet — opening refreshes)"
+            )),
             "the frame must name the unfetched provider: {screen}"
         );
     }

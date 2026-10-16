@@ -9679,9 +9679,11 @@ fn skill_typo_leaves_the_session_open() {
     assert!(!quit, "bare /skill must not end the session either");
 }
 
-/// `/settings` draws all five rows with their live values and the keys that
+/// `/settings` draws all six rows with their live values and the keys that
 /// work — a drawn control with no key behind it is the no-op AGENTS.md
 /// forbids, and a live key with no hint is one the user cannot find.
+/// Before: five rows (model, thinking, theme, thinking blocks, permission);
+/// after: six with plan.
 #[test]
 fn settings_panel_lists_every_row_with_its_live_value_and_keys() {
     let (mut app, _agent, _rx) = test_app();
@@ -9699,6 +9701,7 @@ fn settings_panel_lists_every_row_with_its_live_value_and_keys() {
         "theme",
         "thinking blocks",
         "permission",
+        "plan",
     ] {
         assert!(screen.contains(row), "the {row} row is drawn: {screen}");
     }
@@ -10397,8 +10400,8 @@ fn finished_refresh_reports_success_and_failure() {
     app.config_dir_override = Some(cfg.path().to_path_buf());
     let said = app.record_live_result("deepseek".to_string(), Ok(vec!["deepseek-new".to_string()]));
     assert!(
-        said.is_some_and(|s| s.contains("1 models merged")),
-        "success must report the count"
+        said.is_some_and(|s| s.contains("1 model merged")),
+        "success must report the count, singular"
     );
     assert!(
         app.live_cache

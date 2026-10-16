@@ -425,11 +425,17 @@ fn draw_picker_stage2(f: &mut Frame<'_>, app: &App, outer: Rect, provider: &str)
     // `${enabledCount}/${allIds.length} enabled${unavailableCount ? ` · ${unavailableCount} unavailable` : ""}`
     // (`scoped-models-selector.ts:196-201`). Shown only when there are any: a
     // count of zero is noise on every ordinary stage-2 screen.
+    // A retired row is also unavailable, but retirement is the fact the reader
+    // needs: the saved model aged out, and no retired row can be applied.
     let unavailable = rows.iter().filter(|r| r.is_unavailable).count();
+    let retired = rows.iter().filter(|r| r.is_retired).count();
     let count = format!("{unavailable} unavailable");
     let mut hints = vec![("type", "filters (fuzzy)"), ("enter", "apply")];
     if unavailable > 0 {
         hints.push(("", count.as_str()));
+    }
+    if retired > 0 {
+        hints.push(("", "retired rows cannot be applied"));
     }
     hints.push(("ctrl+s", "save default"));
     hints.push(("backspace/esc", "back"));
@@ -2010,7 +2016,11 @@ pub(super) fn draw_settings(f: &mut Frame<'_>, app: &App, outer: Rect) {
     let arrows = crate::ui::overlay::up_down(theme.glyphs.up, theme.glyphs.down);
     lines.push(overlay::hint_row(
         theme,
-        &[(&arrows, "move"), ("enter", "change"), ("esc", "close")],
+        &[
+            (&arrows, "move"),
+            ("enter", "change (raising asks in composer)"),
+            ("esc", "close"),
+        ],
     ));
     // Where the rest lives: this panel holds five rows of ~fourteen persisted
     // things, and a settings screen that hides the others without naming them
@@ -2102,6 +2112,56 @@ mod safe_to_show_tests {
         assert_eq!(
             safe_to_show("cargo test -p epsilon-tui"),
             "cargo test -p epsilon-tui"
+        );
+    }
+}
+
+#[cfg(test)]
+mod settings_and_retired_hint_tests {
+    use crate::app::tests_support::{render_rows, test_app};
+
+    /// The settings hint names the raising behaviour: raising rows close the
+    /// panel for the composer yes-gate, so the hint must say so.
+    /// Before: `enter change`; after: `enter change (raising asks in composer)`.
+    #[test]
+    fn settings_hint_names_the_raising_gate() {
+        let (mut app, _agent, _rx) = test_app();
+        app.theme.glyphs = crate::ui::theme::UNICODE;
+        app.settings_open = true;
+        let screen = render_rows(&mut app, 100, 30).join("\n");
+        assert!(
+            screen.contains("raising asks in composer"),
+            "the settings hint must say raising rows ask in the composer: {screen}"
+        );
+        assert!(
+            screen.contains("change (raising asks in composer)"),
+            "the full enter hint, not only the parenthesis: {screen}"
+        );
+    }
+
+    /// When any retired row is present, the stage-2 hint row gains
+    /// `retired rows cannot be applied` alongside the N-unavailable count.
+    /// Rendered wide (180 columns) so the full hint row fits: at 100 columns
+    /// the panel truncates the tail, which is a layout fact, not the wording.
+    #[test]
+    fn retired_rows_gain_their_own_hint() {
+        let (mut app, _agent, _rx) = test_app();
+        app.theme.glyphs = crate::ui::theme::UNICODE;
+        app.picker_open = true;
+        app.picker_provider = Some("openai".into());
+        // `gpt-4` is retired (in RETIRED_IDS) and absent from the bundle, so
+        // stage 2 synthesizes the struck row this hint is about.
+        app.model_id = "gpt-4".to_string();
+        app.input = "gpt-4".to_string();
+        app.cursor_chars = 5;
+        let screen = render_rows(&mut app, 180, 40).join("\n");
+        assert!(
+            screen.contains("retired rows cannot be applied"),
+            "the stage-2 hint must say retired rows cannot be applied: {screen}"
+        );
+        assert!(
+            screen.contains("unavailable"),
+            "the N-unavailable count stays alongside it: {screen}"
         );
     }
 }

@@ -12,12 +12,12 @@ Opening `/models` (or entering a provider) fetches that provider's live
 models once per session in the background; `Ctrl+G` refetches on demand.
 Auto-fetch skips listings younger than 60 minutes — manual refresh always
 refetches. A fetched listing is cached on disk, so the next launch starts
-from it (marked `cached <age>`) instead of an empty list; a failed fetch
+from it (marked `from startup cache, <age> ago — auto-refreshes on open`) instead of an empty list; a failed fetch
 keeps the last good listing with its real age rather than clearing it.
 Offline builds never fetch and browse the bundle only.
 
 `/catalog` reports the bundled snapshot date plus each live listing's age
-(`updated <age>`, `cached <age>`, or `not fetched`).
+(`refreshed <age> ago (this session)`, `from startup cache, <age> ago — auto-refreshes on open`, or `not fetched yet — opening refreshes`).
 
 ## Retired models
 

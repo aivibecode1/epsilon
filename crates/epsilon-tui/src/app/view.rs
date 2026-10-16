@@ -455,11 +455,17 @@ impl App {
             // The model-question overlay owns the keyboard (keys.rs routes
             // here past approvals), so the footer names its keys — the
             // composer keys below would not work, which is the wart ADR-044
-            // recorded. Mirrors the overlay's own hint row, state for state.
+            // recorded. Mirrors the overlay's own hint row, state for state:
+            // `enter` toggles when the current question is multi-select,
+            // answers otherwise (panels.rs draws the same pair). Read straight
+            // off the overlay — building a draw snapshot here would allocate
+            // the whole frame (tabs, rows, review) every frame just for one
+            // flag.
             let arrows = crate::ui::overlay::up_down(
                 crate::ui::theme::Glyphs::detect().up,
                 crate::ui::theme::Glyphs::detect().down,
             );
+            let is_multi = overlay.current_is_multi();
             let keys = if overlay.is_custom_open() {
                 vec![
                     ("type".into(), "answer".into()),
@@ -475,7 +481,14 @@ impl App {
             } else {
                 vec![
                     (arrows, "move".into()),
-                    ("enter".into(), "answer".into()),
+                    (
+                        "enter".into(),
+                        if is_multi {
+                            "toggle".into()
+                        } else {
+                            "answer".into()
+                        },
+                    ),
                     ("tab".into(), "next".into()),
                     ("esc".into(), "dismiss".into()),
                 ]
@@ -855,5 +868,88 @@ impl App {
                     .sum::<usize>()
             })
             .sum::<usize>()
+    }
+}
+
+#[cfg(test)]
+mod footer_question_tests {
+    use super::super::tests_support::{park_question, render_rows, test_app};
+    use epsilon_contracts::question::{QuestionOption, QuestionPrompt};
+
+    fn option(label: &str) -> QuestionOption {
+        QuestionOption {
+            label: label.into(),
+            description: format!("go {label}"),
+        }
+    }
+
+    /// Single-select footer says `enter answer` (was the always-`answer`
+    /// wording before the multi flag was threaded through).
+    #[tokio::test]
+    async fn single_select_footer_says_answer() {
+        let (mut app, _agent, _rx) = test_app();
+        app.theme.glyphs = crate::ui::theme::UNICODE;
+        let (_hub, _waiter) = park_question(
+            &mut app,
+            vec![QuestionPrompt {
+                question: "Which side?".into(),
+                header: "side".into(),
+                options: vec![option("up"), option("down")],
+                multiple: false,
+                custom: false,
+            }],
+        )
+        .await;
+        let rows = render_rows(&mut app, 80, 24);
+        let footer = rows.last().cloned().unwrap_or_default();
+        let whole = rows.join("\n");
+        assert!(
+            footer.contains("answer"),
+            "single-select footer must say answer: {footer}\n{whole}"
+        );
+        assert!(
+            !footer.contains("toggle"),
+            "single-select footer must not say toggle: {footer}\n{whole}"
+        );
+        assert!(
+            footer.contains("dismiss"),
+            "Esc stays dismiss: {footer}\n{whole}"
+        );
+        crate::app::ask::clear_for_test(&mut app);
+    }
+
+    /// Multi-select footer says `enter toggle`, mirroring the overlay's own
+    /// hint row (`enter toggle` when multi, `enter answer` otherwise).
+    #[tokio::test]
+    async fn multi_select_footer_says_toggle() {
+        let (mut app, _agent, _rx) = test_app();
+        app.theme.glyphs = crate::ui::theme::UNICODE;
+        let (_hub, _waiter) = park_question(
+            &mut app,
+            vec![QuestionPrompt {
+                question: "How fast?".into(),
+                header: "pace".into(),
+                options: vec![option("fast"), option("slow")],
+                multiple: true,
+                custom: false,
+            }],
+        )
+        .await;
+        let rows = render_rows(&mut app, 80, 24);
+        let footer = rows.last().cloned().unwrap_or_default();
+        let whole = rows.join("\n");
+        assert!(
+            footer.contains("toggle"),
+            "multi-select footer must say toggle: {footer}\n{whole}"
+        );
+        assert!(
+            !footer.contains("answer"),
+            "multi-select footer must not say answer: {footer}\n{whole}"
+        );
+        assert!(
+            footer.contains("dismiss"),
+            "Esc stays dismiss: {footer}\n{whole}"
+        );
+        crate::app::ask::clear_for_test(&mut app);
     }
 }

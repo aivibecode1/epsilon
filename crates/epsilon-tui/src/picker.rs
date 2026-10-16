@@ -848,22 +848,26 @@ pub fn model_badge(row: &PickerRow) -> Option<&'static str> {
 /// One live-status line for `provider` (criterion 6), shared by the picker
 /// footer and `/catalog` so the two cannot disagree:
 ///
-/// - `live: deepseek (12 models, updated 5m ago)` — fetched this session;
-/// - `live: deepseek (12 models, cached 2h ago)` — loaded at startup;
-/// - `live: deepseek (not fetched)` — nothing cached yet.
+/// - `live: deepseek (12 models, refreshed 5m ago (this session))` — fetched this session;
+/// - `live: deepseek (12 models, from startup cache, 2h ago — auto-refreshes on open)` — loaded at startup;
+/// - `live: deepseek (not fetched yet — opening refreshes)` — nothing cached yet.
 ///
 /// The age is [`age_label`]: std-only formatting, deterministic in tests via
-/// the injected `now_ms`.
+/// the injected `now_ms`. `age_label` already carries `ago`/`just now`, so the
+/// verbs reuse it verbatim rather than adding a second `ago`.
 pub fn live_status(provider: &str, entry: Option<&LiveCacheEntry>, now_ms: u64) -> String {
     match entry {
-        None => format!("live: {provider} (not fetched)"),
+        None => format!("live: {provider} (not fetched yet — opening refreshes)"),
         Some(e) => {
             let age = age_label(now_ms, e.fetched_at_ms);
             let n = e.ids.len();
+            let noun = if n == 1 { "model" } else { "models" };
             if e.from_cache {
-                format!("live: {provider} ({n} models, cached {age})")
+                format!(
+                    "live: {provider} ({n} {noun}, from startup cache, {age} — auto-refreshes on open)"
+                )
             } else {
-                format!("live: {provider} ({n} models, updated {age})")
+                format!("live: {provider} ({n} {noun}, refreshed {age} (this session))")
             }
         }
     }
@@ -2176,8 +2180,9 @@ mod tests {
         assert_eq!(model_badge(known), None);
     }
 
-    /// Criterion 6: the live-status line names freshness — updated vs cached
-    /// vs never fetched — with a std-only age.
+    /// Criterion 6: the live-status line names freshness — refreshed (this
+    /// session) vs startup cache vs never fetched — with a std-only age.
+    /// Singular `1 model` is pinned here (the plural bug read `1 models`).
     #[test]
     fn live_status_names_freshness() {
         let now = 10_000_000_000u64;
@@ -2189,7 +2194,7 @@ mod tests {
         };
         assert_eq!(
             live_status("deepseek", Some(&fresh), now),
-            "live: deepseek (2 models, updated just now)"
+            "live: deepseek (2 models, refreshed just now (this session))"
         );
         let cached = crate::app::LiveCacheEntry {
             from_cache: true,
@@ -2198,11 +2203,31 @@ mod tests {
         };
         assert_eq!(
             live_status("deepseek", Some(&cached), now),
-            "live: deepseek (2 models, cached 5m ago)"
+            "live: deepseek (2 models, from startup cache, 5m ago — auto-refreshes on open)"
         );
         assert_eq!(
             live_status("deepseek", None, now),
-            "live: deepseek (not fetched)"
+            "live: deepseek (not fetched yet — opening refreshes)"
+        );
+        // Singular: one id reads `1 model`, never `1 models`.
+        let single = crate::app::LiveCacheEntry {
+            provider: "deepseek".to_string(),
+            ids: vec!["only".to_string()],
+            fetched_at_ms: now,
+            from_cache: false,
+        };
+        assert_eq!(
+            live_status("deepseek", Some(&single), now),
+            "live: deepseek (1 model, refreshed just now (this session))"
+        );
+        let single_cached = crate::app::LiveCacheEntry {
+            from_cache: true,
+            fetched_at_ms: now - 5 * 60 * 1000,
+            ..single.clone()
+        };
+        assert_eq!(
+            live_status("deepseek", Some(&single_cached), now),
+            "live: deepseek (1 model, from startup cache, 5m ago — auto-refreshes on open)"
         );
     }
 
