@@ -982,6 +982,97 @@ pub fn append_prompt_history(entry: &str) -> Result<PathBuf, String> {
     append_prompt_history_in(&dir, entry)
 }
 
+// ---- persisted live listings (criterion 6) -----------------------------------
+
+/// One provider's live listing as persisted in `<dir>/live-models.json`:
+/// the ids plus when they were fetched. No etag — a fetch replaces the whole
+/// entry on success, so there is nothing to revalidate against.
+///
+/// A plain struct rather than a TOML key: listings are fetched data with
+/// their own freshness, not user configuration, and mixing them into
+/// `config.toml` would make every fetch rewrite the user's file.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LiveModelCacheEntry {
+    /// Provider key, as in [`epsilon_llm::catalog`](`live_listing_available`).
+    pub provider: String,
+    /// Model ids from the last successful fetch.
+    pub ids: Vec<String>,
+    /// `SystemTime` millis when the fetch landed (see `now_ms` in the TUI).
+    pub fetched_at_ms: u64,
+}
+
+/// Path of the live-listing cache under `config_dir` (`live-models.json`).
+fn live_cache_path(config_dir: &Path) -> PathBuf {
+    config_dir.join("live-models.json")
+}
+
+/// Parse a persisted cache file; `None` when it is corrupt or an old shape
+/// (fail-open reads, matching [`load_model_id_in`]).
+fn parse_live_cache(raw: &str) -> Option<Vec<LiveModelCacheEntry>> {
+    let value: serde_json::Value = serde_json::from_str(raw).ok()?;
+    let rows = value.as_array()?;
+    let mut out = Vec::with_capacity(rows.len());
+    for row in rows {
+        out.push(LiveModelCacheEntry {
+            provider: row.get("provider")?.as_str()?.to_string(),
+            ids: row
+                .get("ids")?
+                .as_array()?
+                .iter()
+                .map(|id| id.as_str().map(str::to_string))
+                .collect::<Option<Vec<_>>>()?,
+            fetched_at_ms: row.get("fetched_at_ms")?.as_u64()?,
+        });
+    }
+    Some(out)
+}
+
+/// Persisted live listings from `config_dir/live-models.json` (criterion 6).
+///
+/// Missing/unreadable file yields an empty list. A corrupt or old-shape file
+/// is DELETED and reads as empty (delete-and-continue): the next successful
+/// fetch rebuilds it, and startup never fails over fetched data. Never an
+/// error, for the same reason every other reader here is fail-open.
+pub fn load_live_cache_in(config_dir: &Path) -> Vec<LiveModelCacheEntry> {
+    let path = live_cache_path(config_dir);
+    match std::fs::read_to_string(&path) {
+        Ok(raw) => match parse_live_cache(&raw) {
+            Some(entries) => entries,
+            None => {
+                let _ = std::fs::remove_file(&path);
+                Vec::new()
+            }
+        },
+        Err(_) => Vec::new(),
+    }
+}
+
+/// Replace the persisted live listings wholesale (criterion 6: save on every
+/// successful fetch). Best-effort like every other writer here — errors are
+/// returned for callers that want to stay silent, never fatal.
+pub fn save_live_cache_in(
+    config_dir: &Path,
+    entries: &[LiveModelCacheEntry],
+) -> Result<PathBuf, String> {
+    std::fs::create_dir_all(config_dir)
+        .map_err(|e| format!("create {}: {e}", config_dir.display()))?;
+    let path = live_cache_path(config_dir);
+    let rows: Vec<serde_json::Value> = entries
+        .iter()
+        .map(|e| {
+            serde_json::json!({
+                "provider": e.provider,
+                "ids": e.ids,
+                "fetched_at_ms": e.fetched_at_ms,
+            })
+        })
+        .collect();
+    let serialized =
+        serde_json::to_string(&rows).map_err(|e| format!("serialize live cache: {e}"))?;
+    std::fs::write(&path, serialized).map_err(|e| format!("write {}: {e}", path.display()))?;
+    Ok(path)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1860,6 +1951,56 @@ fn extra_skill_dirs_read_absolute_relative_and_blank_shapes() {
     assert!(load_extra_skill_dirs_in(empty.path()).is_empty());
     std::fs::write(dir.path().join("config.toml"), "not [ valid toml {{{{").unwrap();
     assert!(load_extra_skill_dirs_in(dir.path()).is_empty());
+}
+
+/// Criterion 6: live listings persist as one small JSON file and round-trip
+/// (ids + fetch timestamp, no etag).
+#[test]
+fn live_cache_round_trips_ids_and_timestamps() {
+    let dir = tempfile::tempdir().unwrap();
+    assert!(
+        load_live_cache_in(dir.path()).is_empty(),
+        "no file yet reads as empty, never an error"
+    );
+    let entries = vec![
+        LiveModelCacheEntry {
+            provider: "deepseek".to_string(),
+            ids: vec!["deepseek-v4-pro".to_string()],
+            fetched_at_ms: 1_700_000_000_000,
+        },
+        LiveModelCacheEntry {
+            provider: "openai".to_string(),
+            ids: vec![],
+            fetched_at_ms: 1_700_000_060_000,
+        },
+    ];
+    save_live_cache_in(dir.path(), &entries).expect("save");
+    assert_eq!(load_live_cache_in(dir.path()), entries);
+}
+
+/// Criterion 6: a corrupt (or old-shape) cache file deletes-and-continues —
+/// the next fetch rebuilds it, and startup never fails over it.
+#[test]
+fn corrupt_live_cache_deletes_and_continues() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("live-models.json");
+
+    std::fs::write(&path, "not json at all {{{").unwrap();
+    assert!(
+        load_live_cache_in(dir.path()).is_empty(),
+        "garbage reads as empty"
+    );
+    assert!(!path.exists(), "a corrupt file is deleted so it cannot rot");
+
+    // Old shape (an object, not the array this version writes).
+    std::fs::write(&path, r#"{"providers": {"deepseek": ["a"]}}"#).unwrap();
+    assert!(load_live_cache_in(dir.path()).is_empty());
+    assert!(!path.exists(), "an old shape is deleted the same way");
+
+    // A row missing its timestamp is old too, not half-loaded.
+    std::fs::write(&path, r#"[{"provider": "deepseek", "ids": ["a"]}]"#).unwrap();
+    assert!(load_live_cache_in(dir.path()).is_empty());
+    assert!(!path.exists());
 }
 
 /// Every `.rs` under `dir`, skipping build output.

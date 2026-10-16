@@ -2599,6 +2599,28 @@ impl App {
                     "bundled offline: browsing needs no network. refresh with                      `python scripts/regen_catalog.py`, then run the battery."
                         .to_string(),
                 );
+                // Criterion 6: live freshness per provider — one line each for
+                // cached providers, plus `not fetched` for the current
+                // provider when it has a listing endpoint but no entry. The
+                // wording comes from `picker::live_status`, the same helper
+                // the picker footer reads, so the two cannot disagree.
+                let now = now_ms();
+                for entry in &self.live_cache {
+                    self.ui.push_notice(crate::picker::live_status(
+                        &entry.provider,
+                        Some(entry),
+                        now,
+                    ));
+                }
+                let current_provider = epsilon_llm::catalog::lookup_model(&self.model_id)
+                    .map(|m| m.provider.to_string());
+                if let Some(provider) = current_provider
+                    && epsilon_llm::catalog::live_listing_available(&provider)
+                    && !self.live_cache.iter().any(|e| e.provider == provider)
+                {
+                    self.ui
+                        .push_notice(crate::picker::live_status(&provider, None, now));
+                }
             }
             crate::picker::Command::Skills => {
                 // M196: this printed `names.join(", ")`, discarding a description
@@ -4126,5 +4148,64 @@ mod tests {
                 "{w}x{h} lost the plan row: {screen}"
             );
         }
+    }
+
+    /// Criterion 6: `/catalog` gains a live-status line for a fresh entry —
+    /// provider, count, and age on a real UNICODE-pinned frame.
+    #[tokio::test]
+    async fn catalog_draws_updated_line_for_a_fresh_entry() {
+        let (mut app, agent, (_f, _n)) = test_app();
+        app.theme.glyphs = crate::ui::theme::UNICODE;
+        let now = now_ms();
+        app.live_cache = vec![LiveCacheEntry {
+            provider: "deepseek".to_string(),
+            ids: vec!["a".to_string(), "b".to_string()],
+            fetched_at_ms: now,
+            from_cache: false,
+        }];
+        assert!(!type_and_enter(&mut app, &agent, "/catalog"));
+        for (w, h) in [(100u16, 40u16), (80u16, 24u16)] {
+            let screen = frame(&mut app, w, h);
+            assert!(
+                screen.contains(&squeezed("live: deepseek (2 models, updated just now)")),
+                "{w}x{h} lost the fresh live line: {screen}"
+            );
+        }
+    }
+
+    /// Criterion 6: a startup-loaded entry reads `cached`, not `updated`.
+    #[tokio::test]
+    async fn catalog_draws_cached_line_for_a_startup_entry() {
+        let (mut app, agent, (_f, _n)) = test_app();
+        app.theme.glyphs = crate::ui::theme::UNICODE;
+        let now = now_ms();
+        app.live_cache = vec![LiveCacheEntry {
+            provider: "deepseek".to_string(),
+            ids: vec!["a".to_string()],
+            fetched_at_ms: now - 5 * 60 * 1000,
+            from_cache: true,
+        }];
+        assert!(!type_and_enter(&mut app, &agent, "/catalog"));
+        let screen = frame(&mut app, 100, 40);
+        assert!(
+            screen.contains(&squeezed("live: deepseek (1 models, cached 5m ago)")),
+            "the frame must say cached with the age: {screen}"
+        );
+    }
+
+    /// Criterion 6: with nothing cached, `/catalog` says `not fetched` for
+    /// the current provider rather than staying silent about it.
+    #[tokio::test]
+    async fn catalog_names_not_fetched_for_the_current_provider() {
+        let (mut app, agent, (_f, _n)) = test_app();
+        app.theme.glyphs = crate::ui::theme::UNICODE;
+        app.model_id = "deepseek-v4-pro".to_string();
+        assert!(app.live_cache.is_empty());
+        assert!(!type_and_enter(&mut app, &agent, "/catalog"));
+        let screen = frame(&mut app, 100, 40);
+        assert!(
+            screen.contains(&squeezed("live: deepseek (not fetched)")),
+            "the frame must name the unfetched provider: {screen}"
+        );
     }
 }

@@ -34,6 +34,7 @@ pub use epsilon_contracts::command::{
 use epsilon_llm::catalog;
 use epsilon_llm::custom::CustomProvider;
 
+use crate::app::LiveCacheEntry;
 use crate::fuzzy;
 
 /// One selectable line in the `/models` dialog.
@@ -73,6 +74,13 @@ pub struct PickerRow {
     /// `groq/foo-x` cannot be attributed to `deepseek`, because its provider
     /// prefix no longer identifies a live provider.
     pub is_unavailable: bool,
+    /// True when the id is in [`catalog::RETIRED_IDS`]: dropped from the
+    /// bundle as deprecated (criterion 6). A retired row stays struck like
+    /// every unavailable one, but badges `retired` rather than
+    /// `unavailable` — "we used to list this" is a different fact from
+    /// "we never heard of this", and only the first tells the reader their
+    /// saved model aged out.
+    pub is_retired: bool,
 }
 
 fn row_from_info(info: &epsilon_llm::ModelInfo) -> PickerRow {
@@ -88,6 +96,7 @@ fn row_from_info(info: &epsilon_llm::ModelInfo) -> PickerRow {
         is_favorite: false,
         is_default: false,
         is_unavailable: false,
+        is_retired: false,
     }
 }
 
@@ -109,6 +118,7 @@ fn synthetic_row(
         is_favorite: false,
         is_default: false,
         is_unavailable: false,
+        is_retired: false,
     }
 }
 
@@ -142,7 +152,7 @@ pub fn build_rows(
     filter: &str,
     current: &str,
     recents: &[String],
-    live: &[(String, Vec<String>)],
+    live: &[LiveCacheEntry],
 ) -> Vec<PickerRow> {
     build_rows_with(filter, current, recents, &[], None, live, &[])
 }
@@ -155,7 +165,7 @@ pub fn build_rows_with(
     recents: &[String],
     favorites: &[String],
     default: Option<&str>,
-    live: &[(String, Vec<String>)],
+    live: &[LiveCacheEntry],
     customs: &[CustomProvider],
 ) -> Vec<PickerRow> {
     let needle = filter.trim();
@@ -286,12 +296,12 @@ pub fn build_rows_with(
     // Sorted by score so the best live hit surfaces first within the live block.
     {
         let mut live_cands: Vec<(i64, String, String)> = Vec::new();
-        for (provider, ids) in live {
-            for id in ids {
+        for entry in live {
+            for id in &entry.ids {
                 if catalog::lookup_model(id).is_none()
                     && let Some(sc) = total_score(id)
                 {
-                    live_cands.push((sc, provider.clone(), id.clone()));
+                    live_cands.push((sc, entry.provider.clone(), id.clone()));
                 }
             }
         }
@@ -674,7 +684,7 @@ pub fn build_models_for_provider(
     current: &str,
     favorites: &[String],
     default: Option<&str>,
-    live: &[(String, Vec<String>)],
+    live: &[LiveCacheEntry],
     customs: &[CustomProvider],
 ) -> Vec<PickerRow> {
     let needle = filter.trim();
@@ -728,8 +738,8 @@ pub fn build_models_for_provider(
             scored.push((sc, row_from_info(info)));
         }
     }
-    if let Some((_, ids)) = live.iter().find(|(p, _)| p == provider) {
-        for id in ids {
+    if let Some(entry) = live.iter().find(|e| e.provider == provider) {
+        for id in &entry.ids {
             let known = scored.iter().any(|(_, r)| r.id.eq_ignore_ascii_case(id));
             if !known && let Some(sc) = score_hay(id) {
                 scored.push((sc, synthetic_row(id, provider, false, true, false)));
@@ -757,6 +767,12 @@ pub fn build_models_for_provider(
         {
             let mut row = synthetic_row(id, provider, false, false, false);
             row.is_unavailable = true;
+            // Criterion 6: a bundle-retired id stays struck (it cannot be
+            // selected) but badges `retired` — the reader's saved model aged
+            // out, which is a different fact from "never heard of it".
+            row.is_retired = catalog::RETIRED_IDS
+                .iter()
+                .any(|retired| retired.eq_ignore_ascii_case(id));
             scored.push((i64::MAX, row));
         }
     }
@@ -811,6 +827,46 @@ pub fn build_models_for_provider(
         });
     }
     scored.into_iter().map(|(_, r)| r).collect()
+}
+
+/// The badge word for a picker row (criterion 6): `retired` for ids the
+/// bundle dropped as deprecated, `unavailable` for any other unknown id,
+/// nothing for a row that can actually be applied.
+///
+/// A word rather than a glyph so it survives `NO_COLOR` (`AGENTS.md` §8) —
+/// the same reason the draw strikes the row beside it.
+pub fn model_badge(row: &PickerRow) -> Option<&'static str> {
+    if row.is_retired {
+        Some("[retired]")
+    } else if row.is_unavailable {
+        Some("[unavailable]")
+    } else {
+        None
+    }
+}
+
+/// One live-status line for `provider` (criterion 6), shared by the picker
+/// footer and `/catalog` so the two cannot disagree:
+///
+/// - `live: deepseek (12 models, updated 5m ago)` — fetched this session;
+/// - `live: deepseek (12 models, cached 2h ago)` — loaded at startup;
+/// - `live: deepseek (not fetched)` — nothing cached yet.
+///
+/// The age is [`age_label`]: std-only formatting, deterministic in tests via
+/// the injected `now_ms`.
+pub fn live_status(provider: &str, entry: Option<&LiveCacheEntry>, now_ms: u64) -> String {
+    match entry {
+        None => format!("live: {provider} (not fetched)"),
+        Some(e) => {
+            let age = age_label(now_ms, e.fetched_at_ms);
+            let n = e.ids.len();
+            if e.from_cache {
+                format!("live: {provider} ({n} models, cached {age})")
+            } else {
+                format!("live: {provider} ({n} models, updated {age})")
+            }
+        }
+    }
 }
 
 // ---- M16c: command palette -----------------------------------------------------
@@ -1449,10 +1505,9 @@ mod tests {
 
     #[test]
     fn filter_matches_id_label_or_provider_case_insensitively() {
-        // M55: the third query is a LABEL-only term — the registry retired
-        // `deepseek-reasoner`, but `v4.1` appears in `deepseek-flash`'s label
-        // ("DeepSeek V4.1 Flash") and nowhere in its id, so the label path and
-        // the case-folding both stay covered.
+        // M55: the third query is a LABEL-only term — `v4.1` appears in
+        // `deepseek-flash`'s label ("DeepSeek V4.1 Flash") and nowhere in its
+        // id, so the label path and the case-folding both stay covered.
         for q in ["deepseek", "DEEPSEEK", "v4.1"] {
             let rows = build_rows(q, "", &[], &[]);
             assert!(
@@ -1531,15 +1586,13 @@ mod tests {
         );
         // A live-listed id is available too, even though it is also absent from
         // the bundled catalog — the cache is the authority for those.
-        let fetched = build_models_for_provider(
-            "deepseek",
-            "",
-            "",
-            &[],
-            None,
-            &[("deepseek".into(), vec!["deepseek-new-thing".into()])],
-            &[],
-        );
+        let fetched_live = vec![LiveCacheEntry {
+            provider: "deepseek".to_string(),
+            ids: vec!["deepseek-new-thing".to_string()],
+            fetched_at_ms: 1,
+            from_cache: false,
+        }];
+        let fetched = build_models_for_provider("deepseek", "", "", &[], None, &fetched_live, &[]);
         let listed = fetched
             .iter()
             .find(|r| r.id == "deepseek-new-thing")
@@ -1641,18 +1694,16 @@ mod tests {
 
     #[test]
     fn live_rows_surface_only_unknown_ids_under_their_own_group() {
-        let rows = build_rows(
-            "",
-            "",
-            &[],
-            &[(
-                "deepseek".to_string(),
-                vec![
-                    "brand-new-model".to_string(),
-                    "deepseek-v4-pro".to_string(), // known: deduped into the catalog section
-                ],
-            )],
-        );
+        let live = vec![LiveCacheEntry {
+            provider: "deepseek".to_string(),
+            ids: vec![
+                "brand-new-model".to_string(),
+                "deepseek-v4-pro".to_string(), // known: deduped into the catalog section
+            ],
+            fetched_at_ms: 1,
+            from_cache: false,
+        }];
+        let rows = build_rows("", "", &[], &live);
         let live = rows.iter().filter(|r| r.is_live).collect::<Vec<_>>();
         assert_eq!(live.len(), 1);
         assert_eq!(live[0].id, "brand-new-model");
@@ -1664,10 +1715,12 @@ mod tests {
     /// bundled catalog rows (this is the path that makes fresh models appear).
     #[test]
     fn stage2_merges_live_ids_for_its_provider_only() {
-        let live = vec![(
-            "deepseek".to_string(),
-            vec!["deepseek-v4-pro".to_string(), "brand-new-model".to_string()],
-        )];
+        let live = vec![LiveCacheEntry {
+            provider: "deepseek".to_string(),
+            ids: vec!["deepseek-v4-pro".to_string(), "brand-new-model".to_string()],
+            fetched_at_ms: 1,
+            from_cache: false,
+        }];
         let rows = build_models_for_provider("deepseek", "", "", &[], None, &live, &[]);
         assert!(
             rows.iter().any(|r| r.id == "brand-new-model" && r.is_live),
@@ -1680,15 +1733,13 @@ mod tests {
             "no duplicate rows for known ids"
         );
         // A different provider's live listing must NOT leak in.
-        let other = build_models_for_provider(
-            "anthropic",
-            "",
-            "",
-            &[],
-            None,
-            &[("openai".to_string(), vec!["gpt-fake-live".to_string()])],
-            &[],
-        );
+        let other_live = vec![LiveCacheEntry {
+            provider: "openai".to_string(),
+            ids: vec!["gpt-fake-live".to_string()],
+            fetched_at_ms: 1,
+            from_cache: false,
+        }];
+        let other = build_models_for_provider("anthropic", "", "", &[], None, &other_live, &[]);
         assert!(
             !other.iter().any(|r| r.is_live),
             "stage 2 must not show other providers' live ids"
@@ -1732,8 +1783,7 @@ mod tests {
     fn build_rows_uses_fuzzy_subsequence_not_substring() {
         // pi parity: "dvp" is a fuzzy subsequence of "deepseek-v4-pro", not a
         // substring; stage1's build_rows_with must find it via fuzzy_match like
-        // stage2 does. (Pin moved at the M55 refresh: the registry dropped the
-        // old `deepseek-chat` row this case used.)
+        // stage2 does.
         let rows = build_rows("dvp", "", &[], &[]);
         assert!(
             rows.iter().any(|r| r.id == "deepseek-v4-pro"),
@@ -1840,10 +1890,12 @@ mod tests {
     /// wins second.
     #[test]
     fn saved_default_orders_second_and_is_flagged() {
-        let live = vec![(
-            "deepseek".to_string(),
-            vec!["deepseek-a".to_string(), "deepseek-b".to_string()],
-        )];
+        let live = vec![LiveCacheEntry {
+            provider: "deepseek".to_string(),
+            ids: vec!["deepseek-a".to_string(), "deepseek-b".to_string()],
+            fetched_at_ms: 1,
+            from_cache: false,
+        }];
         let rows = build_models_for_provider(
             "deepseek",
             "",
@@ -2080,5 +2132,97 @@ mod tests {
             "tied scores keep newest-first: {:?}",
             rows.iter().map(|r| &r.meta).collect::<Vec<_>>()
         );
+    }
+
+    /// Criterion 6: a bundle-retired id badges `retired`; any other unknown
+    /// id stays `unavailable` (the existing struck row).
+    #[test]
+    fn retired_ids_badge_retired_others_stay_unavailable() {
+        // `gpt-4` is in RETIRED_IDS (dropped from the bundle as deprecated
+        // upstream) and absent from it as a bare id: the fixture is real,
+        // not invented.
+        let retired = "gpt-4";
+        assert!(catalog::lookup_model(retired).is_none());
+        let rows = build_models_for_provider("openai", "", retired, &[], None, &[], &[]);
+        let row = rows
+            .iter()
+            .find(|r| r.id.eq_ignore_ascii_case(retired))
+            .expect("a retired configured id must still be offered");
+        assert!(row.is_retired, "retired ids badge retired: {row:?}");
+        assert!(
+            row.is_unavailable,
+            "a retired row stays struck like every unavailable one: {row:?}"
+        );
+        assert_eq!(model_badge(row), Some("[retired]"));
+
+        // The control: an unknown id nobody retired.
+        let gone = "deepseek-v4-pro-vanished";
+        let rows = build_models_for_provider("deepseek", "", gone, &[], None, &[], &[]);
+        let row = rows
+            .iter()
+            .find(|r| r.id.eq_ignore_ascii_case(gone))
+            .expect("offered");
+        assert!(!row.is_retired, "nothing retired this id: {row:?}");
+        assert!(row.is_unavailable);
+        assert_eq!(model_badge(row), Some("[unavailable]"));
+
+        // And a catalog row carries no badge at all.
+        let rows =
+            build_models_for_provider("deepseek", "", "deepseek-v4-pro", &[], None, &[], &[]);
+        let known = rows
+            .iter()
+            .find(|r| r.id == "deepseek-v4-pro")
+            .expect("a catalog row is offered");
+        assert_eq!(model_badge(known), None);
+    }
+
+    /// Criterion 6: the live-status line names freshness — updated vs cached
+    /// vs never fetched — with a std-only age.
+    #[test]
+    fn live_status_names_freshness() {
+        let now = 10_000_000_000u64;
+        let fresh = crate::app::LiveCacheEntry {
+            provider: "deepseek".to_string(),
+            ids: vec!["a".to_string(), "b".to_string()],
+            fetched_at_ms: now,
+            from_cache: false,
+        };
+        assert_eq!(
+            live_status("deepseek", Some(&fresh), now),
+            "live: deepseek (2 models, updated just now)"
+        );
+        let cached = crate::app::LiveCacheEntry {
+            from_cache: true,
+            fetched_at_ms: now - 5 * 60 * 1000,
+            ..fresh.clone()
+        };
+        assert_eq!(
+            live_status("deepseek", Some(&cached), now),
+            "live: deepseek (2 models, cached 5m ago)"
+        );
+        assert_eq!(
+            live_status("deepseek", None, now),
+            "live: deepseek (not fetched)"
+        );
+    }
+
+    /// Criterion 6: struct entries merge exactly like the old tuples — only
+    /// ids missing from the bundle surface, under their own provider.
+    #[test]
+    fn live_struct_entries_merge_like_tuples() {
+        let live = vec![crate::app::LiveCacheEntry {
+            provider: "deepseek".to_string(),
+            ids: vec![
+                "brand-new-model".to_string(),
+                "deepseek-v4-pro".to_string(), // known: deduped into the catalog section
+            ],
+            fetched_at_ms: 1,
+            from_cache: false,
+        }];
+        let rows = build_rows("", "", &[], &live);
+        let surfaced = rows.iter().filter(|r| r.is_live).collect::<Vec<_>>();
+        assert_eq!(surfaced.len(), 1);
+        assert_eq!(surfaced[0].id, "brand-new-model");
+        assert_eq!(surfaced[0].provider, "deepseek");
     }
 }

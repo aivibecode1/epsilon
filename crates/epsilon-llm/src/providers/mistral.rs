@@ -423,6 +423,10 @@ mod tests {
         assert!(body.get("reasoning_effort").is_none());
     }
 
+    /// A retired magistral row sends neither knob: `magistral-medium-latest`
+    /// left the bundle as deprecated upstream, so the family routing falls
+    /// back to silence for it. Name kept for continuity; the retired path is
+    /// what this now pins (see the integration twin in reasoning_routing.rs).
     #[test]
     fn reasoning_routes_by_family_magistral_gets_prompt_mode() {
         let mut ctx = ctx_with("hi");
@@ -430,7 +434,7 @@ mod tests {
         let body = wire()
             .request_body("magistral-medium-latest", &ctx)
             .expect("body");
-        assert_eq!(body["prompt_mode"], "reasoning");
+        assert!(body.get("prompt_mode").is_none());
         assert!(body.get("reasoning_effort").is_none());
 
         let body = wire()

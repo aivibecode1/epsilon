@@ -3513,3 +3513,64 @@ paths is a trust hole dressed as a feature).
 family tables plus extras cannot express (revisit the tables first), or
 per-project skill scoping becomes a real request (revisit global-only with
 a trust story, not by copying the key).
+
+---
+
+## ADR-047: Persistent live model listings with freshness and retired badging
+
+**Status: accepted (criterion 6, 2026-10-16).**
+
+**The problem.** Live listings were session-only: every launch forgot every
+fetched provider list, nothing showed an entry's age, and a saved model that
+aged out of the bundle looked identical to one never known — the picker
+either hid it or struck it as `unavailable` with no retirement signal.
+
+**Decision: a persisted advisory overlay, replace-on-success.**
+
+- *Cache entry.* `{provider, ids, fetched_at_ms, from_cache}` (`SystemTime`
+  millis, std only). Success stamps the time and clears `from_cache`;
+  failure leaves entry and timestamp untouched — last-known-good stays with
+  its real age, now explicit and tested.
+- *Persistence.* One small JSON file (`live-models.json`) in the existing
+  config dir through one load/save pair in `epsilon-core::config`
+  (ids + timestamp, no etag). Loaded at TUI startup (marked `from_cache`);
+  saved on every successful fetch. A corrupt or old-shape file
+  deletes-and-continues, never an error. Faux/non-`real` builds ignore the
+  file and browse the bundle only, with zero errors.
+- *Freshness rule.* Auto-fetch (`force=false`) skips providers with entries
+  younger than 60 minutes (one const beside `CATALOG_SNAPSHOT_DATE`); manual
+  refresh (Ctrl+G, `force=true`) always refetches. No background loop and no
+  coordinator beyond the existing single-flight fetch.
+- *Visible age.* The picker footer and `/catalog` share one helper:
+  `live: <provider> (<N> models, updated <age>)` for fresh entries,
+  `(cached <age>)` for startup-loaded ones, `(not fetched)` otherwise. The
+  snapshot-date line is unchanged.
+- *Retirement, not a status enum.* `regen_catalog.py` reads models.dev
+  `status`, drops `deprecated` rows from the bundle (pi/opencode parity)
+  while logging them, and emits the small `RETIRED_IDS` list the runtime
+  re-exports (`live_models` unchanged). The picker badges those ids
+  `retired`; every other unknown stays `unavailable` on the existing struck
+  row. No sunset dates (no source publishes them), no auto-substitution (a
+  struck row plus an explicit reselect) — pi itself carries no status at
+  runtime, and inventing one would be data without a source.
+
+**Rejected.** (a) Etag/304 revalidation: there is nothing to revalidate
+against — a fetch replaces the whole entry, so an etag would be ceremony
+around a full download. (b) A background refresh loop: listings change when
+providers ship models, not per keystroke, and a loop spends credentialed
+requests on a screen nobody opened. (c) A `Model.status` enum on the rows:
+pi carries no status at runtime, and an enum the generator cannot fill from
+models.dev is a second source of truth that rots. (d) Auto-substituting a
+retired saved model: silently running a different model than the session
+names is the silent no-op `AGENTS.md` §2.7 forbids — the struck row plus an
+explicit reselect keeps the choice visible.
+
+**Offline-first invariants.** The bundle is the whole listing without the
+`real` feature; a missing cache reads as empty; a corrupt cache deletes
+itself; a failed fetch keeps the last good entry. Nothing here blocks
+startup or spends a request unasked.
+
+**Revisit trigger.** Providers publish sunset dates (revisit "no dates" with
+a real source), the 60-minute window proves wrong against measured listing
+churn, or a second surface needs freshness it cannot read through
+`live_status` (share the helper rather than copying the words).

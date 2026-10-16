@@ -393,11 +393,15 @@ fn draw_picker_stage2(f: &mut Frame<'_>, app: &App, outer: Rect, provider: &str)
         // standard "exists, not usable" mark — the same one Pi reaches for
         // (`scoped-models-selector.ts:255`).
         //
+        // A retired id (criterion 6) badges `[retired]` instead: "we used to
+        // list this" is a different fact from "we never knew this", and the
+        // shared `model_badge` is what keeps the two from drifting apart.
+        //
         // The row is left dim as well: the strike is invisible on a terminal
         // that ignores SGR 9 and the dim is invisible on one that ignores
         // colour, so between them at least one channel always carries the fact.
-        let label = if row.is_unavailable {
-            format!("{} [unavailable]", row.label)
+        let label = if let Some(badge) = crate::picker::model_badge(row) {
+            format!("{} {badge}", row.label)
         } else if row.is_default {
             format!("{} · default", row.label)
         } else {

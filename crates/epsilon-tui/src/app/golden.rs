@@ -2425,6 +2425,47 @@ fn an_unavailable_model_draws_struck_through_and_says_so() {
     );
 }
 
+/// A retired model badges `[retired]`, not `[unavailable]`: "we used to list
+/// this" is a different fact from "we never knew this". Struck like any
+/// unavailable row; the word is what differs.
+#[test]
+fn a_retired_model_draws_struck_through_and_says_retired() {
+    let mut app = bench_app(UiState::new());
+    pin_theme(&mut app, ThemeColorMode::Ansi16);
+    // A retired id from the generator-emitted list, built through the picker's
+    // own stage-2 builder so the row is the one production draws.
+    let old = "gpt-4";
+    let rows = crate::picker::build_models_for_provider("openai", "", old, &[], None, &[], &[]);
+    assert!(
+        rows.iter().any(|r| r.id == old && r.is_retired),
+        "the fixture must actually be retired: {rows:?}"
+    );
+
+    app.picker_open = true;
+    app.picker_provider = Some("openai".into());
+    app.model_id = old.to_string();
+    app.picker_index = 1;
+    // Unavailable rows sort last (a measured constraint, not a preference),
+    // so with no filter the retired row sits below the visible window of a
+    // 33-row provider. The filter narrows to the family without moving the
+    // badge — what this test is about.
+    app.input = "gpt-4".to_string();
+    app.cursor_chars = 5;
+    let (buffer, screen_rows) = render_buffer(&mut app, 100, 40);
+    let screen = screen_rows.join("\n");
+    assert!(screen.contains(old), "the row is offered: {screen}");
+    assert!(
+        screen.contains("[retired]"),
+        "the badge names retirement, not mere absence: {screen}"
+    );
+
+    let label_modifier = modifier_on_row(&buffer, "[retired]", "[retired]");
+    assert!(
+        label_modifier.contains(ratatui::style::Modifier::CROSSED_OUT),
+        "the row's label must be struck through: {label_modifier:?}"
+    );
+}
+
 /// The modifier of the cell a `needle` starts in, anywhere on the screen.
 ///
 /// The column is found through [`row_cells`], not through a byte offset into
@@ -3374,10 +3415,12 @@ fn a_panel_row_is_stripped_before_it_is_drawn() {
     // row's *text* and not only in the absence of a character.
     app.picker_open = true;
     app.picker_provider = Some("faux".into());
-    app.live_cache = vec![(
-        "faux".to_string(),
-        vec!["claude\u{202E}-3-opus".to_string()],
-    )];
+    app.live_cache = vec![crate::app::LiveCacheEntry {
+        provider: "faux".to_string(),
+        ids: vec!["claude\u{202E}-3-opus".to_string()],
+        fetched_at_ms: 1,
+        from_cache: false,
+    }];
 
     let rows = render_rows(&mut app, 100, 30);
     let joined = rows.join("\n");

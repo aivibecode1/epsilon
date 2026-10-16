@@ -33,6 +33,24 @@ pub type LiveFetcher = Arc<
         + Sync,
 >;
 
+/// One provider's live listing with its freshness (criterion 6).
+///
+/// A named type rather than the `(provider, ids)` tuple it replaces, for the
+/// same reason `TimelineRow` exists: the tuple grew two fields, and a
+/// four-tuple in a `for` loop is how timestamps get silently dropped.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LiveCacheEntry {
+    /// Provider key, as in `catalog::live_listing_available`.
+    pub provider: String,
+    /// Model ids from the last successful fetch.
+    pub ids: Vec<String>,
+    /// `SystemTime` millis when the fetch landed ([`now_ms`]); `0` means never.
+    pub fetched_at_ms: u64,
+    /// True when loaded from disk at startup rather than fetched this
+    /// session — the picker footer's `cached` vs `updated` distinction.
+    pub from_cache: bool,
+}
+
 /// Everything the frontend needs: an agent to drive and its approval queue.
 pub struct TuiConfig {
     /// The composed session runtime.
@@ -267,9 +285,11 @@ pub(crate) struct App {
     /// refreshed by toggle_favorite. Kept in memory so cycling never hits
     /// disk mid-keypress (and tests can inject without touching global state).
     favorite_thinking: Vec<(String, String)>,
-    /// M13/M20: per-provider live listing results (provider → ids), merged into
-    /// both picker stages on top of the bundled catalog.
-    live_cache: Vec<(String, Vec<String>)>,
+    /// M13/M20: per-provider live listing results, merged into
+    /// both picker stages on top of the bundled catalog. Persisted across
+    /// launches (criterion 6); `fetched_at_ms` is what makes last-known-good
+    /// explicit, and `from_cache` what the footer reports.
+    live_cache: Vec<LiveCacheEntry>,
     /// M28: user-declared custom providers (`[provider_custom.<name>]`),
     /// loaded once at startup; threaded into every picker row builder so
     /// configured endpoints are visible and descendable in the UI.
@@ -1608,6 +1628,19 @@ impl App {
         self.invalidate_picker();
     }
 
+    /// Whether an auto-fetch for `provider` may skip: the cache holds an
+    /// entry younger than [`epsilon_llm::catalog::LIVE_CACHE_TTL_MS`].
+    /// Pure (time injected) so the 60-minute rule is pinned without a network.
+    /// A manual refresh (`force`, Ctrl+G) never skips.
+    fn should_skip_live_refresh(&self, provider: &str, force: bool, now_ms: u64) -> bool {
+        !force
+            && self.live_cache.iter().any(|e| {
+                e.provider == provider
+                    && now_ms.saturating_sub(e.fetched_at_ms)
+                        < epsilon_llm::catalog::LIVE_CACHE_TTL_MS
+            })
+    }
+
     /// Request the provider's live listing (M13 Ctrl+F; M20 auto-fetch on open).
     ///
     /// Stage-aware: in stage 2 it lists THAT provider; from stage 1 it lists the
@@ -1670,6 +1703,13 @@ impl App {
         if self.live_fetched.contains(&provider) && !force {
             return;
         }
+        // Criterion 6: auto-fetch skips entries younger than 60 minutes (the
+        // persisted cache makes "already landed this session" survive a
+        // restart); manual refresh always refetches. Silent, like the check
+        // above — a skipped refresh is the normal state, not news.
+        if self.should_skip_live_refresh(&provider, force, now_ms()) {
+            return;
+        }
         if self.fetching_hint.is_some() {
             return; // one fetch in flight; Ctrl+F again after it lands
         }
@@ -1689,6 +1729,11 @@ impl App {
 
     /// Record a completed live fetch (event-loop side of [`Self::request_live`]).
     /// Returns a user-facing notice line when one is warranted.
+    ///
+    /// Success stamps the entry and persists the whole cache (criterion 6);
+    /// failure leaves the entry AND its timestamp untouched, so the
+    /// last-known-good listing stays with its real age instead of being
+    /// cleared or silently rejuvenated.
     fn record_live_result(
         &mut self,
         provider: String,
@@ -1698,10 +1743,17 @@ impl App {
         match result {
             Ok(names) => {
                 let n = names.len();
-                match self.live_cache.iter_mut().find(|(p, _)| *p == provider) {
-                    Some((_, ids)) => *ids = names,
-                    None => self.live_cache.push((provider.clone(), names)),
+                let stamped = LiveCacheEntry {
+                    provider: provider.clone(),
+                    ids: names,
+                    fetched_at_ms: now_ms(),
+                    from_cache: false,
+                };
+                match self.live_cache.iter_mut().find(|e| e.provider == provider) {
+                    Some(entry) => *entry = stamped,
+                    None => self.live_cache.push(stamped),
                 }
+                self.persist_live_cache();
                 self.invalidate_picker();
                 self.live_fetched.insert(provider);
                 Some(format!("live listing: {n} models merged into /models"))
@@ -1709,6 +1761,37 @@ impl App {
             Err(e) => Some(format!("live listing failed: {e}")),
         }
     }
+
+    /// Persist the live cache after a successful fetch (criterion 6).
+    ///
+    /// Best-effort and silent: the fetch already reported, and a disk failure
+    /// must not nag on top of it — the next successful fetch retries. Faux
+    /// (non-`real`) builds never fetch, so they never write: the file is
+    /// ignored there and the bundle is the whole listing.
+    #[cfg(feature = "real")]
+    fn persist_live_cache(&self) {
+        let Some(dir) = self
+            .config_dir_override
+            .clone()
+            .or_else(epsilon_core::config::global_dir)
+        else {
+            return;
+        };
+        let snapshot: Vec<epsilon_core::config::LiveModelCacheEntry> = self
+            .live_cache
+            .iter()
+            .map(|e| epsilon_core::config::LiveModelCacheEntry {
+                provider: e.provider.clone(),
+                ids: e.ids.clone(),
+                fetched_at_ms: e.fetched_at_ms,
+            })
+            .collect();
+        let _ = epsilon_core::config::save_live_cache_in(&dir, &snapshot);
+    }
+
+    /// Non-`real` builds have no fetcher, so there is nothing to persist.
+    #[cfg(not(feature = "real"))]
+    fn persist_live_cache(&self) {}
 
     /// Run a `!` shell command off the key handler and show the result.
     ///
@@ -2659,4 +2742,113 @@ pub(crate) struct TimelineRow {
     /// M196: without this the picker could not show a label, so a label the
     /// store held was invisible in the one view that exists to navigate them.
     pub label: Option<String>,
+}
+
+#[cfg(test)]
+mod live_cache_tests {
+    use super::*;
+
+    fn harness() -> App {
+        let (fetched_tx, _frx) = tokio::sync::mpsc::unbounded_channel();
+        let (notices_tx, _nrx) = tokio::sync::mpsc::unbounded_channel();
+        let (oauth_tx, _orx) = tokio::sync::mpsc::unbounded_channel();
+        App::new("faux-1".to_string(), fetched_tx, notices_tx, oauth_tx)
+    }
+
+    /// Criterion 6: a successful fetch stamps the entry — last-known-good
+    /// becomes explicit rather than implied by presence.
+    #[test]
+    fn ok_result_stamps_the_entry() {
+        let mut app = harness();
+        let dir = tempfile::tempdir().expect("a config dir");
+        app.config_dir_override = Some(dir.path().to_path_buf());
+        let before = now_ms();
+        let said =
+            app.record_live_result("deepseek".to_string(), Ok(vec!["deepseek-new".to_string()]));
+        assert!(said.is_some_and(|s| s.contains("1 models merged")));
+        let entry = app
+            .live_cache
+            .iter()
+            .find(|e| e.provider == "deepseek")
+            .expect("the fetch lands in the cache");
+        assert!((before..=now_ms()).contains(&entry.fetched_at_ms));
+        assert!(!entry.from_cache, "a fresh fetch is not from the cache");
+        assert_eq!(entry.ids, vec!["deepseek-new".to_string()]);
+    }
+
+    /// Criterion 6: a failed fetch leaves the entry AND its timestamp
+    /// untouched — the last-known-good listing stays, with its real age.
+    #[test]
+    fn err_result_leaves_entry_and_timestamp_untouched() {
+        let mut app = harness();
+        app.live_cache = vec![LiveCacheEntry {
+            provider: "deepseek".to_string(),
+            ids: vec!["deepseek-old".to_string()],
+            fetched_at_ms: 1_700_000_000_000,
+            from_cache: true,
+        }];
+        let said = app.record_live_result("deepseek".to_string(), Err("timeout".to_string()));
+        assert!(said.is_some_and(|s| s.contains("live listing failed")));
+        let entry = app
+            .live_cache
+            .iter()
+            .find(|e| e.provider == "deepseek")
+            .expect("the entry survives the failure");
+        assert_eq!(entry.ids, vec!["deepseek-old".to_string()]);
+        assert_eq!(entry.fetched_at_ms, 1_700_000_000_000);
+        assert!(entry.from_cache);
+    }
+
+    /// Criterion 6: auto-fetch skips entries younger than 60 minutes;
+    /// manual refresh (Ctrl+G, force) always refetches.
+    #[test]
+    fn auto_skips_fresh_manual_always_refetches() {
+        let mut app = harness();
+        let now = now_ms();
+        app.live_cache = vec![
+            LiveCacheEntry {
+                provider: "fresh".to_string(),
+                ids: vec![],
+                fetched_at_ms: now - 60_000,
+                from_cache: false,
+            },
+            LiveCacheEntry {
+                provider: "stale".to_string(),
+                ids: vec![],
+                fetched_at_ms: now - epsilon_llm::catalog::LIVE_CACHE_TTL_MS - 1,
+                from_cache: false,
+            },
+        ];
+        assert!(
+            app.should_skip_live_refresh("fresh", false, now),
+            "a 1-minute-old entry skips auto-fetch"
+        );
+        assert!(
+            !app.should_skip_live_refresh("fresh", true, now),
+            "manual refresh refetches even a fresh entry"
+        );
+        assert!(
+            !app.should_skip_live_refresh("stale", false, now),
+            "an entry past the TTL refetches on auto"
+        );
+        assert!(
+            !app.should_skip_live_refresh("never", false, now),
+            "a provider with no entry never skips"
+        );
+        // Exactly at the TTL is not younger than it.
+        app.live_cache.push(LiveCacheEntry {
+            provider: "edge".to_string(),
+            ids: vec![],
+            fetched_at_ms: 1_000_000,
+            from_cache: false,
+        });
+        assert!(
+            !app.should_skip_live_refresh(
+                "edge",
+                false,
+                1_000_000 + epsilon_llm::catalog::LIVE_CACHE_TTL_MS
+            ),
+            "the boundary refetches"
+        );
+    }
 }

@@ -17,6 +17,9 @@
 //! string-matches model families.
 
 mod catalog_data;
+mod retired_ids;
+
+pub use retired_ids::RETIRED_IDS;
 
 /// The date of the models.dev snapshot this catalog was generated from, as
 /// `YYYY-MM-DD`.
@@ -31,7 +34,16 @@ mod catalog_data;
 /// Surfacing the date is criterion 5's "clearly indicate when the catalog was last
 /// successfully updated"; the catalog is a committed file, so this date *is* the last
 /// successful update, and it was previously unreadable at runtime.
-pub const CATALOG_SNAPSHOT_DATE: &str = "2026-09-21";
+pub const CATALOG_SNAPSHOT_DATE: &str = "2026-10-16";
+
+/// Freshness window for persisted live listings (criterion 6): an auto-fetch
+/// skips providers whose cached entry is younger than this, while a manual
+/// refresh always refetches. One const beside the snapshot date so the rule
+/// and the data it guards cannot drift apart.
+///
+/// Sixty minutes: live listings change when providers ship models (daily at
+/// most), not per keystroke — and every fetch costs a credentialed request.
+pub const LIVE_CACHE_TTL_MS: u64 = 60 * 60 * 1000;
 
 /// The catalog's size as `(model rows, distinct providers)`.
 ///
@@ -1365,7 +1377,9 @@ mod tests {
         assert!(lookup_model("glm-5.2").is_some());
         assert!(lookup_model("deepseek-v4-pro").is_some());
         assert!(lookup_model("mistral-large-latest").is_some());
-        assert!(lookup_model("vertex/gemini-2.5-flash").is_some());
+        // Retired upstream (models.dev status; criterion 6 retired list), so
+        // the pin moved to the family's current row.
+        assert!(lookup_model("vertex/gemini-3.5-flash").is_some());
         // M55: bedrock ids are canonical now (region + version qualifiers
         // stripped by the generator, absorbing M49's hand rows).
         assert!(lookup_model("bedrock/anthropic.claude-sonnet-4-5").is_some());
@@ -1522,7 +1536,8 @@ mod tests {
         );
         assert_eq!(
             lookup_model("magistral-medium-latest").map(|m| m.reasoning_shape),
-            Some(S::MagistralPromptMode)
+            None,
+            "retired upstream: no bundle row, no shape — the wire stays silent"
         );
         assert_eq!(
             lookup_model("mistral-small-2603").map(|m| m.reasoning_shape),
@@ -1575,5 +1590,31 @@ mod tests {
             }
         }
         assert_eq!(reasoning_shape_for("definitely-not-a-model-id"), None);
+    }
+
+    /// Criterion 6: auto-fetch skips entries younger than 60 minutes — one
+    /// const beside the snapshot date, read by the TUI's skip rule.
+    #[test]
+    fn live_cache_ttl_is_sixty_minutes() {
+        assert_eq!(LIVE_CACHE_TTL_MS, 60 * 60 * 1000);
+    }
+
+    /// Criterion 6: retired ids are bundle-dropped, never catalog rows. The
+    /// picker badges them `retired` instead of `unavailable`.
+    #[test]
+    fn retired_ids_are_absent_from_the_catalog() {
+        assert!(
+            !RETIRED_IDS.is_empty(),
+            "an empty retired list tests nothing"
+        );
+        let mut sorted = RETIRED_IDS.to_vec();
+        sorted.sort_unstable();
+        assert_eq!(sorted, RETIRED_IDS, "regen emits the list sorted");
+        for id in RETIRED_IDS {
+            assert!(
+                lookup_model(id).is_none(),
+                "{id} is still bundled: it must not be retired"
+            );
+        }
     }
 }

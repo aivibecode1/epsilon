@@ -213,15 +213,20 @@ fn zai_glm_rows_send_clear_thinking_switch_plus_effort() {
     );
 }
 
-/// Magistral rows take `prompt_mode: reasoning` and nothing else.
+/// A retired magistral row sends neither knob: `magistral-medium-latest`
+/// left the bundle as deprecated upstream (models.dev status, criterion 6),
+/// so the mistral wire falls back to silence for it — the retirement path,
+/// not the `prompt_mode` path the row took while catalogued. If a magistral
+/// row returns to the bundle, this goes back to asserting
+/// `prompt_mode: reasoning`.
 #[test]
 fn mistral_magistral_rows_use_prompt_mode() {
     let body = mistral_wire()
         .request_body("magistral-medium-latest", &ctx_at(ThinkingLevel::Medium))
         .expect("body");
-    assert_eq!(
-        body.get("prompt_mode").and_then(|v| v.as_str()),
-        Some("reasoning")
+    assert!(
+        body.get("prompt_mode").is_none(),
+        "a retired row must not keep its old knob: {body}"
     );
     assert!(body.get("reasoning_effort").is_none(), "{body}");
 }
@@ -317,13 +322,14 @@ fn unknown_ids_keep_the_default_branch() {
 fn provider_prefixed_ids_resolve_through_the_prefix() {
     let body = mistral_wire()
         .request_body(
-            "mistral/magistral-medium-latest",
+            "mistral/mistral-medium-latest",
             &ctx_at(ThinkingLevel::Medium),
         )
         .expect("body");
     assert_eq!(
-        body.get("prompt_mode").and_then(|v| v.as_str()),
-        Some("reasoning"),
-        "prefixed magistral id keeps prompt_mode: {body}"
+        body.get("reasoning_effort").and_then(|v| v.as_str()),
+        Some("medium"),
+        "prefixed medium id keeps its effort knob: {body}"
     );
+    assert!(body.get("prompt_mode").is_none(), "{body}");
 }

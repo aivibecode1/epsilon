@@ -58,6 +58,24 @@ impl App {
         // other display preferences; flipped by `app.thinking.toggle`.
         let mut ui = UiState::new();
         ui.hide_thinking = epsilon_core::config::load_hide_thinking();
+        // Criterion 6: persisted live listings load at startup and read as
+        // cached until a fetch replaces them. Corrupt files delete-and-continue
+        // inside the loader, never an error; faux (non-`real`) builds ignore
+        // the file entirely and browse the bundle only.
+        #[cfg(feature = "real")]
+        let live_cache: Vec<LiveCacheEntry> = epsilon_core::config::global_dir()
+            .map(|dir| epsilon_core::config::load_live_cache_in(&dir))
+            .unwrap_or_default()
+            .into_iter()
+            .map(|e| LiveCacheEntry {
+                provider: e.provider,
+                ids: e.ids,
+                fetched_at_ms: e.fetched_at_ms,
+                from_cache: true,
+            })
+            .collect();
+        #[cfg(not(feature = "real"))]
+        let live_cache: Vec<LiveCacheEntry> = Vec::new();
         let mut app = Self {
             ui,
             input: String::new(),
@@ -94,7 +112,7 @@ impl App {
             default_model: epsilon_core::config::load_model_id(),
             config_dir_override: None,
             favorite_thinking: epsilon_core::config::load_favorite_thinking(),
-            live_cache: Vec::new(),
+            live_cache,
             customs: epsilon_llm::custom::custom_providers(),
             live: None,
             prefs: crate::state::RenderPrefs::default(),

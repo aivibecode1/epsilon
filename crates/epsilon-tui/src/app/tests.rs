@@ -10391,6 +10391,10 @@ fn ctrl_g_reports_unavailable_without_the_real_feature() {
 #[test]
 fn finished_refresh_reports_success_and_failure() {
     let (mut app, _agent, _rx) = test_app();
+    // Pinned: a successful refresh persists the cache, and a test writes
+    // nowhere near a real config.
+    let cfg = tempfile::tempdir().expect("a config dir");
+    app.config_dir_override = Some(cfg.path().to_path_buf());
     let said = app.record_live_result("deepseek".to_string(), Ok(vec!["deepseek-new".to_string()]));
     assert!(
         said.is_some_and(|s| s.contains("1 models merged")),
@@ -10399,7 +10403,7 @@ fn finished_refresh_reports_success_and_failure() {
     assert!(
         app.live_cache
             .iter()
-            .any(|(p, ids)| p == "deepseek" && ids.contains(&"deepseek-new".to_string())),
+            .any(|e| e.provider == "deepseek" && e.ids.contains(&"deepseek-new".to_string())),
         "and merge the ids"
     );
 
