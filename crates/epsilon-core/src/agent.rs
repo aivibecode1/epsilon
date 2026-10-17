@@ -408,6 +408,13 @@ impl Agent {
         &self.workspace_root
     }
 
+    /// Whether the registry carries a tool by name: the composition-level
+    /// assertion seam (a policy that removes a tool, e.g. `Lsp::Off`, must
+    /// be observable on the built agent, not just on the handle).
+    pub fn has_tool(&self, name: &str) -> bool {
+        self.tools.get(name).is_some()
+    }
+
     pub(crate) fn emit(&self, ev: AgentEvent) {
         let _ = self.events_tx.send(Arc::new(ev));
     }

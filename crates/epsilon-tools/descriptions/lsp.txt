@@ -1,0 +1,7 @@
+Navigate code through the workspace language server: go to definition, find references, go to implementation, or list a file's symbols.
+
+Ops: definition, references, implementation, symbols. Line and column are 1-based, required for every op except symbols (which ignores them); references accepts includeDeclaration (default true).
+
+Results are compact path:line:col lines, at most 20 per call with (+N more) when there are more; the complete hit list is in the result details.
+
+Read-only: it never modifies files. Ask-gated like shell and network tools, and absent entirely when the language-server policy is off.

@@ -484,7 +484,12 @@ impl Tool for BashTool {
                 Ok(o) => {
                     let combined = combine_output(&o.stdout, &o.stderr, o.exit_code);
                     let duration_ms = started.elapsed().as_millis();
-                    let t = util::truncate_output(&combined, &ctx.spill_dir, "bash");
+                    // `true`: every production composition registers the
+                    // `task` tool beside `bash` (single
+                    // `register_builtins_and_gate_runner` entry point), so the
+                    // delegation hint is truthful wherever this runs.
+                    let t =
+                        util::truncate_output_with_task(&combined, &ctx.spill_dir, "bash", true);
                     // Before the spill check below, which moves `t.spilled_to` out.
                     let body = body_text(&t, o.output_complete);
                     let verdict = command_verdict(&o);
@@ -624,7 +629,13 @@ impl Tool for BashTool {
         let combined = combine_output(&stdout, &stderr, status.code());
         let duration_ms = started.elapsed().as_millis();
 
-        let t = util::truncate_output(&combined, &ctx.spill_dir, "bash");
+        let t = util::truncate_output_with_task(
+            &combined,
+            &ctx.spill_dir,
+            "bash",
+            // Same truth as above: `task` ships in every production registry.
+            true,
+        );
         // Before the spill check below, which moves `t.spilled_to` out.
         let body = body_text(&t, output_complete);
         // Same vocabulary on the opt-out path: a caller branching on `verdict` should not have

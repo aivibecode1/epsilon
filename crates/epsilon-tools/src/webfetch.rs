@@ -661,7 +661,9 @@ impl Tool for WebFetchTool {
                 .take(24)
                 .collect::<String>()
         );
-        let truncated = crate::util::truncate_output(&body, &ctx.spill_dir, &stem);
+        // `true`: `task` ships in every production registry (single
+        // `register_builtins_and_gate_runner` entry point).
+        let truncated = crate::util::truncate_output_with_task(&body, &ctx.spill_dir, &stem, true);
         if truncated.truncated
             && let Some(spilled) = &truncated.spilled_to
         {

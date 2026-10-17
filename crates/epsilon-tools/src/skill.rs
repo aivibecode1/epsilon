@@ -68,6 +68,34 @@ pub struct SkillArgs {
 /// is reviewable next to the others rather than buried in a `format!`.
 pub const SKILL_DESC: &str = include_str!("../descriptions/skill.txt");
 
+/// Max bundled files sampled into a skill response (opencode `skill.ts:42`).
+///
+/// A capped *list*, never content: the names make bundled scripts and
+/// references discoverable without paying their bytes every load.
+pub const SKILL_FILE_LIST_LIMIT: usize = 10;
+
+/// Sample up to [`SKILL_FILE_LIST_LIMIT`] non-`SKILL.md` paths under `dir`.
+///
+/// Reuses the tool [`crate::util::walk_files`] walker so ignore rules, hidden-dir
+/// skipping and caps match every other listing — the sample is what the walker
+/// would have shown first, minus the skill body itself (opencode
+/// `skill.ts:37` finds `!**/SKILL.md`). Paths are forward-slash relative to
+/// `dir`, matching the base-dir guidance the envelope carries.
+fn bundle_sample(dir: &std::path::Path) -> Vec<String> {
+    crate::util::walk_files(dir)
+        .into_iter()
+        .filter_map(|rel| {
+            let s = rel.to_string_lossy().replace('\\', "/");
+            if s == "SKILL.md" || s.ends_with("/SKILL.md") {
+                None
+            } else {
+                Some(s)
+            }
+        })
+        .take(SKILL_FILE_LIST_LIMIT)
+        .collect()
+}
+
 /// Loads one skill body on request.
 pub struct SkillTool {
     descriptor: ToolDescriptor,
@@ -159,8 +187,9 @@ impl Tool for SkillTool {
         // exists. The containment check keeps the name inside the root: `join` with
         // an absolute or `..`-carrying name would otherwise escape it, and the name
         // arrives from model input via `find`, not from validated discovery.
+        let is_bundle = bundle.is_file();
         let flat = skill.dir.join(format!("{}.md", skill.name));
-        let path = if bundle.is_file() {
+        let path = if is_bundle {
             bundle
         } else if flat.parent().is_some_and(|parent| parent == skill.dir) && flat.is_file() {
             flat
@@ -188,11 +217,37 @@ impl Tool for SkillTool {
         }
 
         let chars = body.chars().count();
-        let mut out = ToolOutput::text(body);
+        // Bundle skills sample their directory (opencode `skill.ts:35-59`):
+        // base-dir guidance plus up to 10 non-SKILL.md names in a
+        // `<skill_files>` envelope, reusing the tool walker. Flat skills list
+        // none — their `dir` is the parent root, and sampling it would leak
+        // unrelated files. Content loading above is untouched.
+        let (suffix, files, base_dir) = if is_bundle {
+            let files = bundle_sample(&skill.dir);
+            let base = skill.dir.display().to_string();
+            let mut envelope = format!(
+                "\n\nBase directory for this skill: {base}\n\
+                 Relative paths in this skill (e.g., scripts/, reference/) \
+                 are relative to this base directory.\n\
+                 Note: file list is sampled.\n\n<skill_files>\n"
+            );
+            for f in &files {
+                envelope.push_str(&format!("<file>{f}</file>\n"));
+            }
+            envelope.push_str("</skill_files>");
+            (envelope, files, Some(base))
+        } else {
+            (String::new(), Vec::new(), None)
+        };
+        let mut text = body;
+        text.push_str(&suffix);
+        let mut out = ToolOutput::text(text);
         out.details = serde_json::json!({
             "skill": skill.name,
             "path": path.display().to_string(),
             "chars": chars,
+            "files": files,
+            "base_dir": base_dir,
         });
         Ok(out)
     }
@@ -394,5 +449,86 @@ mod tests {
             lower.contains("speculative") || lower.contains("just in case"),
             "the description must discourage speculative loads: {SKILL_DESC}"
         );
+    }
+
+    #[tokio::test]
+    async fn bundle_skill_lists_sampled_files_and_base_dir() {
+        // opencode `skill.ts:35-59`: ripgrep find (limit 10, excluding SKILL.md)
+        // + `<skill_files>` envelope + base-dir guidance. A skill with bundled
+        // scripts is undiscoverable without it.
+        let tmp = tempfile::tempdir().expect("tmp");
+        write_skill(
+            tmp.path(),
+            "alpha",
+            "---\nname: alpha\n---\n\n# Alpha\n\nDo it.\n",
+        );
+        let bundle = tmp.path().join("alpha");
+        std::fs::create_dir_all(bundle.join("scripts")).expect("scripts dir");
+        std::fs::write(bundle.join("scripts/run.sh"), "#!/bin/sh\necho hi\n").expect("script");
+        std::fs::write(bundle.join("reference.md"), "# ref\n").expect("ref");
+        let tool = tool_with(vec![("alpha", "d", bundle.clone())]);
+        let out = run(&tool, "alpha").await.expect("loads");
+        let text = text_of(&out);
+        assert!(
+            text.contains(&bundle.display().to_string()),
+            "base dir must be named: {text}"
+        );
+        assert!(text.contains("<skill_files>"), "{text}");
+        assert!(
+            text.contains("scripts/run.sh") || text.contains("scripts\\run.sh"),
+            "bundled scripts must be listed: {text}"
+        );
+        let files_section = text
+            .split("<skill_files>")
+            .nth(1)
+            .expect("envelope")
+            .split("</skill_files>")
+            .next()
+            .unwrap_or("");
+        assert!(
+            !files_section.contains("SKILL.md"),
+            "the list samples non-SKILL.md files only: {files_section}"
+        );
+    }
+
+    #[tokio::test]
+    async fn flat_skill_lists_no_files() {
+        // A flat `<name>.md` skill has no bundle dir — `dir` is the parent
+        // root, so listing it would leak unrelated files. It must list none.
+        let tmp = tempfile::tempdir().expect("tmp");
+        std::fs::write(
+            tmp.path().join("alpha.md"),
+            "---\nname: alpha\n---\n\n# Alpha\n\nDo it.\n",
+        )
+        .expect("flat skill body");
+        std::fs::write(tmp.path().join("unrelated.txt"), "noise").expect("noise");
+        let tool = tool_with(vec![("alpha", "d", tmp.path().to_path_buf())]);
+        let out = run(&tool, "alpha").await.expect("loads");
+        let text = text_of(&out);
+        assert!(
+            !text.contains("<file>"),
+            "a flat skill has no bundle files to sample: {text}"
+        );
+    }
+
+    #[tokio::test]
+    async fn bundle_file_list_is_capped_at_ten() {
+        // opencode `skill.ts:42` caps the sample at 10. Eleven-plus files
+        // must still yield at most 10 entries.
+        let tmp = tempfile::tempdir().expect("tmp");
+        write_skill(
+            tmp.path(),
+            "alpha",
+            "---\nname: alpha\n---\n\n# Alpha\n\nDo it.\n",
+        );
+        let bundle = tmp.path().join("alpha");
+        for i in 0..12 {
+            std::fs::write(bundle.join(format!("file{i:02}.txt")), "x").expect("f");
+        }
+        let tool = tool_with(vec![("alpha", "d", bundle)]);
+        let out = run(&tool, "alpha").await.expect("loads");
+        let text = text_of(&out);
+        let count = text.matches("<file>").count();
+        assert_eq!(count, super::SKILL_FILE_LIST_LIMIT, "capped at 10: {text}");
     }
 }

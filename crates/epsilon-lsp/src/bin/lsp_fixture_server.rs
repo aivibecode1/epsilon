@@ -14,6 +14,19 @@
 //! | `--silent` | handshake, accept documents, never publish |
 //! | `--refuse` | answer `initialize` with an error |
 //! | `--die` | exit immediately after the handshake |
+//! | `--no-symbols` | like the full server, but `documentSymbol` answers `[]` |
+//!
+//! Query answers (all canned, all deterministic):
+//!
+//! | method | answer |
+//! |---|----|
+//! | `textDocument/definition` | one `Location`: the requested position echoed back, so a caller
+//! asserting on it proves the position survived the round trip in the units it was sent in |
+//! | `textDocument/references` | 25 `Location`s — the declaration (the echo) plus lines 0–23 —
+//! or 24 without the declaration when `context.includeDeclaration` is false |
+//! | `textDocument/implementation` | one fixed `Location` at 0-based (0,0)–(0,5) |
+//! | `textDocument/documentSymbol` | three `SymbolInformation`s (`alpha`/`beta` functions,
+//! `Config` struct), or `[]` under `--no-symbols` |
 
 use std::io::Write;
 
@@ -107,6 +120,140 @@ async fn main() {
                     "params": {"uri": uri, "diagnostics": diagnostics}
                 });
                 write(&mut stdout, &publish).await;
+            }
+            "textDocument/definition" => {
+                let id = message.get("id").cloned().unwrap_or(serde_json::json!(1));
+                let params = &message["params"];
+                let uri = params["textDocument"]["uri"]
+                    .as_str()
+                    .unwrap_or_default()
+                    .to_string();
+                let line = params["position"]["line"].clone();
+                let character = params["position"]["character"].clone();
+                write(
+                    &mut stdout,
+                    &serde_json::json!({
+                        "jsonrpc": "2.0", "id": id,
+                        "result": {
+                            "uri": uri,
+                            "range": {
+                                "start": {"line": line.clone(), "character": character.clone()},
+                                "end": {"line": line, "character": character}
+                            }
+                        }
+                    }),
+                )
+                .await;
+            }
+            "textDocument/references" => {
+                let id = message.get("id").cloned().unwrap_or(serde_json::json!(1));
+                let params = &message["params"];
+                let uri = params["textDocument"]["uri"]
+                    .as_str()
+                    .unwrap_or_default()
+                    .to_string();
+                let include = params["context"]["includeDeclaration"]
+                    .as_bool()
+                    .unwrap_or(true);
+                let mut hits = Vec::new();
+                if include {
+                    hits.push(serde_json::json!({
+                        "uri": uri,
+                        "range": {
+                            "start": {
+                                "line": params["position"]["line"].clone(),
+                                "character": params["position"]["character"].clone()
+                            },
+                            "end": {
+                                "line": params["position"]["line"].clone(),
+                                "character": params["position"]["character"].clone()
+                            }
+                        }
+                    }));
+                }
+                for i in 0..24 {
+                    hits.push(serde_json::json!({
+                        "uri": uri,
+                        "range": {
+                            "start": {"line": i, "character": 0},
+                            "end": {"line": i, "character": 1}
+                        }
+                    }));
+                }
+                write(
+                    &mut stdout,
+                    &serde_json::json!({"jsonrpc": "2.0", "id": id, "result": hits}),
+                )
+                .await;
+            }
+            "textDocument/implementation" => {
+                let id = message.get("id").cloned().unwrap_or(serde_json::json!(1));
+                let uri = message["params"]["textDocument"]["uri"]
+                    .as_str()
+                    .unwrap_or_default()
+                    .to_string();
+                write(
+                    &mut stdout,
+                    &serde_json::json!({
+                        "jsonrpc": "2.0", "id": id,
+                        "result": [{
+                            "uri": uri,
+                            "range": {
+                                "start": {"line": 0, "character": 0},
+                                "end": {"line": 0, "character": 5}
+                            }
+                        }]
+                    }),
+                )
+                .await;
+            }
+            "textDocument/documentSymbol" => {
+                let id = message.get("id").cloned().unwrap_or(serde_json::json!(1));
+                if mode == "--no-symbols" {
+                    write(
+                        &mut stdout,
+                        &serde_json::json!({"jsonrpc": "2.0", "id": id, "result": []}),
+                    )
+                    .await;
+                    continue;
+                }
+                let uri = message["params"]["textDocument"]["uri"]
+                    .as_str()
+                    .unwrap_or_default()
+                    .to_string();
+                let symbols = ["alpha", "beta"]
+                    .iter()
+                    .enumerate()
+                    .map(|(i, name)| {
+                        serde_json::json!({
+                            "name": name,
+                            "kind": "Function",
+                            "location": {
+                                "uri": uri,
+                                "range": {
+                                    "start": {"line": i, "character": 0},
+                                    "end": {"line": i, "character": 4}
+                                }
+                            }
+                        })
+                    })
+                    .chain(std::iter::once(serde_json::json!({
+                        "name": "Config",
+                        "kind": "Struct",
+                        "location": {
+                            "uri": uri,
+                            "range": {
+                                "start": {"line": 2, "character": 0},
+                                "end": {"line": 2, "character": 6}
+                            }
+                        }
+                    })))
+                    .collect::<Vec<_>>();
+                write(
+                    &mut stdout,
+                    &serde_json::json!({"jsonrpc": "2.0", "id": id, "result": symbols}),
+                )
+                .await;
             }
             "shutdown" => {
                 let id = message.get("id").cloned().unwrap_or(serde_json::json!(1));

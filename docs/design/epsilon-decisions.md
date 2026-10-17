@@ -4411,3 +4411,150 @@ branch itself, any transport/auth change.
 the generator — not the rows — is the behaviour being changed), or a
 wire gains a verified native PDF shape the table marked placeholder
 (then that wire's mapping — not the helper — changes).
+
+---
+
+## ADR-056: Two small tool ports — skill file sample, task-aware truncation hint
+
+**Status: accepted (behaviour change, 2026-10-17).**
+
+**The problem.** Two opencode behaviours the model already expects were
+missing from tool output shapes: a loaded skill named bundled helpers the
+model could not see (no sampled file list, so `scripts/` beside a
+`SKILL.md` was undiscoverable), and an oversized truncation notice gave
+one-size guidance (no branch for whether a `task` tool can take the
+spilled file, so the model either missed delegation or was promised a
+tool it did not have).
+
+**Decision: port the two at the smallest diff that holds.**
+
+- *skill file sample (`crates/epsilon-tools/src/skill.rs`).* Opencode
+`skill.ts:35-59` resolves the skill dir, ripgrep-finds `!**/SKILL.md`
+(`hidden: true`, `follow: false`, `limit: 10`), then answers with the
+body plus `Base directory for this skill: …`, the relative-path note,
+the `file list is sampled` note, and a `<skill_files>` envelope of
+absolute paths. Epsilon keeps its own loading byte-identical
+(bundle-first, flat fallback, frontmatter strip) and appends the same
+shape in its own words: `SKILL_FILE_LIST_LIMIT = 10`,
+`bundle_sample` reusing the tool `walk_files` walker (so ignore rules,
+hidden-dir skipping and ordering match every other listing), filtered
+to non-`SKILL.md` at any depth, forward-slash relative paths, capped
+with `take(10)`. Bundle skills get the base-dir guidance plus the
+envelope (empty when the bundle holds only `SKILL.md`); flat
+`<name>.md` skills list none — their `dir` is the parent root, and
+sampling it would leak unrelated files. `details` gains `files`
+(relative sample) and `base_dir` (bundle only); `chars` still describes
+the body.
+- *task-aware truncation hint (`crates/epsilon-tools/src/util.rs`).*
+Opencode `truncate.ts:129-131` branches on `hasTaskTool(agent)`
+(`truncate.ts:27-30`: permission evaluate for `task`): with the tool,
+delegate to the explore agent with Grep/Read and do not read inline;
+without it, Grep plus Read with offset/limit. Epsilon's truthful
+surface is different (`crates/epsilon-tools/src/task.rs`: the tool is
+`task`, the worker is a subagent of some `subagent_type` — e.g.
+`explore`, `plan`, default `default` — and the search tools are `grep`
+and `read`, the latter with `offset`/`limit` via `read_page`), so the
+wording names that surface and never opencode's dedicated "explore
+agent". `truncation_hint(has_task_tool)` owns the two sentences;
+`truncate_output_with_task(output, spill_dir, stem, has_task_tool)`
+runs the unchanged head+tail/spill path (`truncate_inner`) and appends
+the hint only when truncated. `truncate_output` keeps its signature
+and delegates with `false` — the safe default that never promises
+delegation — so the two in-tree callers (`shell.rs`, `webfetch.rs`,
+outside this change's ownership) keep working; the integrator wires
+`true` where the shown registry actually has `task`.
+
+**Alternatives.** (a) Read bundled file contents into the skill
+response: pays every load for bytes the model may never need — refused;
+names are the discoverability, bodies stay on demand. (b) A second
+walker for skills: two ignore-rule implementations drifting on the
+first edit — refused; the tool walker is the one place. (c) Change
+`truncate_output`'s signature to take the flag: forces edits in
+`shell.rs`/`webfetch.rs`, outside this change's ownership — refused;
+the `_with_task` variant carries the branch and the old name keeps the
+honest default.
+
+**Why best for Epsilon.** Each port lands where the existing seam
+already is: the skill envelope is appended after the untouched load,
+the hint is appended after the untouched omission marker, and both
+reuse the predicate the codebase already owns (walker, spill
+locator). No new crate, no new dep, no new surface; the permission
+posture is unchanged (skill stays a single-file read, truncation stays
+a locator plus words).
+
+**Deliberately NOT built:** no skill content loading changes, no new
+permission surface, no output-cap changes, no other hint text changes.
+Small deviations from opencode, each stated above: relative (not
+absolute) sampled paths; the envelope is omitted (not empty) for flat
+skills; the delegation hint names `task` plus a subagent instead of an
+explore agent.
+
+**Revisit trigger.** A skill needs more than names to be usable (then
+the sampler — not the loader — grows a content budget with its own
+ADR), or truncation callers learn their registry's toolset (then the
+call site — not the hint — changes to pass what it shows).
+
+---
+
+## ADR-057: Model-facing `lsp` query tool (navigation over the language server)
+
+**Status: accepted (behaviour change, 2026-10-17).**
+
+**The problem.** Edits get compiler feedback through the diagnostics
+ride-along (M79), but the model has no way to *ask* where a symbol is
+defined, used, or implemented, or what a file declares — the questions
+a developer answers with go-to-definition before touching code. opencode's
+`lsp` tool exposes nine such operations; this harness needs the four
+navigation ones, gated like every other capability.
+
+**Decision: a read-only `lsp` tool over the M215 handle seam.**
+
+- *Contract (`crates/epsilon-contracts/src/lsp_queries.rs`, beside
+  `diagnostics.rs`).* `LspQueryProvider` with four methods —
+  `go_to_definition`, `find_references` (with `include_declaration`),
+  `go_to_implementation`, `document_symbol` — speaking 0-based positions
+  in and 1-based hits out; `LspQueryFailure` with three variants
+  (`UnknownExtension` carrying every known extension, `MissingBinary`
+  naming the executable, `Broken`). An empty answer is `Ok(vec![])`, so
+  "nothing here" is a message, not a failure.
+- *Service (`epsilon-lsp` `client.rs` + `service.rs`).* The client gains
+  an id-keyed request correlator (responses matched by id;
+  `publishDiagnostics` arriving mid-wait is filed, not dropped) plus one
+  method per op; the service reuses the diagnostics multiplex unchanged —
+  same `server-id:root` keying, same broken set, same in-flight dedupe —
+  and implements the contract trait. The fixture server answers all four
+  with canned data (definition echoes the requested position, so the
+  rebasing is asserted, not hoped).
+- *Tool (`epsilon-tools` `lsp_tool.rs`).* `Parallel`, `resource_key` is
+  the file, schema key `path` (the key `gate_subject` reads), positions
+  1-based and converted at this layer (required for the three position
+  ops, ignored for symbols). Four distinct texts: unknown extension
+  (listing known ones), missing binary (naming it), broken server,
+  zero-hits message. Per-op cap 20 with `(+N more)`; compact
+  `path:line:col` lines with the full hit list in JSON details through
+  `truncate_output`. Read-only: no checkpoints. Capability `lsp` has no
+  Allow rule, so it asks everywhere; `Lsp::Off` registers no tool at all.
+- *Composition (`epsilon-runtime`, beside `diagnostics_for`).*
+  `lsp_queries_for` maps the same policy to the same service;
+  `build_runtime` registers the tool from it.
+
+**Alternatives.** (a) Nine ops like opencode: hover/inlay-hint/types are
+context the model cannot act on without the navigation first — refused
+per the smallest-change rule. (b) A new service struct: the diagnostics
+multiplex already keys, dedupes, and remembers broken servers — a second
+one is the "two copies of a rule" defect. (c) Positions converted in the
+service: the wire speaks 0-based and the model 1-based, and the boundary
+between them is the tool — converting anywhere else splits the contract.
+
+**Why best for Epsilon.** One seam (M215) carries both LSP features; the
+tool crate still has no edge to `epsilon-lsp`; every failure degrades to
+words the model can act on.
+
+**Deliberately NOT built:** the remaining five opencode ops, hover
+documentation, call hierarchy, rename/workspace-symbol writes (a write is
+not a query), per-op timeout knobs (the publish timeout is reused and
+said).
+
+**Revisit trigger.** A real server proves `publish_timeout` wrong for
+queries (slow indexers marking broken on every cold query) — then the
+timeout, not the multiplex, is the behaviour being changed.

@@ -15,6 +15,7 @@ pub mod goal;
 pub mod ids;
 pub mod keybind;
 pub mod lagged_notice;
+pub mod lsp_queries;
 pub mod message;
 pub mod prompt_template;
 pub mod question;

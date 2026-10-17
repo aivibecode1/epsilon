@@ -79,6 +79,29 @@ pub fn diagnostics_for(
     }
 }
 
+/// The query handle a language-server policy buys: `None` when the policy is off.
+///
+/// Same shape as [`diagnostics_for`] (M215): the frontend decides (`--lsp`), this builds the
+/// service, and `epsilon-tools` receives only the seam — `None` means the `lsp` tool is not
+/// registered at all, so the model is never offered a query that could only fail.
+#[must_use]
+pub fn lsp_queries_for(
+    policy: Lsp,
+) -> Option<Arc<dyn epsilon_contracts::lsp_queries::LspQueryProvider>> {
+    match policy {
+        Lsp::Off => None,
+        Lsp::Auto => {
+            let cfg = epsilon_lsp::ServiceConfig {
+                scrub_env: Some(Arc::new(|cmd: &mut tokio::process::Command| {
+                    epsilon_safety::scrub_secret_env(cmd)
+                })),
+                ..Default::default()
+            };
+            Some(Arc::new(epsilon_lsp::DiagnosticsService::new(cfg)))
+        }
+    }
+}
+
 /// Parsed `.epsilon/config.toml` — the project layer of ADR-012.
 ///
 /// Declarative only; unknown keys are preserved on disk but ignored by the runtime.
@@ -5937,7 +5960,10 @@ mod protocol_doc_tests {
 
 #[cfg(test)]
 mod lsp_policy_tests {
-    use super::{Lsp, diagnostics_for};
+    use super::{
+        Agent, Lsp, ProjectConfig, Resume, RunParams, build_runtime, diagnostics_for,
+        lsp_queries_for,
+    };
 
     /// The rule that moved in M215 must survive the move: `off` buys no provider at all, and
     /// `auto` buys one.
@@ -5956,6 +5982,67 @@ mod lsp_policy_tests {
         assert!(
             diagnostics_for(Lsp::Auto).is_some(),
             "--lsp auto must build one"
+        );
+    }
+
+    /// The query handle follows the same policy: `off` buys no provider (and therefore no
+    /// `lsp` tool), `auto` buys one.
+    #[test]
+    fn the_policy_decides_whether_queries_exist() {
+        assert!(
+            lsp_queries_for(Lsp::Off).is_none(),
+            "--lsp off must not build a query service"
+        );
+        assert!(
+            lsp_queries_for(Lsp::Auto).is_some(),
+            "--lsp auto must build one"
+        );
+    }
+
+    /// Full composition: the policy is observable on the built agent's
+    /// registry, not just on the handle — `off` composes an agent with no
+    /// `lsp` tool, `auto` one with it.
+    #[tokio::test]
+    async fn the_policy_decides_whether_the_composed_agent_has_the_tool() {
+        use epsilon_llm::{FauxProvider, FauxStep};
+        async fn compose(ws: &std::path::Path, lsp: Lsp) -> std::sync::Arc<Agent> {
+            let project = ProjectConfig::default();
+            let mut sink = Vec::new();
+            build_runtime(RunParams {
+                workspace: ws,
+                stream_fn: std::sync::Arc::new(FauxProvider::new(Vec::<FauxStep>::new())),
+                approvals: std::sync::Arc::new(epsilon_safety::AutoApprove),
+                mcp_servers: &[],
+                mcp_http_servers: &[],
+                session_file: format!(
+                    ".epsilon/sessions/lsp-policy-{}.jsonl",
+                    if lsp == Lsp::Off { "off" } else { "auto" }
+                ),
+                confinement: &epsilon_tools::Confinement::Off,
+                lsp,
+                model_id: "faux-1",
+                model_explicit: false,
+                resume: &Resume::No,
+                project: &project,
+                project_trusted: true,
+                plan_mode: false,
+                preset: epsilon_safety::Preset::Auto,
+                notices: &mut sink,
+            })
+            .await
+            .expect("composition succeeds in a scratch workspace")
+        }
+        let off_ws = tempfile::tempdir().unwrap();
+        let off = compose(off_ws.path(), Lsp::Off).await;
+        assert!(
+            !off.has_tool("lsp"),
+            "--lsp off composes an agent with no lsp tool"
+        );
+        let auto_ws = tempfile::tempdir().unwrap();
+        let auto = compose(auto_ws.path(), Lsp::Auto).await;
+        assert!(
+            auto.has_tool("lsp"),
+            "--lsp auto composes an agent with the lsp tool"
         );
     }
 }
@@ -6763,6 +6850,9 @@ pub async fn build_runtime_and_gate_runner(
         // refuses rather than runs, so "nobody wired this" can no longer mean "run anyway".
         Some(Arc::clone(&approvals)),
     );
+    // The model-facing query tool rides the same policy: off means absent, never a stub that
+    // could only fail (`register_lsp_tool` registers nothing for `None`).
+    epsilon_tools::register_lsp_tool(&mut registry, lsp_queries_for(lsp));
     let all_mcp = mcp_servers_trusted(mcp_servers, &project.mcp_servers, project_trusted);
     let scrub = scrub_env();
     for cfg in &all_mcp {

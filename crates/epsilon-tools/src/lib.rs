@@ -12,6 +12,7 @@ mod files;
 mod find;
 pub mod goal;
 pub mod image;
+mod lsp_tool;
 mod mutation;
 pub mod question;
 mod read_log;
@@ -26,11 +27,13 @@ mod webfetch;
 use std::sync::Arc;
 
 use epsilon_contracts::diagnostics::DiagnosticsProvider;
+use epsilon_contracts::lsp_queries::LspQueryProvider;
 use epsilon_core::ToolRegistry;
 use epsilon_safety::Sandbox;
 
 pub use files::{EditArgs, EditTool, ReadArgs, ReadTool, WriteArgs, WriteTool};
 pub use find::{FindArgs, FindTool};
+pub use lsp_tool::{LspArgs, LspTool, MAX_RESULTS_PER_OP};
 pub mod goal_gate;
 pub use goal::{
     CreateGoalArgs, CreateGoalTool, GetGoalArgs, GetGoalTool, GoalAction, UpdateGoalArgs,
@@ -125,6 +128,18 @@ pub fn register_builtins_with(
     // The alternative — leaving `approvals` unset and letting a model-authored shell
     // command run — is the defect this signature makes impossible to express.
     let _ = register_builtins_and_gate_runner(registry, confinement, diagnostics, None);
+}
+
+/// Register the model-facing `lsp` query tool when a provider exists.
+///
+/// **`lsp` is a handle, not a policy (M215).** Whether to start a language server at all is
+/// the frontend's decision — it owns the `--lsp` flag and the workspace. What this tool needs
+/// is only the seam, so this crate does not depend on `epsilon-lsp`. `None` (the `Lsp::Off`
+/// mapping) registers nothing, so the model is never offered a query that could only fail.
+pub fn register_lsp_tool(registry: &mut ToolRegistry, lsp: Option<Arc<dyn LspQueryProvider>>) {
+    if let Some(provider) = lsp {
+        registry.register(Arc::new(LspTool::new(provider)));
+    }
 }
 
 /// Register every built-in, and hand back the gate runner built from the same sandbox.

@@ -825,6 +825,49 @@ fn clip_head(s: &str, max_bytes: usize) -> &str {
     &s[..cut]
 }
 
+/// What the model should do with a spilled file, branched on truthful
+/// task-tool availability (opencode `truncate.ts:129-131`).
+///
+/// With a `task` tool the hint delegates: a subagent digs through the spill
+/// with `grep`/`read` while the caller keeps its context. Without one the
+/// hint names only what every registry has (`grep`, `read` with
+/// offset/limit) and never invents delegation.
+///
+/// The wording names Epsilon's actual surface (`task.rs`: the tool is
+/// `task`, the worker is a subagent of some `subagent_type`, the search
+/// tools are `grep` and `read`) — not opencode's dedicated "explore agent",
+/// which Epsilon does not have.
+pub fn truncation_hint(has_task_tool: bool) -> &'static str {
+    if has_task_tool {
+        "Use the task tool to have a subagent process the spilled file with grep and read (with offset/limit). Do NOT read the full file yourself - delegate to save context."
+    } else {
+        "Use grep to search the full content or read with offset/limit to view specific sections."
+    }
+}
+
+/// [`truncate_output`] with the task-aware hint made explicit.
+///
+/// `has_task_tool` must reflect the registry the result is shown to — `true`
+/// only where a `task` tool is actually registered. [`truncate_output`]
+/// keeps the safe default (`false`): it never promises delegation it cannot
+/// keep. Caps and spill behaviour are identical; only the hint branches.
+pub fn truncate_output_with_task(
+    output: &str,
+    spill_dir: &Path,
+    stem: &str,
+    has_task_tool: bool,
+) -> Truncated {
+    let mut t = truncate_inner(output, spill_dir, stem);
+    if t.truncated {
+        if !t.text.ends_with('\n') {
+            t.text.push('\n');
+        }
+        t.text.push_str(truncation_hint(has_task_tool));
+        t.text.push('\n');
+    }
+    t
+}
+
 /// Head + tail truncation with an exact omission report, spilling the complete
 /// output to `spill_dir` when cut (DSH locator pattern: the model gets a path it
 /// can `read`).
@@ -836,7 +879,16 @@ fn clip_head(s: &str, max_bytes: usize) -> &str {
 /// end makes the model re-run the command to see what it missed. The marker
 /// states exactly how many lines and bytes were dropped, so the model can decide
 /// whether reading the spill is worth it instead of guessing.
+///
+/// Safe default: the hint claims only `grep`/`read` ([`truncate_output_with_task`]
+/// with `false`). Callers shown to a registry that actually has the `task` tool
+/// should pass `true` through [`truncate_output_with_task`] instead — the branch
+/// is the caller's truth to tell, not this helper's to guess.
 pub fn truncate_output(output: &str, spill_dir: &Path, stem: &str) -> Truncated {
+    truncate_output_with_task(output, spill_dir, stem, false)
+}
+
+fn truncate_inner(output: &str, spill_dir: &Path, stem: &str) -> Truncated {
     let lines: Vec<&str> = output.lines().collect();
     let total_lines = lines.len();
     let total_bytes = output.len();
@@ -1283,5 +1335,67 @@ mod tests {
             let mode = std::fs::metadata(&spill).unwrap().permissions().mode() & 0o777;
             assert_eq!(mode, 0o700, "spill root is private");
         }
+    }
+
+    #[test]
+    fn oversized_hint_delegates_via_task_when_present() {
+        // opencode `truncate.ts:129-131`: with a task tool the hint delegates
+        // to a subagent; the wording must name Epsilon's actual `task` surface
+        // (`task.rs`: `task` tool, `subagent_type`, `grep`/`read` with
+        // offset/limit) — not opencode's "explore agent".
+        let dir = tempfile::tempdir().unwrap();
+        let big = (0..3000)
+            .map(|i| format!("line {i}"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        let t = truncate_output_with_task(&big, dir.path(), "demo", true);
+        assert!(t.truncated, "the fixture must actually truncate");
+        assert!(
+            t.text.contains("task"),
+            "with-task hint names the task tool: {}",
+            tail(&t.text)
+        );
+        assert!(
+            t.text.to_lowercase().contains("subagent")
+                || t.text.to_lowercase().contains("delegate"),
+            "with-task hint delegates instead of reading inline: {}",
+            tail(&t.text)
+        );
+    }
+
+    #[test]
+    fn oversized_hint_without_task_claims_only_read_grep() {
+        // Negative: without a task tool the hint must not invent one — only
+        // the tools that exist on every registry (`grep`, `read`).
+        let dir = tempfile::tempdir().unwrap();
+        let big = (0..3000)
+            .map(|i| format!("line {i}"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        let t = truncate_output_with_task(&big, dir.path(), "demo", false);
+        assert!(t.truncated, "the fixture must actually truncate");
+        let lower = t.text.to_lowercase();
+        assert!(
+            lower.contains("grep") && lower.contains("read"),
+            "without-task hint points at grep/read: {}",
+            tail(&t.text)
+        );
+        assert!(
+            !lower.contains("task tool")
+                && !lower.contains("subagent")
+                && !lower.contains("delegate"),
+            "without-task hint must not claim delegation: {}",
+            tail(&t.text)
+        );
+    }
+
+    fn tail(text: &str) -> String {
+        text.chars()
+            .rev()
+            .take(600)
+            .collect::<String>()
+            .chars()
+            .rev()
+            .collect()
     }
 }
