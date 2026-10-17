@@ -118,6 +118,15 @@ pub struct TuiConfig {
     /// closed. The headless path already said so (`provider: faux (offline scripted)`);
     /// the TUI did not.
     pub offline: bool,
+    /// Workspace root, resolved by the CLI (`--workspace` or cwd) and carried
+    /// rather than re-derived — the same reasoning as [`Self::offline`]: the
+    /// frontend must not decide a second time. Before this, `App` read the
+    /// launch cwd itself, so `--workspace DIR` ran the agent in DIR while
+    /// every App-resolved path (session browser, checkpoints ledger, skills
+    /// and template roots, `/undo-turn` file counts) silently read the cwd —
+    /// including a live `/undo-turn` listing reporting "0 files" for a turn
+    /// that edited one.
+    pub workspace_root: std::path::PathBuf,
 }
 
 /// Redraw cadence (spinner/clock resolution).
@@ -2044,6 +2053,10 @@ impl App {
             inert_channel(),
             inert_channel(),
             inert_channel(),
+            // Bench default is the launch cwd, like production before the
+            // workspace thread-through; benches that need a workspace set
+            // `workspace_root` explicitly afterwards.
+            std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from(".")),
         );
         app.ui = ui;
         app
@@ -2939,7 +2952,13 @@ mod live_cache_tests {
         let (fetched_tx, _frx) = tokio::sync::mpsc::unbounded_channel();
         let (notices_tx, _nrx) = tokio::sync::mpsc::unbounded_channel();
         let (oauth_tx, _orx) = tokio::sync::mpsc::unbounded_channel();
-        App::new("faux-1".to_string(), fetched_tx, notices_tx, oauth_tx)
+        App::new(
+            "faux-1".to_string(),
+            fetched_tx,
+            notices_tx,
+            oauth_tx,
+            std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from(".")),
+        )
     }
 
     /// Criterion 6: a successful fetch stamps the entry — last-known-good

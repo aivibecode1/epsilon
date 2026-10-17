@@ -1271,7 +1271,13 @@ fn app_with_file_tools() -> (App, Arc<Agent>, ChannelApprovalUi, tempfile::TempD
         workspace.path().to_path_buf(),
     );
     (
-        App::new("faux-write".into(), ftx, ntx, otx),
+        App::new(
+            "faux-write".into(),
+            ftx,
+            ntx,
+            otx,
+            workspace.path().to_path_buf(),
+        ),
         agent,
         approvals,
         workspace,

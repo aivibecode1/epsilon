@@ -2449,7 +2449,15 @@ pub fn describe_turn_undo(
     workspace: &Path,
     turn: u64,
 ) -> Result<String, String> {
-    let (_, paths) = turn_plan(agent, workspace, turn)?;
+    let (paths, leaf_before) = turn_plan(agent, workspace, turn)?;
+    // A turn that began on an empty session keeps its transcript (there is
+    // no earlier entry to rewind to) while its files still rewind — the
+    // preview must promise exactly that, not a rewind it will not perform.
+    let transcript_clause = if leaf_before.is_some() {
+        "and rewind the transcript to before it"
+    } else {
+        "but the transcript stays — the turn began the session"
+    };
     if paths.is_empty() {
         return Ok(format!(
             "turn {turn} touched no files — undoing it only rewinds the transcript to \
@@ -2459,9 +2467,8 @@ pub fn describe_turn_undo(
     let shown: Vec<&str> = paths.iter().take(5).map(|s| s.as_str()).collect();
     let more = paths.len().saturating_sub(shown.len());
     Ok(format!(
-        "would undo turn {turn}: {} file(s) ({}{}) back to before the turn, and rewind \
-         the transcript to before it. Nothing has changed yet. Run `/undo-turn {turn} yes` \
-         to apply.",
+        "would undo turn {turn}: {} file(s) ({}{}) back to before the turn, {transcript_clause}. \
+         Nothing has changed yet. Run `/undo-turn {turn} yes` to apply.",
         paths.len(),
         shown.join(", "),
         if more == 0 {
@@ -2491,9 +2498,10 @@ pub fn describe_turn_undo(
 /// The rewind is a leaf move (`navigate_to`), never a truncation: the undone
 /// suffix stays in the file off-branch, the model view excludes it because it
 /// walks from the leaf, and the next append branches from the restored point.
-/// A turn that began on an empty session (`leaf_before: None`) is refused —
-/// there is no entry to navigate to, and re-adding a `resetLeaf` is out of
-/// scope (M221 removed it; `/new` owns the empty branch).
+/// A turn that began on an empty session (`leaf_before: None`) has no earlier
+/// entry, so the leaf stays while its files still rewind — the per-file
+/// `/restore` shape, which never touches the transcript either — and the
+/// sentence says exactly that.
 ///
 /// # Busy guard
 ///
@@ -2623,44 +2631,52 @@ pub fn undo_turn(
             ));
         }
     }
-    // All files back: move the leaf, then reproject the live transcript.
-    let leaf_before = leaf_before.ok_or_else(|| {
-        "undo-turn: turn 1 began on an empty session — there is no entry to rewind to. \
-         The files were left alone; /new starts the empty branch."
-            .to_string()
-    })?;
-    // Files already moved and the leaf has nowhere to go: roll the files back
-    // rather than leave a half-undo behind.
-    if let Err(why) = (|| -> Result<(), String> {
-        let mut st = handle
-            .lock()
-            .map_err(|_| "session store unavailable".to_string())?;
-        st.navigate_to(&leaf_before)
-            .map_err(|e| format!("cannot rewind the transcript: {e}"))?;
-        Ok(())
-    })() {
-        for (target, back) in snapshots {
-            match back {
-                Some(bytes) => {
-                    let _ = std::fs::write(&target, &bytes);
+    // All files back: move the leaf when there is somewhere to go, then
+    // reproject the live transcript. A turn that began on an empty session
+    // has no earlier entry — its files still rewind (the important half,
+    // the same shape as a per-file `/restore`, which never touches the
+    // transcript), the leaf stays, and the sentence says exactly that
+    // rather than reporting a refusal for work that happened.
+    match leaf_before {
+        Some(leaf_before) => {
+            // The leaf has somewhere to go but the move itself can still
+            // fail: roll the files back rather than leave a half-undo.
+            if let Err(why) = (|| -> Result<(), String> {
+                let mut st = handle
+                    .lock()
+                    .map_err(|_| "session store unavailable".to_string())?;
+                st.navigate_to(&leaf_before)
+                    .map_err(|e| format!("cannot rewind the transcript: {e}"))?;
+                Ok(())
+            })() {
+                for (target, back) in snapshots {
+                    match back {
+                        Some(bytes) => {
+                            let _ = std::fs::write(&target, &bytes);
+                        }
+                        None => {
+                            let _ = std::fs::remove_file(&target);
+                        }
+                    }
                 }
-                None => {
-                    let _ = std::fs::remove_file(&target);
-                }
+                return Err(format!(
+                    "undo-turn turn {turn} refused: {why} Nothing was undone."
+                ));
+            }
+            match agent.reproject_current_branch() {
+                Ok(_) => Ok(format!(
+                    "undid turn {turn}: {restored} file(s) back to before the turn; the transcript \
+                     suffix stays in the file off-branch"
+                )),
+                Err(why) => Err(format!(
+                    "undo-turn turn {turn}: files restored but the transcript could not be reprojected \
+                     ({why}) — the leaf was moved; resume the session to re-read it"
+                )),
             }
         }
-        return Err(format!(
-            "undo-turn turn {turn} refused: {why} Nothing was undone."
-        ));
-    }
-    match agent.reproject_current_branch() {
-        Ok(_) => Ok(format!(
-            "undid turn {turn}: {restored} file(s) back to before the turn; the transcript \
-             suffix stays in the file off-branch"
-        )),
-        Err(why) => Err(format!(
-            "undo-turn turn {turn}: files restored but the transcript could not be reprojected \
-             ({why}) — the leaf was moved; resume the session to re-read it"
+        None => Ok(format!(
+            "undid turn {turn}: {restored} file(s) back to before the turn; the transcript stays \
+             — the turn began the session, so there is no earlier entry to rewind to"
         )),
     }
 }
@@ -2670,7 +2686,7 @@ fn turn_plan(
     agent: &epsilon_core::Agent,
     workspace: &Path,
     turn: u64,
-) -> Result<(TurnRow, Vec<String>), String> {
+) -> Result<(Vec<String>, Option<String>), String> {
     let Some(handle) = agent.session_store() else {
         return Err("undo-turn: no session store attached".to_string());
     };
@@ -2690,7 +2706,7 @@ fn turn_plan(
             )
         });
     };
-    let Some((t, ledger_start, ledger_end, _)) =
+    let Some((_, ledger_start, ledger_end, leaf_before)) =
         epsilon_session::SessionStore::parse_turn_anchor(&anchor)
     else {
         return Err(format!(
@@ -2707,15 +2723,7 @@ fn turn_plan(
         .into_iter()
         .collect::<Vec<_>>();
     paths.sort();
-    Ok((
-        TurnRow {
-            turn: t,
-            files: paths.len(),
-            ledger_start,
-            ledger_end,
-        },
-        paths,
-    ))
+    Ok((paths, leaf_before))
 }
 
 /// Whether restoring `entry` would be safe, without restoring anything.
@@ -3102,6 +3110,45 @@ mod undo_turn_tests {
         let err = undo_turn(&agent, ws.path(), 1).expect_err("busy refuses");
         assert!(err.contains("busy"), "{err}");
         agent.set_running_for_tests(false);
+    }
+
+    /// A turn that began on an empty session keeps its transcript (no earlier
+    /// entry exists) while its files still rewind — the per-file `/restore`
+    /// shape. RED-first: the old code refused AFTER restoring the files and
+    /// reported "left alone" for bytes it had moved.
+    #[test]
+    fn undo_on_an_empty_session_rewinds_files_and_keeps_the_transcript() {
+        let ws = tempfile::tempdir().unwrap();
+        std::fs::write(ws.path().join("n.txt"), "before\n").unwrap();
+        let agent = bare_agent(ws.path());
+        let path = ws.path().join(".epsilon/sessions/u7.jsonl");
+        let store =
+            epsilon_session::SessionStore::open_in(&path, ws.path()).expect("session opens");
+        agent.attach_session_store(Arc::new(std::sync::Mutex::new(store)));
+        // Turn 1 on an empty session: mutate, then anchor with NO leaf-before.
+        mutate(ws.path(), "n.txt", "after\n");
+        let (_, end) = ledger_seq_range(ws.path());
+        {
+            let handle = agent.session_store().expect("store attached");
+            let mut st = handle.lock().unwrap();
+            st.append_turn_anchor(1, 1, end, None)
+                .expect("anchor appends");
+        }
+        let preview = describe_turn_undo(&agent, ws.path(), 1).expect("preview describes");
+        assert!(
+            preview.contains("transcript stays"),
+            "the preview must promise what the apply does: {preview}"
+        );
+        let done = undo_turn(&agent, ws.path(), 1).expect("files rewind");
+        assert!(
+            done.contains("transcript stays"),
+            "the sentence reports kept transcript, not refusal: {done}"
+        );
+        assert_eq!(
+            std::fs::read_to_string(ws.path().join("n.txt")).unwrap(),
+            "before\n",
+            "the file goes back even with nowhere for the leaf to go"
+        );
     }
 
     /// Restart durability: anchors survive a reopen; the undo works on the

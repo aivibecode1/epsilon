@@ -4130,3 +4130,17 @@ other command.
 — not the replay — is the behaviour being changed), or a
 second writer needs the leaf-before of an empty session (then `navigate_to`
 grows a pre-first form with its own ADR, not a quiet re-add).
+
+**Amendment (live-probe findings).** Two defects the first cut shipped,
+both found by driving the binary rather than the tests: (1) a turn that
+began on an empty session restored its files and then reported refusal
+("left alone" for bytes it had moved) — now keep-leaf semantics, files
+rewind and the sentence says the transcript stays, the per-file
+`/restore` shape; (2) the TUI `App` read the launch cwd as its workspace
+while the agent ran in `--workspace DIR`, so every App-resolved path
+(session browser, checkpoints ledger, skills/templates/commands roots,
+undo file counts) silently read the wrong directory — including a live
+`/undo-turn` listing reporting "0 files" for a turn that edited one. The
+CLI-resolved workspace now threads through `TuiConfig` into `App::new`
+(carried, not re-derived, the M233 pattern); test seams keep passing the
+launch cwd explicitly so no test changes meaning.

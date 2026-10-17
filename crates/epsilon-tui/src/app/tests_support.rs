@@ -51,7 +51,16 @@ pub fn test_app() -> (App, Arc<Agent>, TestReceivers) {
         gate,
         std::env::temp_dir(),
     );
-    let mut app = App::new("faux-1".into(), ftx, ntx, otx);
+    let mut app = App::new(
+        "faux-1".into(),
+        ftx,
+        ntx,
+        otx,
+        // Today's behavior, pinned: tests run against the launch cwd
+        // unless they override `workspace_root` afterwards (most do).
+        // Production passes the CLI-resolved workspace instead.
+        std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from(".")),
+    );
     // Pinned, not loaded: `App::new` reads the saved default from global
     // config, which is the developer's own on a dev machine — a test that
     // inherited it would order and mark rows by whoever ran it. Tests that
@@ -89,7 +98,13 @@ pub fn test_app_with_faux(steps: Vec<epsilon_llm::FauxStep>) -> (App, Arc<Agent>
         gate,
         std::env::temp_dir(),
     );
-    let mut app = App::new("faux-1".into(), ftx, ntx, otx);
+    let mut app = App::new(
+        "faux-1".into(),
+        ftx,
+        ntx,
+        otx,
+        std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from(".")),
+    );
     app.default_model = None;
     (app, agent, (frx, nrx))
 }
@@ -241,7 +256,13 @@ pub fn test_app_with_bash() -> (App, Arc<Agent>, TestReceivers, ChannelApprovalU
     // fresh instance would be a different queue, and the command would hang there
     // too — with the test unable to see why.
     (
-        App::new("faux-1".into(), ftx, ntx, otx),
+        App::new(
+            "faux-1".into(),
+            ftx,
+            ntx,
+            otx,
+            std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from(".")),
+        ),
         agent,
         (frx, nrx),
         (*approvals).clone(),

@@ -40,6 +40,7 @@ pub(crate) async fn drive(cfg: TuiConfig, terminal: &mut ratatui::DefaultTermina
         trust_review_pending,
         theme_mode,
         offline,
+        workspace_root,
     } = cfg;
 
     let mut events_rx = agent.subscribe();
@@ -49,7 +50,7 @@ pub(crate) async fn drive(cfg: TuiConfig, terminal: &mut ratatui::DefaultTermina
     let (oauth_tx, mut oauth_rx) = tokio::sync::mpsc::unbounded_channel::<OauthUiEvent>();
     let (goal_round_tx, goal_round_rx) =
         tokio::sync::mpsc::unbounded_channel::<epsilon_runtime::GoalRound>();
-    let mut app = App::new(model_id, fetched_tx, notices_tx, oauth_tx);
+    let mut app = App::new(model_id, fetched_tx, notices_tx, oauth_tx, workspace_root);
     app.gate_runner = gate_runner;
     app.set_goal_round_channel(goal_round_tx, goal_round_rx);
     // D8: the palette was resolved by the CLI; `App::new` detected the rest.

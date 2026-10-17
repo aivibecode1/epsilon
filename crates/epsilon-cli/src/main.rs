@@ -1743,6 +1743,7 @@ async fn tui_mode(
                 // `DeepSeek V3.1` over a faux turn, because the offline marker was keyed off the
                 // model id instead of this decision.
                 offline: shared.offline,
+                workspace_root: shared.workspace.clone(),
             })
             .await;
             // P-085, after teardown so it survives in scrollback: name the

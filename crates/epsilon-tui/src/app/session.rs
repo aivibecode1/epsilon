@@ -26,9 +26,8 @@ impl App {
         fetched_tx: tokio::sync::mpsc::UnboundedSender<(String, Result<Vec<String>, String>)>,
         notices_tx: tokio::sync::mpsc::UnboundedSender<String>,
         oauth_tx: tokio::sync::mpsc::UnboundedSender<OauthUiEvent>,
+        workspace_root: std::path::PathBuf,
     ) -> Self {
-        let workspace_root =
-            std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
         // The footer's location label, one per repertoire: the shortening reads the
         // environment (the home prefix) and the ellipsis mark, and the mark is the one
         // thing the draw's own theme decides. Both are derived here, once — see the
@@ -642,6 +641,26 @@ pub(super) fn terminal_title(session_name: Option<&str>, cwd_basename: &str) -> 
 #[cfg(test)]
 mod title_tests {
     use super::terminal_title;
+
+    /// `--workspace DIR` must reach the App, not just the agent: `App::new`
+    /// used to read the launch cwd itself, so a TUI launched elsewhere ran
+    /// its turns in DIR while every App-resolved path (session browser,
+    /// checkpoints ledger, skills/templates/commands roots, undo file
+    /// counts) silently read the cwd — including a live `/undo-turn`
+    /// listing reporting "0 files" for a turn that edited one.
+    #[test]
+    fn new_honors_the_given_workspace_instead_of_the_cwd() {
+        let (ftx, _frx) = tokio::sync::mpsc::unbounded_channel();
+        let (ntx, _nrx) = tokio::sync::mpsc::unbounded_channel();
+        let (otx, _orx) = tokio::sync::mpsc::unbounded_channel();
+        let dir = tempfile::tempdir().unwrap();
+        let app = super::App::new("faux-1".into(), ftx, ntx, otx, dir.path().to_path_buf());
+        assert_eq!(
+            app.workspace_root,
+            dir.path(),
+            "the App must run where the CLI pointed it, not where it was launched"
+        );
+    }
 
     #[test]
     fn title_tracks_name_and_base() {

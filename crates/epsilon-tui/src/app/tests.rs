@@ -9135,7 +9135,13 @@ async fn a_resumed_launch_draws_the_composed_model_not_the_launch_one() {
     let (ftx, _frx) = tokio::sync::mpsc::unbounded_channel();
     let (ntx, _nrx) = tokio::sync::mpsc::unbounded_channel();
     let (otx, _orx) = tokio::sync::mpsc::unbounded_channel();
-    let mut app = App::new(agent.model_id(), ftx, ntx, otx);
+    let mut app = App::new(
+        agent.model_id(),
+        ftx,
+        ntx,
+        otx,
+        std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from(".")),
+    );
     app.default_model = None;
 
     let rows = render_rows(&mut app, 100, 30);
