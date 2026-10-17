@@ -16,26 +16,40 @@
 //!    text instead of the characters they stand for.
 //! 6. **Trimmed-boundary** match: the model included the blank lines around the
 //!    block it meant.
-//! 7. **Block-anchor** match (M71): first and last lines match *approximately*
-//!    (similarity ≥ 0.65) and the region between them is replaced. This is the
-//!    only stage that can match a *different number* of lines than `old_string`,
-//!    which is why it is also the only stage the disproportionality guard can
-//!    fire on — a loose anchor match over a huge span is refused rather than
-//!    applied, because "matched loosely" is the same thing as "guessed".
+//! 7. **Whitespace-normalized** match (opencode `WhitespaceNormalizedReplacer`):
+//!    every whitespace run collapses to one space before comparing, so a paste
+//!    whose indentation and interior spacing drifted still locates the block —
+//!    including a `old_string` shorter than any file line, found by its words.
+//! 8. **Context-aware** match (opencode `ContextAwareReplacer`): same-size
+//!    block, first and last lines exactly equal, at least half the middle
+//!    lines trimmed-equal. Tighter than the anchor stage below (exact anchors,
+//!    fixed height, middle-line rule) for the case the model remembered the
+//!    edges and drifted inside.
+//! 9. **Block-anchor** match (M71): first and last lines match *approximately*
+//!    (similarity ≥ 0.65) and the region between them is replaced. This exists
+//!    for the case the fixed-width stages cannot serve: the model remembered a
+//!    block's opening and closing lines and paraphrased something in the middle. The risk is
+//!    the mirror image of that — two anchors far apart that were never a block — which the
+//!    disproportionality guard refuses.
 //!
 //! Stages run in ascending order of risk (exact first, similarity-based last), which
 //! differs from opencode's ordering (it interleaves by observed frequency): when two
-//! stages would both match, the safer one wins.
+//! stages would both match, the safer one wins. The two opencode ports sit
+//! immediately before the closest looser stage: whitespace-normalized before
+//! escape-normalized (both still compare substance, not shape), context-aware
+//! just ahead of block-anchor (same family, strictly tighter).
 //!
 //! Occurrence-count safety (exactly-once unless `replace_all`) applies to EVERY
-//! stage, not just exact matching.
+//! stage, not just exact matching. opencode's context stage takes the first
+//! candidate (`ContextAwareReplacer` breaks after one); this chain counts them
+//! and refuses on multiples instead — a guess with two homes is not a match.
 
 /// Which stage of the chain produced the replacement.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MatchStrategy {
     /// Byte-for-byte after EOL normalization.
     Exact,
-    /// Per-line equality after trimming both ends of every line.
+    /// Per-line equality after trimming trailing whitespace of every line.
     LineTrimmed,
     /// Per-line equality after stripping leading whitespace and trimming.
     IndentationFlexible,
@@ -43,6 +57,10 @@ pub enum MatchStrategy {
     EscapeNormalized,
     /// Blank lines around the block were ignored.
     TrimmedBoundary,
+    /// Every whitespace run collapsed to one space before comparing.
+    WhitespaceNormalized,
+    /// Same-size block, exact anchors, at least half the middle lines equal.
+    ContextAware,
     /// First and last lines matched approximately; the region between was replaced.
     BlockAnchor,
 }
@@ -56,6 +74,10 @@ impl MatchStrategy {
             Self::IndentationFlexible => " (matched after ignoring indentation differences)",
             Self::EscapeNormalized => " (matched after unescaping \\n/\\t in old_string)",
             Self::TrimmedBoundary => " (matched after ignoring blank lines around the block)",
+            Self::WhitespaceNormalized => " (matched after ignoring whitespace differences)",
+            Self::ContextAware => {
+                " (matched on the first and last lines with similar middle lines — check the result)"
+            }
             Self::BlockAnchor => " (matched on the first and last lines only — check the result)",
         }
     }
@@ -111,18 +133,25 @@ pub fn restore_eol(lf_text: &str, eol: &str) -> String {
 /// Stages are ordered by risk: an exact match always wins over a loose one, so a file
 /// that contains the text verbatim is never "found approximately" somewhere else first.
 pub fn plan(content: &str, old: &str, new: &str, replace_all: bool) -> EditOutcome {
-    // Fixed-width stages first: each compares a window exactly `old_string` tall, so none of
-    // them can match more text than it was given.
+    // Fixed-height stages first: each compares a window exactly `old_string` tall
+    // (or a sub-line of one such line), so none of them can match a *taller*
+    // region than it was given. The guard below still applies to them on the
+    // character rule; the line rule only the anchor stage can trip.
     let mut first_ambiguity: Option<usize> = None;
     for (strategy, run) in [
         (
             MatchStrategy::Exact,
-            replace_exact as fn(&str, &str, &str, bool) -> Result<Option<(String, usize)>, usize>,
+            replace_exact as fn(&str, &str, &str, bool) -> StageResult,
         ),
         (MatchStrategy::LineTrimmed, replace_line_trimmed),
         (MatchStrategy::IndentationFlexible, replace_indent_flexible),
         (MatchStrategy::EscapeNormalized, replace_escape_normalized),
         (MatchStrategy::TrimmedBoundary, replace_trimmed_boundary),
+        (
+            MatchStrategy::WhitespaceNormalized,
+            replace_whitespace_normalized,
+        ),
+        (MatchStrategy::ContextAware, replace_context_aware),
     ] {
         match run(content, old, new, replace_all) {
             Ok(Some((output, count))) => {
@@ -133,11 +162,25 @@ pub fn plan(content: &str, old: &str, new: &str, replace_all: bool) -> EditOutco
                 };
             }
             Ok(None) => continue, // stage found nothing; try the next one
-            Err(n) => {
+            Err(StageRefusal::Ambiguous(n)) => {
                 // Higher-priority stages matched multiple times: that IS the answer — a
                 // looser stage can only match at least as much, so report and stop.
                 first_ambiguity = Some(n);
                 break;
+            }
+            // opencode checks every replacer (`isDisproportionateMatch` in
+            // `replace`, `tool/edit.ts:709-713`): a span far larger than asked
+            // for is refused on the spot, never passed down the chain.
+            Err(StageRefusal::Suspicious {
+                span_lines,
+                old_lines,
+                extra_chars,
+            }) => {
+                return EditOutcome::Suspicious {
+                    span_lines,
+                    old_lines,
+                    extra_chars,
+                };
             }
         }
     }
@@ -145,7 +188,7 @@ pub fn plan(content: &str, old: &str, new: &str, replace_all: bool) -> EditOutco
         return EditOutcome::Ambiguous(n);
     }
 
-    // The one variable-width stage, last because it is the loosest: it can match a region
+    // The one variable-height stage, last because it is the loosest: it can match a region
     // of a different height than `old_string`, and therefore has its own refusals.
     match replace_block_anchor(content, old, new, replace_all) {
         Ok(Some((output, count))) => EditOutcome::Applied {
@@ -154,8 +197,8 @@ pub fn plan(content: &str, old: &str, new: &str, replace_all: bool) -> EditOutco
             strategy: MatchStrategy::BlockAnchor,
         },
         Ok(None) => EditOutcome::NotFound,
-        Err(AnchorRefusal::Ambiguous(n)) => EditOutcome::Ambiguous(n),
-        Err(AnchorRefusal::Suspicious {
+        Err(StageRefusal::Ambiguous(n)) => EditOutcome::Ambiguous(n),
+        Err(StageRefusal::Suspicious {
             span_lines,
             old_lines,
             extra_chars,
@@ -167,14 +210,22 @@ pub fn plan(content: &str, old: &str, new: &str, replace_all: bool) -> EditOutco
     }
 }
 
-/// How the block-anchor stage can decline.
-enum AnchorRefusal {
+/// One stage's answer: the replacement plus its occurrence count, absence, or
+/// a refusal (several matches, or one implausibly large for what was asked).
+type StageResult = Result<Option<(String, usize)>, StageRefusal>;
+
+/// How any stage of the chain can decline.
+#[derive(Debug, PartialEq, Eq)]
+enum StageRefusal {
     /// More than one candidate region.
     Ambiguous(usize),
     /// One region, but implausibly large for the text that was asked for.
     Suspicious {
+        /// Lines the matched span covers.
         span_lines: usize,
+        /// Lines in `old_string`.
         old_lines: usize,
+        /// Extra characters the matched span carries over `old_string`.
         extra_chars: usize,
     },
 }
@@ -193,12 +244,7 @@ const ANCHOR_MIN_LINES: usize = 3;
 /// block's opening and closing lines and paraphrased something in the middle. The risk is
 /// the mirror image of that — two anchors far apart that were never a block — which the
 /// disproportionality guard refuses.
-fn replace_block_anchor(
-    content: &str,
-    old: &str,
-    new: &str,
-    replace_all: bool,
-) -> Result<Option<(String, usize)>, AnchorRefusal> {
+fn replace_block_anchor(content: &str, old: &str, new: &str, replace_all: bool) -> StageResult {
     let content_lines: Vec<&str> = content.split('\n').collect();
     let old_lines: Vec<&str> = old.split('\n').collect();
     if old_lines.len() < ANCHOR_MIN_LINES || old_lines.len() > content_lines.len() {
@@ -228,7 +274,7 @@ fn replace_block_anchor(
     }
     match spans.len() {
         0 => Ok(None),
-        n if n > 1 && !replace_all => Err(AnchorRefusal::Ambiguous(n)),
+        n if n > 1 && !replace_all => Err(StageRefusal::Ambiguous(n)),
         _ => {
             let chosen = if replace_all {
                 spans.as_slice()
@@ -242,7 +288,7 @@ fn replace_block_anchor(
             let old_chars: usize = old.len();
             if !replace_all && disproportionate(span_lines, old_lines.len(), span_chars, old_chars)
             {
-                return Err(AnchorRefusal::Suspicious {
+                return Err(StageRefusal::Suspicious {
                     span_lines,
                     old_lines: old_lines.len(),
                     extra_chars: span_chars.saturating_sub(old_chars),
@@ -298,7 +344,7 @@ fn replace_escape_normalized(
     old: &str,
     new: &str,
     replace_all: bool,
-) -> Result<Option<(String, usize)>, usize> {
+) -> StageResult {
     if !old.contains("\\n") && !old.contains("\\t") && !old.contains("\\r") {
         return Ok(None);
     }
@@ -311,12 +357,7 @@ fn replace_escape_normalized(
 }
 
 /// The model included the blank lines that surround the block it meant to replace.
-fn replace_trimmed_boundary(
-    content: &str,
-    old: &str,
-    new: &str,
-    replace_all: bool,
-) -> Result<Option<(String, usize)>, usize> {
+fn replace_trimmed_boundary(content: &str, old: &str, new: &str, replace_all: bool) -> StageResult {
     let lines: Vec<&str> = old.split('\n').collect();
     let lead = lines.iter().take_while(|l| l.trim().is_empty()).count();
     let trail = lines
@@ -353,17 +394,12 @@ fn disproportionate(
     span_lines >= line_limit || span_chars >= old_chars + 500
 }
 
-/// Byte-exact replacement. `Err(count)` = ambiguous, `Ok(None)` = absent.
-fn replace_exact(
-    content: &str,
-    old: &str,
-    new: &str,
-    replace_all: bool,
-) -> Result<Option<(String, usize)>, usize> {
+/// Byte-exact replacement. `Err(Ambiguous)` = ambiguous, `Ok(None)` = absent.
+fn replace_exact(content: &str, old: &str, new: &str, replace_all: bool) -> StageResult {
     let count = content.matches(old).count();
     match count {
         0 => Ok(None),
-        n if n > 1 && !replace_all => Err(n),
+        n if n > 1 && !replace_all => Err(StageRefusal::Ambiguous(n)),
         _ => {
             let output = if replace_all {
                 content.replace(old, new)
@@ -397,12 +433,7 @@ where
 
 /// Splice `new_lines` over each matched window (right-to-left so earlier
 /// indices stay valid) and rebuild the body.
-fn replace_line_trimmed(
-    content: &str,
-    old: &str,
-    new: &str,
-    replace_all: bool,
-) -> Result<Option<(String, usize)>, usize> {
+fn replace_line_trimmed(content: &str, old: &str, new: &str, replace_all: bool) -> StageResult {
     // opencode `lineTrimmedMatch`: ignore TRAILING whitespace per line;
     // leading whitespace still counts (indentation errors are the next stage's job).
     replace_by_lines(content, old, new, replace_all, |c, o| {
@@ -410,22 +441,11 @@ fn replace_line_trimmed(
     })
 }
 
-fn replace_indent_flexible(
-    content: &str,
-    old: &str,
-    new: &str,
-    replace_all: bool,
-) -> Result<Option<(String, usize)>, usize> {
+fn replace_indent_flexible(content: &str, old: &str, new: &str, replace_all: bool) -> StageResult {
     replace_by_lines(content, old, new, replace_all, |c, o| c.trim() == o.trim())
 }
 
-fn replace_by_lines<F>(
-    content: &str,
-    old: &str,
-    new: &str,
-    replace_all: bool,
-    eq: F,
-) -> Result<Option<(String, usize)>, usize>
+fn replace_by_lines<F>(content: &str, old: &str, new: &str, replace_all: bool, eq: F) -> StageResult
 where
     F: Fn(&str, &str) -> bool,
 {
@@ -436,7 +456,7 @@ where
     let starts = find_line_windows(&content_lines, &old_lines, eq);
     match starts.len() {
         0 => Ok(None),
-        n if n > 1 && !replace_all => Err(n),
+        n if n > 1 && !replace_all => Err(StageRefusal::Ambiguous(n)),
         _ => {
             let chosen = if replace_all {
                 starts.as_slice()
@@ -511,6 +531,235 @@ fn splice_windows(content_lines: &[&str], starts: &[usize], width: usize, new: &
         text.push('\n');
     }
     text
+}
+
+/// Collapse every run of whitespace (spaces, tabs, newlines — the `\s` class)
+/// to one space and trim the ends.
+///
+/// opencode's `WhitespaceNormalizedReplacer` compares `text.replace(/\s+/g,
+/// " ").trim()`; this is the same comparison written without a regex, since
+/// only the ASCII runs matter for matching pasted code.
+fn normalize_whitespace(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    let mut started = false;
+    let mut pending_space = false;
+    for ch in text.chars() {
+        if ch.is_whitespace() {
+            pending_space = started;
+        } else {
+            if pending_space {
+                out.push(' ');
+                pending_space = false;
+            }
+            out.push(ch);
+            started = true;
+        }
+    }
+    out
+}
+
+/// Paste-with-drifted-spacing match (opencode `WhitespaceNormalizedReplacer`,
+/// `tool/edit.ts:427-469`).
+///
+/// Whole lines whose collapsed form equals the collapsed `old_string` match,
+/// and so do exact-height windows; when `old_string` is shorter than any file
+/// line it is located by its words (`word1\s+word2…`, opencode `:441-455`).
+/// Yields are byte spans, deduplicated with overlaps pruned (a single-line hit
+/// inside a multi-line window is one region, not two matches), then counted
+/// like every other stage.
+///
+/// Two deliberate deviations toward safety: an all-whitespace `old_string`
+/// matches nothing (opencode would offer every blank line), and the shared
+/// disproportionality guard applies with `replace_all` too (opencode checks
+/// every yield; the block-anchor stage below skips it there — pre-existing,
+/// untouched).
+fn replace_whitespace_normalized(
+    content: &str,
+    old: &str,
+    new: &str,
+    replace_all: bool,
+) -> StageResult {
+    let normalized_find = normalize_whitespace(old);
+    if normalized_find.is_empty() {
+        return Ok(None); // nothing but whitespace is not a block
+    }
+    let lines: Vec<&str> = content.split('\n').collect();
+    // Byte offset of each line start, turning yields into spans.
+    let mut offsets = Vec::with_capacity(lines.len());
+    let mut cursor = 0usize;
+    for line in &lines {
+        offsets.push(cursor);
+        cursor += line.len() + 1; // +1 for the '\n' the split took
+    }
+    let mut spans: Vec<(usize, usize)> = Vec::new();
+    // Single-line matches first — opencode's generator order.
+    for (i, line) in lines.iter().enumerate() {
+        if normalize_whitespace(line) == normalized_find {
+            spans.push((offsets[i], offsets[i] + line.len()));
+        } else if normalize_whitespace(line).contains(normalized_find.as_str()) {
+            let words: Vec<&str> = old.split_whitespace().collect();
+            if !words.is_empty() {
+                let pattern = words
+                    .iter()
+                    .map(|w| regex::escape(w))
+                    .collect::<Vec<_>>()
+                    .join(r"\s+");
+                if let Ok(re) = regex::Regex::new(&pattern)
+                    && let Some(m) = re.find(line)
+                {
+                    spans.push((offsets[i] + m.start(), offsets[i] + m.end()));
+                }
+            }
+        }
+    }
+    // Then multi-line windows (opencode `:460-468`).
+    let find_lines: Vec<&str> = old.split('\n').collect();
+    if find_lines.len() > 1 {
+        for i in 0..=lines.len().saturating_sub(find_lines.len()) {
+            let block = lines[i..i + find_lines.len()].join("\n");
+            if normalize_whitespace(&block) == normalized_find {
+                spans.push((offsets[i], offsets[i] + block.len()));
+            }
+        }
+    }
+    spans.sort();
+    spans.dedup();
+    let mut pruned: Vec<(usize, usize)> = Vec::with_capacity(spans.len());
+    for span in spans {
+        if pruned.last().is_none_or(|&(_, end)| span.0 >= end) {
+            pruned.push(span);
+        }
+    }
+    if pruned.is_empty() {
+        return Ok(None);
+    }
+    let old_lines = find_lines.len();
+    for &(start, end) in &pruned {
+        let span_chars = end - start;
+        let span_lines = content[start..end].split('\n').count();
+        if disproportionate(span_lines, old_lines, span_chars, old.len()) {
+            return Err(StageRefusal::Suspicious {
+                span_lines,
+                old_lines,
+                extra_chars: span_chars.saturating_sub(old.len()),
+            });
+        }
+    }
+    match pruned.len() {
+        n if n > 1 && !replace_all => Err(StageRefusal::Ambiguous(n)),
+        _ => {
+            let chosen = if replace_all {
+                pruned.as_slice()
+            } else {
+                &pruned[..1]
+            };
+            Ok(Some((splice_spans(content, chosen, new), chosen.len())))
+        }
+    }
+}
+
+/// Replace each byte-range span with `new`, rightmost first so earlier offsets
+/// stay valid. Spans must be disjoint (the caller prunes overlaps).
+fn splice_spans(content: &str, spans: &[(usize, usize)], new: &str) -> String {
+    let mut sorted = spans.to_vec();
+    sorted.sort_by_key(|&(start, _)| start);
+    let mut out = content.to_string();
+    for (start, end) in sorted.into_iter().rev() {
+        out.replace_range(start..end, new);
+    }
+    out
+}
+
+/// Same-size block with exact anchors and similar middles (opencode
+/// `ContextAwareReplacer`, `tool/edit.ts:588-644`).
+///
+/// At least half the middle lines (either side non-empty) must be
+/// trimmed-equal; a block with no non-empty middle lines matches on its
+/// anchors alone. opencode takes the first candidate (`break`); this chain
+/// counts every candidate and reports ambiguity, and every candidate passes
+/// the shared disproportionality guard (opencode checks each yield the same
+/// way, `tool/edit.ts:709-713`).
+fn replace_context_aware(content: &str, old: &str, new: &str, replace_all: bool) -> StageResult {
+    let mut find_lines: Vec<&str> = old.split('\n').collect();
+    if find_lines.len() < 3 {
+        return Ok(None); // need first, last, and something between
+    }
+    // opencode strips one trailing empty line (an `old_string` ending in '\n').
+    if find_lines.last().is_some_and(|l| l.is_empty()) {
+        find_lines.pop();
+    }
+    let content_lines: Vec<&str> = content.split('\n').collect();
+    let first = find_lines[0].trim();
+    let last = find_lines[find_lines.len() - 1].trim();
+    let mut spans: Vec<(usize, usize)> = Vec::new();
+    for i in 0..content_lines.len() {
+        if content_lines[i].trim() != first {
+            continue;
+        }
+        // The nearest following line that closes the anchor, so the span is the
+        // smallest region the two anchors can bound (opencode `:611-641`).
+        let end = ((i + 2)..content_lines.len()).find(|&j| content_lines[j].trim() == last);
+        if let Some(end) = end
+            && content_lines[i..=end].len() == find_lines.len()
+            && middle_lines_match(&content_lines[i..=end], &find_lines)
+        {
+            spans.push((i, end));
+        }
+    }
+    spans.sort();
+    spans.dedup();
+    if spans.is_empty() {
+        return Ok(None);
+    }
+    // Same height as `old_string` by construction, so only the character rule
+    // of the guard can fire — checked all the same (see `disproportionate`).
+    let old_chars = old.len();
+    for &(start, end) in &spans {
+        let span_lines = end - start + 1;
+        let span_chars: usize = content_lines[start..=end].iter().map(|l| l.len() + 1).sum();
+        if disproportionate(span_lines, find_lines.len(), span_chars, old_chars) {
+            return Err(StageRefusal::Suspicious {
+                span_lines,
+                old_lines: find_lines.len(),
+                extra_chars: span_chars.saturating_sub(old_chars),
+            });
+        }
+    }
+    match spans.len() {
+        n if n > 1 && !replace_all => Err(StageRefusal::Ambiguous(n)),
+        _ => {
+            let chosen = if replace_all {
+                spans.as_slice()
+            } else {
+                &spans[..1]
+            };
+            Ok(Some((
+                splice_variable(&content_lines, chosen, new),
+                chosen.len(),
+            )))
+        }
+    }
+}
+
+/// At least half the middle lines trimmed-equal (opencode `:617-638`).
+///
+/// `block` and `find_lines` are the same length; only indices `1..len-1` are
+/// compared. Lines empty on both sides are not lines anyone drifted.
+fn middle_lines_match(block: &[&str], find_lines: &[&str]) -> bool {
+    let mut matching = 0usize;
+    let mut total = 0usize;
+    for k in 1..block.len().saturating_sub(1) {
+        let block_line = block[k].trim();
+        let find_line = find_lines[k].trim();
+        if !block_line.is_empty() || !find_line.is_empty() {
+            total += 1;
+            if block_line == find_line {
+                matching += 1;
+            }
+        }
+    }
+    // `matching / total >= 0.5`, integer-exact and total-free on empties.
+    total == 0 || matching * 2 >= total
 }
 
 /// Byte-offset occurrences of `needle` in `hay` (exact, LF-normalized).
@@ -637,7 +886,11 @@ mod tests {
         ));
 
         // Now the model's copy is *wrong* in the middle: anchors still hold.
-        let old_typo = "impl Foo {\n    // does teh thing\n    fn bar(&self) {}\n}";
+        // Both middle lines drift (0/2), so the context-aware stage refuses
+        // and the looser block-anchor stage serves it — the 1/2 case now
+        // belongs to the context stage (see
+        // `drifted_middle_lines_match_at_the_fifty_percent_rule`).
+        let old_typo = "impl Foo {\n    // does teh thing\n    fn barr(&self) {}\n}";
         match plan(
             content,
             old_typo,
@@ -900,6 +1153,133 @@ mod tests {
                 count: 1,
                 strategy: MatchStrategy::Exact
             }
+        );
+    }
+
+    // ---- WhitespaceNormalizedReplacer (opencode `tool/edit.ts:427-469`) ----------
+
+    #[test]
+    fn whitespace_collapsed_paste_matches() {
+        // The model pasted the block with single spaces; the file uses ragged
+        // interior runs. All earlier stages fail on interior whitespace.
+        let content = "fn a() {\n    let x   =   1;\n}\n";
+        match plan(
+            content,
+            "fn a() {\n    let x = 1;\n}",
+            "fn a() {\n    let x = 2;\n}",
+            false,
+        ) {
+            EditOutcome::Applied {
+                output,
+                count,
+                strategy,
+            } => {
+                assert_eq!(strategy, MatchStrategy::WhitespaceNormalized);
+                assert_eq!(count, 1);
+                assert_eq!(output, "fn a() {\n    let x = 2;\n}\n");
+                assert!(strategy.note().contains("whitespace"));
+            }
+            other => panic!("expected a whitespace-normalized match, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn whitespace_stage_fires_on_a_single_line_substring() {
+        // `old_string` is shorter than any file line and spacing differs, so
+        // only the word-pattern sub-match can find it (opencode `:438-456`).
+        // Earlier stages cannot fire: no line equals it under any trim rule.
+        let content = "if (ready) { log(  \"hello\"  ); }\n";
+        match plan(content, "log( \"hello\" );", "log( \"bye\" );", false) {
+            EditOutcome::Applied {
+                output, strategy, ..
+            } => {
+                assert_eq!(strategy, MatchStrategy::WhitespaceNormalized);
+                assert_eq!(output, "if (ready) { log( \"bye\" ); }\n");
+            }
+            other => panic!("expected a single-line whitespace match, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn whitespace_stage_refuses_a_pathologically_wide_span() {
+        // Same words, but one line carries a 600-space run: 500+ extra
+        // characters over `old_string`, so the shared guard refuses.
+        let old = "a b\nc d\ne f";
+        let content = format!("a{}b\nc d\ne f\n", " ".repeat(600));
+        match plan(&content, old, "x", false) {
+            EditOutcome::Suspicious { extra_chars, .. } => {
+                assert!(extra_chars >= 500, "extra_chars = {extra_chars}");
+            }
+            other => panic!("expected the character rule to fire, got {other:?}"),
+        }
+    }
+
+    // ---- ContextAwareReplacer (opencode `tool/edit.ts:588-644`) ------------------
+
+    #[test]
+    fn drifted_middle_lines_match_at_the_fifty_percent_rule() {
+        // Anchors exact; middles 2/3 trimmed-equal — at the 50% bar, so the
+        // context stage (tighter than block-anchor) must win, not block-anchor.
+        let content = "fn f() {\n    let a = 1;\n    let b = 2;\n    let c = 3;\n}\n";
+        let old = "fn f() {\n    let a = 1;\n    let WRONG = 2;\n    let c = 3;\n}";
+        match plan(content, old, "fn f() {\n    let z = 9;\n}", false) {
+            EditOutcome::Applied {
+                output,
+                count,
+                strategy,
+            } => {
+                assert_eq!(strategy, MatchStrategy::ContextAware);
+                assert_eq!(count, 1);
+                assert_eq!(output, "fn f() {\n    let z = 9;\n}\n");
+                assert!(strategy.note().contains("check the result"));
+            }
+            other => panic!("expected a context-aware match, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn context_stage_hits_the_boundary_exactly_at_half() {
+        // One of two middles matches: 1/2 == 50% — the rule is inclusive.
+        let content = "A\nm1\nm2\nB\n";
+        let matched = replace_context_aware(content, "A\nm1\nWRONG\nB", "Z", false);
+        assert!(
+            matches!(matched, Ok(Some(_))),
+            "exactly half the middles must still match: {matched:?}"
+        );
+    }
+
+    #[test]
+    fn drifted_middle_lines_below_threshold_take_no_context_match() {
+        // One of three middles matches: 1/3 < 50% — the pure stage finds nothing.
+        let content = "A\nm1\nm2\nm3\nB\n";
+        let out = replace_context_aware(content, "A\nm1\nWRONG1\nWRONG2\nB", "Z", false);
+        assert_eq!(out, Ok(None), "below-threshold drift must refuse: {out:?}");
+    }
+
+    #[test]
+    fn context_stage_at_plan_level_falls_through_when_below_threshold() {
+        // Same 1/3 drift through `plan`: the context stage must NOT claim it —
+        // the looser block-anchor stage legitimately does (exact anchors).
+        let content = "A\nm1\nm2\nm3\nB\n";
+        match plan(content, "A\nm1\nWRONG1\nWRONG2\nB", "Z", false) {
+            EditOutcome::Applied { strategy, .. } => {
+                assert_eq!(
+                    strategy,
+                    MatchStrategy::BlockAnchor,
+                    "below-threshold drift must fall past the context stage"
+                );
+            }
+            other => panic!("expected block-anchor fallthrough, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn context_stage_reports_ambiguity_rather_than_picking_one() {
+        // Two identical same-size regions both clear 50%: exactly-once refuses.
+        let content = "A\nm1\nm2\nB\nmid\nA\nm1\nm2\nB\n";
+        assert_eq!(
+            plan(content, "A\nm1\nWRONG\nB", "Z", false),
+            EditOutcome::Ambiguous(2)
         );
     }
 }

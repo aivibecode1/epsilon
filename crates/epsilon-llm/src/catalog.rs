@@ -261,6 +261,15 @@ pub struct ModelInfo {
     /// string-matching the model id (M3 binding property); every other wire
     /// ignores it.
     pub reasoning_shape: ReasoningShape,
+    /// Whether the model accepts image input (ADR-055 capability field).
+    ///
+    /// models.dev does not publish a uniform vision flag, so this is a
+    /// curated conservative default per row (text-only families are false;
+    /// see the generator note in `catalog_data.rs`): the wire layer reads it
+    /// instead of string-matching the model id (M3 binding property). A row
+    /// marked false receives an explicit placeholder, never silent-drop and
+    /// never bytes it cannot see.
+    pub supports_vision: bool,
 }
 
 use catalog_data::CATALOG_ROWS as MODELS;

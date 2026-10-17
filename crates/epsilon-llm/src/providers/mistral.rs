@@ -565,4 +565,65 @@ mod tests {
         assert!(body.get("prompt_mode").is_none(), "{body}");
         assert!(body.get("reasoning_effort").is_none(), "{body}");
     }
+
+    fn image_ctx(text: &str, mime: &str, data: &str) -> LlmContext {
+        use epsilon_contracts::content::{ContentBlock, ImageRef};
+        use epsilon_contracts::message::{Message, ToolResultMessage};
+        use epsilon_contracts::new_id;
+        LlmContext {
+            system_prompt: String::new(),
+            messages: vec![Message::ToolResult(ToolResultMessage {
+                id: new_id("msg"),
+                timestamp_ms: 0,
+                tool_call_id: "tc_1".into(),
+                tool_name: "read".into(),
+                content: vec![
+                    ContentBlock::text(text),
+                    ContentBlock::Image(ImageRef {
+                        mime: mime.to_string(),
+                        data: data.to_string(),
+                    }),
+                ],
+                details: serde_json::json!({}),
+                usage: None,
+                is_error: false,
+            })],
+            tools: vec![],
+            thinking_level: epsilon_contracts::ThinkingLevel::Off,
+        }
+    }
+
+    #[test]
+    fn tool_result_text_plus_image_inherits_compat_follow_up() {
+        let body = wire()
+            .request_body(
+                "mistral-large-latest",
+                &image_ctx("ok", "image/png", "iVBORw0KGgo="),
+            )
+            .expect("body");
+        let s = body.to_string();
+        assert!(
+            s.contains("iVBORw0KGgo=") && s.contains("image_url"),
+            "inherited compat follow-up with bytes missing: {s}"
+        );
+    }
+
+    #[test]
+    fn blind_model_omits_bytes_with_placeholder() {
+        let body = wire()
+            .request_body(
+                "totally-unknown-model",
+                &image_ctx("ok", "image/png", "iVBORw0KGgo="),
+            )
+            .expect("body");
+        let s = body.to_string();
+        assert!(
+            s.contains("(tool image omitted: model does not support images)"),
+            "blind placeholder missing: {s}"
+        );
+        assert!(
+            !s.contains("iVBORw0KGgo="),
+            "blind model must receive no image bytes: {s}"
+        );
+    }
 }

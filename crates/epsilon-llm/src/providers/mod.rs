@@ -268,6 +268,205 @@ fn flag_from_keys(usage: &serde_json::Value, pointers: &[&str], keys: &[&str]) -
         || keys.iter().any(|k| usage.get(*k).is_some())
 }
 
+/// Lead text kept when a tool result carries images but no text (ADR-055).
+///
+/// An image-only result still needs a text part on wires whose shapes pair
+/// text with attachments; an empty string there reads as "nothing happened".
+pub const TOOL_IMAGE_LEAD: &str = "(see attached image)";
+
+/// Placeholder for images withheld from a model without vision (ADR-055).
+///
+/// Refusal is not an option and silent-drop is not either: the model is told,
+/// in words, that images were omitted and why.
+pub const TOOL_IMAGE_OMITTED_BLIND: &str = "(tool image omitted: model does not support images)";
+
+/// Header of the single follow-up user message carrying forwarded images on
+/// wires with no native tool-result image shape (ADR-055).
+pub const TOOL_IMAGE_FOLLOWUP_HEADER: &str = "Attached image(s) from tool result:";
+
+/// Label for a forwarded image on follow-up turns that carry one image part
+/// beside its own text (ADR-055).
+pub const TOOL_RESULT_IMAGE_LABEL: &str = "Tool result image:";
+
+/// Largest base64 payload forwarded to any provider (ADR-055).
+///
+/// Above this the bytes stay out and a sized placeholder naming mime + bytes
+/// goes in instead — a 200 MB screenshot must not become a 200 MB request.
+pub const TOOL_IMAGE_MAX_ENCODED_BYTES: usize = 28 * 1024 * 1024;
+
+/// Largest decoded payload forwarded to any provider (ADR-055).
+///
+/// Estimated as `encoded * 3 / 4` without decoding, so the guard itself never
+/// pays the allocation it is guarding against.
+pub const TOOL_IMAGE_MAX_DECODED_BYTES: usize = 20 * 1024 * 1024;
+
+/// One forwardable binary attachment extracted from a tool result (ADR-055).
+///
+/// Images (`image/*`) and PDFs (`application/pdf`) share this shape: both
+/// ride as base64 in a binary field on wires that support them, and both
+/// become a sized placeholder naming mime + bytes where they do not.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ToolAttachment {
+    /// MIME type, e.g. `image/png` or `application/pdf`.
+    pub mime: String,
+    /// Base64 payload (no data-URL prefix).
+    pub data: String,
+}
+
+/// What one tool result carries for the wires (ADR-055).
+///
+/// `text` is the joined text blocks. `images` / `documents` hold only
+/// attachments that passed the size guard; oversize attachments are replaced
+/// by a sized placeholder in `notes`. Wires map these to their own shapes as
+/// data and never decide policy.
+pub struct ToolResultMedia {
+    /// Joined text blocks (`\n`-separated, possibly empty).
+    pub text: String,
+    /// Forwardable `image/*` attachments (size guard passed).
+    pub images: Vec<ToolAttachment>,
+    /// Forwardable PDF attachments (size guard passed).
+    pub documents: Vec<ToolAttachment>,
+    /// Sized placeholders for oversize attachments (mime + bytes, no bytes).
+    pub notes: Vec<String>,
+}
+
+/// Decoded-size estimate for a base64 payload without decoding it (ADR-055).
+///
+/// `len * 3 / 4` (padding ignored — the estimate errs high, which is the safe
+/// side for a guard). The guard must not allocate the bytes it refuses.
+pub(crate) fn decoded_estimate(encoded_len: usize) -> usize {
+    encoded_len.saturating_mul(3) / 4
+}
+
+/// Whether a base64 payload of `encoded_len` bytes is too large to forward
+/// (ADR-055).
+///
+/// Either ceiling trips it: 28 MiB encoded or 20 MiB decoded (estimated).
+/// Wires never check this themselves; extraction applies it.
+pub(crate) fn is_oversize(encoded_len: usize) -> bool {
+    encoded_len > TOOL_IMAGE_MAX_ENCODED_BYTES
+        || decoded_estimate(encoded_len) > TOOL_IMAGE_MAX_DECODED_BYTES
+}
+
+/// Sized placeholder for an oversize image (ADR-055).
+///
+/// Names the mime and the encoded bytes so the model knows what was withheld.
+/// Carries no bytes itself — base64 never sits inside a text field.
+pub(crate) fn sized_image_placeholder(mime: &str, encoded: usize) -> String {
+    format!("(tool image omitted: {mime}, {encoded} bytes encoded exceeds size limit)")
+}
+
+/// Sized placeholder for a document the wire cannot carry natively (ADR-055).
+///
+/// Names the mime and the encoded bytes. Like every placeholder, words
+/// instead of bytes — and instead of refusal.
+pub(crate) fn sized_document_placeholder(mime: &str, encoded: usize) -> String {
+    format!("(tool document omitted: {mime}, {encoded} bytes)")
+}
+
+/// Whether `model_id` accepts image input (ADR-055).
+///
+/// Reads the catalog row's `supports_vision` capability field — never an
+/// id substring (M3 binding property). Exact id first, then one retry with
+/// the provider segment stripped (`vertex/gemini-…` → `gemini-…`), mirroring
+/// `reasoning_shape_for`. Unknown ids are blind: withholding bytes with an
+/// explicit placeholder is safe, sending bytes to a model that cannot see
+/// them is not.
+pub(crate) fn model_supports_vision(model_id: &str) -> bool {
+    if let Some(row) = crate::catalog::lookup_model(model_id) {
+        return row.supports_vision;
+    }
+    model_id
+        .split_once('/')
+        .and_then(|(_, rest)| crate::catalog::lookup_model(rest))
+        .map(|m| m.supports_vision)
+        .unwrap_or(false)
+}
+
+/// Split one tool result into text, forwardable images and PDFs (ADR-055).
+///
+/// `application/pdf` attachments sort into `documents`; every other
+/// `Image` block sorts into `images`. Oversize attachments of either kind
+/// become sized placeholders in `notes` and their bytes are dropped here —
+/// the wires never see bytes that failed the guard.
+pub(crate) fn extract_tool_result_media(
+    t: &epsilon_contracts::message::ToolResultMessage,
+) -> ToolResultMedia {
+    use epsilon_contracts::content::ContentBlock;
+    let mut text_parts: Vec<&str> = Vec::new();
+    let mut images: Vec<ToolAttachment> = Vec::new();
+    let mut documents: Vec<ToolAttachment> = Vec::new();
+    let mut notes: Vec<String> = Vec::new();
+    for c in &t.content {
+        match c {
+            ContentBlock::Text { text } => text_parts.push(text.as_str()),
+            ContentBlock::Image(img) => {
+                let encoded = img.data.len();
+                if is_oversize(encoded) {
+                    notes.push(sized_image_placeholder(&img.mime, encoded));
+                } else if img.mime == "application/pdf" {
+                    documents.push(ToolAttachment {
+                        mime: img.mime.clone(),
+                        data: img.data.clone(),
+                    });
+                } else {
+                    images.push(ToolAttachment {
+                        mime: img.mime.clone(),
+                        data: img.data.clone(),
+                    });
+                }
+            }
+            _ => {}
+        }
+    }
+    ToolResultMedia {
+        text: text_parts.join("\n"),
+        images,
+        documents,
+        notes,
+    }
+}
+
+/// Policy-combined tool-result payload for `model_id` (ADR-055).
+///
+/// Returns `(text, images, documents)`: `text` is the joined text blocks with
+/// every applicable placeholder appended (oversize notes, then the blind
+/// note when attachments were withheld from a model without vision);
+/// `images` / `documents` hold only the bytes the model may receive (empty
+/// when blind or oversize). Image-free results return their text untouched —
+/// existing bodies stay byte-identical.
+///
+/// This is the one place policy lives. Wires take these three values and map
+/// them to their own JSON shapes as data.
+pub(crate) fn tool_media_for(
+    model_id: &str,
+    t: &epsilon_contracts::message::ToolResultMessage,
+) -> (String, Vec<ToolAttachment>, Vec<ToolAttachment>) {
+    let media = extract_tool_result_media(t);
+    let mut text = media.text;
+    for note in &media.notes {
+        if text.is_empty() {
+            text.push_str(note);
+        } else {
+            text.push('\n');
+            text.push_str(note);
+        }
+    }
+    if media.images.is_empty() && media.documents.is_empty() {
+        return (text, Vec::new(), Vec::new());
+    }
+    if model_supports_vision(model_id) {
+        return (text, media.images, media.documents);
+    }
+    if text.is_empty() {
+        text.push_str(TOOL_IMAGE_OMITTED_BLIND);
+    } else {
+        text.push('\n');
+        text.push_str(TOOL_IMAGE_OMITTED_BLIND);
+    }
+    (text, Vec::new(), Vec::new())
+}
+
 impl HttpEventStream {
     /// Fresh accumulator for one provider response (`provider` is the wire's
     /// static name; `prefer_tail_usage` picks which usage shape wins when a wire
@@ -2457,6 +2656,166 @@ mod http_stream_tests {
         assert_eq!(
             text, "split me",
             "a line split across chunks must still decode once complete"
+        );
+    }
+}
+
+/// Tool-result image forwarding (ADR-055): every wire variant must carry
+/// `ToolResult[Text+Image]` to `request_body` without silent-drop — native
+/// blocks, a follow-up turn, or an explicit placeholder, never nothing.
+#[cfg(test)]
+mod tool_image_forwarding_tests {
+    use super::*;
+    use crate::stream_fn::LlmContext;
+    use epsilon_contracts::content::{ContentBlock, ImageRef};
+    use epsilon_contracts::message::{Message, ToolResultMessage};
+
+    const PNG_BYTES: &str = "iVBORw0KGgo=";
+
+    fn image_ctx() -> LlmContext {
+        LlmContext {
+            system_prompt: String::new(),
+            messages: vec![Message::ToolResult(ToolResultMessage {
+                id: epsilon_contracts::new_id("msg"),
+                timestamp_ms: 0,
+                tool_call_id: "tc_1".into(),
+                tool_name: "read".into(),
+                content: vec![
+                    ContentBlock::text("ok"),
+                    ContentBlock::Image(ImageRef {
+                        mime: "image/png".into(),
+                        data: PNG_BYTES.into(),
+                    }),
+                ],
+                details: serde_json::json!({}),
+                usage: None,
+                is_error: false,
+            })],
+            tools: vec![],
+            thinking_level: epsilon_contracts::ThinkingLevel::Off,
+        }
+    }
+
+    fn wires() -> Vec<(&'static str, Box<dyn ProviderWire>, &'static str)> {
+        vec![
+            ("anthropic", Box::new(AnthropicWire), "claude-haiku-4-5"),
+            (
+                "responses",
+                Box::new(OpenAiResponsesWire {
+                    base_url: "https://api.openai.com/v1".into(),
+                    env_key: Some("OPENAI_API_KEY".into()),
+                }),
+                "gpt-5",
+            ),
+            (
+                "compat",
+                Box::new(OpenAiCompatWire {
+                    base_url: "https://api.example.com/v1".into(),
+                    env_key: Some("K".into()),
+                }),
+                "deepseek/deepseek-v4-flash-vision-exp",
+            ),
+            ("google", Box::new(GoogleWire), "gemini-3-flash-preview"),
+            (
+                "vertex",
+                Box::new(vertex::GoogleVertexWire {
+                    project: "p".into(),
+                    location: "l".into(),
+                    credentials_file: None,
+                }),
+                "vertex/gemini-3-flash-preview",
+            ),
+            (
+                "bedrock",
+                Box::new(BedrockConverseWire),
+                "bedrock/anthropic.claude-haiku-4-5",
+            ),
+            (
+                "mistral",
+                Box::new(MistralConversationsWire {
+                    base_url: "https://api.mistral.ai".into(),
+                    env_key: Some("MISTRAL_API_KEY".into()),
+                }),
+                "mistral-large-latest",
+            ),
+        ]
+    }
+
+    #[test]
+    fn faux_loop_reaches_request_body_on_every_wire_variant() {
+        let ctx = image_ctx();
+        for (name, wire, model) in wires() {
+            let body = wire
+                .request_body(model, &ctx)
+                .unwrap_or_else(|e| panic!("{name} request_body failed: {e}"));
+            let s = body.to_string();
+            assert!(
+                s.contains(PNG_BYTES)
+                    || s.contains("(tool image omitted")
+                    || s.contains("(see attached image)")
+                    || s.contains("Attached image(s) from tool result:")
+                    || s.contains("Tool result image:"),
+                "{name}: ToolResult image silently dropped (neither bytes nor placeholder): {s}"
+            );
+        }
+    }
+
+    #[test]
+    fn blind_model_omits_bytes_with_placeholder() {
+        let ctx = image_ctx();
+        for (name, wire, _) in wires() {
+            let body = wire
+                .request_body("totally-unknown-model", &ctx)
+                .unwrap_or_else(|e| panic!("{name} request_body failed: {e}"));
+            let s = body.to_string();
+            assert!(
+                s.contains("(tool image omitted: model does not support images)"),
+                "{name}: blind placeholder missing: {s}"
+            );
+            assert!(
+                !s.contains(PNG_BYTES),
+                "{name}: blind model must receive no image bytes"
+            );
+        }
+    }
+
+    #[test]
+    fn oversize_image_becomes_sized_placeholder_not_bytes() {
+        // 28 MiB encoded ceiling (ADR-055): one byte over must placeholder.
+        let big = "A".repeat(28 * 1024 * 1024 + 1);
+        let ctx = LlmContext {
+            system_prompt: String::new(),
+            messages: vec![Message::ToolResult(ToolResultMessage {
+                id: epsilon_contracts::new_id("msg"),
+                timestamp_ms: 0,
+                tool_call_id: "tc_1".into(),
+                tool_name: "read".into(),
+                content: vec![
+                    ContentBlock::text("ok"),
+                    ContentBlock::Image(ImageRef {
+                        mime: "image/png".into(),
+                        data: big,
+                    }),
+                ],
+                details: serde_json::json!({}),
+                usage: None,
+                is_error: false,
+            })],
+            tools: vec![],
+            thinking_level: epsilon_contracts::ThinkingLevel::Off,
+        };
+        let body = AnthropicWire
+            .request_body("claude-haiku-4-5", &ctx)
+            .expect("body");
+        let s = body.to_string();
+        assert!(
+            s.contains("(tool image omitted: image/png") && s.contains("bytes"),
+            "oversize sized placeholder (mime+bytes) missing: {}",
+            &s[..s.len().min(400)]
+        );
+        assert!(
+            !s.contains(&"A".repeat(1024)),
+            "oversize bytes must not ride the wire"
         );
     }
 }

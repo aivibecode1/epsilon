@@ -108,6 +108,13 @@ unicode-segmentation = "=1.13.3"
 # M43: image attachments (pi `harness/tools/image.ts` base64). Already in-tree
 # transitively (0.23.1 in Cargo.lock via rmcp/reqwest); pinned exact.
 base64 = "=0.23.1"
+# Three-small-ports (image auto-resize, pi `read.ts:113-118` +
+# `image-resize-core.ts`): decode + downscale + PNG re-encode. Already in-tree
+# via arboard (image 0.25.10, png 0.18.1 and the jpeg decoder all in
+# Cargo.lock — declaring it adds no new source, only the name). Default
+# features off: only the PNG/JPEG codecs the resize path round-trips;
+# GIF/WebP pass through at original size.
+image = { version = "=0.25.10", default-features = false, features = ["png", "jpeg"] }
 # M52: OAuth login ceremonies need a CSPRNG for the PKCE code verifier
 # (RFC 7636 §4.1 requires cryptographic randomness) and for the `state`
 # parameter. std has no RNG; hand-rolling one would be worse. Already in-tree

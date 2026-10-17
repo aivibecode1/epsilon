@@ -165,7 +165,9 @@ impl Tool for ReadTool {
             .take(4096)
             .read_to_end(&mut bytes)
             .map_err(|e| ToolFailure::msg(format!("read error: {e}")))?;
-        if crate::image::detect_supported_image_mime(&bytes).is_some() {
+        if crate::image::detect_supported_image_mime(&bytes).is_some()
+            || crate::image::is_pdf(&bytes)
+        {
             bytes = std::fs::read(&path)
                 .map_err(|e| ToolFailure::msg(format!("cannot open {}: {e}", path.display())))?;
         }
@@ -178,14 +180,64 @@ impl Tool for ReadTool {
                     "Read image file [image/bmp]\n[Image omitted: BMP images are not convertible in this build.]",
                 ));
             }
+            // Shrink toward the model's input limits (pi `read.ts:113-118`):
+            // the fallback caps ARE the limits here — `ToolContext` carries no
+            // model metadata for per-model inputLimits, so
+            // `default_resize_options` is both the fallback and the policy.
+            let resized = crate::image::resize_to_limits(
+                &bytes,
+                mime,
+                &crate::image::default_resize_options(),
+            );
+            let mut header = format!("Read image file [{}]", resized.mime);
+            if resized.mime != mime {
+                // A resized JPEG is re-encoded as PNG (pi's conversion hint,
+                // `image-process.ts:67-70`).
+                header.push_str(&format!(
+                    "\n[Image converted from {mime} to {}.]",
+                    resized.mime
+                ));
+            }
+            if let Some(note) = resized.dimension_note() {
+                header.push('\n');
+                header.push_str(&note);
+            }
             return Ok(ToolOutput {
                 content: vec![
-                    epsilon_contracts::content::ContentBlock::text(format!(
-                        "Read image file [{mime}]"
-                    )),
+                    epsilon_contracts::content::ContentBlock::text(header),
                     epsilon_contracts::content::ContentBlock::Image(
                         epsilon_contracts::content::ImageRef {
-                            mime: mime.into(),
+                            mime: resized.mime,
+                            data: base64::Engine::encode(
+                                &base64::engine::general_purpose::STANDARD,
+                                &resized.bytes,
+                            ),
+                        },
+                    ),
+                ],
+                details: serde_json::json!({}),
+                usage: None,
+                terminate: false,
+            });
+        }
+        if crate::image::is_pdf(&bytes) {
+            // opencode `read.ts:303-324`: a PDF rides as a data-URL attachment —
+            // the same `ContentBlock` shape as the image branch above. Honest
+            // boundary (verified against every provider wire, not assumed):
+            // wires currently forward only `Text` from tool results, so the
+            // model does not see these bytes yet — they are stored and
+            // transcript-visible, ready for the wire-forwarding work that
+            // makes them model-visible. Ungated like the image branch:
+            // `ToolContext` has no model handle for pi's getNonVisionImageNote
+            // capability check (`read.ts:59-64`), so there is nothing to gate on.
+            return Ok(ToolOutput {
+                content: vec![
+                    epsilon_contracts::content::ContentBlock::text(
+                        "Read PDF file [application/pdf]",
+                    ),
+                    epsilon_contracts::content::ContentBlock::Image(
+                        epsilon_contracts::content::ImageRef {
+                            mime: "application/pdf".into(),
                             data: base64::Engine::encode(
                                 &base64::engine::general_purpose::STANDARD,
                                 &bytes,
@@ -820,8 +872,8 @@ impl Tool for EditTool {
                                 .unwrap_or("");
                             return Err(ToolFailure::msg(format!(
                                 "old_string not found in {} (exact, whitespace-trimmed, \
-                         indentation-flexible, escape-normalized, blank-line-trimmed, and \
-                         anchor-similarity matching all failed).{}",
+                         indentation-flexible, escape-normalized, blank-line-trimmed, \
+                         whitespace-normalized, context-anchor, and anchor-similarity matching all failed).{}",
                                 args_path,
                                 if hint.is_empty() {
                                     String::new()
@@ -950,6 +1002,124 @@ mod miss_tests {
             err.message.contains("config.toml"),
             "the near-miss is named; got: {}",
             err.message
+        );
+    }
+}
+
+#[cfg(test)]
+mod attach_tests {
+    use super::ReadTool;
+    use epsilon_contracts::content::ContentBlock;
+    use epsilon_contracts::tool::{Tool, ToolContext, ToolInvocation};
+    use std::sync::Arc;
+    use tokio_util::sync::CancellationToken;
+
+    fn ctx_for(root: &std::path::Path) -> ToolContext {
+        ToolContext {
+            session_id: "attach-test".into(),
+            observation_scope: Arc::new(()),
+            cwd: root.to_path_buf(),
+            spill_dir: root.join(".epsilon/spill"),
+            token: CancellationToken::new(),
+            task_host: None,
+            goal_host: None,
+        }
+    }
+
+    fn read_call(name: &str) -> ToolInvocation {
+        ToolInvocation {
+            tool_call_id: "attach-test".into(),
+            args: serde_json::json!({"path": name}),
+        }
+    }
+
+    #[tokio::test]
+    async fn read_attaches_pdf_as_data_url_attachment() {
+        // opencode `read.ts:303-324`: a PDF rides as a data-URL attachment, the
+        // same shape as the image branch. The first block names the file, the
+        // second carries the bytes.
+        let dir = tempfile::tempdir().unwrap();
+        let pdf = b"%PDF-1.4\n1 0 obj\n<< /Type /Catalog >>\nendobj\n".to_vec();
+        std::fs::write(dir.path().join("doc.pdf"), &pdf).unwrap();
+        let tool = ReadTool::new();
+        let out = tool
+            .execute(read_call("doc.pdf"), ctx_for(dir.path()), Arc::new(|_| {}))
+            .await
+            .unwrap();
+        assert_eq!(out.content.len(), 2, "header + attachment: {out:?}");
+        assert_eq!(
+            out.content[0],
+            ContentBlock::text("Read PDF file [application/pdf]")
+        );
+        let ContentBlock::Image(img) = &out.content[1] else {
+            panic!(
+                "second block must be the attachment, got {:?}",
+                out.content[1]
+            );
+        };
+        assert_eq!(img.mime, "application/pdf");
+        assert_eq!(
+            img.data,
+            base64::Engine::encode(&base64::engine::general_purpose::STANDARD, &pdf)
+        );
+    }
+
+    #[tokio::test]
+    async fn read_still_refuses_non_pdf_binary() {
+        // Guard pin: bytes that are neither image nor PDF keep the honest
+        // binary refusal — no attachment, no decoded garbage.
+        let dir = tempfile::tempdir().unwrap();
+        let mut bytes = vec![0x00, 0x01, 0x02, 0x03];
+        bytes.extend(b"definitely not a document\r\n");
+        bytes.push(0x00);
+        std::fs::write(dir.path().join("blob.bin"), &bytes).unwrap();
+        let tool = ReadTool::new();
+        let err = tool
+            .execute(read_call("blob.bin"), ctx_for(dir.path()), Arc::new(|_| {}))
+            .await
+            .expect_err("binary must still be refused");
+        assert!(
+            err.message.contains("refused: file looks binary"),
+            "the binary refusal survives: {}",
+            err.message
+        );
+    }
+
+    #[tokio::test]
+    async fn read_shrinks_an_oversized_png_toward_limits() {
+        // 3000px wide is over the fallback cap: the attached bytes must decode
+        // to the shrunk dimensions and the header must say what changed.
+        let dir = tempfile::tempdir().unwrap();
+        let img = image::DynamicImage::ImageRgb8(image::ImageBuffer::from_fn(3000, 100, |x, y| {
+            image::Rgb([(x % 251) as u8, (y % 251) as u8, 77u8])
+        }));
+        let mut bytes = Vec::new();
+        img.write_to(
+            &mut std::io::Cursor::new(&mut bytes),
+            image::ImageFormat::Png,
+        )
+        .unwrap();
+        std::fs::write(dir.path().join("wide.png"), &bytes).unwrap();
+        let tool = ReadTool::new();
+        let out = tool
+            .execute(read_call("wide.png"), ctx_for(dir.path()), Arc::new(|_| {}))
+            .await
+            .unwrap();
+        assert_eq!(out.content.len(), 2, "header + attachment: {out:?}");
+        let ContentBlock::Image(attached) = &out.content[1] else {
+            panic!("second block must be the image, got {:?}", out.content[1]);
+        };
+        let raw =
+            base64::Engine::decode(&base64::engine::general_purpose::STANDARD, &attached.data)
+                .unwrap();
+        let decoded = image::load_from_memory(&raw).unwrap();
+        assert_eq!((decoded.width(), decoded.height()), (2000, 67));
+        let ContentBlock::Text { text } = &out.content[0] else {
+            panic!("first block must be the header");
+        };
+        assert!(
+            text.contains("original 3000x100"),
+            "the header names the pre-shrink size: {text}"
         );
     }
 }

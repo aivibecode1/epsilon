@@ -65,21 +65,65 @@ impl ProviderWire for OpenAiCompatWire {
         let flush_pending =
             |messages: &mut Vec<serde_json::Value>,
              pending: &mut Vec<&epsilon_contracts::message::ToolResultMessage>| {
+                // Forwarded images across this batch: at most ONE follow-up
+                // user message carries them all (ADR-055).
+                let mut follow_images: Vec<super::ToolAttachment> = Vec::new();
                 for t in pending.drain(..) {
-                    let body: String = t
+                    let has_media = t
                         .content
                         .iter()
-                        .filter_map(|c| match c {
-                            ContentBlock::Text { text } => Some(text.as_str()),
-                            _ => None,
-                        })
-                        .collect::<Vec<_>>()
-                        .join("\n");
+                        .any(|c| matches!(c, ContentBlock::Image(_)));
+                    if !has_media {
+                        let body: String = t
+                            .content
+                            .iter()
+                            .filter_map(|c| match c {
+                                ContentBlock::Text { text } => Some(text.as_str()),
+                                _ => None,
+                            })
+                            .collect::<Vec<_>>()
+                            .join("\n");
+                        messages.push(json!({
+                            "role": "tool",
+                            "tool_call_id": t.tool_call_id,
+                            "content": body,
+                        }));
+                        continue;
+                    }
+                    // Text stays in the tool message; images ride the single
+                    // follow-up. This wire carries no document shape, so PDFs
+                    // become the shared sized placeholder (mime + bytes).
+                    let (mut text, images, documents) = super::tool_media_for(model, t);
+                    for doc in &documents {
+                        let note = super::sized_document_placeholder(&doc.mime, doc.data.len());
+                        if text.is_empty() {
+                            text = note;
+                        } else {
+                            text.push('\n');
+                            text.push_str(&note);
+                        }
+                    }
                     messages.push(json!({
                         "role": "tool",
                         "tool_call_id": t.tool_call_id,
-                        "content": body,
+                        "content": text,
                     }));
+                    follow_images.extend(images);
+                }
+                if !follow_images.is_empty() {
+                    let mut parts = vec![json!({
+                        "type": "text",
+                        "text": super::TOOL_IMAGE_FOLLOWUP_HEADER,
+                    })];
+                    for img in &follow_images {
+                        parts.push(json!({
+                            "type": "image_url",
+                            "image_url": {
+                                "url": format!("data:{};base64,{}", img.mime, img.data),
+                            },
+                        }));
+                    }
+                    messages.push(json!({"role": "user", "content": parts}));
                 }
             };
         for m in &ctx.messages {
@@ -438,6 +482,7 @@ mod tests {
             env_key: "",
             wire: crate::catalog::WireApi::AnthropicMessages,
             reasoning_shape: shape,
+            supports_vision: true,
         }
     }
 
@@ -525,5 +570,105 @@ mod tests {
         assert_eq!(body["reasoning_effort"], "medium");
         assert!(body.get("reasoning").is_none(), "{body}");
         assert!(body.get("thinking").is_none(), "{body}");
+    }
+
+    fn image_ctx(text: &str, mime: &str, data: &str) -> crate::LlmContext {
+        use epsilon_contracts::content::ImageRef;
+        crate::LlmContext {
+            system_prompt: String::new(),
+            messages: vec![
+                assistant_tool_call("tc_1", "read"),
+                Message::ToolResult(ToolResultMessage {
+                    id: new_id("msg"),
+                    timestamp_ms: 0,
+                    tool_call_id: "tc_1".into(),
+                    tool_name: "read".into(),
+                    content: vec![
+                        ContentBlock::text(text),
+                        ContentBlock::Image(ImageRef {
+                            mime: mime.to_string(),
+                            data: data.to_string(),
+                        }),
+                    ],
+                    details: serde_json::json!({}),
+                    usage: None,
+                    is_error: false,
+                }),
+            ],
+            tools: vec![],
+            thinking_level: epsilon_contracts::ThinkingLevel::Off,
+        }
+    }
+
+    fn compat_wire() -> OpenAiCompatWire {
+        OpenAiCompatWire {
+            base_url: "https://api.example.com/v1".to_string(),
+            env_key: Some("K".into()),
+        }
+    }
+
+    #[test]
+    fn tool_result_text_plus_image_adds_one_follow_up_user_message() {
+        let body = compat_wire()
+            .request_body(
+                "deepseek/deepseek-v4-flash-vision-exp",
+                &image_ctx("ok", "image/png", "iVBORw0KGgo="),
+            )
+            .expect("body");
+        let s = body.to_string();
+        assert!(
+            s.contains("iVBORw0KGgo=") && s.contains("image_url"),
+            "follow-up user message with image_url bytes missing: {s}"
+        );
+        assert!(
+            s.contains("Attached image(s) from tool result:"),
+            "follow-up header vocabulary missing: {s}"
+        );
+        // Exactly ONE follow-up user message carries the image.
+        let follow_ups = body["messages"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|m| m["role"] == "user" && m["content"].to_string().contains("image_url"))
+            .count();
+        assert_eq!(follow_ups, 1, "exactly one follow-up user message: {s}");
+    }
+
+    #[test]
+    fn tool_result_pdf_becomes_sized_placeholder_naming_mime() {
+        let body = compat_wire()
+            .request_body(
+                "deepseek/deepseek-v4-flash-vision-exp",
+                &image_ctx("ok", "application/pdf", "JVBERi0="),
+            )
+            .expect("body");
+        let s = body.to_string();
+        assert!(
+            s.contains("application/pdf"),
+            "PDF mime missing (placeholder must name it): {s}"
+        );
+        assert!(
+            !s.contains("JVBERi0="),
+            "PDF base64 must never ride in a text field: {s}"
+        );
+    }
+
+    #[test]
+    fn blind_model_omits_bytes_with_placeholder() {
+        let body = compat_wire()
+            .request_body(
+                "deepseek-flash",
+                &image_ctx("ok", "image/png", "iVBORw0KGgo="),
+            )
+            .expect("body");
+        let s = body.to_string();
+        assert!(
+            s.contains("(tool image omitted: model does not support images)"),
+            "blind placeholder missing: {s}"
+        );
+        assert!(
+            !s.contains("iVBORw0KGgo="),
+            "blind model must receive no image bytes: {s}"
+        );
     }
 }

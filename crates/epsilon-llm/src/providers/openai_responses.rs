@@ -127,23 +127,73 @@ impl ProviderWire for OpenAiResponsesWire {
                     }
                 }
                 Message::ToolResult(t) => {
-                    let text = t
+                    let has_media = t
                         .content
                         .iter()
-                        .filter_map(|c| match c {
-                            ContentBlock::Text { text } => Some(text.as_str()),
-                            _ => None,
-                        })
-                        .collect::<Vec<_>>()
-                        .join("\n");
+                        .any(|c| matches!(c, ContentBlock::Image(_)));
                     // `function_call_output` pairs with the call via `call_id`
                     // (the part before `|` when pi's pair form is present).
                     let call_id = t.tool_call_id.split('|').next().unwrap_or(&t.tool_call_id);
-                    input.push(json!({
-                        "type": "function_call_output",
-                        "call_id": call_id,
-                        "output": text,
-                    }));
+                    if !has_media {
+                        let text = t
+                            .content
+                            .iter()
+                            .filter_map(|c| match c {
+                                ContentBlock::Text { text } => Some(text.as_str()),
+                                _ => None,
+                            })
+                            .collect::<Vec<_>>()
+                            .join("\n");
+                        input.push(json!({
+                            "type": "function_call_output",
+                            "call_id": call_id,
+                            "output": text,
+                        }));
+                        continue;
+                    }
+                    // Images ride as `input_image` parts inside the output
+                    // (ADR-055). This wire carries no native PDF-in-output
+                    // shape, so PDFs become the shared sized placeholder
+                    // (mime + bytes, never bytes in a text field).
+                    let (mut text, images, documents) = super::tool_media_for(model, t);
+                    for doc in &documents {
+                        let note = super::sized_document_placeholder(&doc.mime, doc.data.len());
+                        if text.is_empty() {
+                            text = note;
+                        } else {
+                            text.push('\n');
+                            text.push_str(&note);
+                        }
+                    }
+                    if images.is_empty() {
+                        input.push(json!({
+                            "type": "function_call_output",
+                            "call_id": call_id,
+                            "output": text,
+                        }));
+                    } else {
+                        let mut out = Vec::new();
+                        out.push(json!({
+                            "type": "input_text",
+                            "text": if text.is_empty() {
+                                super::TOOL_IMAGE_LEAD.to_string()
+                            } else {
+                                text
+                            },
+                        }));
+                        for img in &images {
+                            out.push(json!({
+                                "type": "input_image",
+                                "detail": "auto",
+                                "image_url": format!("data:{};base64,{}", img.mime, img.data),
+                            }));
+                        }
+                        input.push(json!({
+                            "type": "function_call_output",
+                            "call_id": call_id,
+                            "output": out,
+                        }));
+                    }
                 }
                 Message::Custom(_) => {}
             }
@@ -562,5 +612,59 @@ mod tests {
         };
         assert_eq!(message.stop_reason, StopReason::Error);
         assert!(message.error_message.as_deref().unwrap().contains("failed"));
+    }
+
+    fn image_ctx(text: &str, mime: &str, data: &str) -> LlmContext {
+        use epsilon_contracts::content::ImageRef;
+        use epsilon_contracts::message::ToolResultMessage;
+        LlmContext {
+            system_prompt: String::new(),
+            messages: vec![Message::ToolResult(ToolResultMessage {
+                id: new_id("msg"),
+                timestamp_ms: 0,
+                tool_call_id: "call_1".into(),
+                tool_name: "read".into(),
+                content: vec![
+                    epsilon_contracts::content::ContentBlock::text(text),
+                    epsilon_contracts::content::ContentBlock::Image(ImageRef {
+                        mime: mime.to_string(),
+                        data: data.to_string(),
+                    }),
+                ],
+                details: serde_json::json!({}),
+                usage: None,
+                is_error: false,
+            })],
+            tools: vec![],
+            thinking_level: epsilon_contracts::ThinkingLevel::Off,
+        }
+    }
+
+    #[test]
+    fn tool_result_text_plus_image_embeds_input_image() {
+        let body = wire()
+            .request_body("gpt-5", &image_ctx("ok", "image/png", "iVBORw0KGgo="))
+            .expect("body");
+        let s = body.to_string();
+        assert!(
+            s.contains("input_image") && s.contains("iVBORw0KGgo="),
+            "input_image with bytes missing from function_call_output: {s}"
+        );
+    }
+
+    #[test]
+    fn tool_result_pdf_names_mime_without_bytes_in_text() {
+        let body = wire()
+            .request_body("gpt-5", &image_ctx("ok", "application/pdf", "JVBERi0="))
+            .expect("body");
+        let s = body.to_string();
+        assert!(
+            s.contains("application/pdf"),
+            "PDF mime missing from function_call_output: {s}"
+        );
+        assert!(
+            !s.contains("JVBERi0="),
+            "PDF base64 must never sit inside a text output string: {s}"
+        );
     }
 }

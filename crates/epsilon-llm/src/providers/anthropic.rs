@@ -122,7 +122,7 @@ impl ProviderWire for AnthropicWire {
                     }
                 }
                 Message::ToolResult(t) => {
-                    messages.push(tool_result_block(t));
+                    messages.push(tool_result_block(model, t));
                 }
                 Message::Custom(_) => {}
             }
@@ -337,22 +337,69 @@ fn last_user_message_index(messages: &[Message]) -> Option<usize> {
 
 /// Tool results replay as a user turn carrying `tool_result` blocks (pi's
 /// `convertMessages`). Multiple consecutive results collapse into one turn.
-fn tool_result_block(t: &ToolResultMessage) -> serde_json::Value {
-    let body: String = t
+///
+/// Text-only results keep the historical string shape byte-for-byte.
+/// Results with images/PDFs (ADR-055) carry native blocks: a text part first
+/// (the shared lead when image-only), then one `image` block per image and
+/// one `document` block per PDF. Blind/oversize attachments never reach here
+/// as bytes — the shared helper replaced them with placeholder words.
+fn tool_result_block(model: &str, t: &ToolResultMessage) -> serde_json::Value {
+    let has_media = t
         .content
         .iter()
-        .filter_map(|c| match c {
-            ContentBlock::Text { text } => Some(text.as_str()),
-            _ => None,
-        })
-        .collect::<Vec<_>>()
-        .join("\n");
+        .any(|c| matches!(c, ContentBlock::Image(_)));
+    if !has_media {
+        let body: String = t
+            .content
+            .iter()
+            .filter_map(|c| match c {
+                ContentBlock::Text { text } => Some(text.as_str()),
+                _ => None,
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
+        return json!({
+            "role": "user",
+            "content": [{
+                "type": "tool_result",
+                "tool_use_id": t.tool_call_id,
+                "content": body,
+                "is_error": t.is_error,
+            }],
+        });
+    }
+    let (text, images, documents) = super::tool_media_for(model, t);
+    let mut parts = Vec::new();
+    parts.push(json!({
+        "type": "text",
+        "text": if text.is_empty() { super::TOOL_IMAGE_LEAD.to_string() } else { text },
+    }));
+    for img in &images {
+        parts.push(json!({
+            "type": "image",
+            "source": {
+                "type": "base64",
+                "media_type": img.mime,
+                "data": img.data,
+            },
+        }));
+    }
+    for doc in &documents {
+        parts.push(json!({
+            "type": "document",
+            "source": {
+                "type": "base64",
+                "media_type": doc.mime,
+                "data": doc.data,
+            },
+        }));
+    }
     json!({
         "role": "user",
         "content": [{
             "type": "tool_result",
             "tool_use_id": t.tool_call_id,
-            "content": body,
+            "content": parts,
             "is_error": t.is_error,
         }],
     })
@@ -382,3 +429,104 @@ fn anthropic_effort(level: epsilon_contracts::ThinkingLevel) -> Option<&'static 
 /// branch (`buildParams`: `params.system` starts with this text, caller prompt
 /// follows in the same cache-controlled block).
 pub const OAUTH_SYSTEM_IDENTITY: &str = "You are Claude Code, Anthropic's official CLI for Claude.";
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::stream_fn::LlmContext;
+    use epsilon_contracts::content::ImageRef;
+    use epsilon_contracts::message::{Message, ToolResultMessage};
+    use epsilon_contracts::new_id;
+
+    const PNG_BYTES: &str = "iVBORw0KGgo=";
+    const PDF_BYTES: &str = "JVBERi0=";
+
+    fn image_result(text: &str, mime: &str, data: &str) -> LlmContext {
+        LlmContext {
+            system_prompt: String::new(),
+            messages: vec![Message::ToolResult(ToolResultMessage {
+                id: new_id("msg"),
+                timestamp_ms: 0,
+                tool_call_id: "tc_1".into(),
+                tool_name: "read".into(),
+                content: vec![
+                    ContentBlock::text(text),
+                    ContentBlock::Image(ImageRef {
+                        mime: mime.to_string(),
+                        data: data.to_string(),
+                    }),
+                ],
+                details: serde_json::json!({}),
+                usage: None,
+                is_error: false,
+            })],
+            tools: vec![],
+            thinking_level: epsilon_contracts::ThinkingLevel::Off,
+        }
+    }
+
+    #[test]
+    fn tool_result_text_plus_image_emits_native_blocks() {
+        let body = AnthropicWire
+            .request_body(
+                "claude-haiku-4-5",
+                &image_result("ok", "image/png", PNG_BYTES),
+            )
+            .expect("body");
+        let s = body.to_string();
+        assert!(
+            s.contains(PNG_BYTES),
+            "native image bytes missing from tool_result: {s}"
+        );
+        assert!(
+            s.contains("\"type\":\"image\"") && s.contains("\"media_type\":\"image/png\""),
+            "native Anthropic image block shape missing: {s}"
+        );
+    }
+
+    #[test]
+    fn tool_result_pdf_emits_document_shape_naming_mime() {
+        let body = AnthropicWire
+            .request_body(
+                "claude-haiku-4-5",
+                &image_result("ok", "application/pdf", PDF_BYTES),
+            )
+            .expect("body");
+        let s = body.to_string();
+        assert!(
+            s.contains("application/pdf"),
+            "PDF mime missing from tool_result: {s}"
+        );
+    }
+
+    #[test]
+    fn image_only_tool_result_keeps_see_attached_lead() {
+        let ctx = LlmContext {
+            system_prompt: String::new(),
+            messages: vec![Message::ToolResult(ToolResultMessage {
+                id: new_id("msg"),
+                timestamp_ms: 0,
+                tool_call_id: "tc_1".into(),
+                tool_name: "read".into(),
+                content: vec![ContentBlock::Image(ImageRef {
+                    mime: "image/png".into(),
+                    data: PNG_BYTES.into(),
+                })],
+                details: serde_json::json!({}),
+                usage: None,
+                is_error: false,
+            })],
+            tools: vec![],
+            thinking_level: epsilon_contracts::ThinkingLevel::Off,
+        };
+        let body = AnthropicWire
+            .request_body("claude-haiku-4-5", &ctx)
+            .expect("body");
+        let s = body.to_string();
+        assert!(
+            s.contains("(see attached image)"),
+            "image-only lead missing: {s}"
+        );
+        assert!(s.contains(PNG_BYTES), "image bytes missing: {s}");
+    }
+}

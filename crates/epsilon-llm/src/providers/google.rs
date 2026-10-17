@@ -30,10 +30,10 @@ impl ProviderWire for GoogleWire {
 
     fn request_body(
         &self,
-        _model: &str,
+        model: &str,
         ctx: &crate::LlmContext,
     ) -> Result<serde_json::Value, String> {
-        Ok(google_request_body(ctx))
+        Ok(google_request_body(model, ctx))
     }
 
     fn on_event(&self, ev: &super::SseEvent, st: &mut HttpEventStream) -> Option<Vec<StreamEvent>> {
@@ -52,7 +52,7 @@ impl ProviderWire for GoogleWire {
 /// Build the `generateContent` request body: shared by the API-key wire and
 /// the Vertex wire (pi `buildParams` — request construction is identical, the
 /// two only differ in endpoint + auth).
-pub(crate) fn google_request_body(ctx: &crate::LlmContext) -> serde_json::Value {
+pub(crate) fn google_request_body(model: &str, ctx: &crate::LlmContext) -> serde_json::Value {
     use epsilon_contracts::content::ContentBlock;
     use epsilon_contracts::message::Message;
     use epsilon_contracts::tool::ToolDescriptor;
@@ -60,20 +60,62 @@ pub(crate) fn google_request_body(ctx: &crate::LlmContext) -> serde_json::Value 
     let mut contents = Vec::new();
     // Gemini replays results as `functionResponse` parts inside user turns;
     // they must immediately follow their model turn, so flush eagerly.
+    // Pending entries carry forwarded attachments with them: gemini-major>=3
+    // inlines them beside the response (ADR-055), older majors take one
+    // follow-up user turn (same `inlineData` shape, new turn).
     let flush_pending = |contents: &mut Vec<serde_json::Value>,
-                         pending: &mut Vec<(String, serde_json::Value)>| {
+                         pending: &mut Vec<(
+        String,
+        serde_json::Value,
+        Vec<super::ToolAttachment>,
+        Vec<super::ToolAttachment>,
+    )>| {
         if pending.is_empty() {
             return;
         }
-        let parts: Vec<serde_json::Value> = pending
+        let inline = gemini_major(model).is_some_and(|m| m >= 3);
+        if inline {
+            let mut parts: Vec<serde_json::Value> = Vec::new();
+            for (name, response, images, documents) in pending.drain(..) {
+                parts.push(json!({"functionResponse": {"name": name, "response": response}}));
+                for att in images.iter().chain(documents.iter()) {
+                    parts.push(json!({"inlineData": {
+                        "mimeType": att.mime,
+                        "data": att.data,
+                    }}));
+                }
+            }
+            contents.push(json!({"role": "user", "parts": parts}));
+        } else {
+            let mut follow_images: Vec<super::ToolAttachment> = Vec::new();
+            let mut follow_docs: Vec<super::ToolAttachment> = Vec::new();
+            let parts: Vec<serde_json::Value> = pending
                 .drain(..)
-                .map(|(name, response)| {
+                .map(|(name, response, images, documents)| {
+                    follow_images.extend(images);
+                    follow_docs.extend(documents);
                     json!({"functionResponse": {"name": name, "response": response}})
                 })
                 .collect();
-        contents.push(json!({"role": "user", "parts": parts}));
+            contents.push(json!({"role": "user", "parts": parts}));
+            if !follow_images.is_empty() || !follow_docs.is_empty() {
+                let mut fparts = vec![json!({"text": super::TOOL_RESULT_IMAGE_LABEL})];
+                for att in follow_images.iter().chain(follow_docs.iter()) {
+                    fparts.push(json!({"inlineData": {
+                        "mimeType": att.mime,
+                        "data": att.data,
+                    }}));
+                }
+                contents.push(json!({"role": "user", "parts": fparts}));
+            }
+        }
     };
-    let mut pending: Vec<(String, serde_json::Value)> = Vec::new();
+    let mut pending: Vec<(
+        String,
+        serde_json::Value,
+        Vec<super::ToolAttachment>,
+        Vec<super::ToolAttachment>,
+    )> = Vec::new();
     for m in &ctx.messages {
         match m {
             Message::User(u) => {
@@ -112,25 +154,44 @@ pub(crate) fn google_request_body(ctx: &crate::LlmContext) -> serde_json::Value 
                 }
             }
             Message::ToolResult(t) => {
-                let body: serde_json::Value = t
+                let has_media = t
                     .content
                     .iter()
-                    .find_map(|c| match c {
-                        ContentBlock::Text { text } => serde_json::from_str(text).ok(),
-                        _ => None,
-                    })
-                    .unwrap_or_else(|| {
-                        let joined: String = t
-                            .content
-                            .iter()
-                            .filter_map(|c| match c {
-                                ContentBlock::Text { text } => Some(text.as_str()),
-                                _ => None,
-                            })
-                            .collect();
-                        json!({"output": joined})
-                    });
-                pending.push((t.tool_call_id.clone(), body));
+                    .any(|c| matches!(c, ContentBlock::Image(_)));
+                if !has_media {
+                    let body: serde_json::Value = t
+                        .content
+                        .iter()
+                        .find_map(|c| match c {
+                            ContentBlock::Text { text } => serde_json::from_str(text).ok(),
+                            _ => None,
+                        })
+                        .unwrap_or_else(|| {
+                            let joined: String = t
+                                .content
+                                .iter()
+                                .filter_map(|c| match c {
+                                    ContentBlock::Text { text } => Some(text.as_str()),
+                                    _ => None,
+                                })
+                                .collect();
+                            json!({"output": joined})
+                        });
+                    pending.push((t.tool_call_id.clone(), body, Vec::new(), Vec::new()));
+                    continue;
+                }
+                // Attachments ride `inlineData` beside the response (ADR-055):
+                // same turn on gemini-major>=3, one follow-up turn below.
+                // PDFs are native here too (`mimeType: application/pdf`).
+                let (text, images, documents) = super::tool_media_for(model, t);
+                let show = if text.is_empty() {
+                    super::TOOL_IMAGE_LEAD.to_string()
+                } else {
+                    text
+                };
+                let body: serde_json::Value =
+                    serde_json::from_str(&show).unwrap_or_else(|_| json!({"output": show}));
+                pending.push((t.tool_call_id.clone(), body, images, documents));
             }
             Message::Custom(_) => {}
         }
@@ -258,6 +319,26 @@ pub(crate) fn google_map_stop(
     }
 }
 
+/// Major generation of a Gemini model id (ADR-055).
+///
+/// Parses the `gemini-<major>` prefix of the bare id (`vertex/…` qualified
+/// ids strip to the bare form first, mirroring `reasoning_shape_for`).
+/// `gemini-2.5-flash` → 2, `gemini-3-flash-preview` → 3. `None` when the id
+/// is not a Gemini id at all — callers treat unknown as the older shape
+/// (a follow-up turn works on every generation; inlining does not).
+pub(crate) fn gemini_major(model_id: &str) -> Option<u64> {
+    let bare = model_id
+        .split_once('/')
+        .map(|(_, rest)| rest)
+        .unwrap_or(model_id);
+    let rest = bare.strip_prefix("gemini-")?;
+    let major: String = rest.chars().take_while(|c| c.is_ascii_digit()).collect();
+    if major.is_empty() {
+        return None;
+    }
+    major.parse().ok()
+}
+
 /// Ladder -> Google `thinkingLevel` enum (uppercase; xhigh/max clamp to HIGH,
 /// pi's google-shared clamping for models that lack those values).
 pub(crate) fn google_level(level: epsilon_contracts::ThinkingLevel) -> &'static str {
@@ -268,5 +349,85 @@ pub(crate) fn google_level(level: epsilon_contracts::ThinkingLevel) -> &'static 
         T::Low => "LOW",
         T::Medium => "MEDIUM",
         T::High | T::XHigh | T::Max => "HIGH",
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::stream_fn::LlmContext;
+    use epsilon_contracts::content::{ContentBlock, ImageRef};
+    use epsilon_contracts::message::{Message, ToolResultMessage};
+    use epsilon_contracts::new_id;
+
+    fn image_ctx(text: &str, mime: &str, data: &str) -> LlmContext {
+        LlmContext {
+            system_prompt: String::new(),
+            messages: vec![Message::ToolResult(ToolResultMessage {
+                id: new_id("msg"),
+                timestamp_ms: 0,
+                tool_call_id: "tc_1".into(),
+                tool_name: "read".into(),
+                content: vec![
+                    ContentBlock::text(text),
+                    ContentBlock::Image(ImageRef {
+                        mime: mime.to_string(),
+                        data: data.to_string(),
+                    }),
+                ],
+                details: serde_json::json!({}),
+                usage: None,
+                is_error: false,
+            })],
+            tools: vec![],
+            thinking_level: epsilon_contracts::ThinkingLevel::Off,
+        }
+    }
+
+    #[test]
+    fn gemini3_inlines_in_same_turn_gemini2_uses_follow_up() {
+        let wire = GoogleWire;
+        let new_turn = wire
+            .request_body(
+                "gemini-3-flash-preview",
+                &image_ctx("ok", "image/png", "iVBORw0KGgo="),
+            )
+            .expect("body");
+        let s = new_turn.to_string();
+        assert!(
+            s.contains("inlineData") && s.contains("iVBORw0KGgo="),
+            "gemini-3 must carry inlineData bytes: {s}"
+        );
+        let old_turn = wire
+            .request_body(
+                "gemini-2.5-flash",
+                &image_ctx("ok", "image/png", "iVBORw0KGgo="),
+            )
+            .expect("body");
+        let t = old_turn.to_string();
+        assert!(
+            t.contains("inlineData") && t.contains("iVBORw0KGgo="),
+            "gemini-2 must still forward bytes (follow-up turn): {t}"
+        );
+        assert!(
+            t.contains("Tool result image:"),
+            "gemini-2 follow-up vocabulary missing: {t}"
+        );
+    }
+
+    #[test]
+    fn tool_result_pdf_names_mime_without_bytes_in_text() {
+        let body = GoogleWire
+            .request_body(
+                "gemini-3-flash-preview",
+                &image_ctx("ok", "application/pdf", "JVBERi0="),
+            )
+            .expect("body");
+        let s = body.to_string();
+        assert!(s.contains("application/pdf"), "PDF mime missing: {s}");
+        assert!(
+            !s.contains("\"text\":\"okJVBERi0="),
+            "PDF base64 must never sit inside a text part: {s}"
+        );
     }
 }

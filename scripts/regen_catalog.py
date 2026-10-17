@@ -277,6 +277,12 @@ def select_rows(registry):
                 # is why they are here (G18).
                 "pcin": micro_usd(cost, "cache_read"),
                 "pcw": micro_usd(cost, "cache_write"),
+                # Vision: models.dev input modalities decide — an "image" input
+                # means the row can see tool-result attachments (ADR-055). The
+                # curated blind families (deepseek non-vision, codestral/
+                # voxtral, text-only ollama locals) list text-only inputs, so
+                # the rule reproduces them with no exception list.
+                "vin": "image" in m.get("modalities", {}).get("input", []),
             })
     ids = [r["id"] for r in rows]
     dupes = {i for i in ids if ids.count(i) > 1}
@@ -389,6 +395,7 @@ def emit_row(r):
         f"        cache_read_cost_micro_per_mtok: {rust_int(r['pcin'])},\n"
         f"        cache_write_cost_micro_per_mtok: {rust_int(r['pcw'])},\n"
         "        supports_tools: true,\n"
+        f"        supports_vision: {'true' if r['vin'] else 'false'},\n"
         f"        env_key: \"{ENV_BY_PROVIDER[r['prov']]}\",\n"
         f"        wire: {wire_expr(r['prov'], r['id'])},\n"
         f"        reasoning_shape: super::ReasoningShape::{reasoning_shape(r['prov'], r['id'])},\n"

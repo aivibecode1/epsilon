@@ -109,10 +109,10 @@ impl ProviderWire for GoogleVertexWire {
 
     fn request_body(
         &self,
-        _model: &str,
+        model: &str,
         ctx: &crate::LlmContext,
     ) -> Result<serde_json::Value, String> {
-        Ok(google_request_body(ctx))
+        Ok(google_request_body(model, ctx))
     }
 
     fn on_event(&self, ev: &super::SseEvent, st: &mut HttpEventStream) -> Option<Vec<StreamEvent>> {

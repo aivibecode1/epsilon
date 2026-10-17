@@ -4236,3 +4236,178 @@ sorted (not readdir-order) suggestions; `head` skipped in markdown output
 converter — not the switch — is the behaviour being changed, with its own
 dep rationale), or commands need reach-based ordering (then `resource_key`
 grows a reach vocabulary with its own ADR, not a quiet barrier removal).
+
+---
+
+## ADR-054: Three more small tool ports — image resize, PDF attachment, two edit replacers
+
+**Status: accepted (behaviour change, 2026-10-17).**
+
+**The problem.** Three reference behaviours the model already expects were
+missing: an oversized image was stored at full size (no shrink toward
+input limits — and would ride to the provider at full size once wires
+forward tool-result images), a PDF paged as text or refused as binary (no
+attachment), and two common paste shapes — collapsed whitespace, drifted
+middle lines — fell through to the anchor stage or to not-found.
+
+**Decision: port the three at the smallest diff that holds.**
+
+- *image auto-resize (`crates/epsilon-tools/src/image.rs`, read branch in
+  `files.rs`).* Pi `read.ts:113-118` resizes toward
+  `ctx.model.inputLimits.images.resize`, falling back to
+  `resizeOptions` (pi `read.ts:66-72`). `ToolContext` carries no model
+  handle, so per-model limits have nothing to read: the fallback caps ARE
+  the policy — pi's `DEFAULT_OPTIONS` (`image-resize-core.ts:24-29`:
+  2000x2000, 4.5 MiB base64), pinned by value-test. Within caps the bytes
+  ride byte-identical; over caps they downscale aspect-fit (rounded, exact
+  dims) and re-encode as PNG with the coordinate-mapping note (pi
+  `formatDimensionNote`); a resized JPEG converts format with the
+  conversion hint. Anything undecodable passes through — never a refusal.
+  Ponytail ladder: the need is real (provider 5 MB image caps), nothing
+  in-tree decodes, stdlib has no codec, so the direct dep is the `image`
+  crate already compiled into this binary via arboard (same 0.25.10 in
+  `Cargo.lock` — declaring it adds no new source, only the name;
+  default-features off, `png`+`jpeg` only). GIF/WebP pass through at
+  original size (re-encoding an animated GIF would silently drop frames;
+  no WebP decoder under the enabled features), and there is no
+  JPEG-quality ladder — PNG-only output, shrinking dimensions until the
+  byte cap fits. Ceiling marked `ponytail:` at the module docs.
+- *PDF as attachment (`files.rs`, `image.rs::is_pdf`).* opencode
+  `read.ts:303-324`: `%PDF-` magic (opencode `util/media.ts:20`) attaches
+  beside the image branch as a data-URL — here the same `ContentBlock`
+  shape the image branch uses (text header + `ImageRef`, stored and
+  transcript-visible; wires forward tool-result images in a follow-up,
+  see boundaries). Ungated like the image branch: pi's
+  `getNonVisionImageNote` (`read.ts:59-64`) has no model handle to read at
+  this layer. Formats that cannot be represented keep the existing
+  explicit-omission arms (BMP, animated PNG) — PDF is representable, so it
+  attaches; non-PDF binary keeps the `refused: file looks binary` refusal.
+- *two edit replacers (`crates/epsilon-tools/src/edit_match.rs`).*
+  opencode `WhitespaceNormalizedReplacer` (`edit.ts:427-469`: collapsed
+  comparison, single-line plus word-pattern sub-match plus exact-height
+  windows) and `ContextAwareReplacer` (`edit.ts:588-644`: same-size block,
+  exact anchors, >=50% middle lines) port as two pure functions in chain
+  slots ahead of the closest looser stage (whitespace before
+  escape-normalized, context just ahead of block-anchor — safer-first,
+  `edit_match.rs:26-28`). Both honour occurrence-count safety and the
+  shared `Suspicious` guard (`edit_match.rs:77-80`): the old per-stage
+  `usize` ambiguity and the anchor-only refusal enum unify into one
+  `StageRefusal`, and opencode's per-yield disproportionate check applies
+  to every new candidate. Two deliberate deviations toward safety: an
+  all-whitespace `old_string` matches nothing, and the context stage
+  counts every candidate (ambiguity) instead of taking the first. The new
+  context note keeps the anchor family's words ("first and last lines … —
+  check the result"), so the end-to-end anchor test's vocabulary still
+  describes what fired.
+
+**Known boundaries, priced rather than hidden:** (1) the wires inspected
+(anthropic/compat/responses/bedrock/google) forward only `Text` from tool
+results, so image and PDF attachments are transcript-visible but
+wire-dropped today — the same gap for both, owned by `epsilon-llm`, not
+this change. (2) A model-metadata seam reaching `ToolContext` would let
+the read branch prefer per-model limits and gate PDF on capability; until
+then the fallback is both. (3) `files.rs`'s not-found message now names
+all eight stages.
+
+**Deliberately NOT built:** no new permission surface, no separate
+powershell tool, no timeout changes, no image-to-text extraction, no PDF
+page rendering, no JPEG-quality ladder, no wire-format changes.
+
+**Revisit trigger.** A real read shows the PNG-only ladder producing
+uglier or larger output than a JPEG ladder would (then the encoder — not
+the caps — is the behaviour being changed, with its own dep rationale),
+or a model-metadata handle reaches the tool layer (then the fallback-only
+rule and the ungated attachment are the behaviours being changed).
+
+---
+
+## ADR-055: Forward tool-result images/PDFs to providers (close the ADR-054 wire gap)
+
+**Status: accepted (behaviour change, 2026-10-17).**
+
+**The problem.** ADR-054 attached images and PDFs to tool results as
+`ContentBlock::Image` (`ImageRef`, including `mime: application/pdf`) that
+were stored and transcript-visible but wire-dropped: every provider wire
+forwarded only `Text` from tool results. The model never saw the bytes —
+the same gap for both media kinds, owned by `epsilon-llm`, not the tools.
+
+**Decision: one shared helper owns policy; each wire maps bytes as data.**
+
+- *Shared helper (`crates/epsilon-llm/src/providers/mod.rs`, beside
+  `total_or_sum`/`flag_from_keys`).* Extraction of text/images/PDFs from a
+  `ToolResultMessage`, the placeholder vocabulary, and the size-guard
+  decision live here and only here — wires never decide policy:
+  `TOOL_IMAGE_LEAD` (`(see attached image)`, kept when a result is
+  image-only), `TOOL_IMAGE_OMITTED_BLIND`
+  (`(tool image omitted: model does not support images)`),
+  `TOOL_IMAGE_FOLLOWUP_HEADER`
+  (`Attached image(s) from tool result:`),
+  `TOOL_RESULT_IMAGE_LABEL` (`Tool result image:`),
+  `TOOL_IMAGE_MAX_ENCODED_BYTES` (28 MiB) /
+  `TOOL_IMAGE_MAX_DECODED_BYTES` (20 MiB, estimated as `len*3/4` without
+  decoding, so the guard never pays the allocation it refuses).
+  `tool_media_for(model_id, tool_result)` returns `(text, images,
+  documents)`: oversize attachments become sized placeholders naming
+  mime + bytes (`(tool image omitted: <mime>, <n> bytes encoded exceeds
+  size limit)`, `(tool document omitted: <mime>, <n> bytes)`); models
+  without vision get the blind placeholder and no bytes; image-free
+  results return their text untouched. Fallback order is native →
+  follow-up → placeholder; never silent-drop; refusal is not an option.
+  Base64 never sits inside a text/JSON string field — only in binary
+  fields (`data`, `image_url`, `inlineData.data`, `bytes`).
+- *Per-wire byte mapping (data, not policy).*
+  anthropic: native `image`/`document` blocks inside `tool_result`
+  (string shape kept byte-for-byte when text-only);
+  openai_responses: `input_image` parts inside `function_call_output`
+  (string `output` preserved when no images; PDFs placeholdered — no
+  native PDF-in-output shape on this path);
+  openai_compat: text tool message unchanged plus ONE follow-up user
+  message with `image_url` parts (PDFs placeholdered);
+  google/vertex (shared `google_request_body`): `inlineData` beside the
+  `functionResponse` in the same turn for gemini-major>=3, one follow-up
+  user turn below (`Tool result image:` label); PDFs ride `inlineData`
+  with `mimeType: application/pdf` on both paths;
+  bedrock: native Converse `image` (`png|jpeg|gif|webp`) and `document`
+  (`pdf`, `name: tool-result.pdf`) blocks;
+  mistral: zero code changes — inherits the compat builder;
+  copilot: zero changes — delegates to its inner wire.
+- *Catalog (`crates/epsilon-llm/src/catalog.rs::ModelInfo` +
+  `catalog/catalog_data.rs`).* One boolean per row (`supports_vision`),
+  read by the helper instead of id substrings (M3 binding property);
+  unknown ids are blind (withholding with words is safe, sending bytes
+  to a model that cannot see them is not). Values are curated
+  conservative defaults (558 rows: 532 true; false for the text-only
+  families — ollama local rows, deepseek non-vision rows including the
+  openrouter `deepseek/*` mirrors, codestral/voxtral code/audio rows);
+  `scripts/regen_catalog.py` does not emit the flag yet, so a refresh
+  overwrites it — the integrator owns adding vision emission from
+  models.dev input modalities (one-line generator change, outside this
+  change's file ownership).
+- *Vertex note.* `vertex.rs` carries a one-line plumbing change
+  (`google_request_body(model, ctx)` so the shared body can read the
+  generation + vision); body, SSE walk and stop vocabulary are untouched.
+
+**Alternatives.** (a) Per-wire mime allowlists and threshold checks:
+policy in six places, drifting on the first edit — refused; the helper
+is the one place. (b) Rendering PDFs to page images or extracting
+image-to-text: new decoders/dependencies for fidelity nobody asserts —
+refused per the minimal-dependencies rule. (c) A Responses `input_file`
+shape for PDFs: guessed bytes on an unverified shape — placeholder
+words instead, stated above.
+
+**Why best for Epsilon.** The gap ADR-054 priced is closed where the
+existing seam already is: each wire's tool-result arm keeps its
+historical shape when no attachments are present (every pre-existing
+body test passes unmodified), and attachments take the cheapest shape
+the protocol already has. One policy, six data mappings, one new
+catalog capability field.
+
+**Deliberately NOT built:** PDF page rendering, image-to-text
+extraction, a JPEG-quality ladder, per-model input limits at the tool
+layer (the ADR-054 fallback caps stand), vision gating of the read
+branch itself, any transport/auth change.
+
+**Revisit trigger.** models.dev publishes a uniform vision flag (then
+the generator — not the rows — is the behaviour being changed), or a
+wire gains a verified native PDF shape the table marked placeholder
+(then that wire's mapping — not the helper — changes).

@@ -239,20 +239,67 @@ pub(crate) fn bedrock_request_body(model: &str, ctx: &crate::LlmContext) -> serd
                 }
             }
             Message::ToolResult(t) => {
-                let text = t
+                let has_media = t
                     .content
                     .iter()
-                    .filter_map(|c| match c {
-                        ContentBlock::Text { text } => Some(text.as_str()),
-                        _ => None,
-                    })
-                    .collect::<Vec<_>>()
-                    .join("\n");
-                let content = if text.trim().is_empty() {
-                    json!([{"text": "<empty>"}])
+                    .any(|c| matches!(c, ContentBlock::Image(_)));
+                if !has_media {
+                    let text = t
+                        .content
+                        .iter()
+                        .filter_map(|c| match c {
+                            ContentBlock::Text { text } => Some(text.as_str()),
+                            _ => None,
+                        })
+                        .collect::<Vec<_>>()
+                        .join("\n");
+                    let content = if text.trim().is_empty() {
+                        json!([{"text": "<empty>"}])
+                    } else {
+                        json!([{"text": text}])
+                    };
+                    pending_results.push(json!({
+                        "toolResult": {
+                            "toolUseId": BedrockConverseWire::normalize_tool_call_id(&t.tool_call_id),
+                            "content": content,
+                            "status": if t.is_error { "error" } else { "success" },
+                        }
+                    }));
+                    continue;
+                }
+                // Native Converse blocks (ADR-055): text first, then one
+                // `image` block per image and one `document` block per PDF.
+                // Blind/oversize attachments arrive here as placeholder words
+                // already — the shared helper withheld their bytes.
+                let (text, images, documents) = super::tool_media_for(model, t);
+                let show = if text.is_empty() {
+                    super::TOOL_IMAGE_LEAD.to_string()
                 } else {
-                    json!([{"text": text}])
+                    text
                 };
+                let mut content = vec![json!({"text": show})];
+                for img in &images {
+                    match bedrock_image_format(&img.mime) {
+                        Some(format) => content.push(json!({
+                            "image": {
+                                "format": format,
+                                "source": {"bytes": img.data},
+                            }
+                        })),
+                        None => content.push(json!({
+                            "text": super::sized_document_placeholder(&img.mime, img.data.len()),
+                        })),
+                    }
+                }
+                for doc in &documents {
+                    content.push(json!({
+                        "document": {
+                            "format": "pdf",
+                            "name": "tool-result.pdf",
+                            "source": {"bytes": doc.data},
+                        }
+                    }));
+                }
                 pending_results.push(json!({
                     "toolResult": {
                         "toolUseId": BedrockConverseWire::normalize_tool_call_id(&t.tool_call_id),
@@ -316,6 +363,23 @@ fn non_blank_text(text: &str) -> Option<String> {
         None
     } else {
         Some(text.to_string())
+    }
+}
+
+/// MIME → Converse `image.format` (ADR-055, per-wire data).
+///
+/// Converse takes `png | jpeg | gif | webp`; anything else has no native
+/// shape here and the caller maps it to the shared sized placeholder.
+/// The tools only emit the four below plus `application/pdf` (which rides
+/// `document`, never this map), so `None` is unreachable in practice —
+/// and still explicit rather than guessed.
+fn bedrock_image_format(mime: &str) -> Option<&'static str> {
+    match mime {
+        "image/png" => Some("png"),
+        "image/jpeg" => Some("jpeg"),
+        "image/gif" => Some("gif"),
+        "image/webp" => Some("webp"),
+        _ => None,
     }
 }
 
@@ -668,5 +732,69 @@ mod tests {
         // Plain newline JSON (unwrapping proxy) falls back to lines.
         let frames = bedrock_event_payloads(b"{\"a\":1}\n{\"b\":2}\n");
         assert_eq!(frames.len(), 2);
+    }
+
+    fn image_ctx(text: &str, mime: &str, data: &str) -> LlmContext {
+        use epsilon_contracts::content::{ContentBlock, ImageRef};
+        use epsilon_contracts::message::ToolResultMessage;
+        LlmContext {
+            system_prompt: String::new(),
+            messages: vec![Message::ToolResult(ToolResultMessage {
+                id: new_id("msg"),
+                timestamp_ms: 0,
+                tool_call_id: "tc_1".into(),
+                tool_name: "read".into(),
+                content: vec![
+                    ContentBlock::text(text),
+                    ContentBlock::Image(ImageRef {
+                        mime: mime.to_string(),
+                        data: data.to_string(),
+                    }),
+                ],
+                details: serde_json::json!({}),
+                usage: None,
+                is_error: false,
+            })],
+            tools: vec![],
+            thinking_level: epsilon_contracts::ThinkingLevel::Off,
+        }
+    }
+
+    #[test]
+    fn tool_result_text_plus_image_emits_native_image_block() {
+        let body = wire()
+            .request_body(
+                "bedrock/anthropic.claude-haiku-4-5",
+                &image_ctx("ok", "image/png", "iVBORw0KGgo="),
+            )
+            .expect("body");
+        let s = body.to_string();
+        assert!(
+            s.contains("iVBORw0KGgo="),
+            "native image bytes missing from toolResult: {s}"
+        );
+        assert!(
+            s.contains("\"image\"") && s.contains("\"format\":\"png\""),
+            "native Converse image block shape missing: {s}"
+        );
+    }
+
+    #[test]
+    fn tool_result_pdf_emits_document_shape_naming_mime() {
+        let body = wire()
+            .request_body(
+                "bedrock/anthropic.claude-haiku-4-5",
+                &image_ctx("ok", "application/pdf", "JVBERi0="),
+            )
+            .expect("body");
+        let s = body.to_string();
+        assert!(
+            s.contains("\"document\"") && s.contains("\"format\":\"pdf\""),
+            "native Converse document block shape missing: {s}"
+        );
+        assert!(
+            !s.contains("\"text\":\"okJVBERi0="),
+            "PDF base64 must never sit inside a text block: {s}"
+        );
     }
 }
