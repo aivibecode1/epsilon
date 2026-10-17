@@ -848,26 +848,30 @@ pub fn model_badge(row: &PickerRow) -> Option<&'static str> {
 /// One live-status line for `provider` (criterion 6), shared by the picker
 /// footer and `/catalog` so the two cannot disagree:
 ///
-/// - `live: deepseek (12 models, refreshed 5m ago (this session))` — fetched this session;
-/// - `live: deepseek (12 models, from startup cache, 2h ago — auto-refreshes on open)` — loaded at startup;
-/// - `live: deepseek (not fetched yet — opening refreshes)` — nothing cached yet.
+/// - `live: deepseek (12 models · refreshed 5m ago (this session))` — fetched this session;
+/// - `live: deepseek (12 models · from startup cache · 2h ago · auto-refreshes on open)` — loaded at startup;
+/// - `live: deepseek (not fetched yet · opening refreshes)` — nothing cached yet.
 ///
 /// The age is [`age_label`]: std-only formatting, deterministic in tests via
 /// the injected `now_ms`. `age_label` already carries `ago`/`just now`, so the
 /// verbs reuse it verbatim rather than adding a second `ago`.
+///
+/// The separator is `·`, the row's own separator everywhere else in the UI:
+/// `,` and `—` here were a second notation for the same join, and a second
+/// notation is how two screens disagree about one fact.
 pub fn live_status(provider: &str, entry: Option<&LiveCacheEntry>, now_ms: u64) -> String {
     match entry {
-        None => format!("live: {provider} (not fetched yet — opening refreshes)"),
+        None => format!("live: {provider} (not fetched yet · opening refreshes)"),
         Some(e) => {
             let age = age_label(now_ms, e.fetched_at_ms);
             let n = e.ids.len();
             let noun = if n == 1 { "model" } else { "models" };
             if e.from_cache {
                 format!(
-                    "live: {provider} ({n} {noun}, from startup cache, {age} — auto-refreshes on open)"
+                    "live: {provider} ({n} {noun} · from startup cache · {age} · auto-refreshes on open)"
                 )
             } else {
-                format!("live: {provider} ({n} {noun}, refreshed {age} (this session))")
+                format!("live: {provider} ({n} {noun} · refreshed {age} (this session))")
             }
         }
     }
@@ -914,6 +918,30 @@ pub struct PaletteEntry {
 pub enum PaletteAction {
     /// Open or close the workspace file tree (`app.tree.toggle`, F6).
     ToggleFileTree,
+}
+
+impl PaletteEntry {
+    /// The label column: the command value, or `Files` for the direct tree action.
+    ///
+    /// Split from the description so the row can budget the two separately: a
+    /// combined title lets a long description push the label off the row with
+    /// no ellipsis, which reads as complete when it was cut.
+    pub fn label(&self) -> &str {
+        if self.command.is_empty() {
+            // The direct tree action: the title leads with `Files`.
+            "Files"
+        } else {
+            self.command.trim()
+        }
+    }
+
+    /// The description column: the registry words after the `·`, without the label.
+    pub fn description(&self) -> &str {
+        self.title
+            .split_once('·')
+            .map(|(_, rest)| rest.trim())
+            .unwrap_or("")
+    }
 }
 
 /// All palette commands (slash commands + direct actions), in display order.
@@ -2195,7 +2223,7 @@ mod tests {
         };
         assert_eq!(
             live_status("deepseek", Some(&fresh), now),
-            "live: deepseek (2 models, refreshed just now (this session))"
+            "live: deepseek (2 models · refreshed just now (this session))"
         );
         let cached = crate::app::LiveCacheEntry {
             from_cache: true,
@@ -2204,11 +2232,11 @@ mod tests {
         };
         assert_eq!(
             live_status("deepseek", Some(&cached), now),
-            "live: deepseek (2 models, from startup cache, 5m ago — auto-refreshes on open)"
+            "live: deepseek (2 models · from startup cache · 5m ago · auto-refreshes on open)"
         );
         assert_eq!(
             live_status("deepseek", None, now),
-            "live: deepseek (not fetched yet — opening refreshes)"
+            "live: deepseek (not fetched yet · opening refreshes)"
         );
         // Singular: one id reads `1 model`, never `1 models`.
         let single = crate::app::LiveCacheEntry {
@@ -2219,7 +2247,7 @@ mod tests {
         };
         assert_eq!(
             live_status("deepseek", Some(&single), now),
-            "live: deepseek (1 model, refreshed just now (this session))"
+            "live: deepseek (1 model · refreshed just now (this session))"
         );
         let single_cached = crate::app::LiveCacheEntry {
             from_cache: true,
@@ -2228,7 +2256,7 @@ mod tests {
         };
         assert_eq!(
             live_status("deepseek", Some(&single_cached), now),
-            "live: deepseek (1 model, from startup cache, 5m ago — auto-refreshes on open)"
+            "live: deepseek (1 model · from startup cache · 5m ago · auto-refreshes on open)"
         );
     }
 
@@ -2351,5 +2379,59 @@ mod tests {
             filter_palette("zzz-no-such-command", &kb).is_empty(),
             "nonsense matches nothing"
         );
+    }
+
+    /// D3: the palette entry splits into a label and a description column.
+    #[test]
+    fn d3_palette_entry_splits_label_and_description() {
+        let kb = crate::keybindings::KeybindingsManager::from_map(std::collections::HashMap::new());
+        let entries = palette_entries(&kb);
+        let model = entries
+            .iter()
+            .find(|e| e.command.trim() == "/model")
+            .expect("one /model row");
+        assert_eq!(model.label(), "/model");
+        assert!(
+            model.description().contains("set model by id"),
+            "the description keeps the registry words: {:?}",
+            model.title
+        );
+        let tree = entries
+            .iter()
+            .find(|e| e.action.is_some())
+            .expect("the tree action");
+        assert_eq!(tree.label(), "Files");
+        assert!(!tree.description().is_empty());
+    }
+
+    /// D8: the live-status line joins with `·` and pluralizes the count.
+    #[test]
+    fn d8_live_status_uses_middle_dot_and_pluralizes() {
+        let now = 10_000_000_000u64;
+        let two = crate::app::LiveCacheEntry {
+            provider: "deepseek".to_string(),
+            ids: vec!["a".to_string(), "b".to_string()],
+            fetched_at_ms: now,
+            from_cache: false,
+        };
+        let line = live_status("deepseek", Some(&two), now);
+        assert!(
+            line.contains('·'),
+            "the join is the row's own separator: {line:?}"
+        );
+        assert!(
+            !line.contains(','),
+            "no second notation for the same join: {line:?}"
+        );
+        assert!(line.contains("2 models"), "{line:?}");
+        let one = crate::app::LiveCacheEntry {
+            provider: "deepseek".to_string(),
+            ids: vec!["only".to_string()],
+            fetched_at_ms: now,
+            from_cache: false,
+        };
+        let line = live_status("deepseek", Some(&one), now);
+        assert!(line.contains("1 model"), "{line:?}");
+        assert!(!line.contains("1 models"), "{line:?}");
     }
 }

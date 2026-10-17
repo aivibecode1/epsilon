@@ -213,6 +213,25 @@ impl Panel<'_> {
     }
 }
 
+/// Clear the panel's row band across the full frame width, not just the box.
+///
+/// A modal painted over the transcript without clearing shows the conversation
+/// through the margins, which reads as a rendering bug. `Panel::open` clears
+/// its own box; the band clears the rows the box sits on, so a nearly
+/// full-width panel (the palette at 60 columns) does not float over a sliver
+/// of the page it is covering. Every overlay draw calls this before `open`.
+pub fn clear_band(f: &mut Frame<'_>, outer: Rect, panel_area: Rect) {
+    f.render_widget(
+        Clear,
+        Rect {
+            x: outer.x,
+            y: panel_area.y,
+            width: outer.width,
+            height: panel_area.height,
+        },
+    );
+}
+
 /// A row in an overlay list.
 ///
 /// Selection is shown with a leading bar *and* a style, never with style alone:
@@ -269,12 +288,23 @@ pub fn list_row_marked(
     if selected {
         label_style = theme.selected();
     }
+    // The label is truncated to its own budget with an honest mark, never
+    // clipped silently: a label longer than the row used to overflow `width`
+    // and let `Paragraph` cut it without an ellipsis, so a long command read
+    // as complete when it was not.
+    let bar_width = display_width(bar) + GUTTER_AFTER_BAR;
+    let max_label = width.saturating_sub(bar_width);
+    let label = if display_width(label) > max_label && max_label > 0 {
+        crate::state::truncate_public(label, max_label.max(1), theme.glyphs.ellipsis)
+    } else {
+        label.to_string()
+    };
     let mut spans = vec![
         Span::styled(
             format!("{bar}{}", " ".repeat(GUTTER_AFTER_BAR)),
             theme.accent(),
         ),
-        Span::styled(label.to_string(), label_style),
+        Span::styled(label.clone(), label_style),
     ];
     if let Some(meta) = meta {
         // Right-align the metadata so a column of hints or counts lines up and
@@ -293,7 +323,7 @@ pub fn list_row_marked(
         // The label is never shortened to protect the hint: the label is what the
         // user is typing, and a hint that does not fit is worth less than a
         // command name that does.
-        let used = display_width(bar) + GUTTER_AFTER_BAR + display_width(label);
+        let used = display_width(bar) + GUTTER_AFTER_BAR + display_width(label.as_str());
         let available = width.saturating_sub(used + MIN_META_GAP);
         // The mark's **own width** is part of the budget, not an afterthought. `truncate_public`
         // appends the mark after the characters it keeps, so reserving a single column for it works
@@ -353,20 +383,21 @@ pub fn hint_row(theme: &Theme, hints: &[(&str, &str)]) -> Line<'static> {
 /// row exists to prevent.
 pub fn hint_row_in(theme: &Theme, hints: &[(&str, &str)], width: usize) -> Line<'static> {
     /// Columns one hint costs beyond its own text: the ` · ` separator, or a
-    /// trailing `+N` when hints were dropped.
+    /// trailing `+N more` when hints were dropped.
     const SEPARATOR: usize = 3;
-    const DROPPED: &str = "+";
 
     // Measure first, so what is dropped is decided by the budget and not by what has
     // already been pushed.
     let cost = |(key, what): &(&str, &str)| display_width(key) + 1 + display_width(what);
     let mut kept = hints.len();
+    // The dropped count is prose (`+2 more`), measured like any other hint so
+    // the budget that decides the cut is the budget the row is drawn with.
+    let dropped_text = |kept: usize| format!("+{} more", hints.len() - kept);
     while kept > 0 {
         let mut used: usize =
             hints[..kept].iter().map(cost).sum::<usize>() + SEPARATOR * kept.saturating_sub(1);
         if kept < hints.len() {
-            // `+12` plus its separator.
-            used += SEPARATOR + DROPPED.len() + 2;
+            used += SEPARATOR + display_width(&dropped_text(kept));
         }
         if used <= width {
             break;
@@ -386,10 +417,7 @@ pub fn hint_row_in(theme: &Theme, hints: &[(&str, &str)], width: usize) -> Line<
         if kept > 0 {
             spans.push(Span::styled(" · ", theme.faint()));
         }
-        spans.push(Span::styled(
-            format!("{DROPPED}{}", hints.len() - kept),
-            theme.faint(),
-        ));
+        spans.push(Span::styled(dropped_text(kept), theme.faint()));
     }
     Line::from(spans)
 }
@@ -580,6 +608,92 @@ mod tests {
         assert!(
             !cramped.contains(theme.glyphs.ellipsis),
             "no stub hint: {cramped:?}"
+        );
+    }
+
+    /// D1: the shared band clear clears the full row band, not just the box.
+    #[test]
+    fn d1_clear_band_clears_the_full_row_band() {
+        use ratatui::layout::Rect;
+        let theme = theme();
+        let mut terminal = Terminal::new(TestBackend::new(80, 24)).expect("test terminal");
+        terminal
+            .draw(|f| {
+                let outer = f.area();
+                let panel_area = centered(outer, 40, 10);
+                // Paint something behind the band first, so a clear that misses
+                // the margins leaves evidence.
+                f.render_widget(
+                    Paragraph::new("behind"),
+                    Rect {
+                        x: outer.x,
+                        y: panel_area.y,
+                        width: outer.width,
+                        height: 1,
+                    },
+                );
+                clear_band(f, outer, panel_area);
+                Panel {
+                    theme: &theme,
+                    area: panel_area,
+                    title: "t",
+                    focused: true,
+                    border: None,
+                }
+                .open(f);
+            })
+            .expect("draw");
+        let buffer = terminal.backend().buffer();
+        // The band row outside the box must be blank after the shared clear.
+        let row = row_text(buffer, 7, 80);
+        let outside = format!("{}{}", &row[..10], &row[70..]);
+        assert!(
+            outside.trim().is_empty(),
+            "the band margins must be cleared, not show through: {row:?}"
+        );
+    }
+
+    /// D2: the dropped count is prose (`+2 more`), measured like any other hint.
+    #[test]
+    fn d2_hint_row_drops_with_a_prose_more_count() {
+        let theme = theme();
+        let hints = [
+            ("type", "filter"),
+            ("enter", "apply"),
+            ("ctrl+s", "save default"),
+            ("backspace/esc", "back"),
+        ];
+        // Wide enough for all four: no dropped count.
+        let full = hint_row_in(&theme, &hints, 200);
+        let text: String = full.spans.iter().map(|s| s.content.as_ref()).collect();
+        assert!(!text.contains("more"), "{text:?}");
+        // Narrow: the tail drops and the count reads as prose.
+        let narrow = hint_row_in(&theme, &hints, 30);
+        let text: String = narrow.spans.iter().map(|s| s.content.as_ref()).collect();
+        assert!(
+            text.contains("more"),
+            "a dropped hint row must say what it dropped: {text:?}"
+        );
+        assert!(
+            !text.contains("+2,"),
+            "the count is prose, not a bare +N: {text:?}"
+        );
+    }
+
+    /// D3: a long label is truncated with an ellipsis and never overflows.
+    #[test]
+    fn d3_long_label_is_truncated_with_ellipsis_not_clipped() {
+        let theme = theme();
+        let long = "/very-long-command-name-that-never-fits · description words here";
+        let row = list_row(&theme, false, long, Some("meta"), 30);
+        let text: String = row.spans.iter().map(|s| s.content.as_ref()).collect();
+        assert!(
+            crate::ui::layout::display_width(&text) <= 30,
+            "the row must fit its budget: {text:?}"
+        );
+        assert!(
+            text.contains(theme.glyphs.ellipsis),
+            "a cut label must say it was cut: {text:?}"
         );
     }
 }

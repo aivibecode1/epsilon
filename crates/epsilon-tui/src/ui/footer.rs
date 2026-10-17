@@ -51,12 +51,45 @@ const LOCATION_FLOOR: usize = 10;
 /// One definition, read by both the draw and the tests that look for the
 /// location on a rendered row — a second copy in a test is how the two drift
 /// apart and the test starts passing against the wrong string.
+///
+/// Middle-truncation keeping head and leaf: a location answers *which project*,
+/// and the leaf names it while the head orients it (`~/.../Epsilon`). An
+/// end-truncation keeps the head and loses the leaf — the one component that
+/// tells projects apart — so the row would name every checkout the same.
 pub(crate) fn location_span(location: &str, width: usize, theme: &Theme) -> String {
-    crate::wrap::fit_width_with(
-        location,
-        (width / 4).clamp(LOCATION_FLOOR, LOCATION_CAP),
-        theme.glyphs.ellipsis,
-    )
+    let budget = (width / 4).clamp(LOCATION_FLOOR, LOCATION_CAP);
+    if crate::ui::layout::display_width(location) <= budget {
+        return location.to_string();
+    }
+    let mark = theme.glyphs.ellipsis;
+    let mark_width = crate::ui::layout::display_width(mark);
+    if budget <= mark_width {
+        return crate::wrap::fit_width_with(location, budget, mark);
+    }
+    // Keep the head (drive/`~`/first component) and the leaf (last component);
+    // the middle is what gives way. Split on both separators so a mixed
+    // `~/...` path keeps its `~` head on either platform.
+    let sep = location
+        .rfind(['/', '\\'])
+        .map(|i| location[i..i + 1].to_string())
+        .unwrap_or_else(|| "/".to_string());
+    let parts: Vec<&str> = location.split(['/', '\\']).collect();
+    // Preserve a leading `~` or drive head explicitly; the leaf is always kept.
+    let head = parts.first().copied().unwrap_or("");
+    let leaf = parts.last().copied().unwrap_or("");
+    let full = if head.is_empty() {
+        format!("{mark}{sep}{leaf}")
+    } else {
+        format!("{head}{sep}{mark}{sep}{leaf}")
+    };
+    if crate::ui::layout::display_width(&full) <= budget {
+        return full;
+    }
+    // Even `head/.../leaf` does not fit: keep the leaf with the mark,
+    // because the leaf is what tells checkouts apart.
+    let tail_budget = budget.saturating_sub(mark_width + sep.len());
+    let tail = crate::wrap::suffix_at_width(leaf, tail_budget);
+    format!("{mark}{sep}{tail}")
 }
 
 /// Where the transcript view sits relative to the live tail.
@@ -1142,5 +1175,37 @@ mod tests {
         // ASCII repertoire: the badge's glyph comes from the theme's table, so a
         // legacy code page gets a character it can actually draw.
         assert!(theme.glyphs.back.is_ascii());
+    }
+
+    /// D5: middle-truncation keeps the head and the leaf.
+    ///
+    /// An end-truncation keeps the head and loses the leaf — every checkout
+    /// then reads the same — so the row must keep both ends with the mark in
+    /// the middle.
+    #[test]
+    fn d5_location_keeps_head_and_leaf() {
+        use crate::ui::theme::{ColorMode, Theme, UNICODE};
+        let theme = Theme::new(ColorMode::Ansi16, UNICODE);
+        let location = "~/Desktop/My Agent Space/Epsilon";
+        for width in [80u16, 100] {
+            let shown = location_span(location, width as usize, &theme);
+            assert!(
+                shown.contains('~'),
+                "width {width} lost the head: {shown:?}"
+            );
+            assert!(
+                shown.contains("Epsilon"),
+                "width {width} lost the leaf that names the project: {shown:?}"
+            );
+            assert!(
+                shown.contains(theme.glyphs.ellipsis),
+                "a shortened location must say it was shortened: {shown:?}"
+            );
+            assert!(
+                crate::ui::layout::display_width(&shown)
+                    <= (width as usize / 4).clamp(LOCATION_FLOOR, LOCATION_CAP),
+                "the location must fit its budget: {shown:?}"
+            );
+        }
     }
 }

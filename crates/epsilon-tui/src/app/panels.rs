@@ -113,6 +113,7 @@ pub(super) fn draw_picker(f: &mut Frame<'_>, app: &mut App, outer: Rect) {
         focused: true,
         border: None,
     };
+    overlay::clear_band(f, outer, panel.area);
     let inner = panel.open(f);
 
     // M15 viewport fix: pi's centered scroll window — render only the visible slice
@@ -205,6 +206,7 @@ pub(super) fn draw_session_browser(f: &mut Frame<'_>, app: &mut App, outer: Rect
         focused: true,
         border: None,
     };
+    overlay::clear_band(f, outer, panel.area);
     let inner = panel.open(f);
 
     // Same centered scroll window as the pickers: only the visible slice is built.
@@ -222,7 +224,8 @@ pub(super) fn draw_session_browser(f: &mut Frame<'_>, app: &mut App, outer: Rect
         // rows means no sessions exist yet, so the message names the way to
         // make one; a non-empty filter means the filter hides them. The scope
         // rides along (P-230): "in this workspace" when the reader may only
-        // need to press Tab.
+        // need to press Tab. Wrapped to the inner width, never clipped: a
+        // narrow panel must show the whole sentence over two rows, not cut it.
         let empty = if app.input.trim().is_empty() {
             match browser.scope {
                 epsilon_session::SessionScope::Workspace => {
@@ -235,7 +238,13 @@ pub(super) fn draw_session_browser(f: &mut Frame<'_>, app: &mut App, outer: Rect
         } else {
             "no matches \u{2014} Backspace to widen, Esc closes"
         };
-        lines.push(Line::from(Span::styled(empty, app.theme.dim())));
+        for row in crate::wrap::wrap_line(&[(empty, app.theme.dim())], inner.width as usize) {
+            lines.push(Line::from(
+                row.into_iter()
+                    .map(|(text, style)| Span::styled(text, style))
+                    .collect::<Vec<_>>(),
+            ));
+        }
     }
     for (i, row) in browser
         .rows
@@ -367,6 +376,7 @@ fn draw_picker_stage2(f: &mut Frame<'_>, app: &App, outer: Rect, provider: &str)
         focused: true,
         border: None,
     };
+    overlay::clear_band(f, outer, panel.area);
     let inner = panel.open(f);
 
     let capacity = inner.height.saturating_sub(2).max(1) as usize; // blank line + hint footer
@@ -382,10 +392,21 @@ fn draw_picker_stage2(f: &mut Frame<'_>, app: &App, outer: Rect, provider: &str)
 
     let mut lines: Vec<Line<'static>> = Vec::new();
     if rows.is_empty() {
-        lines.push(Line::from(Span::styled(
-            "no matches — Backspace to widen, Esc closes",
-            app.theme.dim(),
-        )));
+        // Wrapped to the inner width: at a narrow terminal the sentence must
+        // take two rows rather than be cut.
+        for row in crate::wrap::wrap_line(
+            &[(
+                "no matches — Backspace to widen, Esc closes",
+                app.theme.dim(),
+            )],
+            inner.width as usize,
+        ) {
+            lines.push(Line::from(
+                row.into_iter()
+                    .map(|(text, style)| Span::styled(text, style))
+                    .collect::<Vec<_>>(),
+            ));
+        }
     }
     for (i, row) in rows.iter().enumerate().skip(start).take(end - start) {
         let selected = i == app.picker_index;
@@ -452,7 +473,7 @@ fn draw_picker_stage2(f: &mut Frame<'_>, app: &App, outer: Rect, provider: &str)
     // needs: the saved model aged out, and no retired row can be applied.
     let unavailable = rows.iter().filter(|r| r.is_unavailable).count();
     let retired = rows.iter().filter(|r| r.is_retired).count();
-    let count = format!("{unavailable} unavailable");
+    let unavailable_text = format!("{unavailable}");
     // Resolved from the table like the changes panel, so a rebind moves the
     // hint with it; the fallback spells the default in the same lowercase
     // `ctrl+s` form the scope picker uses.
@@ -460,16 +481,25 @@ fn draw_picker_stage2(f: &mut Frame<'_>, app: &App, outer: Rect, provider: &str)
         .keybindings
         .key_text("app.model.saveDefault")
         .unwrap_or_else(|| "ctrl+s".to_string());
+    // Budgeted against this panel's own width, with counts as prose hints:
+    // empty-key pseudo-hints (`("", "1 unavailable")`) draw a leading ` · `
+    // with no key, which reads as a broken hint. The counts keep their words
+    // (`3 unavailable`, `retired rows cannot be applied`) so the dropped-count
+    // (`+N more`) is not the only number on the row.
     let mut hints = vec![("type", "filters (fuzzy)"), ("enter", "apply")];
     if unavailable > 0 {
-        hints.push(("", count.as_str()));
+        hints.push((unavailable_text.as_str(), "unavailable"));
     }
     if retired > 0 {
-        hints.push(("", "retired rows cannot be applied"));
+        hints.push(("retired", "rows cannot be applied"));
     }
     hints.push((save_label.as_str(), "save default"));
     hints.push(("backspace/esc", "back"));
-    lines.push(overlay::hint_row(&app.theme, &hints));
+    lines.push(overlay::hint_row_in(
+        &app.theme,
+        &hints,
+        inner.width as usize,
+    ));
     f.render_widget(Paragraph::new(lines), inner);
 }
 
@@ -731,19 +761,11 @@ pub(super) fn draw_palette(f: &mut Frame<'_>, app: &App, outer: Rect) {
         focused: true,
         border: None,
     };
-    // Clear the panel's row band across the full width, not just the box: at 60
+    // The row band is cleared by the shared helper, not just the box: at 60
     // columns the palette is nearly the whole frame, and the transcript row that
     // happens to sit on the box's bottom-rail row showed through the margin —
-    // `▎╰────╯` read as a broken rail. The tree overlay already clears before it
-    // draws for the same reason; a modal that owns the keys must not float over
-    // a sliver of the page it is covering.
-    let band = Rect {
-        x: outer.x,
-        y: panel.area.y,
-        width: outer.width,
-        height: panel.area.height,
-    };
-    f.render_widget(ratatui::widgets::Clear, band);
+    // `▎╰────╯` read as a broken rail.
+    overlay::clear_band(f, outer, panel.area);
     let inner = panel.open(f);
 
     let capacity = inner.height.saturating_sub(2).max(1) as usize;
@@ -756,14 +778,22 @@ pub(super) fn draw_palette(f: &mut Frame<'_>, app: &App, outer: Rect) {
         )));
     }
     for (index, entry) in entries.iter().enumerate().skip(start).take(capacity) {
-        // `as_deref()` on a borrow, because the entry is behind `&` from `entries.iter()`
-        // and the hint is now an owned `String` rather than a `&'static str`.
-        let binding = entry.binding.as_deref().map(|b| format!("[{b}]"));
+        // Label/meta split with a budget, never a silent clip: the label keeps
+        // the registry's `value · description` words (so the row still reads
+        // the way the slash popup does), the meta is the bare resolved chord,
+        // and `list_row` truncates either end with the repertoire's ellipsis
+        // when the row outgrows the panel.
+        let desc = entry.description();
+        let label_text = if desc.is_empty() {
+            entry.label().to_string()
+        } else {
+            format!("{} · {desc}", entry.label())
+        };
         lines.push(overlay::list_row(
             &app.theme,
             index == app.picker_index,
-            &entry.title,
-            binding.as_deref(),
+            &label_text,
+            entry.binding.as_deref(),
             inner.width as usize,
         ));
     }
@@ -805,7 +835,20 @@ pub(super) fn draw_at_file(f: &mut Frame<'_>, app: &App, transcript_area: ratatu
         // nothing: the reader typed a path, saw nothing change, and had no way
         // to tell "no such file" from "the popup is broken". The palette names
         // its own empty row (`no matching commands`), and this is that row.
-        let height = 4u16.min(transcript_area.height);
+        // Sized to content with the same width the rows use, wrapped to the
+        // inner width so a long fragment takes two rows rather than being cut.
+        let width = transcript_area.width.min(64);
+        let inner_width = (width.saturating_sub(4)) as usize;
+        let wrapped = crate::wrap::wrap_line(
+            &[(
+                format!("no matching files for '{}'", app.at_fragment).as_str(),
+                app.theme.dim(),
+            )],
+            inner_width.max(1),
+        );
+        let height = ((wrapped.len() + 1 + 1 + 2) as u16)
+            .min(transcript_area.height)
+            .max(4);
         if height == 0 {
             return;
         }
@@ -816,7 +859,7 @@ pub(super) fn draw_at_file(f: &mut Frame<'_>, app: &App, transcript_area: ratatu
         let area = ratatui::layout::Rect {
             x: transcript_area.x,
             y,
-            width: transcript_area.width.min(64),
+            width,
             height,
         };
         let panel = crate::ui::overlay::Panel {
@@ -826,15 +869,29 @@ pub(super) fn draw_at_file(f: &mut Frame<'_>, app: &App, transcript_area: ratatu
             focused: true,
             border: None,
         };
+        crate::ui::overlay::clear_band(f, transcript_area, panel.area);
         let inner = panel.open(f);
-        let mut lines: Vec<ratatui::text::Line<'static>> = vec![
-            ratatui::text::Line::from(ratatui::text::Span::styled(
-                format!("no matching files for '{}'", app.at_fragment),
+        // Wrapped to the inner width: a long `@fragment` must take two rows
+        // rather than be cut mid-word.
+        let mut lines: Vec<ratatui::text::Line<'static>> = Vec::new();
+        for row in crate::wrap::wrap_line(
+            &[(
+                format!("no matching files for '{}'", app.at_fragment).as_str(),
                 app.theme.dim(),
-            )),
-            ratatui::text::Line::from(""),
-            crate::ui::overlay::hint_row(&app.theme, &[("backspace", "widen"), ("esc", "close")]),
-        ];
+            )],
+            inner.width as usize,
+        ) {
+            lines.push(ratatui::text::Line::from(
+                row.into_iter()
+                    .map(|(text, style)| ratatui::text::Span::styled(text, style))
+                    .collect::<Vec<_>>(),
+            ));
+        }
+        lines.push(ratatui::text::Line::from(""));
+        lines.push(crate::ui::overlay::hint_row(
+            &app.theme,
+            &[("backspace", "widen"), ("esc", "close")],
+        ));
         // Pad so the frame's bottom rule is drawn at the same row every time:
         // a popup that changes height as the filter changes is a layout that
         // moves under the reader's hands.
@@ -865,6 +922,7 @@ pub(super) fn draw_at_file(f: &mut Frame<'_>, app: &App, transcript_area: ratatu
         focused: true,
         border: None,
     };
+    crate::ui::overlay::clear_band(f, transcript_area, panel.area);
     let inner = panel.open(f);
     let theme = &app.theme;
     let mut lines: Vec<ratatui::text::Line<'static>> = rows[start..end]
@@ -938,6 +996,7 @@ pub(super) fn draw_timeline(f: &mut Frame<'_>, app: &mut App, outer: Rect) {
         focused: true,
         border: None,
     };
+    overlay::clear_band(f, outer, panel.area);
     let inner = panel.open(f);
 
     // A row is truncated to what the frame can actually show: the selection bar
@@ -1249,6 +1308,7 @@ pub(super) fn draw_slash_autocomplete(f: &mut Frame<'_>, app: &App, transcript_a
         focused: true,
         border: None,
     };
+    overlay::clear_band(f, transcript_area, panel.area);
     let inner = panel.open(f);
     f.render_widget(Paragraph::new(lines), inner);
 }
@@ -1349,6 +1409,7 @@ pub(super) fn draw_dialog(f: &mut Frame<'_>, app: &App, outer: Rect) {
         // The one overlay that is not merely asking a question.
         border: Some(app.theme.danger()),
     };
+    overlay::clear_band(f, outer, panel.area);
     let inner = panel.open(f);
 
     // The permission dialog is the worst place in this product for a command to be
@@ -1557,12 +1618,15 @@ pub(super) fn draw_label_prompt(f: &mut Frame<'_>, app: &App, outer: Rect) {
         focused: true,
         border: None,
     };
+    overlay::clear_band(f, outer, panel.area);
     let inner = panel.open(f);
     let theme = &app.theme;
     let mut lines: Vec<Line<'static>> = Vec::new();
 
     let target = app.label_prompt_target.as_deref().unwrap_or("?");
-    let shown = crate::wrap::fit_width(&app.label_prompt_text, 60);
+    // Wrapped to the inner width, not a fixed 60: the prompt panel is 46 wide
+    // at most, so a 60-column budget always overflowed it.
+    let shown = crate::wrap::fit_width(&app.label_prompt_text, inner.width as usize);
     lines.push(Line::from(Span::styled(
         format!("entry {target}"),
         theme.system(),
@@ -1620,6 +1684,7 @@ pub(super) fn draw_auth_prompt(f: &mut Frame<'_>, app: &App, outer: Rect) {
         focused: true,
         border: None,
     };
+    overlay::clear_band(f, outer, panel.area);
     let inner = panel.open(f);
     let theme = &app.theme;
 
@@ -1680,6 +1745,7 @@ pub(super) fn draw_think_picker(f: &mut Frame<'_>, app: &App, outer: Rect) {
         focused: true,
         border: None,
     };
+    overlay::clear_band(f, outer, panel.area);
     let inner = panel.open(f);
     let theme = &app.theme;
     let capacity = inner.height.saturating_sub(2).max(1) as usize;
@@ -1687,10 +1753,19 @@ pub(super) fn draw_think_picker(f: &mut Frame<'_>, app: &App, outer: Rect) {
     let end = (start + capacity).min(levels.len());
     let mut lines: Vec<Line<'static>> = Vec::new();
     if levels.is_empty() {
-        lines.push(Line::from(Span::styled(
-            format!("no level matches '{}' — clear the filter", app.input),
-            theme.dim(),
-        )));
+        for row in crate::wrap::wrap_line(
+            &[(
+                format!("no level matches '{}' — clear the filter", app.input).as_str(),
+                theme.dim(),
+            )],
+            inner.width as usize,
+        ) {
+            lines.push(Line::from(
+                row.into_iter()
+                    .map(|(text, style)| Span::styled(text, style))
+                    .collect::<Vec<_>>(),
+            ));
+        }
     }
     for (index, level) in levels.iter().enumerate().skip(start).take(end - start) {
         // The current level is a word, not only a colour: consoles that
@@ -1819,6 +1894,7 @@ pub(super) fn draw_ask(f: &mut Frame<'_>, app: &mut App, outer: Rect) {
         focused: true,
         border: None,
     };
+    overlay::clear_band(f, outer, panel.area);
     let inner = panel.open(f);
     f.render_widget(ratatui::widgets::Paragraph::new(lines), inner);
 }
@@ -1856,6 +1932,7 @@ pub(super) fn draw_scope_picker(f: &mut Frame<'_>, app: &App, outer: Rect) {
         focused: true,
         border: None,
     };
+    overlay::clear_band(f, outer, panel.area);
     let inner = panel.open(f);
     let theme = &app.theme;
     let capacity = inner.height.saturating_sub(2).max(1) as usize;
@@ -1863,10 +1940,19 @@ pub(super) fn draw_scope_picker(f: &mut Frame<'_>, app: &App, outer: Rect) {
     let end = (start + capacity).min(rows.len());
     let mut lines: Vec<Line<'static>> = Vec::new();
     if rows.is_empty() {
-        lines.push(Line::from(Span::styled(
-            format!("no model matches '{}' — clear the filter", app.input),
-            theme.dim(),
-        )));
+        for row in crate::wrap::wrap_line(
+            &[(
+                format!("no model matches '{}' — clear the filter", app.input).as_str(),
+                theme.dim(),
+            )],
+            inner.width as usize,
+        ) {
+            lines.push(Line::from(
+                row.into_iter()
+                    .map(|(text, style)| Span::styled(text, style))
+                    .collect::<Vec<_>>(),
+            ));
+        }
     }
     for (index, row) in rows.iter().enumerate().skip(start).take(end - start) {
         let mark = if row.is_favorite { "[x]" } else { "[ ]" };
@@ -1936,6 +2022,7 @@ pub(super) fn draw_auth_picker(f: &mut Frame<'_>, app: &App, outer: Rect) {
         focused: true,
         border: None,
     };
+    overlay::clear_band(f, outer, panel.area);
     let inner = panel.open(f);
     let theme = &app.theme;
     let capacity = inner.height.saturating_sub(2).max(1) as usize;
@@ -1943,10 +2030,19 @@ pub(super) fn draw_auth_picker(f: &mut Frame<'_>, app: &App, outer: Rect) {
     let end = (start + capacity).min(filtered.len());
     let mut lines: Vec<Line<'static>> = Vec::new();
     if filtered.is_empty() {
-        lines.push(Line::from(Span::styled(
-            format!("no match for '{}' — type another provider id", app.input),
-            theme.dim(),
-        )));
+        for row in crate::wrap::wrap_line(
+            &[(
+                format!("no match for '{}' — type another provider id", app.input).as_str(),
+                theme.dim(),
+            )],
+            inner.width as usize,
+        ) {
+            lines.push(Line::from(
+                row.into_iter()
+                    .map(|(text, style)| Span::styled(text, style))
+                    .collect::<Vec<_>>(),
+            ));
+        }
     }
     for (index, (_, prow)) in filtered.iter().enumerate().skip(start).take(end - start) {
         // Auth state is a word, not only a colour: a key glyph is invisible on a
@@ -2034,6 +2130,7 @@ pub(super) fn draw_settings(f: &mut Frame<'_>, app: &App, outer: Rect) {
         focused: true,
         border: None,
     };
+    overlay::clear_band(f, outer, panel.area);
     let inner = panel.open(f);
     let theme = &app.theme;
     let capacity = inner.height.saturating_sub(2).max(1) as usize;
@@ -2189,22 +2286,15 @@ pub(crate) fn changes_ui_set_confirm(workspace: &std::path::Path, confirm: Optio
 pub(super) fn draw_changes(f: &mut Frame<'_>, app: &App, outer: Rect) {
     use crate::ui::overlay::{self, Panel, Width};
     let width = Width::PANEL.resolve(outer);
-    let height = 16u16.min(outer.height.saturating_sub(2));
-    let panel = Panel {
-        theme: &app.theme,
-        area: Rect {
-            y: outer.y + 1,
-            ..overlay::centered(outer, width, height)
-        },
-        title: &format!("changes — {}", app.changes_scope),
-        focused: true,
-        border: None,
-    };
-    let inner = panel.open(f);
+    // Size to content with a max cap: the panel grows with its rows up to 16,
+    // then scrolls. A fixed 16 for a one-row list wastes ten rows of transcript
+    // behind an empty box; sizing from the content keeps the transcript visible.
+    let w = (width.saturating_sub(4)) as usize;
     let theme = &app.theme;
-    let w = inner.width as usize;
-    let h = inner.height as usize;
-
+    // Build the variable body first so the height can be measured from it.
+    let confirm = changes_ui_confirm(&app.workspace_root)
+        .filter(|c| app.changes_rows.iter().any(|(p, _)| p == &c.path));
+    let mut confirm_lines: Vec<Line<'static>> = Vec::new();
     // Hint labels resolve from the table so a rebind moves its own hint; the
     // fallback spells the default, so the panel never hides a key it binds.
     let diff_label = app
@@ -2222,20 +2312,6 @@ pub(super) fn draw_changes(f: &mut Frame<'_>, app: &App, outer: Rect) {
         .keybindings
         .key_text("app.changes.apply")
         .unwrap_or_else(|| "y".to_string());
-    let close_hint = format!(
-        "{},esc",
-        app.keybindings
-            .key_text("app.changes.close")
-            .unwrap_or_else(|| "q".to_string())
-    );
-
-    // The pending restore, drawn first: the sentence names its path, so its
-    // position above the list is unambiguous. Wrapped, never clipped silently —
-    // the list below shrinks instead. A stale entry (its path left the rows)
-    // is ignored rather than drawn against the wrong file.
-    let confirm = changes_ui_confirm(&app.workspace_root)
-        .filter(|c| app.changes_rows.iter().any(|(p, _)| p == &c.path));
-    let mut confirm_lines: Vec<Line<'static>> = Vec::new();
     if let Some(c) = &confirm {
         for row in crate::wrap::wrap_line(&[(c.sentence.as_str(), theme.text())], w) {
             confirm_lines.push(Line::from(
@@ -2249,12 +2325,6 @@ pub(super) fn draw_changes(f: &mut Frame<'_>, app: &App, outer: Rect) {
             Span::styled(" restores · any other key cancels", theme.faint()),
         ]));
     }
-
-    // The expanded row: diff rows through this panel's own renderer
-    // (`diff_body_rows` — the same signs, numbers and colours the approval
-    // dialog's diff uses, never a third notation), or the refusal sentence
-    // wrapped. Truncated with an honest count when taller than the room, so
-    // the hint rows below always fit.
     let expanded = changes_ui_expanded(&app.workspace_root)
         .filter(|e| app.changes_rows.iter().any(|(p, _)| p == &e.path));
     let mut expanded_lines: Vec<Line<'static>> = Vec::new();
@@ -2271,6 +2341,36 @@ pub(super) fn draw_changes(f: &mut Frame<'_>, app: &App, outer: Rect) {
             }
         }
     }
+    let list_rows = app.changes_rows.len().max(1);
+    // Chrome: top+bottom border (2) + blank (1) + three hint rows (3).
+    let needed = (confirm_lines.len() + expanded_lines.len() + list_rows + 1 + 3 + 2) as u16;
+    let height = needed.min(16).min(outer.height.saturating_sub(2)).max(8);
+    let panel = Panel {
+        theme: &app.theme,
+        area: Rect {
+            y: outer.y + 1,
+            ..overlay::centered(outer, width, height)
+        },
+        title: &format!("changes — {}", app.changes_scope),
+        focused: true,
+        border: None,
+    };
+    overlay::clear_band(f, outer, panel.area);
+    let inner = panel.open(f);
+    let h = inner.height as usize;
+    let close_hint = format!(
+        "{},esc",
+        app.keybindings
+            .key_text("app.changes.close")
+            .unwrap_or_else(|| "q".to_string())
+    );
+
+    // The pending restore, drawn first: the sentence names its path, so its
+    // position above the list is unambiguous. Wrapped, never clipped silently —
+    // the list below shrinks instead. A stale entry (its path left the rows)
+    // is ignored rather than drawn against the wrong file.
+    // (`confirm`/`expanded` above were measured at panel width; re-wrap here to
+    // the measured inner width so the drawn rows match the drawn box.)
     // Fit: three hint rows + blank + confirm + expanded + at least one list row.
     // The hints are never sacrificed — a footer that costs a visible entry is
     // worse than a shorter diff, and a dropped hint is an undiscoverable key.
@@ -2290,13 +2390,25 @@ pub(super) fn draw_changes(f: &mut Frame<'_>, app: &App, outer: Rect) {
 
     let mut lines: Vec<Line<'static>> = confirm_lines;
     if app.changes_rows.is_empty() {
-        lines.push(Line::from(Span::styled(
-            format!(
-                "no checkpoints {} — files the agent writes appear here",
-                app.changes_scope
-            ),
-            theme.dim(),
-        )));
+        // Wrapped to the inner width like the session browser's empty state:
+        // a narrow panel must show the whole sentence over two rows, not cut it.
+        for row in crate::wrap::wrap_line(
+            &[(
+                format!(
+                    "no checkpoints {} — files the agent writes appear here",
+                    app.changes_scope
+                )
+                .as_str(),
+                theme.dim(),
+            )],
+            inner.width as usize,
+        ) {
+            lines.push(Line::from(
+                row.into_iter()
+                    .map(|(text, style)| Span::styled(text, style))
+                    .collect::<Vec<_>>(),
+            ));
+        }
     }
     let start =
         crate::scroll::scroll_start(app.changes_rows.len(), app.changes_index, list_cap.max(1));
@@ -2833,6 +2945,196 @@ mod changes_panel_tests {
                 has("rewind a whole turn"),
                 "and what it does, at {w}x{h}: {}",
                 rows.join("\n")
+            );
+        }
+    }
+}
+
+#[cfg(test)]
+mod structural_review_tests {
+    use super::super::tests_support::{render_rows, test_app};
+
+    /// D1+D3: every overlay draws its title at both evidence widths with its
+    /// UNICODE frame, and the palette row keeps the registry dot without
+    /// brackets or silent clips.
+    #[test]
+    fn d1_d3_every_overlay_draws_with_a_dot_row_and_no_brackets() {
+        for (w, h) in [(80u16, 24u16), (100u16, 30u16)] {
+            // Palette.
+            {
+                let (mut app, _agent, _rx) = test_app();
+                app.theme.glyphs = crate::ui::theme::UNICODE;
+                app.palette_open = true;
+                app.picker_index = 0;
+                let screen = render_rows(&mut app, w, h).join("\n");
+                assert!(
+                    screen.contains("commands"),
+                    "{w}x{h} lost the palette frame:\n{screen}"
+                );
+                assert!(
+                    screen.contains("/model · set model by id"),
+                    "{w}x{h} lost the registry dot row:\n{screen}"
+                );
+                assert!(
+                    !screen.contains("[ctrl"),
+                    "{w}x{h} still brackets the resolved chord:\n{screen}"
+                );
+                assert!(
+                    screen.contains("·"),
+                    "{w}x{h} must carry its unicode join:\n{screen}"
+                );
+            }
+            // Model picker stage 1.
+            {
+                let (mut app, _agent, _rx) = test_app();
+                app.theme.glyphs = crate::ui::theme::UNICODE;
+                app.picker_open = true;
+                app.picker_provider = None;
+                let screen = render_rows(&mut app, w, h).join("\n");
+                assert!(
+                    screen.contains("models"),
+                    "{w}x{h} lost the picker frame:\n{screen}"
+                );
+            }
+            // Timeline.
+            {
+                let (mut app, _agent, _rx) = test_app();
+                app.theme.glyphs = crate::ui::theme::UNICODE;
+                // Seed one timeline entry so the panel opens.
+                app.timeline_open = true;
+                let row = crate::app::TimelineRow {
+                    seq: 1,
+                    id: "t1".into(),
+                    kind: "user".into(),
+                    snippet: "hello".into(),
+                    depth: 0,
+                    on_active: true,
+                    parent: None,
+                    label: None,
+                };
+                app.timeline_all = vec![row.clone()];
+                app.timeline_entries = vec![row];
+                let screen = render_rows(&mut app, w, h).join("\n");
+                assert!(
+                    screen.contains("timeline"),
+                    "{w}x{h} lost the timeline frame:\n{screen}"
+                );
+            }
+        }
+    }
+
+    /// D2: the stage-2 hint row budgets to the panel and counts in prose.
+    #[test]
+    fn d2_stage2_hint_counts_in_prose_with_a_more_tail() {
+        let (mut app, _agent, _rx) = test_app();
+        app.theme.glyphs = crate::ui::theme::UNICODE;
+        app.picker_open = true;
+        app.picker_provider = Some("openai".into());
+        app.model_id = "gpt-4".to_string();
+        app.input = "gpt-4".to_string();
+        app.cursor_chars = 5;
+        // At both evidence widths the panel budgets: the first count survives
+        // and the dropped tail reads as prose `+N more`.
+        for (w, h) in [(80u16, 24u16), (100u16, 30u16)] {
+            let screen = render_rows(&mut app, w, h).join("\n");
+            assert!(
+                screen.contains("unavailable"),
+                "{w}x{h} lost the N-unavailable count:\n{screen}"
+            );
+            assert!(
+                screen.contains("more"),
+                "{w}x{h} lost the prose dropped-count:\n{screen}"
+            );
+        }
+        // Wide enough to fit everything, the retired prose survives beside it
+        // (the existing `retired_rows_gain_their_own_hint` pins the wording).
+        let (mut app, _agent, _rx) = test_app();
+        app.theme.glyphs = crate::ui::theme::UNICODE;
+        app.picker_open = true;
+        app.picker_provider = Some("openai".into());
+        app.model_id = "gpt-4".to_string();
+        app.input = "gpt-4".to_string();
+        app.cursor_chars = 5;
+        let screen = render_rows(&mut app, 180, 40).join("\n");
+        assert!(
+            screen.contains("retired rows cannot be applied"),
+            "wide stage-2 must name the retired prose: {screen}"
+        );
+    }
+
+    /// D4: the session browser's empty state wraps instead of clipping.
+    #[test]
+    fn d4_session_empty_state_wraps_to_the_inner_width() {
+        use epsilon_session::SessionScope;
+        for (w, h) in [(80u16, 24u16), (100u16, 30u16)] {
+            let (mut app, _agent, _rx) = test_app();
+            app.theme.glyphs = crate::ui::theme::UNICODE;
+            app.session_browser = Some(crate::app::SessionBrowser {
+                dir: std::path::PathBuf::from("."),
+                cwd: std::path::PathBuf::from("."),
+                current: None,
+                rows: Vec::new(),
+                index: 0,
+                capacity: 5,
+                scope: SessionScope::Workspace,
+                confirming_delete: None,
+                delete_refusal: None,
+            });
+            app.input = String::new();
+            let rows = render_rows(&mut app, w, h);
+            let screen = rows.join("\n");
+            assert!(
+                screen.contains("No sessions"),
+                "{w}x{h} lost the empty state:\n{screen}"
+            );
+            // Wrapped, not clipped: the tail words survive on the continuation
+            // row (a silent clip would lose them entirely).
+            assert!(
+                screen.contains("Esc") && screen.contains("closes"),
+                "{w}x{h} clipped the empty sentence:\n{screen}"
+            );
+            for row in &rows {
+                assert!(
+                    crate::ui::layout::display_width(row) <= w as usize,
+                    "{w}x{h} overflowed: {row:?}"
+                );
+            }
+        }
+    }
+
+    /// D9: the changes panel sizes to its content with a max cap.
+    #[test]
+    fn d9_changes_panel_sizes_to_content_with_a_max_cap() {
+        for (w, h) in [(80u16, 24u16), (100u16, 30u16)] {
+            let (mut app, _agent, _rx) = test_app();
+            app.theme.glyphs = crate::ui::theme::UNICODE;
+            app.changes_open = true;
+            app.changes_rows = vec![("src/a.rs".into(), "edit".into())];
+            app.changes_index = 0;
+            let rows = render_rows(&mut app, w, h);
+            let screen = rows.join("\n");
+            assert!(
+                screen.contains("changes —"),
+                "{w}x{h} lost the changes frame:\n{screen}"
+            );
+            // The bottom rail must be on screen: a fixed-16 box for one row
+            // would push the transcript off without showing more.
+            let bottom = rows
+                .iter()
+                .rposition(|r| r.contains('╰') || r.contains('+'))
+                .unwrap_or(0);
+            let top = rows
+                .iter()
+                .position(|r| r.contains("changes —"))
+                .unwrap_or(0);
+            let height = bottom.saturating_sub(top) + 1;
+            assert!(
+                height < 16,
+                "{w}x{h} did not size to content (fixed 16?): {height} rows:\n{screen}"
+            );
+            assert!(
+                height >= 8,
+                "{w}x{h} collapsed below its chrome: {height} rows:\n{screen}"
             );
         }
     }

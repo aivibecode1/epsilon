@@ -2962,7 +2962,7 @@ impl App {
                         &["/editor", "/export", "/import", "/share", "/copy"],
                     ),
                     (
-                        "files",
+                        "review",
                         &[
                             "/changes",
                             "/restore",
@@ -2989,7 +2989,7 @@ impl App {
                         &["/help", "/hotkeys", "/settings", "/theme", "/expand"],
                     ),
                     (
-                        "meta",
+                        "system",
                         &["/search", "/changelog", "/quit", "/exit", "/scoped_models"],
                     ),
                 ];
@@ -3026,31 +3026,73 @@ impl App {
                 // `String`, because the F-key line is resolved from the binding
                 // table rather than written (see the format! below).
                 let mut guide: Vec<String> = vec![
-                    "auth — /login <provider> (masked paste) · keys → ~/.config/epsilon/auth.json",
-                    "auth — /login <provider> oauth — same store, browser round-trip",
-                    "thinking — Ctrl+T cycles · current level in the status bar",
-                ]
-                .into_iter()
-                .map(String::from)
-                .collect();
+                    "auth — /login <provider> (masked paste) · keys → ~/.config/epsilon/auth.json"
+                        .to_string(),
+                    "auth — /login <provider> oauth — same store, browser round-trip".to_string(),
+                    format!(
+                        "thinking — {} cycles · current level in the status bar",
+                        self.keybindings
+                            .key_text("app.thinking.cycle")
+                            .unwrap_or_else(|| "ctrl+t".to_string())
+                    ),
+                ];
                 // The header legend used to be reprinted here in full
                 // sentences; it now lives only in `ui::metrics::LEGEND`, held
                 // to the formatters by its own test. The header labels its own
                 // tokens live (ctx · ↑↓ · CH · $ · plan · model · offline), so
                 // reprinting the decodes here cost half the help budget to say
                 // what the row above already shows.
+                //
+                // Every chord below is resolved from the binding table, never
+                // written: a rebinding moves the hint with it, and an unbound
+                // action shows nothing rather than a dead key (the same promise
+                // the footer makes per row).
+                let submit = self
+                    .keybindings
+                    .key_text("tui.input.submit")
+                    .unwrap_or_else(|| "enter".to_string());
+                let stop = self
+                    .keybindings
+                    .key_text("app.interrupt")
+                    .unwrap_or_else(|| "esc".to_string());
+                let expand = self
+                    .keybindings
+                    .key_text("app.tools.expand")
+                    .unwrap_or_else(|| "ctrl+x".to_string());
+                let page_up = self
+                    .keybindings
+                    .key_text("app.transcript.pageUp")
+                    .unwrap_or_else(|| "pageup".to_string());
+                let page_down = self
+                    .keybindings
+                    .key_text("app.transcript.pageDown")
+                    .unwrap_or_else(|| "pagedown".to_string());
+                let model = self
+                    .keybindings
+                    .key_text("app.model.select")
+                    .unwrap_or_else(|| "ctrl+m".to_string());
+                let palette = self
+                    .keybindings
+                    .key_text("app.palette")
+                    .unwrap_or_else(|| "ctrl+p".to_string());
+                let think = self
+                    .keybindings
+                    .key_text("app.thinking.cycle")
+                    .unwrap_or_else(|| "ctrl+t".to_string());
+                let clear_draft = self
+                    .keybindings
+                    .key_text("app.clear")
+                    .unwrap_or_else(|| "ctrl+c".to_string());
                 guide.extend([
                     "goal — /goal <objective> parks one objective · bare shows it".to_string(),
                     "goal — edit · pause · resume · complete · blocked <code> <reason> · clear"
                         .to_string(),
-                    "keys — Enter submit · Esc stops run (quits idle) · Ctrl+X expands output"
-                        .to_string(),
-                    "keys — PgUp/PgDn scroll · Ctrl+M model · Ctrl+P palette · Ctrl+T think"
-                        .to_string(),
+                    format!("keys — {submit} submit · {stop} stops run (quits idle) · {expand} expands output"),
+                    format!("keys — {page_up}/{page_down} scroll · {model} model · {palette} palette · {think} think"),
                     // Transcript vs draft (#3): Ctrl+C clears the composer draft,
                     // `/clear` clears the transcript and keeps totals — one key,
                     // one command, different buffers.
-                    "clear — Ctrl+C clears the draft · /clear clears transcript".to_string(),
+                    format!("clear — {clear_draft} clears the draft · /clear clears transcript"),
                     // Hidden shortcuts (#10): q/? and the dashed/underscore
                     // spellings work but are offered by no palette row — named
                     // here so a reader can find them, not swapped into HEADs.
@@ -4770,7 +4812,7 @@ mod tests {
             let screen = frame(&mut app, w, h);
             assert!(
                 screen.contains(&squeezed(
-                    "live: deepseek (2 models, refreshed just now (this session))"
+                    "live: deepseek (2 models · refreshed just now (this session))"
                 )),
                 "{w}x{h} lost the fresh live line: {screen}"
             );
@@ -4779,7 +4821,7 @@ mod tests {
 
     /// Criterion 6: a startup-loaded entry reads the startup-cache wording,
     /// not the session wording. Before: `1 models, cached 5m ago`; after:
-    /// `1 model, from startup cache, 5m ago — auto-refreshes on open`
+    /// `1 model · from startup cache · 5m ago · auto-refreshes on open`
     /// (also the `1 model` singular fix).
     #[tokio::test]
     async fn catalog_draws_cached_line_for_a_startup_entry() {
@@ -4796,7 +4838,7 @@ mod tests {
         let screen = frame(&mut app, 100, 40);
         assert!(
             screen.contains(&squeezed(
-                "live: deepseek (1 model, from startup cache, 5m ago — auto-refreshes on open)"
+                "live: deepseek (1 model · from startup cache · 5m ago · auto-refreshes on open)"
             )),
             "the frame must say startup cache with the age: {screen}"
         );
@@ -4804,7 +4846,7 @@ mod tests {
 
     /// Criterion 6: with nothing cached, `/catalog` names the unfetched
     /// provider rather than staying silent about it.
-    /// Before: `(not fetched)`; after: `(not fetched yet — opening refreshes)`.
+    /// Before: `(not fetched)`; after: `(not fetched yet · opening refreshes)`.
     /// A fetcher is injected because the line only prints where a fetch could
     /// actually happen — faux builds never fetch, so they must not promise one.
     #[tokio::test]
@@ -4822,7 +4864,7 @@ mod tests {
         let screen = frame(&mut app, 100, 40);
         assert!(
             screen.contains(&squeezed(
-                "live: deepseek (not fetched yet — opening refreshes)"
+                "live: deepseek (not fetched yet · opening refreshes)"
             )),
             "the frame must name the unfetched provider: {screen}"
         );
@@ -5092,18 +5134,20 @@ mod tests {
             let name = item.value.trim();
             assert!(joined.contains(name), "/help lost {name}: {joined:?}");
         }
-        // Every guide fact survives the cut.
+        // Every guide fact survives the cut. Chords are the table's own
+        // lowercase spelling (`key_text`), not hand-capitalized literals: a
+        // rebinding moves the hint, so the test holds the resolved form.
         for fact in [
             "~/.config/epsilon/auth.json",
             "masked",
             "oauth",
-            "Ctrl+T",
+            "ctrl+t",
             "status bar",
             "/goal",
             "blocked",
-            "Ctrl+X",
-            "Ctrl+M",
-            "Ctrl+P",
+            "ctrl+x",
+            "ctrl+m",
+            "ctrl+p",
             "opens the file tree",
         ] {
             assert!(joined.contains(fact), "/help lost {fact:?}: {joined:?}");
@@ -5114,6 +5158,57 @@ mod tests {
             assert!(
                 crate::ui::layout::display_width(line) <= 78,
                 "a help row wraps at 80 columns: {line:?}"
+            );
+        }
+    }
+
+    /// D7: help groups are merged with distinct labels, and every chord is
+    /// resolved from the binding table.
+    #[tokio::test]
+    async fn d7_help_groups_are_distinct_and_chords_resolved() {
+        let (mut app, agent, _receivers) = test_app();
+        app.theme.glyphs = crate::ui::theme::UNICODE;
+        assert!(!type_and_enter(&mut app, &agent, "/help"));
+        let lines: Vec<String> = app.ui.lines().iter().map(|l| l.text.clone()).collect();
+        // Distinct group labels: no two rows share a label, so the index reads
+        // as eight groups rather than six with two repeats.
+        let files = lines.iter().filter(|l| l.starts_with("files —")).count();
+        assert_eq!(files, 1, "exactly one files group: {lines:#?}");
+        assert!(
+            lines.iter().any(|l| l.starts_with("review —")),
+            "the checkpoint group carries its own label: {lines:#?}"
+        );
+        let meta = lines.iter().filter(|l| l.starts_with("meta —")).count();
+        assert_eq!(meta, 1, "exactly one meta group: {lines:#?}");
+        assert!(
+            lines.iter().any(|l| l.starts_with("system —")),
+            "the system group carries its own label: {lines:#?}"
+        );
+        // Table-resolved chords: the table's lowercase spelling, and a rebind
+        // moves the hint.
+        let joined = lines.join("\n");
+        for chord in ["ctrl+m", "ctrl+p", "ctrl+t", "ctrl+x"] {
+            assert!(
+                joined.contains(chord),
+                "/help lost the resolved {chord}: {joined:?}"
+            );
+        }
+        assert!(
+            !joined.contains("Ctrl+M"),
+            "hand-capitalized chords are back: {joined:?}"
+        );
+        for (w, h) in [(80u16, 24u16), (100u16, 30u16)] {
+            let screen = squeezed(&frame(&mut app, w, h));
+            assert!(
+                screen.contains("files—")
+                    && screen.contains("review—")
+                    && screen.contains("meta—")
+                    && screen.contains("system—"),
+                "{w}x{h} lost the distinct groups:\n{screen}"
+            );
+            assert!(
+                screen.contains("—") && screen.contains("·"),
+                "{w}x{h} must carry its unicode joins:\n{screen}"
             );
         }
     }

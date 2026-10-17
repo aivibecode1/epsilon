@@ -169,8 +169,11 @@ async fn the_palette_names_the_file_tree_and_choosing_it_opens_the_tree() {
         .keybindings
         .key_text("app.tree.toggle")
         .expect("app.tree.toggle is bound");
+    // Bare chord, no brackets: no other surface brackets key text (footer,
+    // hints, and the slash rows all print it plain), so brackets here would
+    // be the one place teaching a different convention.
     assert!(
-        row.contains(&format!("[{chord}]")),
+        row.contains(chord.as_str()),
         "the entry must show the chord the table resolves ({chord}): {row:?}"
     );
 

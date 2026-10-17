@@ -477,11 +477,10 @@ impl App {
             // answers otherwise (panels.rs draws the same pair). Read straight
             // off the overlay — building a draw snapshot here would allocate
             // the whole frame (tabs, rows, review) every frame just for one
-            // flag.
-            let arrows = crate::ui::overlay::up_down(
-                crate::ui::theme::Glyphs::detect().up,
-                crate::ui::theme::Glyphs::detect().down,
-            );
+            // flag. Glyphs come from the theme, not the process: the frame is
+            // drawn from `theme.glyphs`, so the footer must read the same
+            // table or it names chords the frame cannot draw.
+            let arrows = crate::ui::overlay::up_down(self.theme.glyphs.up, self.theme.glyphs.down);
             let is_multi = overlay.current_is_multi();
             let keys = if overlay.is_custom_open() {
                 vec![
@@ -557,10 +556,8 @@ impl App {
             // The tree has no filter box, so the generic overlay hints' "type
             // filter" would advertise a key the tree does not act on. Its own
             // row names what the tree honours: arrows, Enter, Esc, and F6.
-            let arrows = crate::ui::overlay::up_down(
-                crate::ui::theme::Glyphs::detect().up,
-                crate::ui::theme::Glyphs::detect().down,
-            );
+            // Glyphs come from the theme, matching the drawn frame.
+            let arrows = crate::ui::overlay::up_down(self.theme.glyphs.up, self.theme.glyphs.down);
             let mut keys = vec![
                 (arrows, "move".into()),
                 ("enter".into(), "view".into()),
@@ -575,21 +572,192 @@ impl App {
                 keys,
                 ..Hints::default()
             }
-        } else if self.overlay_open() {
-            // Overlays own the keyboard; the footer points at their own keys
-            // rather than advertising send/stop, which would not work. The
-            // arrow pair is a glyph rather than a literal because it is
-            // repertoire — and this builder has no `App` to ask, so it asks
-            // `Glyphs::detect()` once, which is the same process decision the
-            // app made at startup (M219).
-            let arrows = crate::ui::overlay::up_down(
-                crate::ui::theme::Glyphs::detect().up,
-                crate::ui::theme::Glyphs::detect().down,
-            );
+        } else if self.palette_open {
+            // Matches `draw_palette`'s own hint row, verb for verb: the palette
+            // filters by typing, so `type filter` is honest here.
+            let arrows = crate::ui::overlay::up_down(self.theme.glyphs.up, self.theme.glyphs.down);
             Hints {
                 mode: Some("list".into()),
                 keys: vec![
                     ("type".into(), "filter".into()),
+                    (arrows, "move".into()),
+                    ("enter".into(), "run".into()),
+                    ("esc".into(), "close".into()),
+                ],
+                ..Hints::default()
+            }
+        } else if self.picker_open {
+            // Stage 1 browses providers, stage 2 filters one provider's models:
+            // the verbs match the panel's own hint row in each stage, so the
+            // footer never advertises `type filter` on the stage that does not
+            // filter.
+            let arrows = crate::ui::overlay::up_down(self.theme.glyphs.up, self.theme.glyphs.down);
+            let keys = if self.picker_provider.is_some() {
+                let mut keys = vec![
+                    ("type".into(), "filters (fuzzy)".into()),
+                    ("enter".into(), "apply".into()),
+                ];
+                if let Some(save) = self.keybindings.key_text("app.model.saveDefault") {
+                    keys.push((save, "save default".into()));
+                }
+                keys.push(("backspace/esc".into(), "back".into()));
+                keys
+            } else {
+                vec![
+                    (arrows, "move".into()),
+                    ("enter".into(), "browse models".into()),
+                    ("esc".into(), "close".into()),
+                ]
+            };
+            Hints {
+                mode: Some("models".into()),
+                keys,
+                ..Hints::default()
+            }
+        } else if self.session_browser.is_some() {
+            // Matches the session browser's in-panel footer: Enter resumes,
+            // Tab switches scope, Esc closes. No `type filter`: the panel's
+            // own hints do not name it, so neither does the footer.
+            let mut keys = vec![
+                ("enter".into(), "resumes".into()),
+                (
+                    "tab".into(),
+                    match self
+                        .session_browser
+                        .as_ref()
+                        .map(|b| b.scope)
+                        .unwrap_or(epsilon_session::SessionScope::Workspace)
+                    {
+                        epsilon_session::SessionScope::Workspace => "all sessions".into(),
+                        epsilon_session::SessionScope::All => "this workspace".into(),
+                    },
+                ),
+                ("esc".into(), "closes".into()),
+            ];
+            // `ctrl+d deletes` is a panel hint with a bound key behind it; name
+            // it here too so the footer matches the panel verb for verb.
+            keys.insert(2, ("ctrl+d".into(), "deletes".into()));
+            Hints {
+                mode: Some("sessions".into()),
+                keys,
+                ..Hints::default()
+            }
+        } else if self.timeline_open {
+            // Matches the timeline's in-panel hints: paging, jump/fork, `f`
+            // filter and `/` search. No `type filter`: the panel filters via
+            // `f`, and advertising typing would promise a key that does nothing.
+            let arrows = crate::ui::overlay::up_down(self.theme.glyphs.up, self.theme.glyphs.down);
+            let enter = if self.timeline_fork_refill.is_some() {
+                "fork"
+            } else {
+                "jump"
+            };
+            Hints {
+                mode: Some("timeline".into()),
+                keys: vec![
+                    (arrows, "move".into()),
+                    ("left/right".into(), "page".into()),
+                    ("enter".into(), enter.into()),
+                    ("f".into(), "filter".into()),
+                    ("/".into(), "search".into()),
+                    ("esc".into(), "close".into()),
+                ],
+                ..Hints::default()
+            }
+        } else if self.think_pick_open {
+            // Matches `draw_think_picker`: typing filters the seven levels.
+            let arrows = crate::ui::overlay::up_down(self.theme.glyphs.up, self.theme.glyphs.down);
+            Hints {
+                mode: Some("think".into()),
+                keys: vec![
+                    ("type".into(), "filter".into()),
+                    (arrows, "move".into()),
+                    ("enter".into(), "apply".into()),
+                    ("esc".into(), "keep current".into()),
+                ],
+                ..Hints::default()
+            }
+        } else if self.changes_open {
+            // Matches `draw_changes`' three hint rows: move, preview, expand,
+            // describe, restore, close. No `type filter`: the panel has no
+            // filter box, and advertising one would promise a dead key.
+            let arrows = crate::ui::overlay::up_down(self.theme.glyphs.up, self.theme.glyphs.down);
+            let diff = self
+                .keybindings
+                .effective()
+                .get("app.changes.diff")
+                .map(|v| v.join("/"))
+                .filter(|s| !s.is_empty())
+                .unwrap_or_else(|| "d/tab".to_string());
+            let describe = self
+                .keybindings
+                .key_text("app.changes.describe")
+                .unwrap_or_else(|| "r".to_string());
+            let apply = self
+                .keybindings
+                .key_text("app.changes.apply")
+                .unwrap_or_else(|| "y".to_string());
+            let close = format!(
+                "{},esc",
+                self.keybindings
+                    .key_text("app.changes.close")
+                    .unwrap_or_else(|| "q".to_string())
+            );
+            Hints {
+                mode: Some("changes".into()),
+                keys: vec![
+                    (arrows, "move".into()),
+                    ("enter".into(), "preview".into()),
+                    (diff, "expand".into()),
+                    (describe, "describe".into()),
+                    (apply, "restore".into()),
+                    (close, "close".into()),
+                ],
+                ..Hints::default()
+            }
+        } else if self.settings_open {
+            // Matches `draw_settings`: the panel has no filter box, only
+            // movement and the three Enter classes. No `type filter`.
+            let arrows = crate::ui::overlay::up_down(self.theme.glyphs.up, self.theme.glyphs.down);
+            Hints {
+                mode: Some("settings".into()),
+                keys: vec![
+                    (arrows, "move".into()),
+                    ("enter".into(), "open · change · ask".into()),
+                    ("esc".into(), "close".into()),
+                ],
+                ..Hints::default()
+            }
+        } else if self.scope_open {
+            // Matches `draw_scope_picker`: typing filters the catalog, Space
+            // stages scope, the resolved save chord persists it.
+            let arrows = crate::ui::overlay::up_down(self.theme.glyphs.up, self.theme.glyphs.down);
+            let save = self
+                .keybindings
+                .key_text("app.model.saveDefault")
+                .unwrap_or_else(|| "ctrl+s".to_string());
+            Hints {
+                mode: Some("scope".into()),
+                keys: vec![
+                    ("type".into(), "filter".into()),
+                    (arrows, "move".into()),
+                    ("space".into(), "toggle".into()),
+                    (save, "save".into()),
+                    ("esc".into(), "discard".into()),
+                ],
+                ..Hints::default()
+            }
+        } else if self.overlay_open() {
+            // Every other overlay owns the keyboard but has no filter box
+            // (permission dialog is handled by the approval branch above;
+            // label/auth prompts and pickers without a list take text, not a
+            // filter). Advertising `type filter` here promised a key the panel
+            // does not act on, so the fallback names only what every overlay
+            // honours: movement, choice, and close.
+            let arrows = crate::ui::overlay::up_down(self.theme.glyphs.up, self.theme.glyphs.down);
+            Hints {
+                mode: Some("list".into()),
+                keys: vec![
                     (arrows, "move".into()),
                     ("enter".into(), "choose".into()),
                     ("esc".into(), "close".into()),
@@ -661,6 +829,7 @@ impl App {
             || self.think_pick_open
             || self.changes_open
             || self.settings_open
+            || self.scope_open
             || self.timeline_open
             || self.tree_open
             || !self.viewer_tabs.is_empty()
@@ -1176,5 +1345,134 @@ mod unpriced_volume_frame_tests {
                 "a priced session must not gain the line at {w}x{h}:\n{screen}"
             );
         }
+    }
+}
+
+#[cfg(test)]
+mod structural_footer_tests {
+    use super::super::tests_support::{render_rows, test_app};
+
+    fn footer_of(rows: &[String]) -> &str {
+        rows.last().map(String::as_str).unwrap_or("")
+    }
+
+    /// D6: per-overlay footer verbs match the panel's own hint row.
+    #[test]
+    fn d6_per_overlay_footers_match_their_panels() {
+        // Palette advertises run (not choose), with a filter.
+        for (w, h) in [(80u16, 24u16), (100u16, 30u16)] {
+            let (mut app, _agent, _rx) = test_app();
+            app.theme.glyphs = crate::ui::theme::UNICODE;
+            app.palette_open = true;
+            let rows = render_rows(&mut app, w, h);
+            let footer = footer_of(&rows).to_string();
+            assert!(
+                footer.contains("run"),
+                "{w}x{h} palette footer must say run: {footer}\n{}",
+                rows.join("\n")
+            );
+            assert!(
+                footer.contains("filter"),
+                "{w}x{h} palette footer keeps its filter: {footer}"
+            );
+        }
+        // Picker stage 1 browses (no filter); stage 2 filters.
+        for (w, h) in [(80u16, 24u16), (100u16, 30u16)] {
+            let (mut app, _agent, _rx) = test_app();
+            app.theme.glyphs = crate::ui::theme::UNICODE;
+            app.picker_open = true;
+            app.picker_provider = None;
+            let rows = render_rows(&mut app, w, h);
+            let footer = footer_of(&rows).to_string();
+            assert!(
+                footer.contains("browse models"),
+                "{w}x{h} stage-1 footer must browse: {footer}"
+            );
+            assert!(
+                !footer.contains("filter"),
+                "{w}x{h} stage-1 has no filter box to advertise: {footer}"
+            );
+        }
+        // Timeline: jump + f filter, never `type filter`.
+        {
+            let (mut app, _agent, _rx) = test_app();
+            app.theme.glyphs = crate::ui::theme::UNICODE;
+            app.timeline_open = true;
+            let row = crate::app::TimelineRow {
+                seq: 1,
+                id: "t1".into(),
+                kind: "user".into(),
+                snippet: "hello".into(),
+                depth: 0,
+                on_active: true,
+                parent: None,
+                label: None,
+            };
+            app.timeline_all = vec![row.clone()];
+            app.timeline_entries = vec![row];
+            let rows = render_rows(&mut app, 100, 30);
+            let footer = footer_of(&rows).to_string();
+            assert!(
+                footer.contains("jump") || footer.contains("fork"),
+                "timeline footer names its Enter: {footer}"
+            );
+            assert!(
+                !footer.contains("type filter"),
+                "the timeline filters via f, not typing: {footer}"
+            );
+        }
+        // Changes: preview/restore, no filter. Settings: three classes, no filter.
+        for (w, h) in [(80u16, 24u16), (100u16, 30u16)] {
+            let (mut app, _agent, _rx) = test_app();
+            app.theme.glyphs = crate::ui::theme::UNICODE;
+            app.changes_open = true;
+            app.changes_rows = vec![("src/a.rs".into(), "edit".into())];
+            let rows = render_rows(&mut app, w, h);
+            let footer = footer_of(&rows).to_string();
+            assert!(
+                footer.contains("preview"),
+                "{w}x{h} changes footer must preview: {footer}"
+            );
+            assert!(
+                !footer.contains("type filter"),
+                "{w}x{h} changes has no filter box: {footer}"
+            );
+        }
+        // Wide, the restore verb survives beside preview.
+        {
+            let (mut app, _agent, _rx) = test_app();
+            app.theme.glyphs = crate::ui::theme::UNICODE;
+            app.changes_open = true;
+            app.changes_rows = vec![("src/a.rs".into(), "edit".into())];
+            let rows = render_rows(&mut app, 180, 40);
+            let footer = footer_of(&rows).to_string();
+            assert!(
+                footer.contains("restore"),
+                "wide changes footer must restore: {footer}"
+            );
+        }
+    }
+
+    /// D10: the footer reads the theme's glyphs, not the process.
+    #[test]
+    fn d10_footer_arrows_follow_the_theme_repertoire() {
+        let (mut app, _agent, _rx) = test_app();
+        app.theme.glyphs = crate::ui::theme::UNICODE;
+        app.palette_open = true;
+        let rows = render_rows(&mut app, 80, 24);
+        let footer = footer_of(&rows).to_string();
+        assert!(
+            footer.contains("↑") && footer.contains("↓"),
+            "UNICODE footer must draw UNICODE arrows: {footer}"
+        );
+        let (mut app, _agent, _rx) = test_app();
+        app.theme.glyphs = crate::ui::theme::ASCII;
+        app.palette_open = true;
+        let rows = render_rows(&mut app, 80, 24);
+        let footer = footer_of(&rows).to_string();
+        assert!(
+            !footer.contains("↑") && !footer.contains("↓"),
+            "ASCII footer must not draw UNICODE arrows: {footer}"
+        );
     }
 }
