@@ -1,0 +1,170 @@
+{
+  "exe": "C:\\Users\\Hp\\AppData\\Local\\Temp\\epsilon-target\\debug\\epsilon.exe",
+  "typed_text": "/settings",
+  "mode": "late",
+  "size": [
+    80,
+    24
+  ],
+  "wait_s": 7.0,
+  "shell": "cmd",
+  "exe_args": "",
+  "host_class": "ConsoleWindowClass",
+  "resize": {
+    "buffer-big": false,
+    "window": true,
+    "buffer-exact": true
+  },
+  "before": {
+    "buffer": [
+      80,
+      24
+    ],
+    "window_origin": [
+      0,
+      0
+    ],
+    "window_cols": 80,
+    "window_rows": 24,
+    "cursor": [
+      0,
+      0
+    ]
+  },
+  "after": {
+    "buffer": [
+      80,
+      24
+    ],
+    "window_origin": [
+      0,
+      0
+    ],
+    "window_cols": 80,
+    "window_rows": 24,
+    "cursor": [
+      2,
+      21
+    ]
+  },
+  "after_screen": [
+    "idle             ctx 1%*/1.0M \u00b7 Faux (offline scripted) \u2022 thinking off \u00b7 offline",
+    "",
+    "E P S I L O N",
+    "a coding agent in your terminal",
+    "",
+    "1 Describe a task, then press enter.",
+    "2 /help lists every command -- start there.",
+    "3 e.g. /login anthropic -- connect a provider.",
+    "@ files \u00b7 ! shell \u00b7 / commands",
+    "* go real: epsilon auth login <provider> (or set the provider's API key env var)",
+    "* skills: ignoring C:\\Users\\Hp\\Desktop\\My Agent",
+    "| Space\\Epsilon\\.agents\\skills\\README.md: 'README' is not a valid skill name",
+    "| (lowercase a-z, 0-9 and hyphens, no leading, trailing or doubled hyphen, at",
+    "| most 64 characters)",
+    "* skills: agent-experience, evidence-guardrails, grill-me, improve,",
+    "| isolate-the-layer, one-three-one-rule, ponytail, ponytail-audit,",
+    "| ponytail-debt, ponytail-gain, ponytail-help, ponytail-review, ratatui-tui,",
+    "| rtl-aware-development, two-stage-review, ux-triage",
+    "* this workspace holds 25 earlier sessions \u2014 `epsilon -c` opens the most recent,",
+    "| `/resume <file>` picks another",
+    "",
+    "> describe a task, or / for commands",
+    "--------------------------------------------------------------------------------",
+    "insert \u00b7 enter send \u00b7 pageup scroll back \u00b7 ctrl+j newline ...\\...\\Epsilon \u00b7 main"
+  ],
+  "typed": {
+    "ok": true,
+    "written": 18,
+    "err": 87
+  },
+  "after_typing": {
+    "buffer": [
+      80,
+      24
+    ],
+    "window_origin": [
+      0,
+      0
+    ],
+    "window_cols": 80,
+    "window_rows": 24,
+    "cursor": [
+      11,
+      21
+    ]
+  },
+  "typed_screen": [
+    "idle             ctx 1%*/1.0M \u00b7 Faux (offline scripted) \u2022 thinking off \u00b7 offline",
+    "",
+    "E P S I L O N",
+    "a coding agent in your terminal",
+    "",
+    "1 Describe a task, then press enter.",
+    "2 /help lists every command -- start there.",
+    "3 e.g. /login anthropic -- connect a provider.",
+    "@ files \u00b7 ! shell \u00b7 / commands",
+    "* go real: epsilon auth login <provider> (or set the provider's API key env var)",
+    "* skills: ignoring C:\\Users\\Hp\\Desktop\\My Agent",
+    "| Space\\Epsilon\\.agents\\skills\\README.md: 'README' is not a valid skill name",
+    "| (lowercase a-z, 0-9 and hyphens, no leading, trailing or doubled hyphen, at",
+    "| most 64 characters)",
+    "+ commands --------------------------------------------------------------------+",
+    "| > /settings  six rows: model, thinking, theme, thinking blocks, permission p |",
+    "|              preset, plan                                                    |",
+    "|                                                                              |",
+    "| ^v pick \u00b7 tab apply \u00b7 esc dismiss                                            |",
+    "+------------------------------------------------------------------------------+",
+    "",
+    "> /settings",
+    "--------------------------------------------------------------------------------",
+    "insert \u00b7 enter send \u00b7 pageup scroll back \u00b7 ctrl+j newline ...\\...\\Epsilon \u00b7 main"
+  ],
+  "enter": {
+    "ok": true,
+    "written": 2,
+    "err": 87
+  },
+  "after_turn": {
+    "buffer": [
+      80,
+      24
+    ],
+    "window_origin": [
+      0,
+      0
+    ],
+    "window_cols": 80,
+    "window_rows": 24,
+    "cursor": [
+      57,
+      23
+    ]
+  },
+  "turn_screen": [
+    "idle             ctx 1%*/1.0M \u00b7 Faux (offline scripted) \u2022 thinking off \u00b7 offline",
+    "        + settings ----------------------------------------------------+",
+    "        | > model                                               faux-1 |",
+    "        |   thinking                                               off |",
+    "        |   theme                                                 dark |",
+    "        |   thinking blocks                                      shown |",
+    "        |   permission                                            auto |",
+    "        |   plan                                                   off |",
+    "        |                                                              |",
+    "        | ^v move \u00b7 enter open \u00b7 change \u00b7 ask \u00b7 esc close              |",
+    "        | model/thinking (/models,/think) open                         |",
+    "        | theme/blocks (/theme) change \u00b7 preset/plan ask               |",
+    "        | more /scoped-models /skill /login /editor /expand            |",
+    "        |                                                              |",
+    "        +--------------------------------------------------------------+",
+    "| isolate-the-layer, one-three-one-rule, ponytail, ponytail-audit,",
+    "| ponytail-debt, ponytail-gain, ponytail-help, ponytail-review, ratatui-tui,",
+    "| rtl-aware-development, two-stage-review, ux-triage",
+    "* this workspace holds 25 earlier sessions \u2014 `epsilon -c` opens the most recent,",
+    "| `/resume <file>` picks another",
+    "",
+    "> describe a task, or / for commands",
+    "--------------------------------------------------------------------------------",
+    "settings \u00b7 ^v move \u00b7 enter open \u00b7 change \u00b7 ask            ...\\...\\Epsilon \u00b7 main"
+  ]
+}
