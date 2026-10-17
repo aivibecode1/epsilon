@@ -55,6 +55,40 @@ pub struct ReadArgs {
 
 pub const READ_DESC: &str = include_str!("../descriptions/read.txt");
 
+/// Suggest up to 3 near-miss names for a file that is not there
+/// (opencode `read.ts:76-99`: substring match in both directions, case-insensitive).
+///
+/// Sorted for stable output (opencode uses readdir order); an exact match is
+/// excluded so an existing file never "suggests" itself. An unreadable or
+/// missing parent yields none — a miss with no neighbours is just a miss.
+pub(crate) fn miss_suggestions(missing: &std::path::Path) -> Vec<String> {
+    let Some(parent) = missing.parent() else {
+        return Vec::new();
+    };
+    let base = missing
+        .file_name()
+        .map(|s| s.to_string_lossy().to_lowercase())
+        .unwrap_or_default();
+    if base.is_empty() {
+        return Vec::new();
+    }
+    let Ok(entries) = std::fs::read_dir(parent) else {
+        return Vec::new();
+    };
+    let mut out: Vec<String> = entries
+        .filter_map(Result::ok)
+        .map(|e| e.file_name().to_string_lossy().to_string())
+        .filter(|name| {
+            let lower = name.to_lowercase();
+            lower != base && (lower.contains(base.as_str()) || base.contains(lower.as_str()))
+        })
+        .map(|name| parent.join(&name).display().to_string())
+        .collect();
+    out.sort();
+    out.truncate(3);
+    out
+}
+
 /// Numbered-line file reader with size caps and spill locators.
 pub struct ReadTool {
     descriptor: ToolDescriptor,
@@ -115,7 +149,19 @@ impl Tool for ReadTool {
         // the whole file is read, because the attachment below needs the bytes.
         let mut bytes = Vec::new();
         std::fs::File::open(&path)
-            .map_err(|e| ToolFailure::msg(format!("cannot open {}: {e}", path.display())))?
+            .map_err(|e| {
+                let mut msg = format!("cannot open {}: {e}", path.display());
+                if e.kind() == std::io::ErrorKind::NotFound {
+                    let suggestions = miss_suggestions(&path);
+                    if !suggestions.is_empty() {
+                        msg.push_str(&format!(
+                            "\n\nDid you mean one of these?\n{}",
+                            suggestions.join("\n")
+                        ));
+                    }
+                }
+                ToolFailure::msg(msg)
+            })?
             .take(4096)
             .read_to_end(&mut bytes)
             .map_err(|e| ToolFailure::msg(format!("read error: {e}")))?;
@@ -819,5 +865,91 @@ impl Tool for EditTool {
             }
         })
         .await
+    }
+}
+
+#[cfg(test)]
+mod miss_tests {
+    use super::ReadTool;
+    use super::miss_suggestions;
+    use epsilon_contracts::tool::{Tool, ToolContext, ToolInvocation};
+    use std::sync::Arc;
+    use tokio_util::sync::CancellationToken;
+
+    fn ctx_for(root: &std::path::Path) -> ToolContext {
+        ToolContext {
+            session_id: "miss-test".into(),
+            observation_scope: Arc::new(()),
+            cwd: root.to_path_buf(),
+            spill_dir: root.join(".epsilon/spill"),
+            token: CancellationToken::new(),
+            task_host: None,
+            goal_host: None,
+        }
+    }
+
+    #[test]
+    fn miss_suggestions_name_the_near_miss() {
+        let dir = tempfile::tempdir().unwrap();
+        for n in [
+            "config.toml",
+            "configuration.md",
+            "other.rs",
+            "unrelated.txt",
+        ] {
+            std::fs::write(dir.path().join(n), "x").unwrap();
+        }
+        let got = miss_suggestions(&dir.path().join("confi"));
+        assert!(!got.is_empty(), "a near-miss must suggest");
+        assert!(got.len() <= 3, "at most three suggestions: {got:?}");
+        assert!(
+            got.iter().any(|s| s.contains("config.toml")),
+            "the near-miss is named: {got:?}"
+        );
+    }
+
+    #[test]
+    fn exact_hit_gives_no_suggestions() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("config.toml"), "x").unwrap();
+        assert!(
+            miss_suggestions(&dir.path().join("config.toml")).is_empty(),
+            "an exact hit suggests nothing"
+        );
+    }
+
+    #[test]
+    fn empty_dir_gives_none() {
+        let dir = tempfile::tempdir().unwrap();
+        assert!(
+            miss_suggestions(&dir.path().join("anything.rs")).is_empty(),
+            "an empty dir suggests nothing"
+        );
+    }
+
+    #[tokio::test]
+    async fn read_error_names_the_near_miss() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("config.toml"), "x = 1\n").unwrap();
+        let tool = ReadTool::new();
+        let call = ToolInvocation {
+            tool_call_id: "miss-test".into(),
+            // A true substring of the neighbour (opencode matches substrings).
+            args: serde_json::json!({"path": "onfig.toml"}),
+        };
+        let err = tool
+            .execute(call, ctx_for(dir.path()), Arc::new(|_| {}))
+            .await
+            .expect_err("a missing file must fail");
+        assert!(
+            err.message.contains("Did you mean"),
+            "the error proposes names; got: {}",
+            err.message
+        );
+        assert!(
+            err.message.contains("config.toml"),
+            "the near-miss is named; got: {}",
+            err.message
+        );
     }
 }

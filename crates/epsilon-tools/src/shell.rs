@@ -25,6 +25,12 @@ use crate::util;
 pub struct BashArgs {
     /// Shell command to run in the workspace root.
     pub command: String,
+    /// Subdirectory to run in (workspace-relative, or absolute under the
+    /// workspace). Defaults to the session cwd. Resolved and escape-checked
+    /// like every path — use this instead of `cd` prefixes (opencode
+    /// `shell/prompt.ts:19-21`, `shell.ts:612-614`).
+    #[serde(default)]
+    pub workdir: Option<String>,
     /// Kill the process after this many seconds (default 120, max 600).
     /// Accepts pi's `timeout` wire name as an alias; zero is rejected (pi
     /// `resolveTimeoutMs` parity) instead of silently clamping.
@@ -385,6 +391,22 @@ fn combine_output(stdout: &str, stderr: &str, exit_code: Option<i32>) -> String 
     combined
 }
 
+/// Resolve the call's working directory: `workdir` when given, else the session cwd.
+///
+/// Escape-checked like every path (`resolve_or_refuse`): a workdir outside the
+/// workspace is a refusal, and the command never spawns. `resource_key` stays
+/// `None` on purpose — a shell command can touch anything whatever its cwd, so
+/// the batch planner keeps treating it as unknown reach (a barrier).
+fn resolve_workdir(
+    cwd: &std::path::Path,
+    workdir: Option<&str>,
+) -> Result<std::path::PathBuf, ToolFailure> {
+    match workdir {
+        Some(raw) => util::resolve_or_refuse(cwd, raw),
+        None => Ok(cwd.to_path_buf()),
+    }
+}
+
 #[async_trait]
 impl Tool for BashTool {
     fn descriptor(&self) -> &ToolDescriptor {
@@ -418,6 +440,10 @@ impl Tool for BashTool {
         let live = util::LiveOutput::new(on_update);
         // One mode per call, resolved before anything spawns (port plan item 15).
         let mode = self.resolve_mode(&args)?;
+        // The directory the command runs in: the session cwd by default, the
+        // resolved `workdir` when the model names one — threaded to the process
+        // cwd / sandbox cwd, never a `cd &&` prefix (opencode `shell.ts:612-614`).
+        let workdir = resolve_workdir(&ctx.cwd, args.workdir.as_deref())?;
 
         // ---- confined path ---------------------------------------------------------
         if let Some(sandbox) = self.sandbox.as_ref() {
@@ -438,7 +464,7 @@ impl Tool for BashTool {
                     ConfinedCommand {
                         program: program.into(),
                         args: argv,
-                        cwd: ctx.cwd.clone(),
+                        cwd: workdir.clone(),
                         mode,
                     },
                     &policy,
@@ -515,7 +541,7 @@ impl Tool for BashTool {
         }
         let (program, argv) = shell_argv(&args.command);
         let mut cmd = tokio::process::Command::new(program);
-        cmd.args(&argv).current_dir(&ctx.cwd);
+        cmd.args(&argv).current_dir(&workdir);
         // DSH subprocess rule: never hand a child the harness's credentials. One
         // `env` in a tool result would put every API key into the transcript, the
         // session JSONL and any export of it.
@@ -666,6 +692,84 @@ mod shell_argv_tests {
         let (program, args) = shell_argv("echo hi");
         assert_eq!(program, "bash");
         assert_eq!(args, vec!["-c".to_string(), "echo hi".to_string()]);
+    }
+}
+
+#[cfg(test)]
+mod workdir_tests {
+    use super::*;
+    use epsilon_contracts::tool::{ToolContext, ToolInvocation};
+    use std::sync::Arc;
+    use tokio_util::sync::CancellationToken;
+
+    fn ctx_for(root: &std::path::Path) -> ToolContext {
+        ToolContext {
+            session_id: "workdir-test".into(),
+            observation_scope: Arc::new(()),
+            cwd: root.to_path_buf(),
+            spill_dir: root.join(".epsilon/spill"),
+            token: CancellationToken::new(),
+            task_host: None,
+            goal_host: None,
+        }
+    }
+
+    async fn run_bash(
+        root: &std::path::Path,
+        args: serde_json::Value,
+    ) -> Result<ToolOutput, ToolFailure> {
+        let tool = BashTool::new();
+        let call = ToolInvocation {
+            tool_call_id: "workdir-test".into(),
+            args,
+        };
+        tool.execute(call, ctx_for(root), Arc::new(|_| {})).await
+    }
+
+    fn text_of(out: &ToolOutput) -> String {
+        out.content
+            .iter()
+            .filter_map(|c| match c {
+                epsilon_contracts::content::ContentBlock::Text { text } => Some(text.as_str()),
+                _ => None,
+            })
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
+
+    #[tokio::test]
+    async fn workdir_runs_in_the_subdir() {
+        // `pwd` proves the process cwd: the subdir name must appear in it.
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        std::fs::create_dir_all(root.join("workdir-probe")).unwrap();
+        let out = run_bash(
+            root,
+            serde_json::json!({"command": "pwd", "workdir": "workdir-probe"}),
+        )
+        .await
+        .expect("bash with workdir must run");
+        let text = text_of(&out);
+        assert!(
+            text.contains("workdir-probe"),
+            "pwd must prove the subdir; got: {text}"
+        );
+    }
+
+    #[tokio::test]
+    async fn workdir_escape_is_refused() {
+        let dir = tempfile::tempdir().unwrap();
+        let err = run_bash(
+            dir.path(),
+            serde_json::json!({"command": "pwd", "workdir": ".."}),
+        )
+        .await
+        .expect_err("a workdir outside the workspace must be refused");
+        assert!(
+            err.message.contains("outside the workspace"),
+            "refusal must name the escape; got: {}",
+            err.message
+        );
     }
 }
 

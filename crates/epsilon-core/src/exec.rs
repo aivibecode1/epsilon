@@ -145,10 +145,30 @@ fn gate_subject(
     if (name == "bash" || name == "shell")
         && let Some(cmd) = args.get("command").and_then(|v| v.as_str())
     {
-        return (
-            name.to_string(),
-            cmd.split_whitespace().next().unwrap_or("*").to_string(),
-        );
+        let head = cmd.split_whitespace().next().unwrap_or("*").to_string();
+        // A `workdir` scopes the command: `pytest` in `sub/` is a different
+        // subject than `pytest` at the root, so an allow-rule for one does
+        // not silently cover the other. Absent workdir the subject is
+        // unchanged (the common case keeps matching old rules).
+        if let Some(wd) = args
+            .get("workdir")
+            .and_then(|v| v.as_str())
+            .filter(|s| !s.is_empty())
+        {
+            let resolution = crate::paths::resolve_for_access(workspace, wd);
+            if resolution.inside {
+                let rel = resolution
+                    .path
+                    .strip_prefix(workspace)
+                    .unwrap_or(&resolution.path)
+                    .to_string_lossy()
+                    .trim_end_matches('/')
+                    .to_string();
+                return (name.to_string(), format!("{head} @{rel}"));
+            }
+            return (name.to_string(), format!("{head} @external:{wd}"));
+        }
+        return (name.to_string(), head);
     }
     (name.to_string(), "*".to_string())
 }
@@ -1317,6 +1337,34 @@ mod tests {
             detail.as_object().map(|o| o.len()),
             Some(3),
             "one key added and nothing else moved: {detail}"
+        );
+    }
+
+    /// A bash `workdir` scopes the permission subject: `pytest` in `sub/`
+    /// must not match an allow-rule written for bare `pytest`, and a bare
+    /// call keeps the old subject. RED-first: pre-change the workdir was
+    /// invisible to the gate.
+    #[test]
+    fn bash_workdir_scopes_the_permission_subject() {
+        let ws = std::path::Path::new("/ws");
+        let bare = serde_json::json!({ "command": "pytest -q" });
+        assert_eq!(
+            gate_subject("bash", &bare, ws),
+            ("bash".to_string(), "pytest".to_string()),
+            "no workdir, no change: {bare}"
+        );
+        let scoped = serde_json::json!({ "command": "pytest -q", "workdir": "sub" });
+        assert_eq!(
+            gate_subject("bash", &scoped, ws),
+            ("bash".to_string(), "pytest @sub".to_string()),
+            "the dir joins the subject: {scoped}"
+        );
+        let escaped = serde_json::json!({ "command": "pytest -q", "workdir": "../out" });
+        let (cap, subject) = gate_subject("bash", &escaped, ws);
+        assert_eq!(cap, "bash");
+        assert!(
+            subject.contains("@external:"),
+            "an escaping workdir must not read as inside: {subject}"
         );
     }
 }

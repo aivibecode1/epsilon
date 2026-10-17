@@ -4144,3 +4144,95 @@ undo file counts) silently read the wrong directory — including a live
 CLI-resolved workspace now threads through `TuiConfig` into `App::new`
 (carried, not re-derived, the M233 pattern); test seams keep passing the
 launch cwd explicitly so no test changes meaning.
+
+---
+
+## ADR-053: Three small tool ports — webfetch `format`, bash `workdir`, read miss suggestions
+
+**Status: accepted (behaviour change, 2026-10-17).**
+
+**The problem.** Three opencode behaviours the model already expects were
+missing: fetched HTML arrived as raw markup (no `format` switch), a command
+that belonged in a subdirectory had to spell `cd` itself (no `workdir`), and
+a mistyped `read` path failed with no neighbours named (no miss suggestions).
+
+**Decision: port the three, stdlib-only, at the smallest diff that holds.**
+
+- *webfetch `format` (`crates/epsilon-tools/src/webfetch.rs`).*
+`WebFetchArgs` gains `format: text|markdown|html`, defaulting to `markdown`
+(opencode `webfetch.ts:13-22`). The request carries the format's Accept
+header, strings verbatim (opencode `webfetch.ts:52-74`); on a 2xx the body is
+shaped by `convert_body` before `max_chars` truncation and the spill helper,
+so the caps describe what the model receives. `html` is always raw;
+`markdown`/`text` convert only `text/html` and pass anything else through
+(opencode `webfetch.ts:129-152`). Conversion is a stdlib tag scanner
+(`html_tokens` + `decode_entities` + `attr_value`) with two consumers:
+`html_to_text` (opencode `extractTextFromHTML`, `webfetch.ts:158-180` —
+same six skip-elements, depth-counted) and `html_to_markdown` (headings,
+links, lists, emphasis, code, rules). The 5 MiB cap, the 15 s/5 s timeouts,
+the spill path and `max_chars` are untouched. Ponytail ladder: need is real
+(raw markup is the complaint), nothing in-tree converts HTML, stdlib holds
+at this fidelity — so no new dependency, and `Cargo.toml`/`Cargo.lock` are
+unchanged. Marked `ponytail:` at the module docs with the ceiling (no
+tables, footnotes, nested-list fidelity) and the trigger (a real page
+showing structural loss → pinned `htmd`/`html2text`).
+- *bash `workdir` (`crates/epsilon-tools/src/shell.rs`).* `BashArgs` gains
+optional `workdir` (the params live in `shell.rs` — no contracts struct, no
+scope question). It resolves under the session cwd through
+`resolve_or_refuse`, so an escape is a refusal and the command never spawns
+(opencode `shell.ts:612-614` minus the AST scan, which Epsilon does not
+have); the resolved dir threads to `ConfinedCommand.cwd` on the sandbox path
+and `current_dir` on the unconfined path, never a `cd &&` prefix (opencode
+`shell/prompt.ts:19-21`). `resource_key` deliberately stays `None`: a shell
+command can touch anything whatever its cwd, so the batch planner keeps
+treating bash as unknown reach (a barrier, as `exec.rs` documents) rather
+than ordering it by a directory that does not bound it.
+- *read miss suggestions (`crates/epsilon-tools/src/files.rs`).*
+`ReadTool`'s open failure, when it is `NotFound` and only then, appends
+opencode's own sentence — `Did you mean one of these?` — with up to 3
+substring matches (both directions, case-insensitive) from the parent dir
+(opencode `read.ts:76-99`), joined to the parent and sorted for stable
+output. Exact hits and unreadable/empty parents yield none.
+
+**Alternatives.** (a) A pinned HTML→markdown dependency: full turndown
+fidelity for pages nobody here asserts on, plus a supply-chain decision for
+a display nicety — refused per the minimal-dependencies rule. (b) bash
+`resource_key` returning the workdir so the planner "sees" it: trades the
+barrier for concurrency between commands whose cwd never bounded them — how
+files get lost. (c) A second tool surface or description-text edits to match:
+out of the brief's scope and ownership.
+
+**Why best for Epsilon.** Each port lands where the existing seam already
+is: conversion before the truncation/spill the tool already owns, cwd where
+the tool already sets it on both execution paths, suggestions where the
+NotFound already surfaces. No new crate, no new dep, no new surface; the
+permission posture is unchanged (Ask gate still fronts webfetch, refusal
+still fronts escapes).
+
+**Best possible?** Yes at this size. Honest caveats, all flagged rather
+than fixed: (1) Epsilon has no command-AST scan, so the permission layer's
+`gate_subject` (`epsilon-core/src/exec.rs`) does not know the `workdir` key
+— the approver sees it in the ask `detail` via the args, but the pattern
+derives from the command's first word; teaching it `workdir` is a one-line
+core change for the integrator. (2) `WebFetchTool::execute` builds its
+reqwest client with no process provider installed: in any binary where
+neither `epsilon-llm` nor `epsilon-mcp` initialised one first (every test
+binary), `Client::build` fails — the pre-existing reason no test ever
+executed a fetch; the fix (a `rustls` dep plus `install_default` mirroring
+`epsilon-mcp/src/http.rs`) needs a `Cargo.toml` change and is left to the
+integrator. For that reason the header wiring is pinned by value-tests
+(verbatim Accept strings) and fixture conversions, not by a live round
+trip. (3) `descriptions/bash.txt` still says "workspace root" — true for
+the default, incomplete with `workdir`; the text file is outside this
+change's ownership.
+
+**Deliberately NOT built:** websearch, apply_patch, an lsp tool, silent
+auto-allows, credential handling, timeout-cap changes, a second tool
+surface. Small deviations from opencode, each one line and stated above:
+sorted (not readdir-order) suggestions; `head` skipped in markdown output
+(the title is metadata); non-2xx bodies are not converted.
+
+**Revisit trigger.** A fetched page needs table/footnote fidelity (then the
+converter — not the switch — is the behaviour being changed, with its own
+dep rationale), or commands need reach-based ordering (then `resource_key`
+grows a reach vocabulary with its own ADR, not a quiet barrier removal).

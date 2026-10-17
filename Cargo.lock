@@ -780,6 +780,7 @@ dependencies = [
  "epsilon-safety",
  "regex",
  "reqwest",
+ "rustls",
  "schemars",
  "serde",
  "serde_json",
