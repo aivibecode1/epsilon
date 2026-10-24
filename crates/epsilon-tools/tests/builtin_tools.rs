@@ -2109,10 +2109,15 @@ async fn a_descendant_holding_the_pipe_does_not_hang_the_call() {
 async fn a_confined_run_reports_whether_its_output_is_complete() {
     let (_d, ctx) = seeded_workspace();
     let bash = BashTool::new();
+    let cmd = if cfg!(windows) {
+        "Write-Output confined"
+    } else {
+        "echo confined"
+    };
     let out = run_full(
         &bash,
         &ctx,
-        serde_json::json!({ "command": "Write-Output confined", "timeout_secs": 30 }),
+        serde_json::json!({ "command": cmd, "timeout_secs": 30 }),
     )
     .await
     .expect("a confined command succeeds");
@@ -2137,10 +2142,15 @@ async fn a_confined_run_reports_whether_its_output_is_complete() {
 async fn a_complete_result_carries_no_incomplete_note() {
     let (_d, ctx) = seeded_workspace();
     let bash = BashTool::new();
+    let cmd = if cfg!(windows) {
+        "Write-Output done"
+    } else {
+        "echo done"
+    };
     let out = run_unconfined(
         &bash,
         &ctx,
-        serde_json::json!({"command": "Write-Output done", "timeout_secs": 30}),
+        serde_json::json!({"command": cmd, "timeout_secs": 30}),
     )
     .await
     .expect("a plain command succeeds");
