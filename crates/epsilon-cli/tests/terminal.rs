@@ -611,6 +611,15 @@ fn a_narrow_terminal_is_survived_rather_than_mangled() {
     // crash or draw rows wider than the window. Start at the narrow size rather
     // than resizing a live pty: some CI consoles do not propagate resize events,
     // which would measure the pre-resize frame instead of the layout contract.
+    //
+    // Windows ConPTY on GitHub's hosted runner reports an 80-column console even
+    // when portable-pty opens at 44; the child then legitimately draws 80 columns
+    // and the emulator measures the mismatch. The in-process golden frames cover
+    // the 44-column layout; skip only this pty assertion on Windows CI.
+    if cfg!(windows) && std::env::var_os("CI").is_some() {
+        eprintln!("SKIPPED on Windows CI: ConPTY does not propagate the initial pty width");
+        return;
+    }
     let Some(bin) = binary() else { return };
     let ws = workspace();
     let mut session = Session::start_sized(&bin, &[], ws.path(), 10, 44);
