@@ -172,6 +172,65 @@ pub fn load_model_id() -> Option<String> {
     load_model_id_in(&global_dir()?)
 }
 
+/// Read `config.toml` for a read-modify-write, refusing to launder a broken file.
+///
+/// **A missing file is an empty table; an unparsable one is an error.** The old
+/// shape treated both as empty, so one typo plus any settings change replaced the
+/// user's custom providers, OAuth client ids, skill roots and favourites with a
+/// single new key. Refusing keeps the bytes on disk and makes the caller report
+/// why; the reader, not this writer, decides how to repair it.
+fn read_config_table(path: &Path) -> Result<toml::Table, String> {
+    match std::fs::read_to_string(path) {
+        Ok(raw) if raw.trim().is_empty() => Ok(toml::Table::new()),
+        Ok(raw) => toml::from_str(&raw).map_err(|e| {
+            format!(
+                "refusing to overwrite unreadable {}: {e} — fix it or back it up first; \
+                 nothing was changed",
+                path.display()
+            )
+        }),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(toml::Table::new()),
+        Err(e) => Err(format!("read {}: {e}", path.display())),
+    }
+}
+
+/// The staging path a write uses before it renames the file into place.
+///
+/// **Unique per write, not per process.** The name used to be
+/// `<file>.toml.tmp.<pid>` — unique per *process*, not per *write*. Two
+/// threads in one process writing the same file then shared one staging
+/// path: the first renamed it into place and the second's rename failed with
+/// `os error 2` ("the system cannot find the file specified"), and the caller
+/// reported a write failure for a file that was perfectly fine.
+///
+/// The prompt history is written from the TUI's submit path, so two submits
+/// racing in one session lost one of them — and a test that read the first
+/// notice off the channel saw *"history not saved"* instead of the notice it
+/// was waiting for.
+///
+/// A pid is unique per *process*, not per *write*. The counter is monotonic
+/// within the process, and the pid keeps two processes from colliding on the
+/// same file.
+fn staging_path(path: &Path) -> PathBuf {
+    static SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    let seq = SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    path.with_extension(format!("toml.tmp.{}.{seq}", std::process::id()))
+}
+
+/// Replace `config.toml` in one step, so a crash cannot leave half a settings file.
+///
+/// The live-cache writer has used staging + rename since M???; settings, which
+/// carry more user work, were the last writer still doing a bare `fs::write`.
+fn write_config_atomic(path: &Path, body: &str) -> Result<(), String> {
+    let staging = staging_path(path);
+    std::fs::write(&staging, body).map_err(|e| format!("write {}: {e}", staging.display()))?;
+    if let Err(e) = std::fs::rename(&staging, path) {
+        let _ = std::fs::remove_file(&staging);
+        return Err(format!("replace {}: {e}", path.display()));
+    }
+    Ok(())
+}
+
 /// Persist `model_id` into `config_dir/config.toml`, creating the directory when needed.
 ///
 /// Best-effort by contract: errors are returned for callers that want to warn but are
@@ -184,10 +243,7 @@ pub fn save_model_id_in(config_dir: &Path, model_id: &str) -> Result<PathBuf, St
         .map_err(|e| format!("create {}: {e}", config_dir.display()))?;
     let path = config_dir.join("config.toml");
 
-    let mut table: toml::Table = std::fs::read_to_string(&path)
-        .ok()
-        .and_then(|raw| toml::from_str(&raw).ok())
-        .unwrap_or_default();
+    let mut table = read_config_table(&path)?;
     table
         .entry("model")
         .or_insert(toml::Value::Table(toml::map::Map::new()))
@@ -197,7 +253,7 @@ pub fn save_model_id_in(config_dir: &Path, model_id: &str) -> Result<PathBuf, St
 
     let serialized =
         toml::to_string_pretty(&table).map_err(|e| format!("serialize config: {e}"))?;
-    std::fs::write(&path, serialized).map_err(|e| format!("write {}: {e}", path.display()))?;
+    write_config_atomic(&path, &serialized)?;
     Ok(path)
 }
 
@@ -395,10 +451,7 @@ pub fn toggle_favorite_model_in(config_dir: &Path, model_id: &str) -> Result<boo
     std::fs::create_dir_all(config_dir)
         .map_err(|e| format!("create {}: {e}", config_dir.display()))?;
     let path = config_dir.join("config.toml");
-    let mut table: toml::Table = std::fs::read_to_string(&path)
-        .ok()
-        .and_then(|raw| toml::from_str(&raw).ok())
-        .unwrap_or_default();
+    let mut table = read_config_table(&path)?;
 
     let mut favs = load_favorite_models_in(config_dir);
     let existed = match favs.iter().position(|id| id == model_id) {
@@ -433,7 +486,7 @@ pub fn toggle_favorite_model_in(config_dir: &Path, model_id: &str) -> Result<boo
 
     let serialized =
         toml::to_string_pretty(&table).map_err(|e| format!("serialize config: {e}"))?;
-    std::fs::write(&path, serialized).map_err(|e| format!("write {}: {e}", path.display()))?;
+    write_config_atomic(&path, &serialized)?;
     Ok(existed)
 }
 
@@ -456,10 +509,7 @@ pub fn save_favorite_models_in(config_dir: &Path, models: &[String]) -> Result<(
     std::fs::create_dir_all(config_dir)
         .map_err(|e| format!("create {}: {e}", config_dir.display()))?;
     let path = config_dir.join("config.toml");
-    let mut table: toml::Table = std::fs::read_to_string(&path)
-        .ok()
-        .and_then(|raw| toml::from_str(&raw).ok())
-        .unwrap_or_default();
+    let mut table = read_config_table(&path)?;
 
     table
         .entry("picker")
@@ -477,7 +527,7 @@ pub fn save_favorite_models_in(config_dir: &Path, models: &[String]) -> Result<(
 
     let serialized =
         toml::to_string_pretty(&table).map_err(|e| format!("serialize config: {e}"))?;
-    std::fs::write(&path, serialized).map_err(|e| format!("write {}: {e}", path.display()))?;
+    write_config_atomic(&path, &serialized)?;
     Ok(())
 }
 
@@ -590,10 +640,7 @@ pub fn set_skill_disabled_in(
     std::fs::create_dir_all(config_dir)
         .map_err(|e| format!("create {}: {e}", config_dir.display()))?;
     let path = config_dir.join("config.toml");
-    let mut table: toml::Table = std::fs::read_to_string(&path)
-        .ok()
-        .and_then(|raw| toml::from_str(&raw).ok())
-        .unwrap_or_default();
+    let mut table = read_config_table(&path)?;
 
     let mut disabled_list = load_disabled_skills_in(config_dir);
     // Remove first so the list cannot accumulate duplicates, then push if wanted.
@@ -619,7 +666,7 @@ pub fn set_skill_disabled_in(
 
     let serialized =
         toml::to_string_pretty(&table).map_err(|e| format!("serialize config: {e}"))?;
-    std::fs::write(&path, serialized).map_err(|e| format!("write {}: {e}", path.display()))?;
+    write_config_atomic(&path, &serialized)?;
     Ok(disabled)
 }
 
@@ -691,10 +738,7 @@ pub fn set_favorite_thinking_in(
     std::fs::create_dir_all(config_dir)
         .map_err(|e| format!("create {}: {e}", config_dir.display()))?;
     let path = config_dir.join("config.toml");
-    let mut table: toml::Table = std::fs::read_to_string(&path)
-        .ok()
-        .and_then(|raw| toml::from_str(&raw).ok())
-        .unwrap_or_default();
+    let mut table = read_config_table(&path)?;
 
     {
         let picker = table
@@ -719,7 +763,7 @@ pub fn set_favorite_thinking_in(
 
     let serialized =
         toml::to_string_pretty(&table).map_err(|e| format!("serialize config: {e}"))?;
-    std::fs::write(&path, serialized).map_err(|e| format!("write {}: {e}", path.display()))?;
+    write_config_atomic(&path, &serialized)?;
     Ok(path)
 }
 
@@ -764,10 +808,7 @@ pub fn save_hide_thinking_in(config_dir: &Path, hide: bool) -> Result<PathBuf, S
     std::fs::create_dir_all(config_dir)
         .map_err(|e| format!("create {}: {e}", config_dir.display()))?;
     let path = config_dir.join("config.toml");
-    let mut table: toml::Table = std::fs::read_to_string(&path)
-        .ok()
-        .and_then(|raw| toml::from_str(&raw).ok())
-        .unwrap_or_default();
+    let mut table = read_config_table(&path)?;
 
     table
         .entry("display")
@@ -778,7 +819,7 @@ pub fn save_hide_thinking_in(config_dir: &Path, hide: bool) -> Result<PathBuf, S
 
     let serialized =
         toml::to_string_pretty(&table).map_err(|e| format!("serialize config: {e}"))?;
-    std::fs::write(&path, serialized).map_err(|e| format!("write {}: {e}", path.display()))?;
+    write_config_atomic(&path, &serialized)?;
     Ok(path)
 }
 
@@ -793,6 +834,129 @@ pub fn load_hide_thinking() -> bool {
 pub fn save_hide_thinking(hide: bool) -> Result<PathBuf, String> {
     let dir = global_dir().ok_or_else(|| "no home directory resolved".to_string())?;
     save_hide_thinking_in(&dir, hide)
+}
+
+/// Whether the project explorer is shown on launch (`[tui] explorer`).
+///
+/// Defaults to `true`: the terminal is an IDE, and a first launch that hides
+/// the project map is the layout this repository moved away from. A missing or
+/// unreadable key reads as visible for the same fail-open reason as every other
+/// display preference.
+pub fn load_explorer_visible_in(config_dir: &Path) -> bool {
+    let path = config_dir.join("config.toml");
+    let Ok(raw) = std::fs::read_to_string(&path) else {
+        return true;
+    };
+    let Ok(table) = toml::from_str::<toml::Table>(&raw) else {
+        return true;
+    };
+    table
+        .get("tui")
+        .and_then(|t| t.get("explorer"))
+        .and_then(|v| v.as_bool())
+        .unwrap_or(true)
+}
+
+/// Set `[tui] explorer`, preserving every other key.
+pub fn save_explorer_visible_in(config_dir: &Path, visible: bool) -> Result<PathBuf, String> {
+    std::fs::create_dir_all(config_dir)
+        .map_err(|e| format!("create {}: {e}", config_dir.display()))?;
+    let path = config_dir.join("config.toml");
+    let mut table = read_config_table(&path)?;
+    table
+        .entry("tui")
+        .or_insert(toml::Value::Table(toml::map::Map::new()))
+        .as_table_mut()
+        .ok_or_else(|| "[tui] exists but is not a table".to_string())?
+        .insert("explorer".into(), toml::Value::Boolean(visible));
+    let serialized =
+        toml::to_string_pretty(&table).map_err(|e| format!("serialize config: {e}"))?;
+    write_config_atomic(&path, &serialized)?;
+    Ok(path)
+}
+
+/// [`load_explorer_visible_in`] against the resolved global directory.
+pub fn load_explorer_visible() -> bool {
+    global_dir()
+        .map(|d| load_explorer_visible_in(&d))
+        .unwrap_or(true)
+}
+
+/// [`save_explorer_visible_in`] against the resolved global directory.
+pub fn save_explorer_visible(visible: bool) -> Result<PathBuf, String> {
+    let dir = global_dir().ok_or_else(|| "no home directory resolved".to_string())?;
+    save_explorer_visible_in(&dir, visible)
+}
+
+/// Collapsed explorer directories for one workspace (`[tui.explorer_collapsed]`).
+///
+/// Keyed by workspace path, so collapsing `src` in one project does not hide
+/// `src` in another. Paths are stored workspace-relative, `/`-separated, and
+/// capped: this is a view preference, not a project manifest.
+pub fn load_explorer_collapsed_in(
+    config_dir: &Path,
+    workspace: &Path,
+) -> std::collections::BTreeSet<String> {
+    let path = config_dir.join("config.toml");
+    let Ok(raw) = std::fs::read_to_string(&path) else {
+        return Default::default();
+    };
+    let Ok(table) = toml::from_str::<toml::Table>(&raw) else {
+        return Default::default();
+    };
+    let key = workspace.to_string_lossy().to_string();
+    table
+        .get("tui")
+        .and_then(|t| t.get("explorer_collapsed"))
+        .and_then(|c| c.get(&key))
+        .and_then(|v| v.as_array())
+        .map(|a| {
+            a.iter()
+                .filter_map(|v| v.as_str())
+                .filter(|s| !s.is_empty())
+                .take(200)
+                .map(str::to_string)
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+/// Persist one workspace's collapsed explorer directories.
+pub fn save_explorer_collapsed_in(
+    config_dir: &Path,
+    workspace: &Path,
+    collapsed: &std::collections::BTreeSet<String>,
+) -> Result<PathBuf, String> {
+    std::fs::create_dir_all(config_dir)
+        .map_err(|e| format!("create {}: {e}", config_dir.display()))?;
+    let path = config_dir.join("config.toml");
+    let mut table = read_config_table(&path)?;
+    let key = workspace.to_string_lossy().to_string();
+    let tui = table
+        .entry("tui")
+        .or_insert(toml::Value::Table(toml::map::Map::new()))
+        .as_table_mut()
+        .ok_or_else(|| "[tui] exists but is not a table".to_string())?;
+    let map = tui
+        .entry("explorer_collapsed")
+        .or_insert(toml::Value::Table(toml::map::Map::new()))
+        .as_table_mut()
+        .ok_or_else(|| "[tui.explorer_collapsed] exists but is not a table".to_string())?;
+    if collapsed.is_empty() {
+        map.remove(&key);
+    } else {
+        let values: Vec<toml::Value> = collapsed
+            .iter()
+            .filter(|s| !s.is_empty())
+            .take(200)
+            .map(|s| toml::Value::String(s.clone()))
+            .collect();
+        map.insert(key, toml::Value::Array(values));
+    }
+    let serialized =
+        toml::to_string_pretty(&table).map_err(|e| format!("serialize config: {e}"))?;
+    write_config_atomic(&path, &serialized)?;
+    Ok(path)
 }
 
 // ---- reasoning effort default (criterion 7) -------------------------------------
@@ -827,10 +991,7 @@ pub fn save_thinking_level_in(
     std::fs::create_dir_all(config_dir)
         .map_err(|e| format!("create {}: {e}", config_dir.display()))?;
     let path = config_dir.join("config.toml");
-    let mut table: toml::Table = std::fs::read_to_string(&path)
-        .ok()
-        .and_then(|raw| toml::from_str(&raw).ok())
-        .unwrap_or_default();
+    let mut table = read_config_table(&path)?;
 
     table
         .entry("thinking")
@@ -844,7 +1005,7 @@ pub fn save_thinking_level_in(
 
     let serialized =
         toml::to_string_pretty(&table).map_err(|e| format!("serialize config: {e}"))?;
-    std::fs::write(&path, serialized).map_err(|e| format!("write {}: {e}", path.display()))?;
+    write_config_atomic(&path, &serialized)?;
     Ok(path)
 }
 
@@ -892,10 +1053,7 @@ pub fn save_preset_in(config_dir: &Path, preset: &str) -> Result<PathBuf, String
     std::fs::create_dir_all(config_dir)
         .map_err(|e| format!("create {}: {e}", config_dir.display()))?;
     let path = config_dir.join("config.toml");
-    let mut table: toml::Table = std::fs::read_to_string(&path)
-        .ok()
-        .and_then(|raw| toml::from_str(&raw).ok())
-        .unwrap_or_default();
+    let mut table = read_config_table(&path)?;
 
     table
         .entry("permissions")
@@ -909,7 +1067,7 @@ pub fn save_preset_in(config_dir: &Path, preset: &str) -> Result<PathBuf, String
 
     let serialized =
         toml::to_string_pretty(&table).map_err(|e| format!("serialize config: {e}"))?;
-    std::fs::write(&path, serialized).map_err(|e| format!("write {}: {e}", path.display()))?;
+    write_config_atomic(&path, &serialized)?;
     Ok(path)
 }
 
@@ -952,10 +1110,7 @@ pub fn save_plan_mode_in(config_dir: &Path, on: bool) -> Result<PathBuf, String>
     std::fs::create_dir_all(config_dir)
         .map_err(|e| format!("create {}: {e}", config_dir.display()))?;
     let path = config_dir.join("config.toml");
-    let mut table: toml::Table = std::fs::read_to_string(&path)
-        .ok()
-        .and_then(|raw| toml::from_str(&raw).ok())
-        .unwrap_or_default();
+    let mut table = read_config_table(&path)?;
 
     table
         .entry("plan")
@@ -966,7 +1121,7 @@ pub fn save_plan_mode_in(config_dir: &Path, on: bool) -> Result<PathBuf, String>
 
     let serialized =
         toml::to_string_pretty(&table).map_err(|e| format!("serialize config: {e}"))?;
-    std::fs::write(&path, serialized).map_err(|e| format!("write {}: {e}", path.display()))?;
+    write_config_atomic(&path, &serialized)?;
     Ok(path)
 }
 
@@ -980,10 +1135,7 @@ pub fn save_tui_theme_in(config_dir: &Path, name: &str) -> Result<PathBuf, Strin
     std::fs::create_dir_all(config_dir)
         .map_err(|e| format!("create {}: {e}", config_dir.display()))?;
     let path = config_dir.join("config.toml");
-    let mut table: toml::Table = std::fs::read_to_string(&path)
-        .ok()
-        .and_then(|raw| toml::from_str(&raw).ok())
-        .unwrap_or_default();
+    let mut table = read_config_table(&path)?;
     table
         .entry("tui")
         .or_insert(toml::Value::Table(toml::map::Map::new()))
@@ -992,7 +1144,7 @@ pub fn save_tui_theme_in(config_dir: &Path, name: &str) -> Result<PathBuf, Strin
         .insert("theme".into(), toml::Value::String(name.to_string()));
     let serialized =
         toml::to_string_pretty(&table).map_err(|e| format!("serialize config: {e}"))?;
-    std::fs::write(&path, serialized).map_err(|e| format!("write {}: {e}", path.display()))?;
+    write_config_atomic(&path, &serialized)?;
     Ok(path)
 }
 
@@ -1028,10 +1180,7 @@ pub fn push_recent_model_in(config_dir: &Path, model_id: &str) -> Result<PathBuf
     std::fs::create_dir_all(config_dir)
         .map_err(|e| format!("create {}: {e}", config_dir.display()))?;
     let path = config_dir.join("config.toml");
-    let mut table: toml::Table = std::fs::read_to_string(&path)
-        .ok()
-        .and_then(|raw| toml::from_str(&raw).ok())
-        .unwrap_or_default();
+    let mut table = read_config_table(&path)?;
 
     let mut recent = load_recent_models_in(config_dir);
     recent.retain(|id| id != model_id);
@@ -1055,7 +1204,7 @@ pub fn push_recent_model_in(config_dir: &Path, model_id: &str) -> Result<PathBuf
 
     let serialized =
         toml::to_string_pretty(&table).map_err(|e| format!("serialize config: {e}"))?;
-    std::fs::write(&path, serialized).map_err(|e| format!("write {}: {e}", path.display()))?;
+    write_config_atomic(&path, &serialized)?;
     Ok(path)
 }
 
@@ -1123,7 +1272,7 @@ pub fn append_prompt_history_in(config_dir: &Path, entry: &str) -> Result<PathBu
         serialized.push_str(&serde_json::to_string(e).map_err(|e| e.to_string())?);
         serialized.push('\n');
     }
-    std::fs::write(&path, serialized).map_err(|e| format!("write {}: {e}", path.display()))?;
+    write_config_atomic(&path, &serialized)?;
     Ok(path)
 }
 
@@ -1675,8 +1824,22 @@ mod tests {
 
         // Unset reads visible; corrupt reads visible.
         assert!(!load_hide_thinking_in(dir));
-        std::fs::write(dir.join("config.toml"), "not = [valid").unwrap();
+        let corrupt = "not = [valid";
+        std::fs::write(dir.join("config.toml"), corrupt).unwrap();
         assert!(!load_hide_thinking_in(dir));
+
+        // A write over a corrupt file refuses and leaves every byte alone. This
+        // used to launder the corruption into a one-key file, which destroyed the
+        // user's custom providers, OAuth ids and skill roots.
+        let refused =
+            save_hide_thinking_in(dir, true).expect_err("corrupt config is not overwritten");
+        assert!(refused.contains("unreadable"), "{refused}");
+        assert_eq!(
+            std::fs::read_to_string(dir.join("config.toml")).unwrap(),
+            corrupt,
+            "a refused write changes nothing"
+        );
+        std::fs::write(dir.join("config.toml"), "").unwrap();
 
         // Set true, read back true; set false, read back false.
         save_hide_thinking_in(dir, true).unwrap();
@@ -1697,6 +1860,60 @@ mod tests {
             load_favorite_models_in(dir),
             vec!["deepseek-chat".to_string()],
             "unhiding must not clobber favorites either"
+        );
+    }
+
+    #[test]
+    fn explorer_visibility_defaults_visible_and_round_trips() {
+        let tmp = tempfile::tempdir().expect("tmp");
+        assert!(
+            load_explorer_visible_in(tmp.path()),
+            "a fresh config shows the project"
+        );
+        save_explorer_visible_in(tmp.path(), false).unwrap();
+        assert!(!load_explorer_visible_in(tmp.path()));
+        save_explorer_visible_in(tmp.path(), true).unwrap();
+        assert!(load_explorer_visible_in(tmp.path()));
+        // The key lives beside the other display preferences and does not
+        // disturb them.
+        save_hide_thinking_in(tmp.path(), true).unwrap();
+        save_explorer_visible_in(tmp.path(), false).unwrap();
+        assert!(load_hide_thinking_in(tmp.path()));
+        assert!(!load_explorer_visible_in(tmp.path()));
+    }
+
+    #[test]
+    fn explorer_collapse_is_per_workspace_and_clears() {
+        let tmp = tempfile::tempdir().expect("tmp");
+        let config = tmp.path().join("config");
+        let a = tmp.path().join("project-a");
+        let b = tmp.path().join("project-b");
+        std::fs::create_dir_all(&a).unwrap();
+        std::fs::create_dir_all(&b).unwrap();
+        assert!(
+            load_explorer_collapsed_in(&config, &a).is_empty(),
+            "nothing collapsed on a fresh config"
+        );
+        let mut collapsed = std::collections::BTreeSet::new();
+        collapsed.insert("src/gen".to_string());
+        collapsed.insert("vendor".to_string());
+        save_explorer_collapsed_in(&config, &a, &collapsed).unwrap();
+        assert_eq!(load_explorer_collapsed_in(&config, &a), collapsed);
+        assert!(
+            load_explorer_collapsed_in(&config, &b).is_empty(),
+            "another project keeps its own layout"
+        );
+        // Clearing removes only this workspace's entry.
+        save_explorer_collapsed_in(&config, &a, &Default::default()).unwrap();
+        assert!(load_explorer_collapsed_in(&config, &a).is_empty());
+        // A corrupt config is refused, not replaced.
+        std::fs::write(config.join("config.toml"), "{ broken").unwrap();
+        let err = save_explorer_collapsed_in(&config, &a, &collapsed)
+            .expect_err("corrupt config is not overwritten");
+        assert!(err.contains("config.toml"), "{err}");
+        assert_eq!(
+            std::fs::read_to_string(config.join("config.toml")).unwrap(),
+            "{ broken"
         );
     }
 
@@ -1842,6 +2059,113 @@ mod tests {
         append_prompt_history_in(dir, "has \"quotes\" and\nnewlines").unwrap();
         let loaded = load_prompt_history_in(dir);
         assert!(loaded.contains(&"has \"quotes\" and\nnewlines".to_string()));
+    }
+
+    /// **A concurrent write to the same settings file must not lose the file.**
+    ///
+    /// The staging name used to be `<file>.toml.tmp.<pid>` — unique per
+    /// *process*, not per *write*. Two threads in one process writing the same
+    /// file therefore shared one staging path: the first renamed it into place
+    /// and the second's rename failed with `os error 2` ("the system cannot
+    /// find the file specified"), and the caller reported a write failure for a
+    /// file that was perfectly fine.
+    ///
+    /// The prompt history is written from the TUI's submit path, so two
+    /// submits racing in one session lost one of them — and a test that read
+    /// the first notice off the channel saw *"history not saved"* instead of
+    /// the notice it was waiting for.
+    ///
+    /// **Why this asserts the staging path, not the outcome.** Two threads
+    /// that merely happen to run together do not reliably interleave into the
+    /// failing order: the write and the rename are fast, so a test that only
+    /// checked "both writes returned Ok" would pass against the broken name
+    /// and prove nothing. The invariant that *causes* the failure is
+    /// "two concurrent writes use two different staging paths", and that is
+    /// what is asserted here — deterministically, from two threads.
+    #[test]
+    fn concurrent_writes_to_one_settings_file_use_distinct_staging_paths() {
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().join("history");
+
+        // Two threads, one file, one instant — both compute their staging path
+        // before either renames. Both are spawned *first*: a barrier of two
+        // only releases when two threads arrive at it, so spawning one and
+        // joining it before spawning the other would deadlock.
+        let barrier = std::sync::Arc::new(std::sync::Barrier::new(2));
+        let spawn = || {
+            let path = path.clone();
+            let barrier = barrier.clone();
+            std::thread::spawn(move || {
+                barrier.wait();
+                staging_path(&path)
+            })
+        };
+        let a = spawn();
+        let b = spawn();
+        let a = a.join().unwrap();
+        let b = b.join().unwrap();
+
+        assert_ne!(
+            a, b,
+            "two writes of one file must not share a staging path: {a:?} == {b:?}"
+        );
+        // The staging name still names the file it will replace, so a reader
+        // looking for leftovers can tell which file they belong to.
+        assert!(
+            a.to_string_lossy().contains("history"),
+            "the staging path names the file: {a:?}"
+        );
+    }
+
+    /// **Two concurrent writes to one settings file both succeed.**
+    ///
+    /// The end-to-end half of the staging-path test above: with distinct
+    /// staging paths, a race between two writers loses neither.
+    #[test]
+    fn concurrent_writes_to_one_settings_file_all_succeed() {
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = tmp.path();
+        std::fs::create_dir_all(dir).unwrap();
+        let path = dir.join("history");
+
+        // Both writers reach the barrier before either is released, so the two
+        // staging writes are guaranteed to overlap.
+        let barrier = std::sync::Arc::new(std::sync::Barrier::new(2));
+        let write = |body: &str| {
+            let path = path.clone();
+            let barrier = barrier.clone();
+            let body = body.to_string();
+            std::thread::spawn(move || {
+                barrier.wait();
+                write_config_atomic(&path, &body)
+            })
+        };
+        let a = write("{\"a\":1}\n");
+        let b = write("{\"b\":2}\n");
+        let a = a.join().unwrap();
+        let b = b.join().unwrap();
+
+        assert!(
+            a.is_ok() && b.is_ok(),
+            "neither write may fail: {a:?} / {b:?}"
+        );
+        // The file holds one of the two bodies — never a staging leftover.
+        let on_disk = std::fs::read_to_string(&path).unwrap();
+        assert!(
+            on_disk == "{\"a\":1}\n" || on_disk == "{\"b\":2}\n",
+            "the file holds exactly one complete body: {on_disk:?}"
+        );
+        // No staging file is left behind.
+        let leftovers: Vec<_> = std::fs::read_dir(dir)
+            .unwrap()
+            .filter_map(|e| e.ok())
+            .map(|e| e.file_name().to_string_lossy().into_owned())
+            .filter(|n| n.contains(".tmp."))
+            .collect();
+        assert!(
+            leftovers.is_empty(),
+            "no staging file survives a successful write: {leftovers:?}"
+        );
     }
 
     // --- read-only project-trust status (adversarial-review Fix 3) ------------

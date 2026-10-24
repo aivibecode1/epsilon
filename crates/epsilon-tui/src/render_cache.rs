@@ -114,24 +114,71 @@ impl RenderState<'_> {
 }
 
 impl RenderedLine {
+    /// A user or assistant message as an independent card: top border, body
+    /// rows with side rails, bottom border. The whitespace at each side is the
+    /// card chrome; the body wraps to the space that remains.
+    fn build_card(
+        line: &TranscriptLine,
+        width: usize,
+        state: &RenderState<'_>,
+        theme: &Theme,
+    ) -> Self {
+        let frame_width = width + crate::ui::transcript::GUTTER;
+        let inner_width = frame_width.saturating_sub(4);
+        let mut rows = vec![crate::ui::transcript::card_top(
+            line.kind,
+            frame_width,
+            theme,
+        )];
+        let mut kinds = vec![crate::state::LineKind::MessageHeader];
+        let mut body_rows = 0;
+        for logical in logical_lines(line, state, theme, inner_width) {
+            let pieces = if crate::ui::card::row_width(&logical) <= inner_width {
+                vec![logical]
+            } else {
+                wrap::wrap_line(
+                    &logical
+                        .iter()
+                        .map(|(text, style)| (text.as_str(), *style))
+                        .collect::<Vec<_>>(),
+                    inner_width,
+                )
+            };
+            for row in pieces {
+                rows.push(crate::ui::transcript::card_body(row, inner_width, theme));
+                kinds.push(crate::state::LineKind::MessageBody);
+                body_rows += 1;
+            }
+        }
+        if body_rows == 0 {
+            rows.push(crate::ui::transcript::card_body(
+                Vec::new(),
+                inner_width,
+                theme,
+            ));
+            kinds.push(crate::state::LineKind::MessageBody);
+        }
+        rows.push(crate::ui::transcript::card_bottom(frame_width, theme));
+        kinds.push(crate::state::LineKind::MessageHeader);
+        Self { kinds, rows }
+    }
+
     fn build(line: &TranscriptLine, width: usize, state: &RenderState<'_>, theme: &Theme) -> Self {
         // Each LOGICAL line wraps independently (headings/fences never merge across
         // paragraphs); their wrapped rows concatenate into this line's screen rows.
         //
-        // A row that already fits is not re-wrapped, and the reason is not
-        // performance. [`logical_lines`] hands back rows that a renderer has already
-        // cut *and padded* to the width — a tool card's diff rows are the case —
-        // and `wrap::wrap_line` is not idempotent on those: it drops trailing
-        // whitespace and collapses a whitespace run to one space, which is right for
-        // prose ("screen convention", `wrap.rs`) and wrong for a row whose alignment
-        // *is* the padding. The split diff is that row: two halves each padded to its
-        // own column, and re-wrapping collapsed the left half's 56 spaces to one — a
-        // 138-cell row became 25 cells, the right half landed 13 columns after the
-        // left instead of 69, and the blank half that says "this line has no
-        // counterpart" disappeared. No 80-column diff test could see it, because
-        // only a 120-column body takes the split branch.
+        // A user or assistant message is its own card. Everything else keeps the
+        // two-column gutter: thinking, notices and tool cards are annotations on
+        // the conversation, not peers of a message card.
         let mut rows = Vec::new();
         let mut kinds = Vec::new();
+        if matches!(
+            line.kind,
+            crate::state::LineKind::User | crate::state::LineKind::Assistant
+        ) && !line.text.trim().is_empty()
+        {
+            return Self::build_card(line, width, state, theme);
+        }
         // A card's title keeps the line's kind; its body rows nest under
         // `CardBody` (presentation pass: a title and its output must not
         // share a gutter). Wrapped pieces inherit their logical row's kind.
@@ -311,7 +358,9 @@ fn row_marker(kind: LineKind, theme: &Theme) -> String {
         LineKind::SystemErr => glyphs.cross,
         // Card bodies carry no marker (the title introduced them); like
         // prose, they read better undecorated.
-        LineKind::CardBody => return String::new(),
+        LineKind::CardBody | LineKind::MessageHeader | LineKind::MessageBody => {
+            return String::new();
+        }
         LineKind::Assistant | LineKind::Thinking | LineKind::Blank => return String::new(),
     };
     // **Only when it differs from the gutter.**
@@ -364,6 +413,8 @@ fn style_for(kind: LineKind, theme: &Theme) -> Style {
         // Unreachable for plain lines (bodies are assigned at render, never
         // pushed); dim matches the bodies it gutters.
         LineKind::CardBody => theme.dim(),
+        // The divider carries its own label and rule; the body style is unused.
+        LineKind::MessageHeader | LineKind::MessageBody => theme.dim(),
     }
 }
 
@@ -834,7 +885,11 @@ mod tests {
         // Same state again: no new renders (len unchanged), offsets stable.
         cache.reconcile(&lines, 80, &state(false), &theme(), &HashSet::new());
         assert_eq!(cache.len(), 1);
-        assert_eq!(cache.total_rows(), 2, "heading + paragraph");
+        assert_eq!(
+            cache.total_rows(),
+            4,
+            "card top + heading + paragraph + card bottom"
+        );
     }
 
     /// The half of the header's cost claim that is structural, pinned.
@@ -1105,21 +1160,28 @@ mod tests {
             TranscriptLine::plain(LineKind::System, "run finished"),
         ];
         let rows = snapshot_rows(&lines, 80, false, 0, 10, &theme());
-        // The cache holds the **body**, before `ui::transcript::decorate` paints
-        // the gutter — and since M198 the body carries a marker only when it
-        // differs from the gutter's. So exactly one of these four has one.
-        //
-        // The user turn is that one: gutter `▎` (whose turn), marker `❯` (where
-        // input goes). Two different characters carrying two different facts, and
-        // `❯ hello` reads the way a prompt should.
-        assert_eq!(text_of(&rows[0]), "❯ hello");
-        // The other three lost theirs, because it was the gutter's own character
-        // printed again: `▸ ▸ tool-call`, `• • run finished`, `✗ ✗ bash`. The role
-        // is still unambiguous — it is the gutter that says which — and
-        // `no_transcript_row_repeats_its_gutter_glyph` is what holds that.
-        assert_eq!(text_of(&rows[1]), "bash → boom");
-        assert_eq!(text_of(&rows[2]), "tool-call bash {ls}");
-        assert_eq!(text_of(&rows[3]), "run finished");
+        // The cache holds the card rows before `ui::transcript::decorate` runs:
+        // top border, one inner row, bottom border, then the ordinary rows.
+        // The title carries the role; the body is no longer a bulleted line.
+        let top = text_of(&rows[0]);
+        assert!(
+            top.starts_with("╭─ ▎ you"),
+            "top border names the speaker: {top:?}"
+        );
+        assert!(top.ends_with('╮'), "top border closes: {top:?}");
+        let body = text_of(&rows[1]);
+        assert!(
+            body.starts_with("│ ❯ hello"),
+            "body sits inside the rails: {body:?}"
+        );
+        assert!(body.ends_with('│'), "body closes: {body:?}");
+        let bottom = text_of(&rows[2]);
+        assert!(bottom.starts_with('╰') && bottom.ends_with('╯'));
+        // The other three lost their body markers, because the gutter carries
+        // the role for ordinary transcript rows.
+        assert_eq!(text_of(&rows[3]), "bash → boom");
+        assert_eq!(text_of(&rows[4]), "tool-call bash {ls}");
+        assert_eq!(text_of(&rows[5]), "run finished");
     }
 
     #[test]

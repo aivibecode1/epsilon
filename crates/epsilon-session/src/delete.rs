@@ -10,7 +10,7 @@
 //! ## The algorithm, and where it comes from
 //!
 //! Pi's `deleteSessionFile`
-//! (`references/pi-1.0.0/packages/coding-agent/src/modes/interactive/components/session-selector.ts:654-689`)
+//! (`references/pi-1.3.0/packages/coding-agent/src/modes/interactive/components/session-selector.ts:654-689`)
 //! tries the `trash` command-line tool first and falls back to a permanent unlink. This module is
 //! that algorithm, with two deliberate corrections recorded below rather than quietly applied.
 //!

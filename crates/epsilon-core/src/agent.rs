@@ -26,7 +26,7 @@ impl Agent {
         let steering_queue = PendingQueue::new(limits.steering_mode);
         let followup_queue = PendingQueue::new(limits.followup_mode);
         let window = limits.context_window_tokens;
-        Arc::new(Self {
+        let agent = Arc::new(Self {
             limits,
             stream_fn: RwLock::new(stream_fn),
             tools,
@@ -58,6 +58,7 @@ impl Agent {
             task_depth: Mutex::new(0),
             agent_brief: Mutex::new(String::new()),
             system_overlay: Mutex::new(crate::prompt::SystemOverlay::default()),
+            project_trusted: AtomicBool::new(true),
             touched_dirs: Mutex::new(Default::default()),
             last_repair: Mutex::new(None),
             tasks: Arc::new(Mutex::new(Vec::new())),
@@ -65,6 +66,7 @@ impl Agent {
             task_notices_rx: Mutex::new(task_notices_rx),
             summarizer: Mutex::new(None),
             skills: Mutex::new(Vec::new()),
+            disabled_skills: Mutex::new(Vec::new()),
             model_id: Mutex::new("faux-1".into()),
             thinking_level: Mutex::new(epsilon_contracts::ThinkingLevel::Off),
             abort_armed: std::sync::atomic::AtomicBool::new(false),
@@ -73,7 +75,10 @@ impl Agent {
             usage_anchor: Mutex::new(None),
             progress: Mutex::new(crate::guards::ProgressGuard::new()),
             cache: Mutex::new(crate::cache_stats::CacheStats::default()),
-        })
+            self_ref: std::sync::OnceLock::new(),
+        });
+        let _ = agent.self_ref.set(Arc::downgrade(&agent));
+        agent
     }
 
     /// Override the model identifier (M10): providers route via the catalog's wire
@@ -280,6 +285,26 @@ impl Agent {
         }
     }
 
+    /// Record which discovered skills the user switched off.
+    ///
+    /// Both the prompt catalog and the `skill` tool read this list. Keeping it on
+    /// the agent — rather than filtering the discovered list — is what lets
+    /// `/skills` still show an off skill. Deleting it from the list made an off
+    /// skill indistinguishable from one that was never installed.
+    pub fn set_disabled_skills(&self, disabled: Vec<String>) {
+        if let Ok(mut slot) = self.disabled_skills.lock() {
+            *slot = disabled;
+        }
+    }
+
+    /// The names currently switched off, cloned for the prompt builder.
+    pub fn disabled_skills(&self) -> Vec<String> {
+        self.disabled_skills
+            .lock()
+            .map(|s| s.clone())
+            .unwrap_or_default()
+    }
+
     /// Attach discovered agent-type defs for `task` routing (M50 wiring).
     pub fn set_agents(&self, agents: Vec<crate::agents::AgentDef>) {
         if let Ok(mut slot) = self.agents.lock() {
@@ -408,11 +433,45 @@ impl Agent {
         &self.workspace_root
     }
 
+    /// Record the frontend's project-trust decision.
+    ///
+    /// `false` means the workspace's `AGENTS.md`-family files and `MEMORY.md`
+    /// do not enter the system prompt. Composition calls this once after
+    /// [`Self::new`]; the default is `true` so a library embedder with no trust
+    /// surface keeps the historical behaviour. The prompt is rebuilt per run,
+    /// so a decision made after construction applies to the next request.
+    pub fn set_project_trusted(&self, trusted: bool) {
+        self.project_trusted.store(trusted, Ordering::Relaxed);
+    }
+
+    /// Whether workspace-supplied instructions may enter the prompt.
+    pub fn project_trusted(&self) -> bool {
+        self.project_trusted.load(Ordering::Relaxed)
+    }
+
     /// Whether the registry carries a tool by name: the composition-level
     /// assertion seam (a policy that removes a tool, e.g. `Lsp::Off`, must
     /// be observable on the built agent, not just on the handle).
     pub fn has_tool(&self, name: &str) -> bool {
         self.tools.get(name).is_some()
+    }
+
+    /// Register or replace one tool in the live registry.
+    ///
+    /// Used by a reload that must keep the running agent (and its session)
+    /// while swapping a tool whose data changed — today, the `skill` tool after
+    /// `/reload`, and after the user disables or re-enables a skill. Returns
+    /// the replaced tool's name, if any.
+    pub fn replace_tool(&self, tool: Arc<dyn epsilon_contracts::tool::Tool>) -> Option<String> {
+        self.tools.insert(tool)
+    }
+
+    /// Remove a tool from the live registry, if present.
+    ///
+    /// A reload that leaves no loadable skills removes the tool rather than
+    /// leaving one whose list is empty and whose error message is a lie.
+    pub fn remove_tool(&self, name: &str) -> Option<Arc<dyn epsilon_contracts::tool::Tool>> {
+        self.tools.remove(name)
     }
 
     pub(crate) fn emit(&self, ev: AgentEvent) {

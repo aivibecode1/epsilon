@@ -39,6 +39,32 @@ use crate::stream_fn::{BoxEventStream, EventStream, LlmContext, ModelRef, Stream
 // engine's internal use.
 pub(crate) use crate::catalog::WireApi;
 
+/// Whether `base_url` points at exactly `host` (ignoring a port).
+///
+/// `str::contains` is wrong for cache-affinity fields: a custom endpoint named
+/// `api.openai.com.example` would receive an OpenAI-only parameter. This parses
+/// the authority enough for provider URLs without adding a URL dependency.
+pub(crate) fn is_first_party_host(base_url: &str, host: &str) -> bool {
+    let authority = base_url
+        .split_once("://")
+        .map_or(base_url, |(_, rest)| rest)
+        .split('/')
+        .next()
+        .unwrap_or_default()
+        .rsplit('@')
+        .next()
+        .unwrap_or_default();
+    if authority.starts_with('[') {
+        // IPv6 literals are not first-party provider hosts; reject rather than
+        // truncate at a colon inside the brackets.
+        return false;
+    }
+    authority
+        .split(':')
+        .next()
+        .is_some_and(|hostname| hostname.eq_ignore_ascii_case(host))
+}
+
 /// Credential-extra key holding a Copilot Business/Enterprise domain (M55).
 /// Written by a login whose `[oauth.github-copilot] enterprise_domain` is set;
 /// the wire builds `https://copilot-api.<domain>` from it when the minted token
@@ -203,7 +229,7 @@ pub(crate) fn wire_for(
 /// OpenAI interleaves calls), usage capture, and final `Done` synthesis.
 pub struct HttpEventStream {
     model: String,
-    provider: &'static str,
+    provider: String,
     text: String,
     thinking: String,
     /// OpenAI-style indexed tool calls: index → (id, name, json buffer).
@@ -471,10 +497,10 @@ impl HttpEventStream {
     /// Fresh accumulator for one provider response (`provider` is the wire's
     /// static name; `prefer_tail_usage` picks which usage shape wins when a wire
     /// emits both, see Mistral/Bedrock).
-    pub fn new(model: &str, provider: &'static str, prefer_tail_usage: bool) -> Self {
+    pub fn new(model: &str, provider: impl Into<String>, prefer_tail_usage: bool) -> Self {
         Self {
             model: model.to_string(),
-            provider,
+            provider: provider.into(),
             text: String::new(),
             thinking: String::new(),
             tools_open: BTreeMap::new(),
@@ -536,7 +562,12 @@ impl HttpEventStream {
         {
             u.reasoning = Some(n);
         }
-        if u.input + u.output > 0 {
+        // Seed on **evidence**, not on a token sum. A gateway can report a fully
+        // cached prompt as `input_tokens: 0, output_tokens: 0` while the cache
+        // fields carry the real usage; the old `input + output > 0` guard threw
+        // that seed away, and the final usage then rendered `CH n/a` with a zero
+        // cache read. Presence of any usage key is enough.
+        if u.input + u.output > 0 || u.cache_reported || u.reasoning.is_some() {
             self.usage_seed = Some(u);
         }
     }
@@ -1676,12 +1707,13 @@ impl Default for DirectProvider {
 /// ([`crate::auth::oauth_needs_refresh_in`] answers `false` for both), so this
 /// is a cheap read on every stream, not a round-trip.
 #[cfg(feature = "real")]
-pub(crate) async fn ensure_oauth_fresh(provider: &str) {
+pub(crate) async fn ensure_oauth_fresh(provider: &str) -> Option<String> {
     if let Some(dir) = crate::auth::global_dir()
         && crate::auth::oauth_needs_refresh_in(&dir, provider, crate::oauth::OAUTH_MIN_VALIDITY_MS)
     {
-        refresh_oauth_before_use(&dir, provider).await;
+        return refresh_oauth_before_use(&dir, provider).await;
     }
+    None
 }
 
 /// Exchange a stored refresh token for a rotated pair and persist it (M51; pi
@@ -1694,34 +1726,39 @@ pub(crate) async fn ensure_oauth_fresh(provider: &str) {
 /// resolution falls back to the stored/env key path, and a telling error
 /// surfaces there, never a stale token on the wire.
 ///
+/// **The fresh token is returned even when the store cannot be written.** A
+/// successful exchange followed by a failed persist used to re-resolve the old
+/// (expired) token from disk and fail the request, losing a rotated refresh
+/// token for the next launch as well. The in-flight request uses the token it
+/// just received; the next launch may need a re-login, which is the honest
+/// consequence of a read-only config directory.
+///
 /// **No expiry decision is made here.** The caller gates on pi's 5-minute
 /// window ([`ensure_oauth_fresh`]); a second threshold here is what made the
 /// window dead.
 #[cfg(feature = "real")]
-async fn refresh_oauth_before_use(dir: &std::path::Path, provider: &str) {
-    let endpoint = match crate::oauth::refresh_endpoint(provider) {
-        Some(e) => e,
-        None => return,
-    };
+async fn refresh_oauth_before_use(dir: &std::path::Path, provider: &str) -> Option<String> {
+    let endpoint = crate::oauth::refresh_endpoint(provider)?;
     let refresh_token = match crate::auth::load_credentials_in(dir).get(provider) {
         Some(crate::auth::StoredCredential::Oauth { refresh, .. }) => refresh.clone(),
-        _ => return,
+        _ => return None,
     };
     // `client_id_for` skips the read for an endpoint that names no var, which
     // is what unblocks Copilot: its mint needs no client id, and
     // `std::env::var("")` is always an error.
     let Ok(client_id) = crate::oauth::client_id_for(&endpoint) else {
-        return;
+        return None;
     };
     let Ok(mut fresh) =
         crate::oauth::exchange_refresh_token(provider, &refresh_token, &client_id).await
     else {
-        return;
+        return None;
     };
     if fresh.refresh.trim().is_empty() {
         fresh.refresh = refresh_token;
     }
     let _ = crate::auth::store_refreshed_oauth_in(dir, provider, &fresh);
+    Some(fresh.access)
 }
 
 /// M49: like [`DirectProvider::stream`], Bedrock with an empty key signs
@@ -1742,9 +1779,14 @@ pub async fn try_stream_direct(
     let customs = crate::custom::custom_providers();
     let wire = wire_for(model_id, &customs)?;
     let provider = crate::catalog::lookup_model(model_id)
-        .map(|m| m.provider)
-        .unwrap_or("");
-    let body = wire.request_body(model_id, &ctx)?;
+        .map(|m| m.provider.to_string())
+        .unwrap_or_else(|| {
+            model_id
+                .split_once('/')
+                .map(|(prefix, _)| prefix.to_string())
+                .unwrap_or_default()
+        });
+    let body = wire.request_body(crate::custom::wire_model_id(model_id, &customs), &ctx)?;
     let url = wire.endpoint_for(model_id, key);
     let mut req = http_client()
         .post(&url)
@@ -1787,7 +1829,7 @@ pub async fn try_stream_direct(
         return Err(format!("HTTP {status}: {clipped}"));
     }
 
-    let st = HttpEventStream::new(model_id, "", wire.finalize_usage_from_tail());
+    let st = HttpEventStream::new(model_id, &provider, wire.finalize_usage_from_tail());
     Ok(Box::new(WireStream {
         wire,
         inner: Box::pin(futures_util::StreamExt::chain(
@@ -1834,8 +1876,8 @@ impl StreamFn for DirectProvider {
         // and persist the rotated pair so the key below is fresh. Failure
         // falls through to the normal path (stored/env key) — never a stale
         // token, never a hard fail. One gate, shared with the fallback chain.
-        ensure_oauth_fresh(provider).await;
-        let key = match crate::catalog::resolve_api_key(provider) {
+        let fresh_oauth = ensure_oauth_fresh(provider).await;
+        let key = match fresh_oauth.or_else(|| crate::catalog::resolve_api_key(provider)) {
             Some(k) => k,
             // M49: Bedrock resolves NO bearer token unless one is stored —
             // the SigV4 chain (env keys, profile, ECS…) carries no secret to
@@ -1857,7 +1899,8 @@ impl StreamFn for DirectProvider {
             }
         };
 
-        let body = match wire.request_body(&model.id, &ctx) {
+        let body = match wire.request_body(crate::custom::wire_model_id(&model.id, &customs), &ctx)
+        {
             Ok(b) => b,
             Err(detail) => {
                 return Box::new(OnceStream {
@@ -1952,7 +1995,7 @@ impl StreamFn for DirectProvider {
             });
         }
 
-        let st = HttpEventStream::new(&model.id, "", wire.finalize_usage_from_tail());
+        let st = HttpEventStream::new(&model.id, provider, wire.finalize_usage_from_tail());
         Box::new(WireStream {
             wire,
             inner: Box::pin(futures_util::StreamExt::chain(
@@ -2817,5 +2860,37 @@ mod tool_image_forwarding_tests {
             !s.contains(&"A".repeat(1024)),
             "oversize bytes must not ride the wire"
         );
+    }
+
+    #[test]
+    fn first_party_host_matching_is_exact_not_substring() {
+        assert!(is_first_party_host(
+            "https://api.openai.com/v1",
+            "api.openai.com"
+        ));
+        assert!(is_first_party_host(
+            "https://api.openai.com:443/v1",
+            "api.openai.com"
+        ));
+        assert!(is_first_party_host(
+            "https://API.OPENAI.COM/v1",
+            "api.openai.com"
+        ));
+        assert!(!is_first_party_host(
+            "https://api.openai.com.evil.example/v1",
+            "api.openai.com"
+        ));
+        assert!(!is_first_party_host(
+            "https://evilapi.openai.com/v1",
+            "api.openai.com"
+        ));
+        assert!(is_first_party_host(
+            "https://api.mistral.ai",
+            "api.mistral.ai"
+        ));
+        assert!(!is_first_party_host(
+            "https://api.mistral.ai.evil/v1",
+            "api.mistral.ai"
+        ));
     }
 }

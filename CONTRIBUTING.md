@@ -15,14 +15,14 @@ human or agent, and it is short on purpose. It covers:
 - how to be a good subagent, if you are one.
 
 **`AGENTS.md` is versioned like any other file** since the 2026-10-15 unlock — if you
-think a rule is wrong, correct it directly. (The lock-era proposals live in
-[`docs/AGENTS-PROPOSALS.md`](docs/AGENTS-PROPOSALS.md) as history.)
+think a rule is wrong, correct it directly. There is no archive of past proposals; the
+live contract is the file itself.
 
 ## Get oriented
 
-- New to the project? Start at **[`docs/START-HERE.md`](docs/START-HERE.md)**. There is an
-- Want to know what is true right now? **[`docs/STATUS.md`](docs/STATUS.md)**.
-- Curious where an idea came from? **[`CREDITS.md`](CREDITS.md)** and
+- New to the project? Start at **[`docs/01-OVERVIEW.md`](docs/01-OVERVIEW.md)**. There is an
+- Want to know what is true right now? **[`docs/04-STATUS.md`](docs/04-STATUS.md)**.
+- Curious where an idea came from? **[credits](README.md#credits)** and
   [`docs/references/`](docs/references/README.md).
 
 ## Build and run it

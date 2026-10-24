@@ -14,12 +14,12 @@
 //! |---|---|
 //! | the last **tool definition** | Tool schemas sit between the system prompt and the transcript, so a stable marker there keeps the expensive part of the prefix reusable when a later conversation extends it. |
 //! | the last **system block** | The stable prefix. Kept from pi's behaviour. |
-//! | the last **user message** | **This is the one that pays.** A single turn is many API calls: each tool result sends the whole history back. The latest user message sits at the start of the turn and does not move, so every one of those calls reuses everything up to it. |
+//! | the last **user-role turn** | **This is the one that pays.** A single turn is many API calls: each tool result sends the whole history back. The latest user-role turn is the newest boundary that will be reused, and tool results are user-role turns on the wire. Pi marks the last user *or* tool-result message (`anthropic-messages.ts:1529-1553`); Epsilon previously marked only `Message::User`, so every tool result after the prompt was reprocessed at full price. |
 //!
 //! opencode reaches the same three (`packages/llm/src/cache-policy.ts:18-22`) and gives the
 //! same reason: *"the latest user message stays put while a single turn explodes into many
 //! assistant/tool round-trips, so caching at that boundary lets every intra-turn API call
-//! hit the prefix."*
+//! hit the prefix."* Pi extends that boundary through each tool round-trip; so do we.
 //!
 //! # Why this lives outside the wire
 //!
@@ -39,8 +39,12 @@ pub struct CachePolicy {
     pub mark_last_tool: bool,
     /// Mark the final system block.
     pub mark_last_system: bool,
-    /// Mark the final user message's last text-bearing block.
-    pub mark_last_user_message: bool,
+    /// Mark the last user-role turn: a user message or a wire tool-result block.
+    ///
+    /// Tool results are sent under `"role": "user"`, so they are part of the
+    /// reusable prefix boundary. Marking only `Message::User` stops the cache at
+    /// the start of the turn and reprocesses every tool result after it.
+    pub mark_last_user_turn: bool,
 }
 
 impl CachePolicy {
@@ -52,7 +56,7 @@ impl CachePolicy {
     pub const DEFAULT: Self = Self {
         mark_last_tool: true,
         mark_last_system: true,
-        mark_last_user_message: true,
+        mark_last_user_turn: true,
     };
 
     /// No markers at all — for a wire whose provider caches implicitly, or a test that needs
@@ -60,14 +64,14 @@ impl CachePolicy {
     pub const NONE: Self = Self {
         mark_last_tool: false,
         mark_last_system: false,
-        mark_last_user_message: false,
+        mark_last_user_turn: false,
     };
 
     /// How many breakpoints this policy will place.
     pub fn count(&self) -> usize {
         usize::from(self.mark_last_tool)
             + usize::from(self.mark_last_system)
-            + usize::from(self.mark_last_user_message)
+            + usize::from(self.mark_last_user_turn)
     }
 }
 

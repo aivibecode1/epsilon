@@ -92,6 +92,14 @@ impl Session {
         for arg in args {
             cmd.arg(arg);
         }
+        // **Terminal tests are offline by construction.** Without this, a
+        // developer machine with a stored credential (which the auto-launch
+        // path now correctly uses) turned these into live-network tests and
+        // billed a paid API. The caller can still pass `--provider` explicitly.
+        if !args.contains(&"--provider") {
+            cmd.arg("--provider");
+            cmd.arg("faux");
+        }
         cmd.cwd(cwd);
         Self::start_with(cmd)
     }
@@ -408,9 +416,13 @@ fn the_screen_reports_what_the_harness_is_doing() {
         !screen.contains('$'),
         "a cost is shown before any turn has run, so it must be fabricated:\n{screen}"
     );
+    // The default layout docks the explorer, so this frame's workspace half is
+    // narrower than the 80-column widget test. The header's budget then keeps
+    // the context gauge and drops the quiet usage segment; either is an honest
+    // empty state. What must never appear is a fabricated counter or cost.
     assert!(
-        screen.contains("no usage yet"),
-        "an empty session must collapse its zero gauges, not print them:\n{screen}"
+        screen.contains("no usage yet") || screen.contains("ctx "),
+        "an empty session must show its context or the quiet usage segment, not nothing:\n{screen}"
     );
     assert!(
         screen.contains("DeepSeek") || screen.contains("Faux") || screen.contains("offline"),
@@ -696,6 +708,10 @@ fn assert_works_through_shell(shell: &str) {
         // No spaces, no quotes, no ambiguity.
         bin.clone()
     };
+    // Shell-startup tests are offline too: the auto-launch path now finds a
+    // stored credential, and a test that only draws the frame must not depend
+    // on the machine's login state.
+    let script = format!("{script} --provider faux");
     let mut session = Session::start_in_shell(&shell_path, &script, ws.path());
     // cmd was started with `/K` and no command, so the command goes in the way a
     // user types it: keystrokes into the shell's input. For PowerShell the

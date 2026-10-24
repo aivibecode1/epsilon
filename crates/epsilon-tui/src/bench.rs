@@ -154,9 +154,11 @@ mod tests {
         let mut ui = UiState::new();
         build_synthetic_transcript(&mut ui, 3);
         // No lifecycle markers: 3 assistant rows, a tool call on the first
-        // message, and 3 tool results = 7 content lines, plus 6 blank
-        // separators (every adjacent pair changes block).
-        assert_eq!(ui.lines().len(), 13);
+        // message, and 3 tool results = 7 content lines. Card chat now draws a
+        // divider before each prose message at render time, so those boundaries
+        // no longer carry a blank state row; the remaining 4 blanks are the
+        // tool-card separators.
+        assert_eq!(ui.lines().len(), 11);
         assert!(ui.lines().iter().any(|l| l.md.is_some()));
         let kinds: Vec<_> = ui.lines().iter().map(|l| l.kind).collect();
         assert!(

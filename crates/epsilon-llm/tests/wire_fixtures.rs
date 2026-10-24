@@ -33,6 +33,17 @@ fn custom_provider_id_routes_to_declared_endpoint() {
     // The lookup that picks this wire for an arbitrary id:
     assert!(epsilon_llm::custom::lookup_custom(&customs, "lmstudio/anything").is_some());
     assert!(epsilon_llm::custom::lookup_custom(&customs, "other/thing").is_none());
+    // The wire body carries the remote model name, not the local routing prefix.
+    let body = w
+        .request_body(
+            epsilon_llm::custom::wire_model_id("lmstudio/qwen2.5-7b-instruct", &customs),
+            &thinking_ctx(ThinkingLevel::Off),
+        )
+        .expect("a valid request");
+    assert_eq!(
+        body["model"], "qwen2.5-7b-instruct",
+        "the endpoint names the provider; the body names the model: {body}"
+    );
 }
 
 fn ev(data: &str) -> SseEvent {
@@ -85,6 +96,45 @@ fn openai_length_finish_maps_to_max_tokens_even_with_tool_calls() {
     assert_eq!(final_stop(&done), StopReason::MaxTokens);
 }
 
+/// **A usage-only frame is billed.** Providers that honour
+/// `stream_options.include_usage` send a final chunk with `choices: []` and a
+/// usage object. The old handler returned early on the missing choices and threw
+/// the count away, so a real request showed `0` tokens and `$0`.
+#[test]
+fn openai_usage_only_frame_with_no_choices_is_still_counted() {
+    let w = OpenAiCompatWire {
+        base_url: "https://api.openai.com/v1".to_string(),
+        env_key: None,
+    };
+    let mut st = HttpEventStream::empty_for_tests();
+    let usage = r#"{"choices":[],"usage":{"prompt_tokens":120,"completion_tokens":30,"prompt_tokens_details":{"cached_tokens":100}}}"#;
+    assert!(
+        w.on_event(&ev(usage), &mut st).is_none(),
+        "a usage frame emits no text event"
+    );
+    let done = w.on_event(&ev("[DONE]"), &mut st).unwrap();
+    let message = done_message(&done, &st);
+    assert_eq!(message.usage.input, 20, "prompt minus the cached prefix");
+    assert_eq!(message.usage.cache_read, 100);
+    assert_eq!(message.usage.output, 30);
+}
+
+/// Some compatible providers put usage on the choice instead of the envelope
+/// (the reference names Moonshot). Both shapes must bill.
+#[test]
+fn openai_choice_level_usage_is_read() {
+    let w = OpenAiCompatWire {
+        base_url: "https://api.moonshot.cn/v1".to_string(),
+        env_key: None,
+    };
+    let mut st = HttpEventStream::empty_for_tests();
+    let frame = r#"{"choices":[{"index":0,"delta":{},"usage":{"prompt_tokens":12,"completion_tokens":3}}]}"#;
+    let _ = w.on_event(&ev(frame), &mut st);
+    let done = w.on_event(&ev("[DONE]"), &mut st).unwrap();
+    let usage = done_message(&done, &st).usage;
+    assert_eq!((usage.input, usage.output), (12, 3));
+}
+
 #[test]
 fn openai_content_filter_maps_to_error() {
     let w = OpenAiCompatWire {
@@ -128,6 +178,21 @@ fn anthropic_default_stop_still_ends_turn_cleanly() {
         .on_event(&ev(r#"{"type":"message_stop"}"#), &mut st)
         .unwrap();
     assert_eq!(final_stop(&done), StopReason::EndTurn);
+}
+
+/// A blocked prompt can carry `usageMetadata` with no candidates; the billed
+/// input must survive, and no text event is invented.
+#[test]
+fn gemini_usage_metadata_without_a_candidate_is_still_counted() {
+    let w = GoogleWire;
+    let mut st = HttpEventStream::empty_for_tests();
+    let frame = r#"{"usageMetadata":{"promptTokenCount":77,"candidatesTokenCount":0,"totalTokenCount":77},"promptFeedback":{"blockReason":"SAFETY"}}"#;
+    assert!(w.on_event(&ev(frame), &mut st).is_none());
+    let done = w
+        .on_event(&ev(r#"{"candidates":[{"finishReason":"STOP"}]}"#), &mut st)
+        .unwrap();
+    let usage = done_message(&done, &st).usage;
+    assert_eq!(usage.input, 77, "the blocked prompt was billed");
 }
 
 #[test]

@@ -1,56 +1,96 @@
-# Epsilon Skill Selection
+# Skill discovery, catalogue budget, and built-ins
 
-**Design proposal, not a verified bundle inventory.** For contributors considering skill packaging. The selections and budget below describe intended v1 behavior, not verified shipped skills or CI enforcement. Development skills under `.agents/skills/` are a separate surface. See [the port audit](../../audit/02-port-fidelity.md).
+This is the design note behind [`docs/user/skills.md`](../user/skills.md). It
+records why skills are shaped this way, not how to write one.
 
-Epsilon implements the Agent Skills spec (ADR-015): a skill is a `SKILL.md` directory whose
-frontmatter (name, description) enters the prompt catalog and whose body loads on demand via the
-`skill` tool / read tool. This document selects the skills bundled with or referenced by Epsilon
-v1, with justifications, and records exclusions.
+## What a skill is
 
-Selection criteria, derived from Phase 1-2 evidence:
+A directory with a `SKILL.md`, or a flat `<name>.md` file, carrying frontmatter
+(`name`, `description`, optional `disable-model-invocation`) and a Markdown body.
+The Agent Skills shape is shared by Claude Code, Codex, Gemini CLI, Cursor,
+Windsurf, opencode, Pi, DeepSeek Harness and Epsilon. Discovery reads every one
+of those roots, so a skill written for another harness usually works here.
 
-1. **Frequency x generality** - skills pay for their catalog cost only if they encode procedures
-   the agent would otherwise improvise inconsistently (Hermes' "Footprint Ladder" reasoning:
-   prefer skills over new core tools to keep every-call schema costs flat).
-2. **Procedure stability** - content must change slower than model versions; volatile knowledge
-   belongs in docs retrieval, not skills.
-3. **Safety relevance** - procedures that reduce destructive-action risk earn priority
-   (Prime directive 2 support).
-4. **Spec compliance** - all skills ship as plain SKILL.md so users can fork/override them in
-   project directories.
+Epsilon reads one level below each root. It does not recurse into monorepo
+subdirectories, and it does not read plugin trees, because those are installed
+software with a different trust story. The divergence is stated in
+`crates/epsilon-core/src/skills.rs`, not hidden.
 
-## Bundled skills (ship with Epsilon)
+## Progressive disclosure
 
-| Skill | Purpose | Justification |
-|---|---|---|
-| `commit-craft` | Repo-style-aware commit workflow: inspect status/diff/log, stage explicit paths, message conventions, when-to-refuse | Git discipline violations are the most common agent harm class across all four references; encoding pi's git rules as a procedure makes them loadable exactly when needed instead of always consuming context |
-| `test-first-fix` | Bug-fix loop: reproduce -> failing test -> minimal fix -> run targeted tests -> full checks | Encodes the verify-don't-guess working loop; the single highest-value procedure for code quality; mirrors pi's test-harness discipline (suite harness + faux provider pattern) |
-| `codebase-onboarding` | Structured first-pass exploration of an unfamiliar repo: manifests, entry points, module map, AGENTS.md discovery | Large-search delegation is a documented subagent strength (opencode task/explore agents); a fixed procedure prevents shallow README-only impressions - the exact failure mode Phase 1 was designed to avoid |
-| `refactor-safely` | Mechanical refactors: find-all-usages before rename, keep behavior green, small commits, no drive-by reformatting | Encodes "read files in full before wide-ranging changes" (pi's rule) into a repeatable checklist |
-| `dependency-audit` | Adding/upgrading dependencies: check advisories, license, maintenance signals, pin exact, note lifecycle scripts | Both pi (npm incident policy) and Hermes (exact-pin post-incident) converged on this; cargo-deny/cargo-vet equivalents for Rust make it mechanical |
-| `doc-driven-answer` | Answering questions about libraries/APIs: locate authoritative local docs first, then vendor sources, cite paths, flag uncertainty | Direct implementation of Prime directive 4; prevents fabricated API claims without requiring web access |
-| `session-recap` | Produce handoff summaries from session logs: decisions, state, unfinished work | Leverages Epsilon's JSONL tree format; supports multi-session continuity where compaction summaries alone lose structure |
+The model sees only the catalogue: one line per skill, `name: description`.
+The body loads when the model calls the `skill` tool, or when a user chooses it.
+This keeps a large installed skill collection from consuming context on every
+turn. It also means the description is the whole advertisement: a vague
+description makes the skill invisible in practice.
 
-## Referenced skill packs (documented pointers, not bundled)
+The catalogue has a budget rule from the reference studies: keep the bundled
+catalogue under roughly 1,500 tokens of name-and-description text. Epsilon ships
+twelve built-ins; their descriptions are short enough that enabling all twelve
+still leaves room for a project's own skills. The catalogue budget grows with the
+selection, so adding a skill means removing one or showing it earns the row.
 
-| Pack | Why referenced only |
-|---|---|
-| Language-specific style packs (rust-idioms, ts-migration) | Too opinionated to bundle; teams should override per project; catalog stays small |
-| Framework skills (react, axum, tokio patterns) | Volatile content violates criterion 2; better served by doc retrieval + MCP doc servers |
+## Discovery rules
 
-## Explicitly excluded
+- **Name:** lowercase `a-z`, `0-9`, hyphens; at most 64 characters; no leading,
+  trailing, or doubled hyphen.
+- **Description:** required, one line, at most 1,024 characters.
+- **Frontmatter:** a small flat parser, not YAML. Block scalars and quoted
+  scalars are handled; unknown keys are ignored.
+- **Collisions:** a later root wins. A project skill therefore overrides a user
+  skill of the same name. Discovery reports both paths. This is a deliberate
+  divergence from Pi, which keeps the first and reports the loser.
+- **Failures:** an unreadable root, an unreadable file, an invalid name or a bad
+  description is a startup notice, not silence.
 
-| Excluded | Reason |
-|---|---|
-| Browser automation / computer-use skills | No browser tool in v1 surface (architecture section 14); a skill cannot create missing capabilities |
-| Data-science/notebook skills | Out of scope for v1 coding focus; NotebookEdit-class tools not built |
-| Marketing/writing/content skills | Not coding tasks; generic LLM ability suffices; catalog slots are scarce |
-| Self-modification / harness-extension skills | Deliberately excluded until sandboxed self-extension exists post-1.0 (HA-DSH: opt-in even there); bundling one now would advertise capability the permission model should gate explicitly |
-| Cron/scheduling/ops skills | No scheduler subsystem in v1 |
-| "Personality" skills (SOUL.md-style persona swaps) | Hermes carries identity in stable tier config, not skills; identity-as-skill conflates layers and breaks byte-stable prompts (ADR-008) |
+## Trust
 
-## Catalog budget rule
+Project roots (`.epsilon/skills`, `.agents/skills`, `.claude/skills`, and the
+rest) are repository-controlled. They load only after the workspace is trusted.
+User roots (`~/.config/epsilon/skills`, `~/.agents/skills`, and the other
+harness conventions) always load: they are the user's own files, in the user's
+home directory.
 
-Total bundled catalog must stay under ~1,500 tokens of name+description text (measured at build
-time, CI-enforced). Beyond that, progressive disclosure savings evaporate - the same budget logic
-as Hermes' footprint ladder applied to the catalog tier.
+## Opt-in built-ins
+
+Epsilon compiles twelve skills into the binary, in
+`crates/epsilon-core/src/builtin_skills.rs` with assets beside it. They are
+**off until enabled**:
+
+- `[off]` rows are shown by `/skills` with their description and a sentence on
+  why the skill is useful.
+- `/skill <name> on` writes `<config>/builtin-skills/<name>/SKILL.md`, plus any
+  files the body refers to (the `improve` skill carries three reference pages).
+- Discovery then treats it as an ordinary skill; there is no second loader.
+- `/skill <name> off` removes the copy only if every owned file is byte-identical
+  to the bundled text. An edited copy is the user's work and is left in place
+  with a message; a missing bundled file is repaired on the next enable.
+
+Why this shape rather than a second registry:
+
+1. **One catalogue, one loader.** Compiling skills into the binary but keeping a
+   separate runtime path for them would create two answers to "which skills
+   exist". Writing an ordinary file reuses every existing rule.
+2. **The user's directory stays theirs.** The built-in root is separate from
+   `~/.config/epsilon/skills`, so removal cannot touch a skill the user wrote or
+   edited.
+3. **Off means absent from the prompt.** An enable-list would silently disable
+   existing discovered skills when a config file gained a `[skills]` section;
+   file presence avoids that. Built-ins are the only population that starts
+   absent, and that is what "opt-in" means.
+
+The category is deliberately small: procedures that are stable across projects,
+cheap to describe, and expensive to improvise differently every time. A skill
+that only repeats generic advice is not bundled. See
+[`docs/user/skills.md`](../user/skills.md) for the list and the selection
+rationale.
+
+## Attribution
+
+Most built-ins are written for Epsilon, informed by the reference harnesses and
+by the skills under `.agents/skills/`. **Ponytail** by DietrichGebert and
+**improve** by shadcn are adapted from their MIT-licensed upstream skills; the
+`credit` field on [`BuiltinSkill`](../../crates/epsilon-core/src/builtin_skills.rs)
+carries that attribution into `/skills`, and the README credits name the
+projects. REA's workflow is credited in `docs/references/rea.md` and in the skill
+text itself.

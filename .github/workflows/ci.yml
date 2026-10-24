@@ -1,9 +1,11 @@
-# Epsilon CI (M13): every gate from AGENTS.md, on both confinement platforms.
+# Epsilon CI (M13): every gate from AGENTS.md, on the platforms the product ships.
 #
 # - windows: the full suite runs here — Job Object sandbox tests, TUI reducer tests,
 #   everything. This is the primary development platform.
 # - linux: closes the "Linux confinement verified" acceptance item — the bwrap
 #   integration suite (tests/bwrap_unix.rs) executes against real bubblewrap.
+# - macos: portability and installer smoke; macOS has no native shell-confinement
+#   backend, so the installer is the part that needs a real host.
 # - msrv: the workspace declares rust-version = 1.88; prove every crate still
 #   compiles there. (Before ADR-039 the desktop crate was excluded on purpose:
 #   it needed 1.95 because egui did. That exclusion left with the crate.)
@@ -16,6 +18,7 @@ on:
   push:
     branches: [main]
   pull_request:
+  workflow_dispatch:
 
 env:
   CARGO_TERM_COLOR: always
@@ -65,6 +68,12 @@ jobs:
           EPSILON_BIN: target/debug/epsilon.exe
         run: cargo test -p epsilon-cli --test terminal -- --test-threads=1
 
+      - name: Windows installer builds and verifies a binary
+        shell: pwsh
+        run: |
+          .\install.ps1 -NoVerify -Prefix "$env:RUNNER_TEMP\epsilon-install"
+          & "$env:RUNNER_TEMP\epsilon-install\bin\epsilon.exe" --version
+
   linux-confinement:
     runs-on: ubuntu-latest
     timeout-minutes: 60
@@ -103,6 +112,11 @@ jobs:
           EPSILON_BIN: target/debug/epsilon
         run: cargo test -p epsilon-cli --test terminal -- --test-threads=1
 
+      - name: Linux installer builds and verifies a binary
+        run: |
+          bash install.sh --no-verify --prefix "$RUNNER_TEMP/epsilon"
+          "$RUNNER_TEMP/epsilon/bin/epsilon" --version
+
   msrv:
     runs-on: ubuntu-latest
     timeout-minutes: 45
@@ -117,3 +131,22 @@ jobs:
 
       - name: Workspace compiles under MSRV
         run: cargo check --workspace
+  macos:
+    runs-on: macos-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+
+      - name: Full suite on macOS
+        run: cargo test --workspace
+
+      - name: Installer builds and verifies a binary on macOS
+        run: |
+          bash install.sh --no-verify --prefix "$RUNNER_TEMP/epsilon"
+          "$RUNNER_TEMP/epsilon/bin/epsilon" --version

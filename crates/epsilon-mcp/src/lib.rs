@@ -34,6 +34,19 @@ pub struct McpServerConfig {
     /// argv for `command`.
     #[serde(default)]
     pub args: Vec<String>,
+    /// Per-call deadline in seconds. Omitted means [`CALL_TIMEOUT_SECS`].
+    ///
+    /// A server that does real external work — REA's Ghidra/Hopper analysis is
+    /// the motivating case — can legitimately exceed the 120 s default. The
+    /// bound stays per server rather than global so one slow integration does
+    /// not weaken the deadline for every other server.
+    #[serde(default = "default_timeout_secs")]
+    pub timeout_secs: u64,
+}
+
+/// The default per-call deadline, shared by serde and [`call_timeout`].
+fn default_timeout_secs() -> u64 {
+    CALL_TIMEOUT_SECS
 }
 
 /// Declarative config for one StreamableHTTP MCP server.
@@ -57,6 +70,9 @@ pub struct HttpServerConfig {
     /// `None` means no auth header. Never accepted on a command line.
     #[serde(default)]
     pub bearer_token: Option<String>,
+    /// Per-call deadline in seconds. Omitted means [`CALL_TIMEOUT_SECS`].
+    #[serde(default = "default_timeout_secs")]
+    pub timeout_secs: u64,
 }
 
 /// The config enum: one `[[mcp_servers]]` entry is stdio XOR HTTP.
@@ -151,6 +167,7 @@ pub fn http_server_config(
         url: url.to_string(),
         headers,
         bearer_token: bearer,
+        timeout_secs: CALL_TIMEOUT_SECS,
     })
 }
 
@@ -279,6 +296,16 @@ pub async fn bridge(
     server_name: &str,
     connector: Arc<dyn Connector>,
 ) -> Result<usize, String> {
+    bridge_with_timeout(registry, server_name, connector, CALL_TIMEOUT_SECS).await
+}
+
+/// [`bridge`] with a per-server call deadline.
+pub async fn bridge_with_timeout(
+    registry: &mut epsilon_core::ToolRegistry,
+    server_name: &str,
+    connector: Arc<dyn Connector>,
+    timeout_secs: u64,
+) -> Result<usize, String> {
     let tools = connector.list_tools().await?;
     let mut count = 0usize;
     for info in tools {
@@ -294,6 +321,7 @@ pub async fn bridge(
             tool_name: info.name.clone(),
             connector: Arc::clone(&connector),
             last_probe_ms: std::sync::atomic::AtomicI64::new(0),
+            timeout_secs: timeout_secs.max(1),
         }));
         count += 1;
     }
@@ -309,6 +337,8 @@ struct McpBridgeTool {
     /// Last successful health probe (DIRECTION-02). Calls within the TTL skip
     /// the probe; a failed call resets it so the next call re-probes first.
     last_probe_ms: std::sync::atomic::AtomicI64,
+    /// This server's per-call deadline. See [`McpServerConfig::timeout_secs`].
+    timeout_secs: u64,
 }
 
 /// How long a successful health probe stays valid (Hermes' availability-TTL).
@@ -326,20 +356,20 @@ pub const HEALTH_TTL_MS: i64 = 30_000;
 /// Deliberately the same order as the shell tool's default (120 s): an MCP tool is
 /// a remote procedure that may do real work, so the bound has to be loose enough
 /// not to fail a legitimate slow one and tight enough that a wedged server costs
-/// a turn rather than the process. Fixed, not configurable — an override would
-/// be a knob nothing uses, which is the mistake this round just removed from the
-/// health probe's comment.
+/// a turn rather than the process. This is the **default**; a server whose work
+/// legitimately outlasts it (REA's Ghidra/Hopper analysis) can set
+/// [`McpServerConfig::timeout_secs`] / [`HttpServerConfig::timeout_secs`].
 ///
 /// The deadline test needs no short value: it runs under paused tokio time, so the
 /// 120 s elapse the moment the call has nothing left to do.
 pub const CALL_TIMEOUT_SECS: u64 = 120;
 
-/// The deadline for one call.
-fn call_timeout() -> std::time::Duration {
-    std::time::Duration::from_secs(CALL_TIMEOUT_SECS)
-}
-
 impl McpBridgeTool {
+    /// This server's deadline, never zero.
+    fn call_timeout(&self) -> std::time::Duration {
+        std::time::Duration::from_secs(self.timeout_secs.max(1))
+    }
+
     /// Probe server health at most once per [`HEALTH_TTL_MS`], and always
     /// after a failure, so a dead server fails FAST with a clear message
     /// instead of an opaque transport error mid-call.
@@ -419,7 +449,7 @@ impl Tool for McpBridgeTool {
                     self.server_name, self.tool_name
                 )));
             }
-            answered = tokio::time::timeout(call_timeout(), call_fut) => {
+            answered = tokio::time::timeout(self.call_timeout(), call_fut) => {
                 match answered {
                     Ok(Ok(t)) => t,
                     Ok(Err(e)) => {
@@ -436,7 +466,7 @@ impl Tool for McpBridgeTool {
                             "MCP tool {}::{} did not answer within {:?} and was abandoned",
                             self.server_name,
                             self.tool_name,
-                            call_timeout()
+                            self.call_timeout()
                         )));
                     }
                 }

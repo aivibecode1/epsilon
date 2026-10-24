@@ -1,9 +1,0 @@
-model "deepseek-chat" matched catalog entry "deepseek/deepseek-chat-v3.1"
-no credentials for provider "openrouter" — set OPENROUTER_API_KEY or run: epsilon auth login openrouter
-providers with stored credentials: deepseek (pick one with --model)
-try: --model deepseek-flash (deepseek)
-provider: faux (offline scripted)
-go real:  epsilon auth login <provider>   (or set the provider's API key env var)
-repaired D:\epsilon-m119-recon\resume-check.jsonl: 18 tool call(s) had no result — synthesized an error result so the transcript stays provider-valid
-repaired D:\epsilon-m119-recon\resume-check.jsonl: the session ended mid-run — appended an aborted turn marker
-resumed 932 entries from D:\epsilon-m119-recon\resume-check.jsonl

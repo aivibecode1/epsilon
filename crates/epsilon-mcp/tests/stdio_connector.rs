@@ -12,7 +12,8 @@ use std::sync::Arc;
 
 use epsilon_core::ToolRegistry;
 use epsilon_mcp::{
-    Connector, McpServerConfig, StdioConnector, attach_stdio_server, qualified_name,
+    CALL_TIMEOUT_SECS, Connector, McpServerConfig, StdioConnector, attach_stdio_server,
+    qualified_name,
 };
 
 fn fixture_config() -> McpServerConfig {
@@ -20,6 +21,7 @@ fn fixture_config() -> McpServerConfig {
         name: "fixture".into(),
         command: env!("CARGO_BIN_EXE_mcp-fixture-server").into(),
         args: vec![],
+        timeout_secs: CALL_TIMEOUT_SECS,
     }
 }
 

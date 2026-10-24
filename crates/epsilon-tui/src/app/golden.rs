@@ -436,13 +436,26 @@ fn the_frame_shows_the_four_things_it_is_for() {
         .chars()
         .next()
         .expect("a horizontal glyph");
-    let rules = rows
+    // The composer is a box: a titled top border and a bottom border. Those are
+    // the two lines that separate the prompt from the transcript and the footer.
+    let top_left = app.theme().glyphs.top_left.chars().next().expect("glyph");
+    let bottom_left = app
+        .theme()
+        .glyphs
+        .bottom_left
+        .chars()
+        .next()
+        .expect("glyph");
+    let box_rows = rows
         .iter()
-        .filter(|r| !r.is_empty() && r.chars().all(|c| c == rule))
+        .filter(|r| {
+            (r.starts_with(top_left) && r.contains("prompt"))
+                || (r.starts_with(bottom_left) && r.chars().any(|c| c == rule))
+        })
         .count();
-    assert_eq!(
-        rules, 1,
-        "expected one full-width rule made of {rule:?}, found {rules}: {screen}"
+    assert!(
+        box_rows >= 2,
+        "expected a composer box (top and bottom), found {box_rows}: {screen}"
     );
 }
 
@@ -559,7 +572,6 @@ async fn a_pending_approval_is_visible_in_a_well_formed_frame() {
 fn a_user_turn_carries_its_gutter_and_band_on_a_real_frame() {
     let mut app = bench_app(UiState::new());
     pin_theme(&mut app, ThemeColorMode::Truecolor);
-    let surface = app.theme.surface_user().bg;
     let user_style = app.theme.user();
     app.ui
         .push_local_input("what does the gutter look like now?");
@@ -570,44 +582,39 @@ fn a_user_turn_carries_its_gutter_and_band_on_a_real_frame() {
         .position(|r| r.contains("what does the gutter look like now?"))
         .unwrap_or_else(|| panic!("the user turn never reached the screen: {rows:#?}"));
     let row = &rows[row_index];
+    let title_index = row_index - 1;
+    let title = &rows[title_index];
 
-    // 1. The two-column gutter, and the `▎` that says "this is the person
-    //    talking" in the leftmost cell.
+    // 1. The card's title names the speaker and carries the user colour.
     assert!(
-        row.starts_with("▎ "),
-        "user row {row_index} has no gutter marker: {row:?}"
+        title.starts_with("╭─ ▎ you"),
+        "the card title must name the user: {title:?}"
     );
-    assert_eq!(cell(&buffer, 0, row_index as u16).symbol(), "▎");
+    assert_eq!(cell(&buffer, 0, title_index as u16).symbol(), "╭");
     assert_eq!(
-        cell(&buffer, 0, row_index as u16).style().fg,
+        cell(&buffer, 0, title_index as u16).style().fg,
         user_style.fg,
-        "the gutter glyph must carry the user role's colour"
+        "the card title must carry the user role's colour"
     );
-    // 2. The band, at the glyph, behind the text, and out to the terminal edge.
-    for x in [0u16, 2, 20, 79] {
-        assert_eq!(
-            cell(&buffer, x, row_index as u16).style().bg,
-            surface,
-            "column {x} of the user row is not on the user surface"
-        );
-    }
-    // 3. Exactly one marker. `❯` from the render cache; the `"> "` that
-    //    `push_local_input` used to store is gone, so the row reads
-    //    `▎ ❯ what does …` and not `▎ ❯ > what does …`.
+    // 2. The body is bounded by card rails; the prompt caret is still visible
+    //    inside, and there is exactly one of it.
     assert!(
-        row.contains("▎ ❯ what does"),
-        "the user row must carry one marker, not two: {row:?}"
+        row.starts_with("│ ❯ what does"),
+        "the user body must sit inside the card rails: {row:?}"
     );
-    // 4. The band belongs to that row and nothing else: a blank line above it is
-    //    not painted as part of the message.
+    assert_eq!(cell(&buffer, 0, row_index as u16).symbol(), "│");
+    assert_eq!(cell(&buffer, 2, row_index as u16).symbol(), "❯");
+    assert!(
+        !row.contains("❯ ❯") && !row.contains("> what does"),
+        "the user body must carry one marker, not two: {row:?}"
+    );
+    // 3. The title is its own row; the rail above it is not part of the body.
     assert_ne!(
-        cell(&buffer, 20, row_index as u16 - 1).style().bg,
-        surface,
-        "the band leaked onto the row above the message"
+        cell(&buffer, 20, title_index as u16 - 1).symbol(),
+        "│",
+        "a blank row must separate the card from the transcript above it"
     );
-    // 5. And the frame is still exactly the terminal's width — a band that
-    //    overflows is a wrapped row, which is what the one column of slack used
-    //    to be buying.
+    // 4. And the frame is still exactly the terminal's width.
     for (index, r) in rows.iter().enumerate() {
         assert_eq!(
             r.chars().count(),
@@ -627,14 +634,13 @@ fn a_wrapped_banded_message_keeps_every_row_inside_the_frame() {
     // the production path, at a realistic narrow width.
     let mut app = bench_app(UiState::new());
     pin_theme(&mut app, ThemeColorMode::Truecolor);
-    let surface = app.theme.surface_user().bg;
     app.ui.push_local_input(
         "the user turn is the one row that must never wrap its band past the terminal \
          edge, because a band that overflows turns one message into two rows and moves \
          everything under it",
     );
 
-    let (buffer, rows) = render_buffer(&mut app, 60, 20);
+    let (_buffer, rows) = render_buffer(&mut app, 60, 20);
     for (index, row) in rows.iter().enumerate() {
         assert_eq!(
             row.chars().count(),
@@ -643,32 +649,33 @@ fn a_wrapped_banded_message_keeps_every_row_inside_the_frame() {
             row.chars().count()
         );
     }
-    let banded: Vec<usize> = (0..rows.len())
-        .filter(|&y| cell(&buffer, 59, y as u16).style().bg == surface)
-        .collect();
+    let top = rows
+        .iter()
+        .position(|r| r.starts_with("╭─ ▎ you"))
+        .unwrap_or_else(|| panic!("the user card has no top border: {rows:#?}"));
+    let bottom = rows
+        .iter()
+        .enumerate()
+        .skip(top + 1)
+        .find(|(_, row)| row.starts_with('╰'))
+        .map(|(index, _)| index)
+        .unwrap_or_else(|| panic!("the user card has no bottom border: {rows:#?}"));
+    let body = &rows[top + 1..bottom];
     assert!(
-        banded.len() >= 3,
-        "a wrapped user turn must band every one of its rows, got {banded:?}: {rows:#?}"
+        body.len() >= 3,
+        "the wrapped user card needs several body rows: {body:#?}"
     );
-    assert_eq!(
-        banded,
-        (banded[0]..banded[0] + banded.len()).collect::<Vec<_>>(),
-        "the banded rows must be contiguous"
-    );
-    // One marker, on the first row only: a `❯` repeated on every continuation row
-    // would read as a new message per line.
-    assert!(
-        rows[banded[0]].starts_with("▎ ❯ the user turn"),
-        "the first banded row must carry the gutter and the one marker: {:?}",
-        rows[banded[0]]
-    );
-    for index in banded.iter().skip(1) {
+    for row in body {
         assert!(
-            !rows[*index].contains('❯'),
-            "continuation row {index} repeated the marker: {:?}",
-            rows[*index]
+            row.starts_with('│') && row.ends_with('│'),
+            "every wrapped card row must be inside the rails: {row:?}"
         );
     }
+    assert_eq!(
+        body.iter().filter(|row| row.contains('❯')).count(),
+        1,
+        "one prompt marker across the wrapped card: {body:#?}"
+    );
 }
 
 #[test]
@@ -825,26 +832,22 @@ fn an_answer_and_its_reasoning_are_distinguishable_on_a_real_frame_without_colou
         .position(|r| r.contains("weighing the two options"))
         .unwrap_or_else(|| panic!("the reasoning never reached the screen: {rows:#?}"));
 
-    // The fallback markers, named rather than merely "different": `pin_theme`
-    // pins the Unicode repertoire, so these are the glyphs a real terminal gets.
-    //
-    // **Read from the repertoire, not typed into the assertion.** This line had `•`
-    // written into it, and that literal was the *defect*: `UNICODE.assistant` was `•`,
-    // the same character as `UNICODE.bullet`, so on a bandless terminal the model's
-    // answer drew as a harness notice. M303 gave the answer its own `▪` and this
-    // assertion failed — for the right reason, at the wrong moment, and only because
-    // a golden frame test happened to name the character.
-    //
-    // Asserting against the table states what the test is for: the answer row carries
-    // *this repertoire's* answer marker, and the reasoning row its reasoning marker.
-    // The collision those two roles once shared is pinned as a property over both
-    // repertoires by `no_glyph_set_gives_an_answer_and_a_notice_the_same_character`,
-    // so it does not need restating here.
+    // The answer is a card: its title names the role and its body sits inside
+    // the rails. Reasoning is not a card and keeps its own gutter marker. The
+    // two are distinguishable without colour by shape, not by hue.
     let glyphs = crate::ui::theme::UNICODE;
     assert!(
-        rows[answer_row].starts_with(&format!("{} the answer", glyphs.assistant)),
-        "the answer's row must carry its own gutter marker: {:?}",
+        rows[answer_row].starts_with("│ the answer"),
+        "the answer's body must sit inside the card: {:?}",
         rows[answer_row]
+    );
+    assert!(
+        rows[..answer_row]
+            .iter()
+            .rev()
+            .find(|row| row.contains("assistant"))
+            .is_some_and(|row| row.starts_with("╭")),
+        "the answer needs an assistant card title above it: {rows:#?}"
     );
     assert!(
         rows[reasoning_row].starts_with(&format!("{} weighing", glyphs.thinking)),
@@ -856,8 +859,7 @@ fn an_answer_and_its_reasoning_are_distinguishable_on_a_real_frame_without_colou
         cell(&buffer, 0, reasoning_row as u16).symbol(),
         "with colour off, the answer and its reasoning are the same pixels"
     );
-    // And the same distinction holds on a terminal that *can* show bands — the
-    // two roles are separated by the band there, and must still not collide.
+    // And the same distinction holds on a terminal that *can* show bands.
     let rich_rows = render_rows(&mut rich, 80, 24);
     let rich_answer = rich_rows
         .iter()
@@ -868,8 +870,8 @@ fn an_answer_and_its_reasoning_are_distinguishable_on_a_real_frame_without_colou
         .position(|r| r.contains("weighing the two options"))
         .unwrap_or_else(|| panic!("the reasoning never reached the screen: {rich_rows:#?}"));
     assert!(
-        rich_rows[rich_answer].starts_with("  the answer"),
-        "a banded answer needs no marker: {:?}",
+        rich_rows[rich_answer].starts_with("│ the answer"),
+        "the answer keeps its card body: {:?}",
         rich_rows[rich_answer]
     );
     assert!(
@@ -1470,50 +1472,36 @@ fn a_detail_object_prints_the_field_that_decides_the_question() {
 }
 
 #[test]
-fn the_one_rule_sits_between_the_transcript_and_the_composer() {
-    // Where the surviving rule lives, on a frame whose transcript is full. The
-    // old layout drew this row AND a second rule under the header; the point of
-    // cutting one is that this one keeps its job — "everything below this line
-    // takes keystrokes" — and the row goes to the conversation.
+fn the_composer_box_sits_between_the_transcript_and_the_footer() {
+    // The composer's own top and bottom borders are the lines that separate it
+    // from the transcript and the footer. There is no second full-width rule;
+    // the box is the separator.
     let mut app = bench_app(UiState::new());
     for index in 0..40 {
         app.ui.push_notice(format!("ROW-{index:03}"));
     }
     let rows = render_rows(&mut app, 80, 24);
-    let rule: char = app
-        .theme()
-        .glyphs
-        .horizontal
-        .chars()
-        .next()
-        .expect("a horizontal glyph");
-    let is_rule = |r: &String| !r.is_empty() && r.chars().all(|c| c == rule);
-    let rule_rows: Vec<usize> = (0..rows.len()).filter(|&i| is_rule(&rows[i])).collect();
-    assert_eq!(
-        rule_rows.len(),
-        1,
-        "there must be one rule, not two: {rows:#?}"
-    );
-    let rule_row = rule_rows[0];
-    // The rule is the line under the composer, and the transcript runs INTO the
-    // composer with nothing between them: under the old layout a second rule sat
-    // there, at 80x24 on row 19, and this frame's transcript ended above it.
-    let composer_row = rule_row - 1;
+    let composer_row = rows
+        .iter()
+        .position(|r| r.contains("describe a task, or / for commands"))
+        .expect("the composer row");
+    let bottom = rows
+        .get(composer_row + 1)
+        .unwrap_or_else(|| panic!("no row below the composer: {rows:#?}"));
     assert!(
-        rows[composer_row].contains("describe a task, or / for commands"),
-        "the one rule must sit directly below the composer, found it on row \
-         {rule_row} with {:?} above it: {rows:#?}",
-        rows[composer_row]
+        bottom.starts_with(app.theme().glyphs.bottom_left)
+            && bottom.ends_with(app.theme().glyphs.bottom_right),
+        "the composer must close with its own bottom border, found {bottom:?}"
     );
     assert!(
-        rows[composer_row - 1].trim().is_empty(),
-        "the row between the composer and the conversation must be the ending \
-         blank, not {row:?}: {rows:#?}",
+        rows[composer_row - 1].contains("prompt")
+            && rows[composer_row - 1].starts_with(app.theme().glyphs.top_left),
+        "the composer must open with its own titled border, not {row:?}: {rows:#?}",
         row = rows[composer_row - 1]
     );
     assert!(
         rows[composer_row - 2].contains("ROW-"),
-        "the transcript must reach the ending blank with no rule between them: {:?}",
+        "the transcript must reach the composer box with no extra rule between them: {:?}",
         rows[composer_row - 2]
     );
 }

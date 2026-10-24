@@ -213,6 +213,14 @@ impl ProviderWire for OpenAiCompatWire {
                 .collect();
             body["tools"] = json!(tools);
         }
+        // OpenAI's explicit cache-affinity key. Only the first-party endpoint is
+        // given this field: other OpenAI-compatible services may reject unknown
+        // parameters, and DeepSeek's context cache is implicit.
+        if super::is_first_party_host(&self.base_url, "api.openai.com")
+            && let Some(key) = ctx.prompt_cache_key(model)
+        {
+            body["prompt_cache_key"] = json!(key);
+        }
         Ok(body)
     }
 
@@ -233,7 +241,20 @@ impl ProviderWire for OpenAiCompatWire {
             let message = st.failure_message(format!("provider stream error: {err_msg}"));
             return Some(vec![StreamEvent::Done { message }]);
         }
-        for choice in v.get("choices").and_then(|c| c.as_array())?.iter() {
+        let choices = v.get("choices").and_then(|c| c.as_array());
+        // Usage rides the last chunk when `stream_options.include_usage` is
+        // honored — and some providers put it on the choice, or send a usage-only
+        // frame with no `choices` at all. Read it before the choices guard: the
+        // old `?` on `choices` dropped a billed token count entirely.
+        if let Some(usage) = v
+            .get("usage")
+            .or_else(|| choices.and_then(|c| c.iter().find_map(|choice| choice.get("usage"))))
+            .filter(|u| !u.is_null())
+        {
+            st.seed_usage_compat(usage);
+        }
+        let choices = choices?;
+        for choice in choices.iter() {
             if let Some(delta) = choice.get("delta") {
                 if let Some(text) = delta.get("content").and_then(|t| t.as_str())
                     && !text.is_empty()
@@ -273,10 +294,6 @@ impl ProviderWire for OpenAiCompatWire {
             if let Some(finish) = choice.get("finish_reason").and_then(|f| f.as_str()) {
                 st.note_finish_reason(finish);
             }
-        }
-        // Usage rides the last chunk when stream_options.include_usage is honored.
-        if let Some(usage) = v.get("usage").filter(|u| !u.is_null()) {
-            st.seed_usage_compat(usage);
         }
         None
     }
@@ -572,6 +589,34 @@ mod tests {
         assert!(body.get("thinking").is_none(), "{body}");
     }
 
+    #[test]
+    fn openai_host_gets_a_prompt_cache_key_but_custom_compat_hosts_do_not() {
+        let ctx = crate::LlmContext {
+            system_prompt: "sys".into(),
+            messages: vec![user("say hi now")],
+            tools: vec![],
+            thinking_level: epsilon_contracts::ThinkingLevel::Off,
+        };
+        let openai = OpenAiCompatWire {
+            base_url: "https://api.openai.com/v1".into(),
+            env_key: Some("K".into()),
+        };
+        let body = openai.request_body("gpt-4o", &ctx).expect("body");
+        let key = body["prompt_cache_key"]
+            .as_str()
+            .expect("OpenAI gets a cache key");
+        assert!(key.len() <= 64, "OpenAI's key limit: {key}");
+
+        let custom = OpenAiCompatWire {
+            base_url: "https://api.example.com/v1".into(),
+            env_key: Some("K".into()),
+        };
+        let body = custom.request_body("deepseek-chat", &ctx).expect("body");
+        assert!(
+            body.get("prompt_cache_key").is_none(),
+            "an arbitrary compat endpoint must not receive a field it may reject: {body}"
+        );
+    }
     fn image_ctx(text: &str, mime: &str, data: &str) -> crate::LlmContext {
         use epsilon_contracts::content::ImageRef;
         crate::LlmContext {

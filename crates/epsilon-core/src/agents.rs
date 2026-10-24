@@ -223,6 +223,16 @@ fn root_is_absent(root: &Path, err: &std::io::Error) -> bool {
 /// strings, `tools` string-or-list, `model` string) + body as system prompt.
 /// Returns `None` for anything pi would skip (missing frontmatter, non-string
 /// name/description).
+fn unquote(value: &str) -> String {
+    let value = value.trim();
+    value
+        .strip_prefix('"')
+        .and_then(|v| v.strip_suffix('"'))
+        .or_else(|| value.strip_prefix('\'').and_then(|v| v.strip_suffix('\'')))
+        .unwrap_or(value)
+        .to_string()
+}
+
 fn parse_agent_def(raw: &str, source: AgentSource) -> Option<AgentDef> {
     let mut lines = raw.lines();
     if lines.next().map(str::trim) != Some("---") {
@@ -244,8 +254,12 @@ fn parse_agent_def(raw: &str, source: AgentSource) -> Option<AgentDef> {
             continue;
         };
         match k.trim() {
-            "name" => name = Some(v.trim().to_string()),
-            "description" => description = Some(v.trim().to_string()),
+            // A quoted value is valid YAML and is how a description containing
+            // `: ` stays one scalar. The parser is deliberately not a YAML
+            // parser; stripping the matching outer quote is the one piece of
+            // quoted-scalar support the bundle needs.
+            "name" => name = Some(unquote(v)),
+            "description" => description = Some(unquote(v)),
             // Both spellings are valid YAML and both in use:
             // `tools: read, bash` (string) and `tools: [read, bash]` (list).
             // Anything else yields no tools (full registry) rather than

@@ -83,6 +83,70 @@ async fn await_settled(
     panic!("task {id} never settled");
 }
 
+/// **A background child's spend is folded at completion, once.**
+///
+/// The completion used to be invisible to the parent's totals until somebody
+/// polled, and every poll re-billed the same leg. It is now recorded when the
+/// child settles, and a later poll gets `None`.
+#[tokio::test]
+async fn a_background_tasks_usage_is_folded_at_completion_and_never_rebilled() {
+    let agent = agent_with(vec![FauxStep::say("child work done")]);
+    let host = agent.clone() as Arc<dyn TaskHost>;
+    let outcome = host
+        .run_task(req("do the thing", "usage probe", true, None))
+        .await
+        .expect("background start");
+    let id = match outcome {
+        TaskOutcome::Running(s) => s.id,
+        other => panic!("expected Running, got {other:?}"),
+    };
+    let settled = await_settled(&agent, &id).await;
+    assert!(settled.usage.is_some(), "the child spent tokens");
+
+    let total = agent.session_usage();
+    assert_eq!(
+        (total.input, total.output),
+        (100, 50),
+        "the completion alone puts the spend in the parent's session"
+    );
+    assert!(
+        agent.take_task_usage(&id).is_none(),
+        "a later poll must not bill the same leg again"
+    );
+    assert!(
+        agent.task_snapshot(&id).and_then(|s| s.usage).is_some(),
+        "the display snapshot still carries the usage"
+    );
+}
+
+/// The foreground path returns usage in the same call, so a later poll sees it
+/// as already reported.
+#[tokio::test]
+async fn a_foreground_tasks_usage_is_marked_reported_by_its_result() {
+    let agent = agent_with(vec![FauxStep::say("child work done")]);
+    let host = agent.clone() as Arc<dyn TaskHost>;
+    let outcome = host
+        .run_task(req("do the thing", "foreground", false, None))
+        .await
+        .expect("foreground run");
+    let (id, usage) = match outcome {
+        TaskOutcome::Completed(res) => (
+            res.details
+                .get("task_id")
+                .and_then(|v| v.as_str())
+                .expect("task id")
+                .to_string(),
+            res.usage.expect("foreground usage"),
+        ),
+        other => panic!("expected Completed, got {other:?}"),
+    };
+    assert_eq!((usage.input, usage.output), (100, 50));
+    assert!(
+        agent.take_task_usage(&id).is_none(),
+        "the result already carried this spend"
+    );
+}
+
 #[tokio::test]
 async fn background_task_runs_detached_and_its_notice_reaches_the_parent() {
     // Script order is the call order: the child consumes the first step, the

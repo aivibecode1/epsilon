@@ -32,6 +32,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use epsilon_contracts::goal::GoalGate;
+use epsilon_core::PermissionGate;
 use epsilon_safety::{ConfinedCommand, ConfinementPolicy, Sandbox};
 
 /// How much of a failing gate's output is kept.
@@ -95,6 +96,20 @@ pub struct GoalGateRunner {
     /// The backend, or `None` when the session runs unconfined by explicit choice.
     sandbox: Option<Arc<dyn Sandbox>>,
     policy: ConfinementPolicy,
+    /// The session's permission gate, when one has been attached.
+    ///
+    /// **The approval channel alone is not the policy.** A gate is a shell
+    /// command the model wrote; asking the UI directly skips plan mode and the
+    /// `read-only` preset, because those are decisions of the gate, not of the
+    /// person at the keyboard. The runner is built before the gate exists in
+    /// composition, so this is a shared slot filled immediately afterwards by
+    /// [`Self::set_permission_gate`] — the same runner the tool holds, not a
+    /// second copy that would drift from it.
+    gate: Arc<std::sync::Mutex<Option<Arc<dyn PermissionGate>>>>,
+    /// The session's confinement mode for a gate that runs inside a sandbox.
+    /// It used to be hardcoded `WorkspaceWrite`, so `--sandbox read-only`
+    /// still ran a model-written gate with write access.
+    mode: epsilon_safety::SandboxMode,
     /// The last **failure** per gate command, with the fingerprint it failed at.
     ///
     /// Hermes skips re-running a gate whose workspace has not moved since the same failure
@@ -116,14 +131,11 @@ pub struct GoalGateRunner {
     /// never consulted: one "allow once" on some unrelated bash call, and any number of
     /// arbitrary shell commands, with a dialog the user had never been shown.
     ///
-    /// The sandbox axis was always honest — a gate shares `bash`'s sandbox and fails closed
-    /// without one — so this was an **authorization** bypass rather than a sandbox escape.
-    /// What was missing is the question, and the answer is to ask the one question the
-    /// user has actually agreed to answer before.
-    ///
     /// `None` is not "ask nothing and run anyway": it **refuses**, because a runner with
     /// no approver cannot ask, and a command the model wrote that nobody was asked about is
     /// precisely the hole. The sandbox is a containment boundary; this is the consent one.
+    /// The `gate` slot is the policy above it: when composition fills it, the runner calls
+    /// `authorize` (so plan and `read-only` can deny) instead of asking the UI directly.
     approvals: Option<std::sync::Arc<dyn epsilon_safety::ApprovalUi>>,
 }
 
@@ -150,6 +162,8 @@ impl Clone for GoalGateRunner {
             sandbox: self.sandbox.clone(),
             policy: self.policy.clone(),
             last_failure: std::sync::Mutex::new(std::collections::HashMap::new()),
+            gate: Arc::clone(&self.gate),
+            mode: self.mode,
             approvals: self.approvals.clone(),
         }
     }
@@ -174,8 +188,34 @@ impl GoalGateRunner {
             sandbox,
             policy: ConfinementPolicy::default(),
             last_failure: std::sync::Mutex::new(std::collections::HashMap::new()),
+            gate: Arc::new(std::sync::Mutex::new(None)),
+            mode: epsilon_safety::SandboxMode::WorkspaceWrite,
             approvals,
         }
+    }
+
+    /// Attach the session's permission gate, so plan and `read-only` can deny.
+    ///
+    /// Composition builds this runner before the gate exists; it fills the
+    /// slot immediately afterwards. The slot is shared with every clone, so the
+    /// runner held by the tool and the one handed back to the front end cannot
+    /// disagree about the policy.
+    pub fn set_permission_gate(&self, gate: Arc<dyn PermissionGate>) {
+        if let Ok(mut slot) = self.gate.lock() {
+            *slot = Some(gate);
+        }
+    }
+
+    /// Builder form of [`Self::set_permission_gate`].
+    pub fn with_permission_gate(self, gate: Arc<dyn PermissionGate>) -> Self {
+        self.set_permission_gate(gate);
+        self
+    }
+
+    /// Set the confinement mode for the gate's own process.
+    pub fn with_mode(mut self, mode: epsilon_safety::SandboxMode) -> Self {
+        self.mode = mode;
+        self
     }
 
     /// Run one gate in `cwd` and report what happened.
@@ -224,49 +264,62 @@ impl GoalGateRunner {
         // **A36: the gate is shell, and it is asked as shell.** This sits above the
         // unconfined branch on purpose: a session with `--no-sandbox` still owes the user
         // the question, because confinement is containment and this is consent.
-        let Some(approvals) = self.approvals.as_ref() else {
-            return GateReport {
-                gate: gate.clone(),
-                passed: false,
-                exit_code: None,
-                output_tail: "no approval channel is wired to this goal runner, so a command the \
-                     model wrote cannot be authorized. Refusing rather than running it."
-                    .into(),
-                carried_over: false,
-                unavailable: true,
-            };
+        //
+        // **The gate's policy is the session's policy, not a parallel ask.** When
+        // composition has attached a `PermissionGate`, this call goes through it: plan
+        // mode and the `read-only` preset deny here exactly as they deny `bash`, and the
+        // UI question happens inside the gate. Asking the approval channel directly was
+        // the hole — a model-written command could run from a posture whose own rules
+        // would have refused the same line typed at the composer.
+        let request = epsilon_contracts::agent_event::PermissionRequest {
+            request_id: format!("goal-gate-{}", gate.command),
+            // **Capability `bash`, deliberately.** The whole defect was that this ran
+            // under the tool's own name, which no rule matches, so `Rule::new("bash",
+            // "*", Ask)` was never reached. Naming it `bash` puts the gate back under
+            // the rule the user already agreed to — and under any project `[[rules]]`
+            // layer they wrote for shell.
+            capability: "bash".into(),
+            // The whole command, matching what `gate_subject` produces for a bash ask:
+            // a saved `bash` grant names the line the user read, not its first word.
+            pattern: gate.command.clone(),
+            detail: serde_json::json!({ "goal_gate": gate.command }),
         };
-        let decision = approvals
-            .ask(epsilon_contracts::agent_event::PermissionRequest {
-                request_id: format!("goal-gate-{}", gate.command),
-                // **Capability `bash`, deliberately.** The whole defect was that this ran
-                // under the tool's own name, which no rule matches, so `Rule::new("bash",
-                // "*", Ask)` was never reached. Naming it `bash` puts the gate back under
-                // the rule the user already agreed to — and under any project `[[rules]]`
-                // layer they wrote for shell.
-                capability: "bash".into(),
-                // The command's first word, matching what `gate_subject` produces for a
-                // bash ask, so a user's saved `bash` grants behave the same way here.
-                pattern: gate
-                    .command
-                    .split_whitespace()
-                    .next()
-                    .unwrap_or("*")
-                    .to_string(),
-                detail: serde_json::json!({ "goal_gate": gate.command }),
-            })
-            .await;
-        if decision.is_denial() {
-            return GateReport {
-                gate: gate.clone(),
-                passed: false,
-                exit_code: None,
-                output_tail: match decision.guidance() {
+        let policy_gate = self.gate.lock().ok().and_then(|slot| slot.clone());
+        let refusal = if let Some(gate) = policy_gate {
+            let authorization = gate.authorize(request).await;
+            if authorization.allowed() {
+                None
+            } else {
+                Some(match authorization.decision.guidance() {
+                    Some(g) => format!("the gate was refused: {g}"),
+                    None => "the gate was refused by the session permission policy".into(),
+                })
+            }
+        } else if let Some(approvals) = self.approvals.as_ref() {
+            let decision = approvals.ask(request).await;
+            if decision.is_denial() {
+                Some(match decision.guidance() {
                     Some(g) => format!("the gate was refused: {g}"),
                     None => "the gate was refused".into(),
-                },
+                })
+            } else {
+                None
+            }
+        } else {
+            Some(
+                "no approval channel is wired to this goal runner, so a command the model wrote \
+                 cannot be authorized. Refusing rather than running it."
+                    .into(),
+            )
+        };
+        if let Some(reason) = refusal {
+            return GateReport {
+                gate: gate.clone(),
+                passed: false,
+                exit_code: None,
+                output_tail: reason,
                 carried_over: false,
-                unavailable: false,
+                unavailable: true,
             };
         }
 
@@ -298,10 +351,10 @@ impl GoalGateRunner {
         match sandbox
             .run(
                 ConfinedCommand {
-                    program: program.into(),
+                    program,
                     args: argv,
                     cwd: cwd.to_path_buf(),
-                    mode: epsilon_safety::SandboxMode::WorkspaceWrite,
+                    mode: self.mode,
                 },
                 &policy,
                 None,
@@ -517,6 +570,37 @@ mod tests {
             workspace_fingerprint(dir.path()),
             None,
             "a directory that is not a repository must report no fingerprint"
+        );
+    }
+
+    /// A plan-mode deny reaches the gate, not only the `bash` tool.
+    ///
+    /// The gate runner used to ask the approval UI directly, so a session whose
+    /// policy denied `bash` could still run a model-written gate — the command
+    /// the user refused, reached through the goal. The policy slot is filled in
+    /// composition and consulted first; AutoApprove alone cannot rescue it.
+    #[test]
+    fn a_plan_mode_deny_stops_a_model_written_gate_before_it_runs() {
+        use epsilon_core::PermissionGate;
+
+        let dir = tempfile::tempdir().expect("a temp dir");
+        let marker = dir.path().join("the-gate-ran");
+        let policy = Arc::new(epsilon_safety::RulesetGate::new(Arc::new(
+            epsilon_safety::AutoApprove,
+        )));
+        assert!(policy.set_plan_mode(true));
+        let runner = GoalGateRunner::new(None, None).with_permission_gate(policy);
+        let gate = GoalGate::new(format!("touch {}", marker.display()));
+        let report = block_on(runner.run(&gate, dir.path()));
+        assert!(!report.passed, "a denied gate must not report success");
+        assert!(
+            !marker.exists(),
+            "the denied command must never reach the shell"
+        );
+        assert!(
+            report.output_tail.contains("refused"),
+            "the refusal names itself: {}",
+            report.output_tail
         );
     }
 

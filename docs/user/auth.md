@@ -5,6 +5,12 @@ For users configuring their own provider accounts.
 Credentials live in `~/.config/epsilon/auth.json` (written with restrictive permissions
 where the OS supports it). Precedence: **stored credentials win over environment variables.**
 
+> **The file is plaintext.** This matches Pi 1.3.0's `auth.json` model; Epsilon does
+> not ship an OS-keyring store. The file is owner-only on Unix and atomically
+> replaced, but anyone who can read your account can read the key. In CI, on a
+> shared machine, or for a credential you would rather not persist, set the
+> provider's environment variable instead and skip `auth login`.
+
 ## API keys
 
 ```sh
@@ -45,7 +51,7 @@ epsilon auth login github-copilot --oauth   # GitHub Copilot subscription
 - Refresh is implemented but not reliable across all paths: configuration-only IDs,
   Copilot preparation, proactive rotation and cached fallback credentials have open
   integration findings (F16). A successful login is not proof of later refresh.
-  See [the ledger](../../audit/03-defects.md).
+  See the ledger.
 
 ## Custom providers with credentials
 

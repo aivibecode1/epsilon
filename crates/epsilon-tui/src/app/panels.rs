@@ -359,7 +359,7 @@ fn draw_picker_stage2(f: &mut Frame<'_>, app: &App, outer: Rect, provider: &str)
         &app.customs,
     );
     let width = Width::PANEL.resolve(outer);
-    let height = 15u16.min(outer.height.saturating_sub(2));
+    let height = 16u16.min(outer.height.saturating_sub(2));
     let title = format!(
         "models {} {provider}: filter '{}'",
         app.theme.glyphs.dash, app.input
@@ -379,7 +379,8 @@ fn draw_picker_stage2(f: &mut Frame<'_>, app: &App, outer: Rect, provider: &str)
     overlay::clear_band(f, outer, panel.area);
     let inner = panel.open(f);
 
-    let capacity = inner.height.saturating_sub(2).max(1) as usize; // blank line + hint footer
+    // blank line + freshness line + hint footer
+    let capacity = inner.height.saturating_sub(3).max(1) as usize;
     // **Remember the measured capacity.** A Page key arrives in the key handler,
     // which knows nothing about geometry -- and pi's page size is `maxVisible`
     // (`session-selector.ts:612-617`), the same measured window, not a constant.
@@ -465,6 +466,15 @@ fn draw_picker_stage2(f: &mut Frame<'_>, app: &App, outer: Rect, provider: &str)
     }
 
     lines.push(Line::from(""));
+    // Freshness is part of choosing a model: a list fetched this minute and one
+    // from yesterday read identically without it. The helper is shared with
+    // `/catalog`, so the two surfaces cannot report different ages.
+    let entry = app.live_cache.iter().find(|e| e.provider == provider);
+    let status = crate::picker::live_status(provider, entry, now_ms());
+    lines.push(Line::from(Span::styled(
+        crate::wrap::fit_width_with(&status, inner.width as usize, app.theme.glyphs.ellipsis),
+        app.theme.dim(),
+    )));
     // P-260: the count of unavailable rows, like Pi's
     // `${enabledCount}/${allIds.length} enabled${unavailableCount ? ` · ${unavailableCount} unavailable` : ""}`
     // (`scoped-models-selector.ts:196-201`). Shown only when there are any: a
@@ -493,6 +503,11 @@ fn draw_picker_stage2(f: &mut Frame<'_>, app: &App, outer: Rect, provider: &str)
     if retired > 0 {
         hints.push(("retired", "rows cannot be applied"));
     }
+    let refresh_label = app
+        .keybindings
+        .key_text("app.live.refresh")
+        .unwrap_or_else(|| "ctrl+g".to_string());
+    hints.push((refresh_label.as_str(), "refresh live"));
     hints.push((save_label.as_str(), "save default"));
     hints.push(("backspace/esc", "back"));
     lines.push(overlay::hint_row_in(
@@ -571,6 +586,65 @@ pub(super) fn draw_transcript(
         ),
     ] {
         if !text.is_empty() {
+            if kind == LineKind::Assistant {
+                // A streaming answer is already a message: give it the same
+                // card it will have when it commits, bottom border included.
+                // The border moves down as tokens arrive; it does not wait for
+                // the commit, so the transcript never changes shape mid-answer.
+                tail_kinds_seen = true;
+                last_tail_kind = Some(kind);
+                let inner_width = frame_width.saturating_sub(4);
+                tail_rows.push((
+                    LineKind::MessageHeader,
+                    false,
+                    Line::from(
+                        crate::ui::transcript::card_top(kind, frame_width, &app.theme)
+                            .into_iter()
+                            .map(|(text, style)| Span::styled(text, style))
+                            .collect::<Vec<_>>(),
+                    ),
+                ));
+                let mut body_rows = 0;
+                for line in text.split('\n') {
+                    let wrapped = crate::wrap::wrap_line(&[(line, style)], inner_width);
+                    for row in wrapped {
+                        tail_rows.push((
+                            LineKind::MessageBody,
+                            false,
+                            Line::from(
+                                crate::ui::transcript::card_body(row, inner_width, &app.theme)
+                                    .into_iter()
+                                    .map(|(text, style)| Span::styled(text, style))
+                                    .collect::<Vec<_>>(),
+                            ),
+                        ));
+                        body_rows += 1;
+                    }
+                }
+                if body_rows == 0 {
+                    tail_rows.push((
+                        LineKind::MessageBody,
+                        false,
+                        Line::from(
+                            crate::ui::transcript::card_body(Vec::new(), inner_width, &app.theme)
+                                .into_iter()
+                                .map(|(text, style)| Span::styled(text, style))
+                                .collect::<Vec<_>>(),
+                        ),
+                    ));
+                }
+                tail_rows.push((
+                    LineKind::MessageHeader,
+                    false,
+                    Line::from(
+                        crate::ui::transcript::card_bottom(frame_width, &app.theme)
+                            .into_iter()
+                            .map(|(text, style)| Span::styled(text, style))
+                            .collect::<Vec<_>>(),
+                    ),
+                ));
+                continue;
+            }
             // The separator goes above the first row of this kind, so it counts
             // as a tail row for the skip arithmetic below — exactly like the
             // separator round 72 put above the whole tail.
@@ -579,6 +653,7 @@ pub(super) fn draw_transcript(
             }
             tail_kinds_seen = true;
             last_tail_kind = Some(kind);
+
             for line in text.split('\n') {
                 // The same continuation rule the cached rows get: the tail is
                 // not in the cache, so it has no `line_of_row` answer and has
@@ -628,6 +703,14 @@ pub(super) fn draw_transcript(
             (kind, continued, line)
         })
         .collect();
+    // The divider is part of the message's cache line, but it is not a body
+    // row: the first row after it is still the message's FIRST row and must
+    // carry the role marker, not the continuation rail.
+    for i in 1..rows.len() {
+        if rows[i - 1].0 == crate::state::LineKind::MessageHeader {
+            rows[i].1 = false;
+        }
+    }
     // The live tail is not a transcript line, so `push_line`'s separation
     // rule never sees it — without this it glues to the previous block
     // while streaming and only separates when committed. Same rule, at draw
@@ -635,6 +718,7 @@ pub(super) fn draw_transcript(
     // Inside `tail_rows` (not the cache), so scroll math below counts it
     // like any other tail row.
     if !tail_rows.is_empty()
+        && tail_rows[0].0 != crate::state::LineKind::MessageHeader
         && rows
             .last()
             .is_some_and(|(kind, _, _)| *kind != crate::state::LineKind::Blank)
@@ -645,12 +729,25 @@ pub(super) fn draw_transcript(
         );
     }
     let remaining = visible.saturating_sub(rows.len());
-    rows.extend(
-        tail_rows
-            .into_iter()
-            .skip(skip.saturating_sub(total))
-            .take(remaining),
-    );
+    // The live tail is taller than the window while a long answer streams. At
+    // the pinned bottom, show the **end** of the tail — but when only one row
+    // fits, spend it on the newest body line, not on the closing border. A
+    // scrolled-back view keeps its explicit offset.
+    let last_body = tail_rows
+        .iter()
+        .rposition(|(kind, _, _)| *kind == crate::state::LineKind::MessageBody);
+    let at_bottom = skip + visible >= geometry.total;
+    let tail_start = if at_bottom {
+        let end = if remaining < 2 {
+            last_body.map(|index| index + 1).unwrap_or(tail_rows.len())
+        } else {
+            tail_rows.len()
+        };
+        end.saturating_sub(remaining)
+    } else {
+        skip.saturating_sub(total)
+    };
+    rows.extend(tail_rows.into_iter().skip(tail_start).take(remaining));
 
     // The conversation's live edge sits next to the composer.
     //
@@ -743,11 +840,23 @@ pub(super) fn draw_transcript(
 /// Command palette overlay (M16c, opencode command-palette pattern): fuzzy-filtered
 /// list of all commands with keybinding hints.
 pub(super) fn draw_palette(f: &mut Frame<'_>, app: &App, outer: Rect) {
-    use crate::ui::overlay::{self, Panel, Width};
+    use crate::ui::overlay::{self, Panel};
 
     let entries = crate::picker::filter_palette(&app.input, &app.keybindings);
-    let width = Width::Fixed(64).resolve(outer);
-    let height = 14u16.min(outer.height.saturating_sub(2)).max(4);
+    // **The menu is the composer's width.** A command palette is the command
+    // line's long form, so the two share one edge: the panel used to be 80% of
+    // the whole frame, which put its rails over the explorer and left the
+    // reader's eye to travel between a filter line and a box that did not line
+    // up with it. `outer` is the workspace column, not the frame, and the
+    // composer is exactly that column (layout.rs: `Regions::split` takes the
+    // full width of its area).
+    let width = outer.width.max(1);
+    // Taller than the old 3/5: with a real description column the list is the
+    // point, and eighteen rows still leave the composer and footer standing.
+    let height = (outer.height * 3 / 4)
+        .clamp(10, 22)
+        .min(outer.height.saturating_sub(2))
+        .max(6);
     let panel = Panel {
         theme: &app.theme,
         // Top-aligned rather than centred: the palette opens where the eye
@@ -768,8 +877,19 @@ pub(super) fn draw_palette(f: &mut Frame<'_>, app: &App, outer: Rect) {
     overlay::clear_band(f, outer, panel.area);
     let inner = panel.open(f);
 
-    let capacity = inner.height.saturating_sub(2).max(1) as usize;
+    // Blank + page count + hint row own three rows; the list gets the rest.
+    let capacity = inner.height.saturating_sub(3).max(1) as usize;
     let start = crate::scroll::scroll_start(entries.len(), app.picker_index, capacity);
+    let window = &entries[start..(start + capacity).min(entries.len())];
+    // One measured label column for every visible row, capped so a command
+    // name cannot eat the description it is introducing. The same measurement
+    // the slash popup makes, so the two menus have one rhythm.
+    let label_col = window
+        .iter()
+        .map(|entry| crate::ui::layout::display_width(entry.label()))
+        .max()
+        .unwrap_or(0)
+        .clamp(1, 18);
     let mut lines: Vec<Line<'static>> = Vec::new();
     if entries.is_empty() {
         lines.push(Line::from(Span::styled(
@@ -777,36 +897,27 @@ pub(super) fn draw_palette(f: &mut Frame<'_>, app: &App, outer: Rect) {
             app.theme.dim(),
         )));
     }
-    for (index, entry) in entries.iter().enumerate().skip(start).take(capacity) {
-        // Label/meta split with a budget, never a silent clip: the label keeps
-        // the registry's `value · description` words (so the row still reads
-        // the way the slash popup does), the meta is the bare resolved chord,
-        // and `list_row` truncates either end with the repertoire's ellipsis
-        // when the row outgrows the panel.
-        let desc = entry.description();
-        let label_text = if desc.is_empty() {
-            entry.label().to_string()
-        } else {
-            format!("{} · {desc}", entry.label())
-        };
-        lines.push(overlay::list_row(
+    for (index, entry) in window.iter().enumerate() {
+        lines.push(overlay::list_row_columns(
             &app.theme,
-            index == app.picker_index,
-            &label_text,
+            start + index == app.picker_index,
+            entry.label(),
+            entry.description(),
             entry.binding.as_deref(),
+            label_col,
             inner.width as usize,
         ));
     }
-    // **The filter stays on the composer's line, and that is a correction (M312).** The comment
-    // here used to read "The filter itself lives in the title bar, so the body stays a pure
-    // list" — and the title is `"commands"`, with no filter in it. What the frame showed was the
-    // composer row *and* the box's top border sharing one line, with the filter text reading as
-    // part of the border. **The claim was true of the design and false of the code**, which is
-    // the shape of a comment that has drifted. The filter is what the reader typed and where they
-    // expect to see it; the box keeps a pure list.
     lines.push(Line::from(""));
+    if !entries.is_empty() {
+        let shown_end = (start + capacity).min(entries.len());
+        lines.push(Line::from(Span::styled(
+            format!("{}-{} of {}", start + 1, shown_end, entries.len()),
+            app.theme.dim(),
+        )));
+    }
     let arrows = overlay::up_down(app.theme.glyphs.up, app.theme.glyphs.down);
-    lines.push(overlay::hint_row(
+    lines.push(overlay::hint_row_in(
         &app.theme,
         &[
             ("type", "filter"),
@@ -814,6 +925,7 @@ pub(super) fn draw_palette(f: &mut Frame<'_>, app: &App, outer: Rect) {
             ("enter", "run"),
             ("esc", "close"),
         ],
+        inner.width as usize,
     ));
     f.render_widget(Paragraph::new(lines), inner);
 }
@@ -1184,117 +1296,52 @@ pub(super) fn draw_slash_autocomplete(f: &mut Frame<'_>, app: &App, transcript_a
     let start = crate::scroll::scroll_start(total, app.slash_index, capacity);
     let window = &candidates[start..(start + capacity).min(total)];
 
-    // **The box takes the width the terminal offers.** It was capped at 56
-    // columns, and at 80 that wasted twenty-four of them on the transcript while
-    // the description column had thirty-seven to work with — which is why
-    // `browse session files in this workspace` arrived as `browse session files
-    // in this workspac…`. The description is the part a user reads to choose, so
-    // it gets the room, and the cap only bites on a genuinely narrow terminal.
-    let width = transcript_area.width.clamp(40, 80);
+    // **The menu is the composer's width, and that is the correction.** The
+    // popup used to cap itself at 80 columns, so at 100 it covered four fifths
+    // of the input while the description column still ended in ellipses; the
+    // reader's filter text and the menu describing it did not share an edge.
+    // `transcript_area` is the workspace column, which is exactly the row the
+    // composer is drawn on (`Regions::split` takes the full width of `main`).
+    let width = transcript_area.width.max(1);
     let inner_width = (width as usize).saturating_sub(4);
 
-    // The label column is **measured from the rows on screen**, not fixed: `/models`
-    // is seven columns and `/scoped-models` is fourteen, and a shared column lets
-    // the eye find the description by position rather than by scanning. The gap
-    // after it is the same `MIN_META_GAP` the shared row renderer reserves, so a
-    // slash row and a picker row use one rhythm.
-    const MIN_META_GAP: usize = 2;
+    // The label column is **measured from the rows on screen**, not fixed:
+    // `/models` is seven columns and `/scoped_models` is fifteen, and a shared
+    // column lets the eye find the description by position rather than by
+    // scanning. The gap after it is the same one `list_row_columns` uses, so a
+    // slash row and a palette row have one rhythm.
     let label_col = window
         .iter()
-        .map(|item| crate::ui::layout::display_width(item.value.as_str()))
+        .map(|item| crate::ui::layout::display_width(safe_to_show(&item.value).as_str()))
         .max()
         .unwrap_or(0)
-        + MIN_META_GAP;
+        .max(1);
 
-    let mut lines: Vec<Line<'static>> = Vec::with_capacity(window.len() * 2);
+    let mut lines: Vec<Line<'static>> = Vec::with_capacity(window.len() + 3);
     for (offset, item) in window.iter().enumerate() {
-        let selected = start + offset == app.slash_index;
         // The bar marks selection for a monochrome terminal, and the accent
         // carries it for the rest: two statements of the same fact, neither of
         // which is the only one.
-        let bar = if selected {
-            app.theme.glyphs.cursor_bar
-        } else {
-            " "
-        };
-        let label_style = if selected {
-            app.theme.selected()
-        } else {
-            app.theme.text()
-        };
         let value = safe_to_show(&item.value);
-        let label_width = crate::ui::layout::display_width(&value);
-        let mut row = vec![
-            Span::styled(
-                format!("{bar}{}", " ".repeat(overlay::GUTTER_AFTER_BAR)),
-                app.theme.accent(),
-            ),
-            Span::styled(value.clone(), label_style),
-        ];
-        // A description is wrapped onto continuation lines rather than
-        // truncated when it will not fit beside its command. Truncating said
-        // `show or switch the permission preset (A…` — worse than saying nothing,
-        // because it looks like the sentence ended there. The continuation is
-        // indented under the description column, so the second line reads as
-        // more of the same thought and not as a new row.
-        let desc_budget = inner_width.saturating_sub(1 + 1 + label_col).max(1);
         let description = safe_to_show(&item.description);
-        if description.is_empty() {
-            row.push(Span::raw(" ".repeat(desc_budget)));
-            lines.push(Line::from(row));
-            continue;
-        }
-        let pad = label_col.saturating_sub(label_width);
-        row.push(Span::raw(" ".repeat(pad)));
-        row.push(Span::styled(description.clone(), app.theme.dim()));
-        lines.push(Line::from(row));
-        // Wrap what did not fit beside the command onto continuation lines rather
-        // than cutting it: a truncated description used to read
-        // `show or switch the permission preset (A…`, which is worse than useless
-        // because it looks as though the sentence ended there. `wrap_line` is
-        // measured in columns from a span list, and the continuation is padded to
-        // the column the description began, so a second line reads as more of the
-        // same thought rather than as a new row.
-        //
-        // **The first line's cut is on a word boundary, not on a column count.**
-        // `fit_width` cuts wherever the budget runs out, which leaves
-        // `...underscore spell` + `g)` on its own line — a one-word orphan that
-        // reads as a mistake. Breaking at the last space before the budget means
-        // the remainder is a whole phrase, which is what wrapping is for.
-        //
-        // **Split on a byte boundary that a grapheme respects.** The cut index
-        // comes from a column budget, so it can land inside a multi-byte
-        // sequence; slicing by it would panic or split a grapheme. Searching
-        // backwards for the nearest ASCII space lands on a char boundary by
-        // construction — a space is one byte and cannot be part of a sequence.
-        let head = crate::wrap::fit_width(description.as_str(), desc_budget);
-        let cut = if head.len() < description.len() {
-            let candidate = description[..head.len()].rfind(' ').unwrap_or(head.len());
-            description[..candidate].trim_end().len()
-        } else {
-            description.len()
-        };
-        if cut < description.len() {
-            let continuation = description[cut..].trim_start();
-            for wrapped in crate::wrap::wrap_line(&[(continuation, app.theme.dim())], desc_budget) {
-                let mut line = vec![Span::raw(" ".repeat(1 + 1 + label_col))];
-                line.extend(
-                    wrapped
-                        .into_iter()
-                        .map(|(text, style)| Span::styled(text, style)),
-                );
-                lines.push(Line::from(line));
-            }
-        }
+        lines.push(overlay::list_row_columns(
+            &app.theme,
+            start + offset == app.slash_index,
+            &value,
+            &description,
+            None,
+            label_col,
+            inner_width,
+        ));
     }
     lines.push(Line::from(""));
     let arrows = overlay::up_down(app.theme.glyphs.up, app.theme.glyphs.down);
-    lines.push(overlay::hint_row(
+    lines.push(overlay::hint_row_in(
         &app.theme,
         &[(&arrows, "pick"), ("tab", "apply"), ("esc", "dismiss")],
+        inner_width,
     ));
-    let capacity = lines.len().min(20);
-    let height = capacity as u16 + 2;
+    let height = (lines.len() as u16 + 2).min(transcript_area.height);
     let area = Rect {
         x: transcript_area.x,
         y: transcript_area.bottom().saturating_sub(height),
@@ -2958,7 +3005,7 @@ mod structural_review_tests {
     /// UNICODE frame, and the palette row keeps the registry dot without
     /// brackets or silent clips.
     #[test]
-    fn d1_d3_every_overlay_draws_with_a_dot_row_and_no_brackets() {
+    fn every_overlay_draws_aligned_columns_and_no_brackets() {
         for (w, h) in [(80u16, 24u16), (100u16, 30u16)] {
             // Palette.
             {
@@ -2971,17 +3018,29 @@ mod structural_review_tests {
                     screen.contains("commands"),
                     "{w}x{h} lost the palette frame:\n{screen}"
                 );
-                assert!(
-                    screen.contains("/model · set model by id"),
-                    "{w}x{h} lost the registry dot row:\n{screen}"
+                // The label and the description are two fields with one
+                // shared column, not a sentence joined by a dot: `/model`
+                // and `/think` start their descriptions at the same x.
+                let model_row = screen
+                    .lines()
+                    .find(|r| r.contains("/model") && r.contains("Switch or pick a model"))
+                    .unwrap_or_else(|| panic!("{w}x{h} lost the /model row:\n{screen}"));
+                let think_row = screen
+                    .lines()
+                    .find(|r| r.contains("/think") && r.contains("Set thinking effort"))
+                    .unwrap_or_else(|| panic!("{w}x{h} lost the /think row:\n{screen}"));
+                assert_eq!(
+                    model_row[..model_row.find("Switch or pick").expect("just checked")]
+                        .chars()
+                        .count(),
+                    think_row[..think_row.find("Set thinking").expect("just checked")]
+                        .chars()
+                        .count(),
+                    "{w}x{h}: the description column must line up:\n{screen}"
                 );
                 assert!(
                     !screen.contains("[ctrl"),
                     "{w}x{h} still brackets the resolved chord:\n{screen}"
-                );
-                assert!(
-                    screen.contains("·"),
-                    "{w}x{h} must carry its unicode join:\n{screen}"
                 );
             }
             // Model picker stage 1.
@@ -3119,13 +3178,16 @@ mod structural_review_tests {
             );
             // The bottom rail must be on screen: a fixed-16 box for one row
             // would push the transcript off without showing more.
-            let bottom = rows
-                .iter()
-                .rposition(|r| r.contains('╰') || r.contains('+'))
-                .unwrap_or(0);
             let top = rows
                 .iter()
                 .position(|r| r.contains("changes —"))
+                .unwrap_or(0);
+            let bottom = rows
+                .iter()
+                .enumerate()
+                .skip(top + 1)
+                .find(|(_, r)| r.contains('╰') || r.contains('+'))
+                .map(|(i, _)| i)
                 .unwrap_or(0);
             let height = bottom.saturating_sub(top) + 1;
             assert!(

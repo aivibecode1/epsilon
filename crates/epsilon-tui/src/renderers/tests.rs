@@ -391,7 +391,7 @@ fn a_successful_shell_card_grows_no_exit_code() {
 /// **C7: a cancelled command prints no exit number (P-158).**
 ///
 /// Pi's rule is an if/else — `(cancelled)` **or** `(exit N)`, never both
-/// (`references/pi-1.0.0/packages/coding-agent/src/modes/interactive/components/bash-execution.ts:189`,
+/// (`references/pi-1.3.0/packages/coding-agent/src/modes/interactive/components/bash-execution.ts:189`,
 /// `:192`) — because a killed child's status is not the command's verdict.
 /// `exit 1` beside `cancelled` reads as "this failed on its own merit", which is
 /// the C-110 lie in a new place.

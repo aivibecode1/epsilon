@@ -9,13 +9,48 @@ backend. Default shell execution refuses when no backend exists. Linux needs
 [permissions](permissions.md).
 
 This is a development build, not a release: it is not certified on Linux or macOS beyond
-CI compiling it, and the defects still open are tracked in
-[the defect ledger](../../audit/03-defects.md). What the recorded verification does and
-does not prove is in [the 2026-09-16 assessment (history)](../../audit/history/11-current-assessment.md); read that
-before trusting a claim here. Run the commands below from the repository root.
+CI compiling it. The current limits and the security decisions behind them are in
+[status](../04-STATUS.md). Run the commands below from the repository root.
+
+## Use the installer
+
+The installer builds the release binary with `cargo install --locked` and verifies
+that it runs. It puts build output in a temporary target directory, not inside the
+checkout, so it does not reproduce the in-tree compiler failures recorded in
+[`../03-DEVELOPMENT.md`](../03-DEVELOPMENT.md).
+
+**Windows** (PowerShell):
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\install.ps1
+```
+
+**macOS and Linux:**
 
 ```sh
-cargo install --path crates/epsilon-cli --force     # installs `epsilon` into ~/.cargo/bin
+bash install.sh
+```
+
+Both accept a custom location and a no-verify mode:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\install.ps1 -Prefix C:\Tools\epsilon
+powershell -ExecutionPolicy Bypass -File .\install.ps1 -NoVerify
+```
+
+```sh
+bash install.sh --prefix "$HOME/.local"
+bash install.sh --no-verify
+```
+
+Without `--prefix`/`-Prefix`, the binary goes to Cargo's bin directory
+(`~/.cargo/bin` or `$CARGO_HOME/bin`). The installer prints the exact path and, if
+it is not on `PATH`, the line to add.
+
+The equivalent manual command, if you want to run it yourself:
+
+```sh
+cargo install --path crates/epsilon-cli --locked --force
 epsilon --help                                       # every mode, flag, env var and file
 ```
 
@@ -46,7 +81,7 @@ epsilon doctor      # checks model resolution, credentials, sandbox, sessions an
 
 ```sh
 epsilon                          # interactive TUI in the current directory
-epsilon -p "summarize this repo" # headless: reply to stdout, diagnostics to stderr
+epsilon -p "summarize this repo" # headless: reply to stdout; diagnostics, usage and cost to stderr
 ```
 
 In the TUI: type a task, press Enter; `Esc` stops a run, `/help` lists slash commands,
@@ -56,13 +91,10 @@ In the TUI: type a task, press Enter; `Esc` stops a run, `/help` lists slash com
 
 This is a preview, not a release: no versioned artifacts, install is from
 source, and the gap list is the parity matrix —
-[Pi port](../parity/pi-tui.md). ([DSH Desktop](../parity/dsh-desktop.md) is retired: the
-desktop frontend it measured was removed in ADR-039, and the file is frozen history.)
+[Pi port](../parity/pi-tui.md).
 
-What works: the agent loop with tools, approvals and checkpoints; the slash
-heads in the terminal; sessions with leases and repair; permission presets with a risk
-gate on the way up. What does not: much of the matrix, a screen-reader pass (never done),
-context menus, and any platform beyond the dev machines. The defect ledger is
-[audit/03-defects.md](../../audit/03-defects.md). The install this was
-verified with — commands, outputs, hashes — is
-[the preview transcript](../../audit/evidence/preview-install-2026-10-08.txt).
+What works: the agent loop with tools, approvals and checkpoints; the slash heads in
+the terminal; sessions with leases and repair; permission presets with a risk gate on the
+way up. What does not: much of the matrix, a screen-reader pass (never done), context
+menus, and any platform beyond the dev machines. The current limits are in
+[status](../04-STATUS.md).

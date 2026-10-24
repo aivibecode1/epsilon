@@ -35,6 +35,7 @@ pub(crate) async fn drive(cfg: TuiConfig, terminal: &mut ratatui::DefaultTermina
         approvals,
         initial_task,
         model_id,
+        default_model,
         live,
         startup_notices,
         trust_review_pending,
@@ -50,7 +51,29 @@ pub(crate) async fn drive(cfg: TuiConfig, terminal: &mut ratatui::DefaultTermina
     let (oauth_tx, mut oauth_rx) = tokio::sync::mpsc::unbounded_channel::<OauthUiEvent>();
     let (goal_round_tx, goal_round_rx) =
         tokio::sync::mpsc::unbounded_channel::<epsilon_runtime::GoalRound>();
+    let prefs_workspace = workspace_root.clone();
     let mut app = App::new(model_id, fetched_tx, notices_tx, oauth_tx, workspace_root);
+    // The collapsed set is per workspace; load it before the first
+    // `show_explorer`, which rebuilds the rows with the set applied.
+    if let Some(dir) = epsilon_core::config::global_dir() {
+        app.tree_collapsed =
+            epsilon_core::config::load_explorer_collapsed_in(&dir, &prefs_workspace);
+    }
+    // The picker's saved-default marker is a property of the resolved config,
+    // not a second global read.
+    app.default_model = default_model;
+    // The TUI is an IDE, not a chat window: the project opens on the right from
+    // the first frame. It does not take the keyboard — the composer does — so
+    // `show_explorer`, not `focus_tree`.
+    // The IDE layout is the default, but F6 can hide it — and that choice is a
+    // preference, not a per-run mode. A hidden explorer stays hidden next launch.
+    if epsilon_core::config::load_explorer_visible() {
+        app.show_explorer();
+    }
+    // The composed agent has already resolved session > project > global for
+    // thinking. Reading the global file again here made the header and `/think`
+    // disagree with the level the next request would actually use.
+    app.thinking = agent.thinking_level();
     app.gate_runner = gate_runner;
     app.set_goal_round_channel(goal_round_tx, goal_round_rx);
     // D8: the palette was resolved by the CLI; `App::new` detected the rest.
@@ -232,6 +255,14 @@ pub(crate) async fn drive(cfg: TuiConfig, terminal: &mut ratatui::DefaultTermina
                 dirty = true;
                 goal_dirty = true;
             }
+        }
+
+        // The explorer is a live view of the workspace, not a startup snapshot.
+        // Poll only while it is visible: a hidden tree should cost nothing. The
+        // method itself is interval-gated, so this is a cheap call on every
+        // tick, not a filesystem walk.
+        if app.tree_open && app.poll_tree() {
+            dirty = true;
         }
 
         // Frame ceiling (~30 fps). Without it a fast provider stream would still

@@ -433,9 +433,56 @@ def render_retired(retired):
     )
 
 
+def validate(rows):
+    """Refuse to overwrite a working bundle with partial or impossible data.
+
+    The old writer only rejected duplicate ids. One upstream outage that still
+    parsed could therefore replace 555 rows with a handful, or ship a zero
+    output cap that makes ``max_tokens: 0`` on the next request. Everything
+    here is a single line naming what is wrong; a failed regeneration must
+    leave both committed files untouched.
+    """
+    if len(rows) < 500:
+        sys.exit(f"refusing to write: only {len(rows)} rows (expected at least 500)")
+    missing = sorted(set(PROVIDERS) - {r["prov"] for r in rows})
+    if missing:
+        sys.exit(f"refusing to write: no rows for provider(s) {', '.join(missing)}")
+    seen = set()
+    for r in rows:
+        mid = r["id"]
+        if not mid or '"' in mid or "\\" in mid or any(ord(c) < 32 for c in mid):
+            sys.exit(f"refusing to write: unsafe model id {mid!r}")
+        if mid in seen:
+            sys.exit(f"refusing to write: duplicate model id {mid!r}")
+        seen.add(mid)
+        if r["out"] <= 0:
+            sys.exit(f"refusing to write: {mid} has max_output_tokens={r['out']}")
+        if r["out"] > r["ctx"]:
+            sys.exit(
+                f"refusing to write: {mid} advertises output {r['out']} > context {r['ctx']}"
+            )
+        for key in ("pin", "pout", "pcin", "pcw"):
+            if r[key] < 0:
+                sys.exit(f"refusing to write: {mid} has negative price {key}={r[key]}")
+
+
+def write_atomic(path, body):
+    """Stage beside the target, then replace; a crash never leaves half a file."""
+    staging = path.with_suffix(path.suffix + ".tmp")
+    staging.write_text(body, encoding="utf-8", newline="\n")
+    staging.replace(path)
+
+
 def main():
     registry = load_registry(sys.argv)
     rows, skipped, retired = select_rows(registry)
+    # An output cap above the context is impossible to honour; clamp it here
+    # rather than emitting a request that the provider rejects.
+    for r in rows:
+        if r["out"] > r["ctx"]:
+            r["out"] = r["ctx"]
+            skipped.append((r["id"], f"output cap clamped to context {r['ctx']}"))
+    validate(rows)
     prov_counts = {}
     for r in rows:
         prov_counts[r["prov"]] = prov_counts.get(r["prov"], 0) + 1
@@ -464,9 +511,9 @@ def main():
         "];",
         "",
     ]
-    OUT.write_text("\n".join(chunks), encoding="utf-8", newline="\n")
+    write_atomic(OUT, "\n".join(chunks))
     print(f"wrote {OUT} ({len(rows)} registry rows)")
-    OUT_RET.write_text(render_retired(retired), encoding="utf-8", newline="\n")
+    write_atomic(OUT_RET, render_retired(retired))
     print(f"wrote {OUT_RET} ({len(set(retired))} retired ids)")
     for p, n in prov_counts.items():
         print(f"  {p}: {n}")

@@ -26,12 +26,12 @@
 //! cargo test -p epsilon-tui frame_dump -- --ignored --nocapture
 //! ```
 //!
-//! Set `EPSILON_FRAME_DIR` to also write each frame to a file, which is how a
-//! before/after pair ends up in `audit/evidence/` as something a reviewer can read
-//! rather than take on trust:
+//! Set `EPSILON_FRAME_DIR` to also write each frame to a file in a durable
+//! directory outside `target/`, which is how a before/after pair ends up as
+//! something a reviewer can read rather than take on trust:
 //!
 //! ```text
-//! EPSILON_FRAME_DIR=audit/evidence/frames cargo test -p epsilon-tui frame_dump -- --ignored
+//! $env:EPSILON_FRAME_DIR="$env:TEMP\epsilon-frames"; cargo test -p epsilon-tui frame_dump -- --ignored
 //! ```
 //!
 //! The tests are `#[ignore]`d, which is not a way of keeping them out of sight: it
@@ -110,6 +110,114 @@ pub fn shoot(name: &str, app: &mut App) -> String {
     }
     print!("{all}");
     all
+}
+
+/// **The subagent browser at the widths a user has.** The panel has to show
+/// the list, the selected role's reason and the writer command without covering
+/// the prompt box; this is the frame that proves it.
+#[test]
+#[ignore = "a rendering fixture; run with --ignored --nocapture"]
+fn frames_subagent_browser() {
+    let (mut app, _a, _r) = test_app();
+    let config_dir = app.config_dir_override.clone();
+    app.catalog = Some(super::catalog::CatalogPanel::subagents(
+        config_dir.as_deref(),
+    ));
+    shoot("subagent-browser", &mut app);
+}
+
+/// **The explorer at the moment a change lands.** The tree has to show nesting,
+/// a modified file, an untracked file and a changed directory's roll-up without
+/// turning the sidebar into a git status listing.
+#[test]
+#[ignore = "a rendering fixture; run with --ignored --nocapture"]
+fn frames_tree_status() {
+    let (mut app, _a, _r) = test_app();
+    let workspace = tempfile::tempdir().unwrap();
+    std::fs::create_dir_all(workspace.path().join("src")).unwrap();
+    std::fs::write(workspace.path().join("src/main.rs"), "fn main() {}\n").unwrap();
+    std::fs::write(workspace.path().join("src/lib.rs"), "pub fn lib() {}\n").unwrap();
+    std::fs::write(workspace.path().join("README.md"), "# demo\n").unwrap();
+    std::fs::write(workspace.path().join("new.rs"), "fn new() {}\n").unwrap();
+    app.workspace_root = workspace.path().to_path_buf();
+    app.show_explorer();
+    app.tree_git
+        .insert("src/main.rs".to_string(), crate::git::Status::Modified);
+    app.tree_git
+        .insert("new.rs".to_string(), crate::git::Status::Untracked);
+    app.tree_changed_dirs = crate::git::changed_dirs(&app.tree_git);
+    shoot("tree-status", &mut app);
+}
+
+/// **The default IDE layout**, at the widths it has to survive.
+///
+/// The explorer is part of the first frame now, not an F6 surprise. This dump is
+/// the evidence for that: a docked right-hand panel at 100 and 80 columns, a
+/// header and footer that still belong to the workspace, and the 60-column
+/// fallback where the panel is deliberately absent until focused.
+#[test]
+#[ignore = "a rendering fixture; run with --ignored --nocapture"]
+fn frames_default_ide_layout() {
+    let dir = tempfile::tempdir().expect("temporary workspace");
+    std::fs::create_dir_all(dir.path().join("src").join("app")).expect("tree");
+    for (rel, body) in [
+        ("README.md", "# project\n"),
+        ("src/main.rs", "fn main() {}\n"),
+        ("src/app.rs", "pub fn run() {}\n"),
+        ("src/app/layout.rs", "pub const COLS: u16 = 80;\n"),
+    ] {
+        std::fs::write(dir.path().join(rel), body).expect("fixture file");
+    }
+    let (mut app, _a, _r) = test_app();
+    app.workspace_root = dir.path().to_path_buf();
+    app.show_explorer();
+    shoot("default-ide", &mut app);
+}
+
+/// **The menus next to a docked explorer.** The palette and the slash popup
+/// take the *workspace* width, not the frame's: at 80 columns with a 24-column
+/// explorer, the composer is 55 columns and the menus must end where it ends.
+#[test]
+#[ignore = "a rendering fixture; run with --ignored --nocapture"]
+fn frames_menus_share_the_composer_width_with_an_explorer() {
+    let dir = tempfile::tempdir().expect("temporary workspace");
+    std::fs::create_dir_all(dir.path().join("src").join("app")).expect("tree");
+    for (rel, body) in [
+        ("README.md", "# project\n"),
+        ("src/main.rs", "fn main() {}\n"),
+        ("src/app/layout.rs", "pub const COLS: u16 = 80;\n"),
+    ] {
+        std::fs::write(dir.path().join(rel), body).expect("fixture file");
+    }
+    let (mut app, _a, _r) = test_app();
+    app.workspace_root = dir.path().to_path_buf();
+    app.show_explorer();
+    app.refresh_tree();
+    app.palette_open = true;
+    shoot("palette-explorer", &mut app);
+
+    app.palette_open = false;
+    app.input = "/se".into();
+    app.cursor_chars = app.input.chars().count();
+    app.slash_open = true;
+    shoot("slash-explorer", &mut app);
+}
+
+/// The explorer while it owns the keyboard: the title must name the way back,
+/// and the footer must describe the tree keys instead of the composer's.
+#[test]
+#[ignore = "a rendering fixture; run with --ignored --nocapture"]
+fn frames_explorer_focused() {
+    let dir = tempfile::tempdir().expect("temporary workspace");
+    std::fs::create_dir_all(dir.path().join("src")).expect("tree");
+    std::fs::write(dir.path().join("main.rs"), "fn main() {}\n").expect("file");
+    std::fs::write(dir.path().join("src").join("lib.rs"), "").expect("file");
+    let (mut app, _a, _r) = test_app();
+    app.workspace_root = dir.path().to_path_buf();
+    app.show_explorer();
+    app.tree_focused = true;
+    app.refresh_tree();
+    shoot("explorer-focused", &mut app);
 }
 
 #[test]
@@ -417,6 +525,23 @@ fn frames_command_palette() {
     shoot("palette-open", &mut app);
 }
 
+/// **The slash popup, open.**
+///
+/// The menu a reader sees while typing `/`. It is the surface the owner named
+/// as cramped: a fixed 56-column box, a description right-aligned into whatever
+/// the command name left over, and lines that wrapped mid-phrase. The frame is
+/// the only place the column widths and the row rhythm can be judged.
+#[test]
+#[ignore = "a rendering fixture; run with --ignored --nocapture"]
+fn frames_slash_popup() {
+    let (mut app, _a, _r) = test_app();
+    app.input = "/se".into();
+    app.cursor_chars = app.input.chars().count();
+    app.slash_open = true;
+    app.slash_index = 0;
+    shoot("slash-open", &mut app);
+}
+
 /// **The search highlight, on a real frame (P-218).**
 ///
 /// The panel counted matches for as long as it existed while the transcript
@@ -658,7 +783,16 @@ fn frames_the_find_line_survives_a_body_longer_than_the_panel() {
     let panel_row = |needle: &str| {
         frame
             .lines()
-            .filter(|l| l.contains('\u{2502}'))
+            .filter(|l| {
+                // `frame_text` wraps every row in `|`, so count rails after
+                // stripping the dump edge. Two inner rails are the panel's own
+                // body; one is the docked sidebar. Both repertoires count: a
+                // NO_COLOR/ASCII console is a supported screen, and a test that
+                // only understands `│` fails there for the environment, not the
+                // feature.
+                let inner = l.trim_start_matches('|').trim_end_matches('|');
+                inner.matches('\u{2502}').count() >= 2 || inner.matches('|').count() >= 2
+            })
             .any(|l| l.contains(needle))
     };
     assert!(

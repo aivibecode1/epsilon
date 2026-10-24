@@ -8,6 +8,10 @@
 //! channel; frontends are reducers over that stream.
 
 pub mod agents;
+/// Opt-in skills that ship inside the binary. See [`builtin_skills::BUILTIN_SKILLS`].
+pub mod builtin_skills;
+/// Opt-in subagent roles that ship inside the binary. See [`builtin_subagents::BUILTIN_SUBAGENTS`].
+pub mod builtin_subagents;
 // M196: public because the TUI formats token counts in the compaction row too,
 // and a private module would mean a SECOND formatter. One number, one
 // rendering -- or a header reading `12k` beside a row reading `12000`, and a
@@ -323,6 +327,13 @@ pub struct Agent {
     /// Declared workspace root; path arguments resolving outside it get gated under the
     /// external_dir capability instead of their tool name.
     pub(crate) workspace_root: std::path::PathBuf,
+    /// Weak handle to this agent, set once in [`Agent::new`].
+    ///
+    /// A background `task` completion happens after the dispatch call returned.
+    /// The child's usage must still be folded into the parent session, and the
+    /// background future only has `&Agent`; upgrading this weak handle is how it
+    /// reaches the parent's own accounting without an unsafe cast.
+    self_ref: std::sync::OnceLock<std::sync::Weak<Agent>>,
     /// Durable mirror of this agent's transcript; compaction entries land here and the
     /// provider context switches to the store's shadowed model view when attached.
     session_store: Mutex<Option<Arc<Mutex<SessionStore>>>>,
@@ -369,6 +380,14 @@ pub struct Agent {
     /// (`crate::prompt::SystemOverlay`; pi `SYSTEM.md` + `APPEND_SYSTEM.md`).
     /// Frontend-attached, because the frontend owns the trust decision that guards it.
     system_overlay: Mutex<crate::prompt::SystemOverlay>,
+    /// Whether this workspace's instruction files may enter the prompt.
+    ///
+    /// The trust decision belongs to the frontend; `epsilon-runtime` sets this
+    /// right after construction from the launch's `project_trusted`. A project
+    /// the user declined must not become system-level instructions merely
+    /// because it is readable. Defaults to `true` for library users that have no
+    /// trust surface; the one composition point sets it explicitly.
+    project_trusted: AtomicBool,
     /// What the last session resume had to repair (M75), so a frontend can tell the user what
     /// their session was missing. `None` when the session opened clean or was never attached.
     last_repair: Mutex<Option<epsilon_session::repair::RepairReport>>,
@@ -389,6 +408,11 @@ pub struct Agent {
     /// Discovered skills (catalog in CONTEXT tier; bodies load on demand via skill tool).
     /// Interior-mutable so composition code can attach discoveries after `Arc<Agent>`.
     skills: Mutex<Vec<crate::skills::Skill>>,
+    /// Names the user switched off. The catalog and the `skill` tool both read
+    /// this list, so a disabled skill is neither advertised nor loadable. It is
+    /// separate from the discovered list because `/skills` still shows what was
+    /// switched off; deleting it from the list made an off skill look uninstalled.
+    disabled_skills: Mutex<Vec<String>>,
     /// Dedicated auxiliary stream for summarization (isolated from the main loop's
     /// provider/script; pi isolates aux calls for cache reasons, we ALSO isolate scripts).
     summarizer: Mutex<Option<Arc<dyn epsilon_llm::StreamFn>>>,

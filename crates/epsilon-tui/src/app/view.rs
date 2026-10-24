@@ -518,6 +518,7 @@ impl App {
             let viewer = self.viewer_tabs.get(self.viewer_tab);
             let editing = viewer.is_some_and(|v| v.editing);
             let truncated = viewer.is_some_and(|v| v.truncated);
+            let unsaved = viewer.is_some_and(|v| v.has_unsaved());
             Hints {
                 mode: Some(if editing {
                     "edit".into()
@@ -539,10 +540,19 @@ impl App {
                     // (`start_edit` refuses), so the footer must not offer
                     // it as edit.
                     vec![
-                        ("arrows/pgup/pgdn".into(), "scroll".into()),
                         ("e".into(), "edit unavailable".into()),
                         ("esc".into(), "close".into()),
+                        ("arrows/pgup/pgdn".into(), "scroll".into()),
                     ]
+                } else if unsaved {
+                    let mut keys = Vec::new();
+                    if let Some(save) = self.keybindings.key_text("app.viewer.save") {
+                        keys.push((save, "save".into()));
+                    }
+                    keys.push(("esc".into(), "close".into()));
+                    keys.push(("e".into(), "resume edit".into()));
+                    keys.push(("arrows/pgup/pgdn".into(), "scroll".into()));
+                    keys
                 } else {
                     vec![
                         ("arrows/pgup/pgdn".into(), "scroll".into()),
@@ -552,21 +562,22 @@ impl App {
                 },
                 ..Hints::default()
             }
-        } else if self.tree_open {
-            // The tree has no filter box, so the generic overlay hints' "type
-            // filter" would advertise a key the tree does not act on. Its own
-            // row names what the tree honours: arrows, Enter, Esc, and F6.
-            // Glyphs come from the theme, matching the drawn frame.
+        } else if self.tree_focused {
+            // The explorer has no filter box, so the generic overlay hints' "type
+            // filter" would advertise a key the tree does not act on. Its own row
+            // names what it honours: movement, open, reference, refresh, focus
+            // return, and hide. Glyphs come from the theme, matching the frame.
             let arrows = crate::ui::overlay::up_down(self.theme.glyphs.up, self.theme.glyphs.down);
             let mut keys = vec![
                 (arrows, "move".into()),
-                ("enter".into(), "view".into()),
+                ("enter".into(), "open".into()),
                 ("@".into(), "refer".into()),
-                ("esc".into(), "close".into()),
             ];
             if let Some(toggle) = self.keybindings.key_text("app.tree.toggle") {
-                keys.push((toggle, "tree".into()));
+                keys.push((toggle, "hide".into()));
             }
+            keys.push(("r".into(), "refresh".into()));
+            keys.push(("esc".into(), "back".into()));
             Hints {
                 mode: Some("tree".into()),
                 keys,
@@ -806,6 +817,21 @@ impl App {
         // changes the goal, not when a frame is drawn, and reading it here would fold the whole
         // session log thirty times a second. `refresh_goal` is the one writer of this field.
         hints.goal = self.goal_badge.clone();
+        // **A refused exit says so where the reader is looking.**
+        //
+        // The refusal is pushed to the transcript, and the file viewer is a panel
+        // centred over the transcript band — so a reader with a dirty tab open
+        // sees the viewer, not the notice, and presses `Ctrl+Q` again. The
+        // footer's mode word is the one place that is always drawn.
+        //
+        // It is **additive**: the surface's own hints still print, because the
+        // viewer's `alt+s save` is the key the reader needs next, and replacing
+        // the row would take away the way out of the refusal. Only the mode
+        // word changes. It is cleared on the next successful exit attempt, so
+        // the word does not outlive the decision that set it.
+        if self.quit_refused {
+            hints.mode = Some("quit refused".into());
+        }
         hints
     }
 
@@ -831,7 +857,7 @@ impl App {
             || self.settings_open
             || self.scope_open
             || self.timeline_open
-            || self.tree_open
+            || self.tree_focused
             || !self.viewer_tabs.is_empty()
             || self.session_browser.is_some()
             || self.pending_ask.is_some()

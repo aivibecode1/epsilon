@@ -50,6 +50,27 @@ pub fn write_json(store: &SessionStore, dest: &std::path::Path) -> Result<usize,
     Ok(n)
 }
 
+/// Copy the session's JSONL bytes into `dest`, creating parents.
+///
+/// `jsonl` in `/export` used to fall through to [`write_json`], so a file named
+/// `.jsonl` held one pretty-printed JSON array — not what the format word says.
+/// The session store's own file is already the JSONL export, so the honest
+/// writer is a copy (and the count is the entries it names).
+pub fn write_jsonl(store: &SessionStore, dest: &std::path::Path) -> Result<usize, String> {
+    let source = store.path();
+    let dest_resolved = std::path::absolute(dest).map_err(|e| format!("{e}"))?;
+    let source_resolved = std::path::absolute(source).map_err(|e| format!("{e}"))?;
+    if dest_resolved == source_resolved {
+        return Err("refusing to export the session over its own file".into());
+    }
+    let n = store.read_all().map_err(|e| format!("{e}"))?.len();
+    if let Some(parent) = dest.parent() {
+        std::fs::create_dir_all(parent).map_err(|e| format!("{e}"))?;
+    }
+    std::fs::copy(source, dest).map_err(|e| format!("{e}"))?;
+    Ok(n)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -106,6 +127,33 @@ mod tests {
                 .expect("valid json");
         let arr = v.as_array().expect("json export must be an array");
         assert_eq!(arr.len(), 2);
+    }
+
+    /// `jsonl` means the session's own line-per-entry format, not pretty JSON
+    /// under a `.jsonl` name (the bug this test was written for).
+    #[test]
+    fn jsonl_export_copies_one_entry_per_line() {
+        let dir = tempfile::tempdir().expect("tmp");
+        let mut store = open_store(dir.path(), "s.jsonl");
+        append_user(&mut store, "m1", "hello");
+        append_user(&mut store, "m2", "again");
+        let dest = dir.path().join("out.jsonl");
+        assert_eq!(write_jsonl(&store, &dest).expect("write"), 2);
+        let body = std::fs::read_to_string(&dest).expect("read back");
+        assert_eq!(
+            body,
+            std::fs::read_to_string(store.path()).expect("source"),
+            "the JSONL export is the session's own bytes"
+        );
+        assert_eq!(body.lines().count(), 3, "header + two entries");
+        for line in body.lines() {
+            serde_json::from_str::<serde_json::Value>(line).expect("every line is JSON");
+        }
+        // Writing over the live file would truncate it mid-read.
+        assert!(
+            write_jsonl(&store, store.path()).is_err(),
+            "the session cannot export over itself"
+        );
     }
 
     #[test]

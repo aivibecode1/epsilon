@@ -122,6 +122,23 @@ fn synthetic_row(
     }
 }
 
+/// Mark a synthetic row that the runtime cannot route.
+///
+/// Every source of ids — favourites, recents, a live `/models` page, a typed
+/// filter — can produce an id with no catalog row. Drawing those as ordinary
+/// selectable rows is how the picker came to write a model that made the next
+/// launch fail. A declared custom provider is the one exception: its prefix is a
+/// real route even though no catalog row exists.
+fn mark_unavailable(row: &mut PickerRow, customs: &[CustomProvider]) {
+    if catalog::lookup_model(&row.id).is_some()
+        || customs.iter().any(|custom| custom.matches_id(&row.id))
+    {
+        return;
+    }
+    row.is_unavailable = true;
+    row.is_retired = catalog::is_retired_model(&row.id, &row.provider);
+}
+
 /// Whether an unknown id can honestly be shown under `provider`.
 ///
 /// Bare ids can: a catalog entry with no `/` is this provider's, which is how
@@ -204,7 +221,7 @@ pub fn build_rows_with(
     // states the reason in its own doc comment — *"keep the bare model ID out of
     // the leading position"* so a provider-prefixed query ranks above proxy ids
     // like `openrouter/openai/gpt-5`
-    // (`references/pi-1.0.0/packages/coding-agent/src/modes/interactive/model-search.ts:13-21`).
+    // (`references/pi-1.3.0/packages/coding-agent/src/modes/interactive/model-search.ts:13-21`).
     // Its scoped overlay uses the opposite order deliberately (`:7-11`), which is
     // why the reference has two functions; Epsilon has one picker over one
     // haystack, so it takes the selector's order.
@@ -257,7 +274,9 @@ pub fn build_rows_with(
                     row.provider = "favorite".into();
                     fav_cands.push((sc, row));
                 } else {
-                    fav_cands.push((sc, synthetic_row(id, "favorite", false, false, false)));
+                    let mut row = synthetic_row(id, "favorite", false, false, false);
+                    mark_unavailable(&mut row, customs);
+                    fav_cands.push((sc, row));
                 }
             }
         }
@@ -281,7 +300,9 @@ pub fn build_rows_with(
                     row.provider = "recent".into();
                     rec_cands.push((sc, row));
                 } else {
-                    rec_cands.push((sc, synthetic_row(id, "recent", false, false, true)));
+                    let mut row = synthetic_row(id, "recent", false, false, true);
+                    mark_unavailable(&mut row, customs);
+                    rec_cands.push((sc, row));
                 }
             }
         }
@@ -307,11 +328,9 @@ pub fn build_rows_with(
         }
         live_cands.sort_by_key(|(sc, _, _)| *sc);
         for (_, provider, id) in live_cands {
-            push_unique(
-                synthetic_row(&id, &provider, false, true, false),
-                &mut rows,
-                &mut seen,
-            );
+            let mut row = synthetic_row(&id, &provider, false, true, false);
+            mark_unavailable(&mut row, customs);
+            push_unique(row, &mut rows, &mut seen);
         }
     }
 
@@ -742,7 +761,9 @@ pub fn build_models_for_provider(
         for id in &entry.ids {
             let known = scored.iter().any(|(_, r)| r.id.eq_ignore_ascii_case(id));
             if !known && let Some(sc) = score_hay(id) {
-                scored.push((sc, synthetic_row(id, provider, false, true, false)));
+                let mut row = synthetic_row(id, provider, false, true, false);
+                mark_unavailable(&mut row, customs);
+                scored.push((sc, row));
             }
         }
     }
@@ -1090,10 +1111,16 @@ pub fn format_bytes(bytes: u64) -> String {
 /// Age label from two epoch-millis stamps (`just now`, `5m`, `3h`, `2d`).
 /// Injected `now_ms` keeps this deterministic in tests.
 pub fn age_label(now_ms: u64, then_ms: u64) -> String {
-    if then_ms == 0 || now_ms <= then_ms {
+    if then_ms == 0 {
         return "just now".to_string();
     }
-    let secs = (now_ms - then_ms) / 1000;
+    // A future stamp is clock skew or a hand-edited cache, not a fresh fetch.
+    // The refresh rule already treats it as stale; the label must not say
+    // "just now" about the one state that is about to be refetched.
+    if then_ms > now_ms {
+        return "timestamp in the future".to_string();
+    }
+    let secs = now_ms.saturating_sub(then_ms) / 1000;
     if secs < 60 {
         return "just now".to_string();
     }
@@ -1510,6 +1537,11 @@ mod tests {
         let now = 1_000_000_000_000u64;
         assert_eq!(age_label(now, now), "just now");
         assert_eq!(age_label(now, now - 30_000), "just now");
+        assert_eq!(
+            age_label(now, now + 60_000),
+            "timestamp in the future",
+            "clock skew is not a fresh fetch"
+        );
         assert_eq!(age_label(now, now - 5 * 60_000), "5m ago");
         assert_eq!(age_label(now, now - 3 * 3_600_000), "3h ago");
         assert_eq!(age_label(now, now - 50 * 3_600_000), "2d ago");
@@ -1573,7 +1605,7 @@ mod tests {
     /// in its own doc comment: *"keep the bare model ID out of the leading
     /// position"* so that a provider-prefixed query ranks above proxy ids like
     /// `openrouter/openai/gpt-5`
-    /// (`references/pi-1.0.0/packages/coding-agent/src/modes/interactive/model-search.ts:13-21`).
+    /// (`references/pi-1.3.0/packages/coding-agent/src/modes/interactive/model-search.ts:13-21`).
     /// Its scoped overlay deliberately uses the opposite order, id first
     /// (`:7-11`), which is why the reference has two functions and Epsilon picks
     /// the selector's.
@@ -1617,8 +1649,9 @@ mod tests {
             !known.is_unavailable,
             "a model the catalog knows is available: {known:?}"
         );
-        // A live-listed id is available too, even though it is also absent from
-        // the bundled catalog — the cache is the authority for those.
+        // A live-listed id with no catalog row has **no wire**: it is shown so
+        // the reader can see the provider still publishes it, but it is marked
+        // unavailable because selecting it would make the next launch fail.
         let fetched_live = vec![LiveCacheEntry {
             provider: "deepseek".to_string(),
             ids: vec!["deepseek-new-thing".to_string()],
@@ -1631,8 +1664,8 @@ mod tests {
             .find(|r| r.id == "deepseek-new-thing")
             .expect("a live id is offered");
         assert!(
-            !listed.is_unavailable,
-            "a live listing is available: {listed:?}"
+            listed.is_unavailable,
+            "a live id with no catalog row cannot be routed: {listed:?}"
         );
     }
 
@@ -1923,19 +1956,16 @@ mod tests {
     /// wins second.
     #[test]
     fn saved_default_orders_second_and_is_flagged() {
-        let live = vec![LiveCacheEntry {
-            provider: "deepseek".to_string(),
-            ids: vec!["deepseek-a".to_string(), "deepseek-b".to_string()],
-            fetched_at_ms: 1,
-            from_cache: false,
-        }];
+        // Catalog rows, not synthetic live ids: only a catalog row is
+        // selectable, and an unavailable row deliberately sorts last so it can
+        // never displace a real candidate.
         let rows = build_models_for_provider(
             "deepseek",
             "",
             "deepseek-v4-pro",
             &[],
-            Some("deepseek-b"),
-            &live,
+            Some("deepseek-flash"),
+            &[],
             &[],
         );
         assert_eq!(
@@ -1945,7 +1975,7 @@ mod tests {
         );
         let pos = rows
             .iter()
-            .position(|r| r.id == "deepseek-b")
+            .position(|r| r.id == "deepseek-flash")
             .expect("the default is listed");
         assert_eq!(pos, 1, "default second, not scored: {rows:?}");
         assert!(rows[pos].is_default, "and flagged for the mark: {rows:?}");
@@ -2209,6 +2239,56 @@ mod tests {
         assert_eq!(model_badge(known), None);
     }
 
+    /// Every synthetic source carries the availability flags, not just the
+    /// configured-current row. A retired id in recents or favourites, or a
+    /// live-listed id with no catalog wire, must look as unselectable as it is.
+    #[test]
+    fn retired_and_live_only_rows_are_marked_in_every_source() {
+        let live = vec![crate::app::LiveCacheEntry {
+            provider: "deepseek".into(),
+            ids: vec!["deepseek/live-only".into()],
+            fetched_at_ms: 1,
+            from_cache: true,
+        }];
+        let rows = build_rows_with(
+            "",
+            "faux-1",
+            &["deepseek-flash".to_string(), "local/qwen".to_string()],
+            &["gpt-4".to_string(), "local/llama".to_string()],
+            None,
+            &live,
+            &[CustomProvider {
+                name: "local".into(),
+                base_url: "http://127.0.0.1:1234/v1".into(),
+                env_key: String::new(),
+            }],
+        );
+        let find = |id: &str| {
+            rows.iter()
+                .find(|r| r.id.eq_ignore_ascii_case(id))
+                .unwrap_or_else(|| panic!("{id} missing: {rows:#?}"))
+        };
+        let retired = find("gpt-4");
+        assert!(
+            retired.is_unavailable && retired.is_retired,
+            "a retired favourite stays marked: {retired:?}"
+        );
+        let live_only = find("deepseek/live-only");
+        assert!(
+            live_only.is_unavailable && !live_only.is_retired,
+            "a live id with no catalog row cannot be applied: {live_only:?}"
+        );
+        let custom = find("local/qwen");
+        assert!(
+            !custom.is_unavailable,
+            "a declared custom provider prefix is a real route: {custom:?}"
+        );
+        assert!(
+            !find("deepseek-flash").is_unavailable,
+            "a catalog row stays selectable"
+        );
+    }
+
     /// Criterion 6: the live-status line names freshness — refreshed (this
     /// session) vs startup cache vs never fetched — with a std-only age.
     /// Singular `1 model` is pinned here (the plural bug read `1 models`).
@@ -2278,6 +2358,32 @@ mod tests {
         assert_eq!(surfaced.len(), 1);
         assert_eq!(surfaced[0].id, "brand-new-model");
         assert_eq!(surfaced[0].provider, "deepseek");
+    }
+
+    /// Every palette row is unique by command and by visible label.
+    ///
+    /// The registry already has aliases (`/tree` for `/branch`, `/models` for
+    /// `/model`), but aliases are parser inputs, not palette rows. One row per
+    /// canonical command is what makes the menu scannable; a duplicate row here
+    /// is two entries that run the same action and teach nothing.
+    #[test]
+    fn palette_entries_are_unique_by_command_and_label() {
+        let kb = crate::keybindings::KeybindingsManager::from_map(std::collections::HashMap::new());
+        let entries = palette_entries(&kb);
+        let mut commands = std::collections::HashSet::new();
+        let mut labels = std::collections::HashSet::new();
+        for entry in &entries {
+            if !entry.command.is_empty() {
+                assert!(
+                    commands.insert(entry.command.trim()),
+                    "duplicate command row: {entry:?}"
+                );
+            }
+            assert!(
+                labels.insert(entry.label()),
+                "duplicate visible label: {entry:?}"
+            );
+        }
     }
 
     /// AGENTS.md §2.4 drift guard: every `COMMAND_HEADS` entry gets exactly
@@ -2391,8 +2497,9 @@ mod tests {
             .find(|e| e.command.trim() == "/model")
             .expect("one /model row");
         assert_eq!(model.label(), "/model");
-        assert!(
-            model.description().contains("set model by id"),
+        assert_eq!(
+            model.description(),
+            "Switch or pick a model",
             "the description keeps the registry words: {:?}",
             model.title
         );

@@ -23,6 +23,15 @@ use crate::time;
 /// Lines scanned from the head for the first user message.
 pub const SCAN_LINES: usize = 64;
 
+/// Bytes read from the head for discovery.
+///
+/// `read_line` allocates the whole line, so `SCAN_LINES` alone bounds the
+/// number of lines and not their size: one hostile line could still demand
+/// the file's full length. One MiB is pi's
+/// `MAX_SESSION_HEADER_SCAN_BYTES` and is far above any real header or first
+/// message.
+pub const MAX_DISCOVERY_SCAN_BYTES: u64 = 1024 * 1024;
+
 /// Bytes read from the tail for the display name (which is written whenever
 /// `/name` runs, i.e. anywhere in the file).
 pub const TAIL_BYTES: usize = 8 * 1024;
@@ -81,9 +90,9 @@ impl SessionSummary {
 /// files — discovery never fails a run. Blank leading lines are tolerated, the
 /// same leniency the store's own scan applies.
 pub fn read_session_header(path: &Path) -> Option<SessionHeader> {
-    use std::io::{BufRead, BufReader};
+    use std::io::{BufRead, BufReader, Read};
     let file = std::fs::File::open(path).ok()?;
-    let mut reader = BufReader::new(file);
+    let mut reader = BufReader::new(file).take(MAX_DISCOVERY_SCAN_BYTES);
     let mut line = String::new();
     for _ in 0..16 {
         line.clear();
@@ -115,9 +124,9 @@ fn modified_ms(path: &Path) -> u64 {
 
 /// First user message text from the head of a session file, one line, clipped.
 fn first_user_message(path: &Path) -> Option<String> {
-    use std::io::{BufRead, BufReader};
+    use std::io::{BufRead, BufReader, Read};
     let file = std::fs::File::open(path).ok()?;
-    let reader = BufReader::new(file);
+    let reader = BufReader::new(file).take(MAX_DISCOVERY_SCAN_BYTES);
     for line in reader.lines().take(SCAN_LINES) {
         let Ok(line) = line else { break };
         let Some(Ok(parsed)) = SessionLine::parse(&line) else {

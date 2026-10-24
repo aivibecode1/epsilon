@@ -277,8 +277,9 @@ a second model call per round and adds a failure mode where the judge is unreach
 why Hermes itself makes it fail open (`hermes_cli/goals.py:6`).
 
 **Hermes' gateway.** About twenty messaging platforms under `gateway/platforms/`, each an adapter,
-plus DM pairing and per-platform auth. Epsilon has four front ends — terminal, native window,
-HTTP/SSE, stdio-RPC — and none of them is a chat channel somebody can message the agent through.
+plus DM pairing and per-platform auth. Epsilon has four modes — terminal IDE, headless,
+HTTP/SSE, stdio-RPC — and none of them is a chat channel somebody can message the agent
+through.
 
 **The plugin system, the skills hub, and skill self-improvement.** `skills/` plus
 `plugins/memory/`, `plugins/context_engine/`, `plugin-catalog/`, `optional-skills/`, and the
@@ -333,7 +334,7 @@ been `tools/checkpoint_manager.py`, 63 KB of shadow-git store management.
 **What actually happened is different, and the difference is deliberate.** No third-party source
 code was copied into this repository; every item above is a reimplementation from Hermes' own
 written behaviour, and the divergences above are divergences of design, not of authorship.
-[`CREDITS.md`](../../CREDITS.md) records this: "**no third-party source code was copied into this
+[`README credits`](../../README.md#credits) records this: "**no third-party source code was copied into this
 repository**: what was taken is behaviour, structure and design decisions" — which is why there
 is no `THIRD_PARTY_NOTICES` file. The cost is that a citation must be checked by hand, so every
 item above carries the reference file and line where the behaviour is stated.

@@ -149,7 +149,7 @@ pub fn result_head(
         "shell" | "bash" | "run" => {
             // A cancelled command prints no exit number (P-158). Pi's own rule is
             // an if/else — `(cancelled)` **or** `(exit N)`, never both
-            // (`references/pi-1.0.0/packages/coding-agent/src/modes/interactive/components/bash-execution.ts:189`,
+            // (`references/pi-1.3.0/packages/coding-agent/src/modes/interactive/components/bash-execution.ts:189`,
             // `:192`) — and the reason is that a killed child's status is not the
             // command's verdict. `exit 1` beside `cancelled` on one title reads as
             // "this failed on its own merit", which is the C-110 lie: a defect where

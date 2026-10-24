@@ -661,7 +661,10 @@ pub fn live_listing_available(provider: &str) -> bool {
 /// env vars stay as the fallback for CI and users who prefer them. An empty
 /// stored key is treated as absent.
 pub fn resolve_api_key(provider: &str) -> Option<String> {
-    resolve_api_key_in(&crate::auth::global_dir()?, provider, &|name| {
+    // A missing home directory must not disable the environment fallback: CI
+    // runs without `HOME`, and a key in the process environment is the
+    // documented path there. The old `?` returned before the env lookup.
+    resolve_api_key_in(crate::auth::global_dir().as_deref(), provider, &|name| {
         std::env::var_os(name).map(|v| v.to_string_lossy().into_owned())
     })
 }
@@ -745,10 +748,13 @@ pub fn oauth_credential_unused(dir: Option<&std::path::Path>, provider: &str) ->
 /// never executed here unless it is actually the stored key (pi's
 /// `isCommandConfigValue` skip: resolution happens only on read, not on list).
 fn resolve_api_key_in(
-    dir: &std::path::Path,
+    dir: Option<&std::path::Path>,
     provider: &str,
     env_lookup: &dyn Fn(&str) -> Option<String>,
 ) -> Option<String> {
+    let stored = dir
+        .map(crate::auth::load_credentials_in)
+        .unwrap_or_default();
     // OAuth credentials never resolve to an api key here: the wire takes the
     // access token directly (pi `toAuth`), and its expiry is checked at the
     // call site, not in key resolution.
@@ -774,7 +780,7 @@ fn resolve_api_key_in(
     // `USE_AMBIENT_AWS_CHAIN` — it must NEVER resolve as a bearer token
     // (sending it would be a confusing 403). Any other stored key resolves.
     if provider == "amazon-bedrock" {
-        return match crate::auth::load_credentials_in(dir).get(provider) {
+        return match stored.get(provider) {
             Some(crate::auth::StoredCredential::Api { key, env }) => {
                 let k = key.trim();
                 if k.is_empty()
@@ -791,9 +797,7 @@ fn resolve_api_key_in(
             _ => None,
         };
     }
-    if let Some(crate::auth::StoredCredential::Api { key, env }) =
-        crate::auth::load_credentials_in(dir).get(provider)
-    {
+    if let Some(crate::auth::StoredCredential::Api { key, env }) = stored.get(provider) {
         let k = key.trim();
         if !k.is_empty()
             && !crate::config_value::is_command_value(k)
@@ -820,7 +824,8 @@ fn resolve_api_key_in(
     // minted Copilot bearer, and that bearer (not the GitHub token) is what the
     // proxy authenticates. An expired/missing pair falls through to
     // `COPILOT_GITHUB_TOKEN`, which the wire sends as the bearer as-is.
-    if matches!(provider, "anthropic" | "xai" | "github-copilot")
+    if let Some(dir) = dir
+        && matches!(provider, "anthropic" | "xai" | "github-copilot")
         && let crate::auth::OauthToken::Live(access) =
             crate::auth::oauth_access_token_in(dir, provider)
     {
@@ -902,7 +907,12 @@ pub async fn live_models(provider: &str) -> Result<Vec<String>, String> {
             req = req.header("Authorization", format!("Bearer {key}"));
         }
     }
+    // A listing that never answers must not wedge `live_fetching` forever: the
+    // UI removes that marker only when this future resolves. Pi bounds the same
+    // request at 15 s; reqwest's connector timeout alone does not cover a
+    // server that accepts and then stalls.
     let resp = req
+        .timeout(std::time::Duration::from_secs(15))
         .send()
         .await
         .map_err(|e| format!("listing failed: {e}"))?;
@@ -1031,21 +1041,27 @@ mod tests {
         // Neither present -> None.
         let none: Option<String> = None;
         assert_eq!(
-            resolve_api_key_in(dir, "anthropic", &|_| none.clone()),
+            resolve_api_key_in(Some(dir), "anthropic", &|_| none.clone()),
             None,
             "no store, no env"
         );
 
         // Env only -> env value.
         assert_eq!(
-            resolve_api_key_in(dir, "anthropic", &env("ANTHROPIC_API_KEY")),
+            resolve_api_key_in(Some(dir), "anthropic", &env("ANTHROPIC_API_KEY")),
             Some("env-key".into())
+        );
+        // No home directory must not disable the CI fallback.
+        assert_eq!(
+            resolve_api_key_in(None, "anthropic", &env("ANTHROPIC_API_KEY")),
+            Some("env-key".into()),
+            "a HOME-less process still reads the provider env var"
         );
 
         // Stored beats env.
         crate::auth::save_credential_in(dir, "anthropic", "stored-key").expect("save");
         assert_eq!(
-            resolve_api_key_in(dir, "anthropic", &env("ANTHROPIC_API_KEY")),
+            resolve_api_key_in(Some(dir), "anthropic", &env("ANTHROPIC_API_KEY")),
             Some("stored-key".into()),
             "stored credential must win over the env var"
         );
@@ -1058,7 +1074,7 @@ mod tests {
         )
         .expect("write legacy blank key");
         assert_eq!(
-            resolve_api_key_in(dir, "anthropic", &env("ANTHROPIC_API_KEY")),
+            resolve_api_key_in(Some(dir), "anthropic", &env("ANTHROPIC_API_KEY")),
             Some("env-key".into())
         );
     }
@@ -1199,7 +1215,7 @@ mod tests {
         )
         .expect("save template key");
         assert_eq!(
-            resolve_api_key_in(dir, "anthropic", &none),
+            resolve_api_key_in(Some(dir), "anthropic", &none),
             Some("prefix-vault-key".into())
         );
 
@@ -1212,7 +1228,7 @@ mod tests {
         )
         .expect("save dangling template");
         assert_eq!(
-            resolve_api_key_in(dir, "openai", &|name| {
+            resolve_api_key_in(Some(dir), "openai", &|name| {
                 if name == "OPENAI_API_KEY" {
                     Some("env-fallback".to_string())
                 } else {
@@ -1226,7 +1242,7 @@ mod tests {
         // through instead of spawning a process from a read.
         crate::auth::save_credential_full_in(dir, "google", "!echo must-not-run", None)
             .expect("save command key");
-        assert_eq!(resolve_api_key_in(dir, "google", &none), None);
+        assert_eq!(resolve_api_key_in(Some(dir), "google", &none), None);
     }
 
     #[test]
@@ -1318,6 +1334,17 @@ mod tests {
         for m in MODELS {
             assert!(!m.label.is_empty());
             assert!(m.context_window > 0);
+            // A zero output cap becomes `max_tokens: 0` on the wire, which
+            // providers reject; a cap above the context can never be honoured.
+            // The generator clamps and refuses these, and this is the second
+            // gate on the committed bytes.
+            assert!(
+                m.max_output_tokens > 0 && m.max_output_tokens <= m.context_window,
+                "{}: max_output_tokens {} vs context {}",
+                m.id,
+                m.max_output_tokens,
+                m.context_window
+            );
             let _ = &m.wire; // presence is structural, no Option involved
         }
     }
@@ -1560,7 +1587,7 @@ mod tests {
         crate::auth::save_credential_in(dir, "amazon-bedrock", "USE_AMBIENT_AWS_CHAIN")
             .expect("save");
         assert_eq!(
-            resolve_api_key_in(dir, "amazon-bedrock", &|_| None),
+            resolve_api_key_in(Some(dir), "amazon-bedrock", &|_| None),
             None,
             "the marker selects the ambient chain; it is not a key"
         );

@@ -1,9 +1,87 @@
 # Changelog
 
-All notable changes to Epsilon, grouped by milestone. Most milestones have a dev log in
-`docs/milestones/`; where one was not written, the timeline row in `docs/history.md` is the record.
+All notable changes to Epsilon, grouped by milestone. Current state and limitations are in
+`docs/04-STATUS.md`.
 
 ## [Unreleased]
+
+### Added
+
+- **Twelve opt-in built-in skills.** `verify-before-claim`, `onboard-codebase`,
+  `make-a-change`, `review-a-change`, `two-stage-review`, `ponytail`, `improve`,
+  `ux-triage`, `write-a-commit`, `debug-a-failure`, `write-a-handoff` and
+  `reverse-engineer-anything` ship inside the binary. `/skills` lists what each does
+  and why it is useful; `/skill <name> on` installs an ordinary `SKILL.md` under the
+  config directory, and `off` removes only an unedited copy.
+- **REA as an optional first-class component.** `epsilon --rea` attaches the pinned
+  `rea-agents@6.7.0` MCP server, with the Windows launch wrapper and a 900-second
+  per-server deadline. See `docs/user/reverse-engineering.md` and credit in
+  `docs/references/rea.md`.
+- **Cross-platform installers.** `install.ps1` (Windows) and `install.sh` (macOS/Linux)
+  build with `--locked`, verify the binary, and keep build output outside the checkout.
+- **`docs/09-TUI-REFERENCE.md` and `docs/10-EXTENSION-POINTS.md`**, plus
+  `docs/user/skills.md` and `docs/user/reverse-engineering.md`.
+
+### Changed
+
+- **The slash menu and the command palette are the composer's width, with a column
+  layout.** The popup no longer caps at 80 columns and the palette no longer takes 80% of
+  the frame; both share the workspace edge, the command column is measured, the
+  description starts at one x position, and the key hint is right-aligned. All 42 offered
+  descriptions were rewritten as one imperative line; the full usage is in
+  `docs/07-COMMANDS.md`.
+- **The documentation set is consolidated.** `docs/01-OVERVIEW` → `07-COMMANDS` is the
+  numbered sequence, followed by `design/`, `user/`, `parity/` and `references/`. The
+  archive, milestone logs, old plans, agent memory and audit markdown were removed.
+  Reference studies and parity citations were re-pointed at the vendored Pi 1.3.0 and
+  DeepSeek Harness 0.2.1-rc.2 trees.
+
+### Security
+
+- **"Always (session)" now remembers the whole shell command, not its first word**, and
+  session memory compares exactly. Plan mode and `read-only` deny every capability
+  outside a read-only allowlist, including MCP and extension writes.
+- **The serve token comes from the OS CSPRNG.** `webfetch` refuses redirects and
+  non-public destinations, pins the checked address and streams into its cap.
+- **An unconfined command's timeout/cancel kills its process tree**; the capture is
+  bounded to 8 MiB per stream. Session files are refused above 256 MiB and discovery
+  reads at most 1 MiB.
+- **`--sandbox read-only` forces the read-only permission preset**, and a read-only shell
+  request is refused on a backend that cannot confine the filesystem (Windows Job
+  Objects). Project instructions are trust-gated, capped and frame-escaped; headless
+  `-p` output is stripped of control and bidi characters.
+- **The Windows shell is spawned by an absolute interpreter path**, so a repository
+  cannot plant a `powershell.exe` for `CreateProcess` to find in its own directory.
+- **Goal gates are authorized by the session policy and run in its sandbox mode.** A
+  model-written gate can no longer run from plan/read-only or step outside the session's
+  confinement.
+- **A checkpoint ledger cannot name a path outside the workspace.** `/changes` drops
+  those rows before the file viewer can open them.
+
+### Fixed
+
+- **OpenAI/Mistral prompt-cache affinity keys.** Those wires now send a stable
+  content-derived `prompt_cache_key` (model + system prompt + first user text) to
+  their first-party hosts; custom compatible endpoints and DeepSeek do not receive
+  the field. The key survives tool round-trips and process restarts.
+- **The Anthropic prompt-cache tail now follows tool results.** The tail breakpoint
+  was on the last `Message::User`, so after a tool call the cache stopped at the
+  original prompt and every tool result was reprocessed at full price. Tool results
+  are user-role turns on the wire; they are now grouped into one user message per
+  parallel batch and the marker lands on the last, matching Pi. ADR-093.
+- **The explorer is live.** A visible tree polls the workspace every 900 ms and
+  `git status` every 3 s, preserving the selected path; files added, removed or
+  modified no longer require `r`. Rows carry a right-aligned `A`/`M`/`?`/`D`/`R`/`!`
+  status and changed directories a roll-up dot. ADR-092.
+- `/export jsonl` writes JSONL (the session's own one-record-per-line file), not pretty
+  JSON under a `.jsonl` name.
+- **The file editor no longer leaves the live screen sliced beside it.** Its overlay used
+  the workspace rect, so a docked explorer stayed painted on the right; it now clears the
+  full band between header and footer. `the_file_editor_clears_the_screen_behind_it`
+  failed before the change and passes after it; the frame dump was read at 100×30,
+  80×24 and 60×20.
+- **A disabled skill is no longer advertised in the prompt.** The catalogue and the
+  `skill` tool now filter from the same disabled list.
 
 ### Removed
 
@@ -11,9 +89,9 @@ All notable changes to Epsilon, grouped by milestone. Most milestones have a dev
   egui/eframe) is deleted: the window could never present on the machine that builds it,
   so its pixels were never seen by their owner, and it carried the workspace's only Rust
   1.95 floor, a second command table and a 433-row matrix. The workspace is 1.88
-  everywhere again; `docs/parity/dsh-desktop.md` is retired (frozen history, gates read
-  `pi-tui.md` only); `check-verb-counts` guards the removal; `/open` stays parseable but
-  unoffered until the TUI IDE gives it a door. Revisit trigger lives in the ADR.
+  everywhere again; the DSH desktop matrix was removed with the documentation
+  consolidation (2026-10-18, gates read `pi-tui.md` only); `check-verb-counts` guards the
+  removal. Revisit trigger lives in the ADR.
 
 ### Added
 
@@ -27,8 +105,8 @@ All notable changes to Epsilon, grouped by milestone. Most milestones have a dev
   there is no recorder — a binding can be set by hand, not recorded with a keystroke.
 - **Two parity matrices, and the guide that explains them.** [`docs/parity/`](docs/parity/README.md)
   holds **one row per behaviour** against the two projects Epsilon is a port of:
-  [`pi-tui.md`](docs/parity/pi-tui.md) against Pi's interactive terminal mode, and
-  [`dsh-desktop.md`](docs/parity/dsh-desktop.md) against DSH Desktop. Each row carries where the
+  [`pi-tui.md`](docs/parity/pi-tui.md) against Pi's interactive terminal mode; the DSH
+  Desktop matrix was retired with the desktop in ADR-039. Each row carries where the
   *reference* defines the behaviour, our status, where *we* implement it, and how it was verified —
   because the objective asks how close a port is, and until now the answer was a commit message
   rather than a document. They are built from **869 cited rows read out of the vendored sources**
@@ -437,7 +515,7 @@ All notable changes to Epsilon, grouped by milestone. Most milestones have a dev
 ### Documentation and project reference
 
 - **There is now a reading guide for anyone meeting Epsilon for the first time.**
-  [`docs/START-HERE.md`](docs/START-HERE.md) gives a ten-minute tour, a suggested reading order,
+  [`docs/START-HERE.md`](docs/01-OVERVIEW.md) gives a ten-minute tour, a suggested reading order,
   a folder map with "who cares about this", a glossary of every term used, and one diagram of how
   the pieces connect — with a "if you read only three files, read these" for the impatient. An
   what the product is, how to read it, and where to start without reading the source.
@@ -448,11 +526,11 @@ All notable changes to Epsilon, grouped by milestone. Most milestones have a dev
   and the file rewritten to 292 lines. It is now maintainer-owned and locked by SHA-256
   (`AGENTS.md.sha256`, enforced by `scripts/check-agents-lock.py` in the battery and in CI), so
   an agent that could rewrite the rules it is held to no longer can. Changes to it go through
-  [`docs/AGENTS-PROPOSALS.md`](docs/AGENTS-PROPOSALS.md).
+  `docs/archive/agents-proposals.md`.
 - **The six reference harnesses are now written down, and credited.** One page each under
   [`docs/references/`](docs/references/README.md) — what each project is, who made it, its
   licence taken from its own LICENSE, what Epsilon took, adapted and skipped, and where that
-  lives in the tree — with a one-table summary. [`CREDITS.md`](CREDITS.md) carries the formal
+  lives in the tree — with a one-table summary. [credits](README.md#credits) carries the formal
   acknowledgement, including the two agent skills this project's working method comes from.
 - **The TUI stack decision is now recorded rather than implicit**
   ([`docs/references/TUI-DECISION.md`](docs/references/TUI-DECISION.md)): Ratatui stays. The
@@ -985,8 +1063,8 @@ All notable changes to Epsilon, grouped by milestone. Most milestones have a dev
 > **Coverage.** This is a curated record of user-visible changes, not a complete one: M125 forward at
 > the top, M11–M82 below, and **nothing for M83–M124** — the audit, port-fidelity and hardening
 > rounds. That is a choice rather than a loss. The file stopped being updated at M82 and resumed with
-> the M125–M130 entries, while [`docs/history.md`](docs/history.md) already carries a finding-level row
-> for every milestone in between and [`docs/milestones/`](docs/milestones) the dev log each row was
+> the M125–M130 entries, while `docs/history.md` already carries a finding-level row
+> for every milestone in between and `docs/milestones/` the dev log each row was
 > written from. A second-hand summary composed here now would be a third copy of that record, in the
 > place a reader trusts most.
 
@@ -1361,7 +1439,7 @@ the defect ledger, the port plan and the roadmap.
   future omission into a build error.
 
 > M32–M51 landed as commits `e200815` and the working tree; their summaries
-> live in [`docs/milestones/`](docs/milestones) (M33 forward).
+> live in `docs/milestones/` (M33 forward).
 
 ### M31 — Reference gap closure (G-M1..G-M5)
 - **Slash-navigable sessions**: `/compact` reclaims context on demand (complements 80%-threshold auto-compact), `/timeline` lists `branch_entries()` with lane and snippet and jumps via `navigate_to`, `/fork` copies JSONL to `*-fork-<id>.jsonl` preserving the tree.

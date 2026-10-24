@@ -92,4 +92,4 @@ mark and nothing to carry in `THIRD_PARTY_NOTICES`.
 
 MIT into an MIT project. Compatible. Because **no code was copied**, there is nothing to
 attribute at the file level and nothing in `THIRD_PARTY_NOTICES`. The ideas above are ideas,
-and ideas are credited in [`../../CREDITS.md`](../../CREDITS.md).
+and ideas are credited in [`../../README credits`](../../README.md#credits).

@@ -66,6 +66,12 @@ pub fn test_app() -> (App, Arc<Agent>, TestReceivers) {
     // inherited it would order and mark rows by whoever ran it. Tests that
     // want a default set `app.default_model` explicitly.
     app.default_model = None;
+    // Every config write from this fixture goes to its own directory. The
+    // explorer's visibility now persists on F6, so without this a binding test
+    // would rewrite the developer's `[tui] explorer`; the same guard covers
+    // favourites, presets and thinking. Tests that need the real resolver path
+    // set this to `None` explicitly.
+    app.config_dir_override = Some(tempfile::tempdir().expect("test config dir").keep());
     (app, agent, (frx, nrx))
 }
 
@@ -106,6 +112,7 @@ pub fn test_app_with_faux(steps: Vec<epsilon_llm::FauxStep>) -> (App, Arc<Agent>
         std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from(".")),
     );
     app.default_model = None;
+    app.config_dir_override = Some(tempfile::tempdir().expect("test config dir").keep());
     (app, agent, (frx, nrx))
 }
 

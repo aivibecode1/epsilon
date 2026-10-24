@@ -1,16 +1,22 @@
 //! Tool registry: name -> tool, plus descriptor export for provider payloads.
+//!
+//! **Interior mutability is deliberate.** The registry is owned behind an
+//! `Arc` by the running agent, and a skill reload has to replace one tool
+//! without rebuilding the agent (or the session it is attached to). A
+//! `&mut self` API made that impossible; an `RwLock` costs one uncontended read
+//! per tool lookup and lets composition and `/reload` use the same registry.
 
 use std::collections::HashMap;
-use std::sync::Arc;
+use std::sync::{Arc, RwLock};
 
 use epsilon_contracts::tool::{Tool, ToolDescriptor};
 
 /// Simple name-keyed registry. Duplicate names replace the old entry (last registration
-/// wins), matching pi's extension-override behavior; collisions are visible via
-/// [`ToolRegistry::register`] returning the replaced name.
+/// wins), matching pi's extension-override behavior; collisions are visible via the
+/// return value.
 #[derive(Default)]
 pub struct ToolRegistry {
-    tools: HashMap<String, Arc<dyn Tool>>,
+    tools: RwLock<HashMap<String, Arc<dyn Tool>>>,
 }
 
 impl ToolRegistry {
@@ -19,17 +25,45 @@ impl ToolRegistry {
         Self::default()
     }
 
-    /// Register a tool; returns the displaced tool's name if one existed.
+    /// Register a tool through a mutable handle (the composition/build shape).
+    ///
+    /// Kept as `&mut self` so every existing caller and test fixture compiles
+    /// unchanged; [`Self::insert`] is the same operation on a shared registry.
     pub fn register(&mut self, tool: Arc<dyn Tool>) -> Option<String> {
+        self.insert(tool)
+    }
+
+    /// Register or replace a tool on a shared registry.
+    ///
+    /// Returns the displaced tool's name if one existed. A poisoned lock is
+    /// recovered through `into_inner`: a single failed tool registration must
+    /// not turn every later lookup into "no such tool".
+    pub fn insert(&self, tool: Arc<dyn Tool>) -> Option<String> {
         let name = tool.descriptor().name.clone();
-        self.tools
+        let mut guard = self
+            .tools
+            .write()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        guard
             .insert(name.clone(), tool)
             .map(|old| old.descriptor().name.clone())
     }
 
+    /// Remove a tool by name, if present.
+    pub fn remove(&self, name: &str) -> Option<Arc<dyn Tool>> {
+        self.tools
+            .write()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .remove(name)
+    }
+
     /// Look up by tool name.
     pub fn get(&self, name: &str) -> Option<Arc<dyn Tool>> {
-        self.tools.get(name).cloned()
+        self.tools
+            .read()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .get(name)
+            .cloned()
     }
 
     /// Descriptors of every registered tool, in a **stable, sorted order**.
@@ -43,11 +77,11 @@ impl ToolRegistry {
     /// tool set alone (ADR-008's byte-stable premise), which is the whole point
     /// of the tier discipline.
     pub fn descriptors(&self) -> Vec<ToolDescriptor> {
-        let mut out: Vec<ToolDescriptor> = self
+        let guard = self
             .tools
-            .values()
-            .map(|t| t.descriptor().clone())
-            .collect();
+            .read()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let mut out: Vec<ToolDescriptor> = guard.values().map(|t| t.descriptor().clone()).collect();
         out.sort_by(|a, b| a.name.cmp(&b.name));
         out
     }
@@ -57,10 +91,20 @@ impl ToolRegistry {
     /// copies). Unknown names are skipped, never an error: discovery data is
     /// advisory and one stale name must not break delegation.
     pub fn subset(&self, names: &[String]) -> ToolRegistry {
-        let mut sub = ToolRegistry::new();
-        for n in names {
-            if let Some(t) = self.tools.get(n) {
-                sub.tools.insert(n.clone(), std::sync::Arc::clone(t));
+        let source = self
+            .tools
+            .read()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let sub = ToolRegistry::new();
+        {
+            let mut out = sub
+                .tools
+                .write()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            for n in names {
+                if let Some(t) = source.get(n) {
+                    out.insert(n.clone(), Arc::clone(t));
+                }
             }
         }
         sub
@@ -147,5 +191,22 @@ mod tests {
             sub.get("nope").is_none(),
             "unknown names are skipped, not errors"
         );
+    }
+
+    /// A shared registry can replace and remove one tool without touching the
+    /// others — the operation `/reload` needs for the `skill` tool.
+    #[test]
+    fn a_shared_registry_can_replace_and_remove_one_tool() {
+        let reg = Arc::new(ToolRegistry::new());
+        reg.insert(Arc::new(Named::new("skill")));
+        reg.insert(Arc::new(Named::new("read")));
+        assert_eq!(
+            reg.insert(Arc::new(Named::new("skill"))),
+            Some("skill".into())
+        );
+        assert_eq!(reg.descriptors().len(), 2);
+        assert!(reg.remove("skill").is_some());
+        assert!(reg.get("skill").is_none());
+        assert!(reg.get("read").is_some());
     }
 }

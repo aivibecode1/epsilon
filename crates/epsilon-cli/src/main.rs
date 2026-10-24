@@ -43,10 +43,10 @@ const USAGE: &str = "usage: epsilon            interactive TUI (default)
   epsilon doctor          why is this not working: model, credentials, sandbox, session, trust
   epsilon --import PI.jsonl   convert a pi session into an Epsilon session beside it
   epsilon auth list       stored provider keys (~/.config/epsilon/auth.json)
-  epsilon auth login <provider> [key]   save an API key (prompted if key omitted)
+  epsilon auth login <provider>         save an API key (hidden prompt; never argv)
   epsilon auth login <provider> --oauth [--paste]   subscription login (anthropic|openrouter|xai|github-copilot)
   epsilon auth logout <provider>        remove the stored key
-  flags: --model id · --provider faux|real · --script f · --mcp name=cmd[:a,b] · --mcp-http name=URL (headers via config file only)
+  flags: --model id · --provider faux|real · --script f · --mcp name=cmd[:a,b] · --mcp-http name=URL (headers via config file only) · --rea
          --sandbox auto|read-only|off · --plan · -c/--continue | --resume f · --version
   epsilon --help          every flag, env var and file, in full";
 
@@ -74,7 +74,7 @@ MODES (pick one; the default is the interactive TUI)
                     loop works with no key and no network
   --list-models [PROVIDER]
                     print the bundled model catalog (optionally one provider)
-  auth list | login <provider> [key] [--oauth [--paste]] | logout <provider>
+  auth list | login <provider> [--oauth [--paste]] | logout <provider>
                     manage stored credentials
   --tui-bench N     render benchmark for the transcript (N synthetic messages)
   doctor            report configuration and available capabilities without
@@ -124,6 +124,10 @@ FLAGS
   --mcp-http NAME=URL   attach an MCP server over StreamableHTTP (repeatable;
                         headers and bearer tokens come from the config file only,
                         never from this flag)
+  --rea                 attach REA (Reverse Engineer Anything) over stdio:
+                        npx -y rea-agents@6.7.0 mcp; needs Node 22.19+/24.11+
+                        and network on first run. Optional; nothing starts without
+                        this flag or an explicit [[mcp_servers]] entry.
   -V, --version         print the version
   -h, --help            this text
 
@@ -147,7 +151,7 @@ ENVIRONMENT
 FILES
   ~/.config/epsilon/config.toml   model, picker favorites, custom providers,
                                   [oauth.<provider>] client ids, [editor] command
-  ~/.config/epsilon/auth.json     stored credentials (chmod 600 where supported)
+  ~/.config/epsilon/auth.json     stored credentials (plaintext; 0600 where supported)
   ~/.config/epsilon/MEMORY.md     global memory injected into the prompt
   ~/.config/epsilon/history       prompt history
   .epsilon/sessions/<workspace>/  session transcripts, one file per launch
@@ -187,6 +191,10 @@ struct Args {
     stream_pace_ms: u64,
     workspace: Option<PathBuf>,
     mcp_servers: Vec<McpServerConfig>,
+    /// `--rea`: attach the pinned REA MCP server for this run. Kept as a flag
+    /// rather than pushed straight into `mcp_servers` so dispatch can let an
+    /// explicit `--mcp rea=…` win without a duplicate registration.
+    rea: bool,
     /// `--mcp-http` endpoints. Headers/bearer stay in the config file (AGENTS.md §6),
     /// so the flag carries only `name=URL`.
     mcp_http_servers: Vec<HttpServerConfig>,
@@ -302,7 +310,7 @@ fn parse_args() -> Args {
                 // API key (M22 behavior, unchanged).
                 let mut oauth = false;
                 let mut paste = false;
-                let mut key: Option<String> = None;
+                let key: Option<String> = None;
                 for arg in raw.iter().skip(3) {
                     match arg.as_str() {
                         "--oauth" | "oauth" => oauth = true,
@@ -310,13 +318,14 @@ fn parse_args() -> Args {
                         other if other.starts_with("--") => {
                             die(&format!("unknown auth login flag '{other}'"))
                         }
-                        other => {
-                            if key.is_none() {
-                                key = Some(other.to_string());
-                            } else {
-                                die(&format!("unexpected extra argument '{other}'"));
-                            }
-                        }
+                        // A secret on argv is visible in shell history, process
+                        // listings and CI logs. There is no safe way to accept it;
+                        // the prompt reads without echo.
+                        _ => die(
+                            "refusing an API key on the command line (it would be visible in \
+                             shell history and process listings) — omit it and paste at the \
+                             hidden prompt",
+                        ),
                     }
                 }
                 Mode::Auth(AuthAction::Login {
@@ -333,7 +342,9 @@ fn parse_args() -> Args {
                     .unwrap_or_else(|| die("auth logout requires a provider id"));
                 Mode::Auth(AuthAction::Logout { provider })
             }
-            _ => die("usage: epsilon auth list | login <provider> [key] | logout <provider>"),
+            _ => die(
+                "usage: epsilon auth list | login <provider> [--oauth [--paste]] | logout <provider>",
+            ),
         };
         return Args {
             mode,
@@ -341,6 +352,7 @@ fn parse_args() -> Args {
             stream_pace_ms: 0,
             workspace: None,
             mcp_servers: Vec::new(),
+            rea: false,
             mcp_http_servers: Vec::new(),
             port: 8787,
             confinement: epsilon_tools::Confinement::Auto,
@@ -360,6 +372,7 @@ fn parse_args() -> Args {
     let mut stream_pace_ms: u64 = 0;
     let mut workspace = None;
     let mut mcp_servers = Vec::new();
+    let mut rea = false;
     let mut mcp_http_servers = Vec::new();
     let mut port: u16 = 8787;
     let mut confinement = epsilon_tools::Confinement::Auto;
@@ -542,6 +555,7 @@ fn parse_args() -> Args {
                 mode = Mode::ListModels(provider);
             }
             "--port" => die("--port belongs to --serve"),
+            "--rea" => rea = true,
             a if a.starts_with("--mcp-http") => {
                 let spec = a
                     .strip_prefix("--mcp-http")
@@ -582,6 +596,7 @@ fn parse_args() -> Args {
         stream_pace_ms,
         workspace,
         mcp_servers,
+        rea,
         mcp_http_servers,
         port,
         confinement,
@@ -635,6 +650,7 @@ fn parse_mcp_spec(spec: &str) -> McpServerConfig {
                     .collect()
             })
             .unwrap_or_default(),
+        timeout_secs: epsilon_mcp::CALL_TIMEOUT_SECS,
     }
 }
 
@@ -709,6 +725,20 @@ fn mask_key(key: &str) -> String {
     format!("…{last4}")
 }
 
+/// Say what storing a key actually costs, at the moment it is stored.
+///
+/// AGENTS §6 records plaintext-at-rest as a known violation: the credential
+/// store has owner-only permissions but no OS keyring yet. A command that
+/// writes the key must not let the user believe otherwise; the env-var
+/// alternative is the one path that avoids the file entirely.
+fn plaintext_credential_warning(path: &std::path::Path, provider: &str) -> String {
+    format!(
+        "warning: {provider} credentials are stored in plaintext at {} (owner-only permissions). \
+         Prefer the provider's environment variable in CI or on a shared machine.",
+        path.display()
+    )
+}
+
 fn auth_command(action: &AuthAction) -> i32 {
     match action {
         AuthAction::List => {
@@ -719,6 +749,9 @@ fn auth_command(action: &AuthAction) -> i32 {
                 return 0;
             }
             println!("stored credentials (~/.config/epsilon/auth.json):");
+            eprintln!(
+                "note: stored credentials are plaintext on disk; environment variables avoid the file"
+            );
             for (provider, cred) in &creds {
                 match cred {
                     epsilon_llm::auth::StoredCredential::Api { key, .. } => {
@@ -782,6 +815,7 @@ fn auth_command(action: &AuthAction) -> i32 {
             match epsilon_llm::auth::save_credential(provider.trim(), key.trim()) {
                 Ok(path) => {
                     println!("stored {provider} key in {}", path.display());
+                    eprintln!("{}", plaintext_credential_warning(&path, provider.trim()));
                     0
                 }
                 Err(e) => {
@@ -849,7 +883,7 @@ fn login_oauth(provider: &str, paste_only: bool) -> i32 {
             "provider '{provider}' has no OAuth login here — available: {}",
             oauth_providers().join(", ")
         );
-        eprintln!("API-key login still works: epsilon auth login {provider} <key>");
+        eprintln!("API-key login still works: epsilon auth login {provider} (hidden prompt)");
         return 2;
     }
     println!(
@@ -991,7 +1025,7 @@ impl epsilon_llm::oauth_login::LoginUi for CliLoginUi {
     }
 }
 
-/// `epsilon auth login google-vertex [key]`: pi's Vertex login asks for the
+/// `epsilon auth login google-vertex`: pi's Vertex login asks for the
 /// auth choice first (API key vs ADC/service-account), then project +
 /// location. Non-interactive use passes the key argv and the two env vars;
 /// interactive use is prompted for each. The key may be empty (ADC path) —
@@ -1047,7 +1081,7 @@ fn login_google_vertex(key_arg: &Option<String>) -> i32 {
     if is_vertex_placeholder_key(&key) && credentials_file.is_empty() && !default_adc_file_exists()
     {
         eprintln!(
-            "no API key and no ADC file found — run `gcloud auth application-default login`, pass a key, or set GOOGLE_APPLICATION_CREDENTIALS"
+            "no ADC file found — run `gcloud auth application-default login` or set GOOGLE_APPLICATION_CREDENTIALS"
         );
         return 2;
     }
@@ -1094,7 +1128,7 @@ fn default_adc_file_exists() -> bool {
         .unwrap_or(false)
 }
 
-/// `epsilon auth login amazon-bedrock [key]`: pi's Bedrock login is a
+/// `epsilon auth login amazon-bedrock`: pi's Bedrock login is a
 /// three-way select (bearer token / AWS profile / existing credential
 /// chain). Non-interactive use passes the bearer token argv (or nothing for
 /// chain); interactive use picks 1/2/3. Profile names store into the
@@ -1236,15 +1270,59 @@ async fn dispatch(args: Args) -> i32 {
         Ok(launch) => launch,
         Err(message) => die(&message),
     };
-    // Startup notices flush here, in order, once (plan 008).
-    for line in &launch.notices {
+    // Startup notices flush here, in order, once (plan 008). The list is mutable
+    // because `--rea` adds one below; a notice the user never sees is a notice
+    // that was not worth writing.
+    let mut launch_notices = launch.notices.clone();
+    let mut mcp_servers = args.mcp_servers.clone();
+    if args.rea {
+        let uses_runtime = matches!(
+            &args.mode,
+            Mode::Print(_) | Mode::Tui(_) | Mode::Serve(_) | Mode::Rpc
+        );
+        let rea_named = mcp_servers
+            .iter()
+            .any(|s| s.name == epsilon_runtime::REA_SERVER_NAME)
+            || args
+                .mcp_http_servers
+                .iter()
+                .any(|s| s.name == epsilon_runtime::REA_SERVER_NAME)
+            || launch
+                .project
+                .mcp_servers
+                .iter()
+                .any(|s| s.name == epsilon_runtime::REA_SERVER_NAME)
+            || launch
+                .project
+                .mcp_http_servers
+                .iter()
+                .any(|s| s.name == epsilon_runtime::REA_SERVER_NAME);
+        if !uses_runtime {
+            launch_notices.push(
+                "--rea ignored: this mode does not build an agent or attach MCP servers"
+                    .to_string(),
+            );
+        } else if rea_named {
+            launch_notices.push(
+                "--rea ignored: an explicit mcp server named 'rea' is already configured"
+                    .to_string(),
+            );
+        } else {
+            mcp_servers.push(epsilon_runtime::rea_mcp_server());
+            launch_notices.push(format!(
+                "mcp: attaching REA ({}) over stdio; first launch may download it",
+                epsilon_runtime::REA_PACKAGE
+            ));
+        }
+    }
+    for line in &launch_notices {
         eprintln!("{line}");
     }
 
     let shared = SharedRun {
         workspace: launch.workspace.clone(),
         stream_fn: launch.stream_fn.clone(),
-        mcp_servers: args.mcp_servers.clone(),
+        mcp_servers,
         mcp_http_servers: args.mcp_http_servers.clone(),
         confinement: launch.confinement.clone(),
         lsp: launch.lsp,
@@ -1256,7 +1334,7 @@ async fn dispatch(args: Args) -> i32 {
         plan_mode: launch.plan_mode,
         preset: launch.preset,
         offline: launch.offline,
-        startup_notices: launch.notices.clone(),
+        startup_notices: launch_notices,
         trust_review_pending: launch.trust_review_pending,
     };
     match &args.mode {
@@ -1311,7 +1389,11 @@ async fn rpc_mode(shared: &SharedRun) -> i32 {
         approvals: Arc::clone(&approvals) as Arc<dyn ApprovalUi>,
         mcp_servers: &shared.mcp_servers,
         mcp_http_servers: &shared.mcp_http_servers,
-        session_file: ".epsilon/sessions/rpc.jsonl".to_string(),
+        session_file: epsilon_cli::runtime::fresh_session_file(
+            epsilon_cli::runtime::now_millis(),
+            &epsilon_contracts::new_id("ses"),
+            &shared.workspace,
+        ),
         confinement: &shared.confinement,
         lsp: shared.lsp,
         model_id: &shared.model_id,
@@ -1340,9 +1422,17 @@ async fn rpc_mode(shared: &SharedRun) -> i32 {
     epsilon_cli::rpc_mode::run(agent, approvals).await
 }
 
-/// Headless catalog dump (`--list-models [provider]`) — pi's `list-models` analogue.
-fn list_models(provider_filter: Option<&str>) {
+/// Render `--list-models` without printing, so the output is testable.
+fn list_models_text(provider_filter: Option<&str>) -> Result<String, String> {
+    use std::fmt::Write as _;
     let filter = provider_filter.map(|p| p.to_ascii_lowercase());
+    let mut out = String::new();
+    let _ = writeln!(
+        out,
+        "catalog snapshot {} · {} rows",
+        epsilon_llm::catalog::CATALOG_SNAPSHOT_DATE,
+        epsilon_llm::catalog::curated().len()
+    );
     let mut any = false;
     for info in epsilon_llm::catalog::curated() {
         if let Some(f) = &filter
@@ -1351,14 +1441,21 @@ fn list_models(provider_filter: Option<&str>) {
             continue;
         }
         any = true;
+        // Stored credentials count. This used to test the env var alone, so a
+        // successfully logged-in provider printed "(set …)" and read as
+        // unusable — the opposite of what the next launch would do.
         let key = if info.env_key.is_empty() {
             "—".to_string()
-        } else if std::env::var_os(info.env_key).is_some() {
-            format!("🔑 {}", info.env_key)
+        } else if epsilon_llm::catalog::row_credentials_ready(info) {
+            match epsilon_llm::catalog::env_credential_name_live(info.provider, info.env_key) {
+                Some(name) => format!("key (env {name})"),
+                None => "key (stored)".to_string(),
+            }
         } else {
-            format!("   (set {})", info.env_key)
+            format!("(set {})", info.env_key)
         };
-        println!(
+        let _ = writeln!(
+            out,
             "{:<22} {:<12} {:>9}-tok  {:<28} {}",
             info.id,
             info.provider,
@@ -1372,11 +1469,22 @@ fn list_models(provider_filter: Option<&str>) {
             .iter()
             .map(|m| m.provider)
             .collect();
-        eprintln!(
+        return Err(format!(
             "unknown provider '{provider_filter:?}'; bundled providers: {}",
             known.join(", ")
-        );
-        std::process::exit(2);
+        ));
+    }
+    Ok(out)
+}
+
+/// Headless catalog dump (`--list-models [provider]`) — pi's `list-models` analogue.
+fn list_models(provider_filter: Option<&str>) {
+    match list_models_text(provider_filter) {
+        Ok(text) => print!("{text}"),
+        Err(message) => {
+            eprintln!("{message}");
+            std::process::exit(2);
+        }
     }
 }
 
@@ -1503,7 +1611,11 @@ async fn print_mode(shared: &SharedRun, yes: bool, task: String) -> i32 {
         approvals: approvals_ui,
         mcp_servers: &shared.mcp_servers,
         mcp_http_servers: &shared.mcp_http_servers,
-        session_file: ".epsilon/sessions/cli.jsonl".to_string(),
+        session_file: epsilon_cli::runtime::fresh_session_file(
+            epsilon_cli::runtime::now_millis(),
+            &epsilon_contracts::new_id("ses"),
+            &shared.workspace,
+        ),
         confinement: &shared.confinement,
         lsp: shared.lsp,
         model_id: &shared.model_id,
@@ -1539,12 +1651,24 @@ async fn print_mode(shared: &SharedRun, yes: bool, task: String) -> i32 {
             // explanation anywhere (M63).
             let (text, diagnostic) = print_outcome(&outcome);
             if let Some(text) = text {
-                println!("{text}");
+                // **The terminal is a trust boundary too.** A model can emit
+                // OSC 52 (clipboard), a title change, or a cursor/erase
+                // sequence, and `-p` used to print the bytes straight out. The
+                // TUI has stripped these since M219; the headless surface now
+                // goes through the same function.
+                let (safe, _) = epsilon_runtime::text_safety::display_safe(&text);
+                println!("{safe}");
+            }
+            if let Some(line) =
+                session_usage_line(&agent.session_usage(), &agent.session_usage_by_model())
+            {
+                eprintln!("{line}");
             }
             match diagnostic {
                 None => 0,
                 Some(d) => {
-                    eprintln!("{d}");
+                    let (safe, _) = epsilon_runtime::text_safety::display_safe(&d);
+                    eprintln!("{safe}");
                     1
                 }
             }
@@ -1600,6 +1724,56 @@ fn print_outcome(outcome: &epsilon_core::RunOutcome) -> (Option<String>, Option<
         None => format!("run did not finish cleanly: {reason} — the reply above may be partial"),
     };
     (text, Some(diagnostic))
+}
+
+/// One stderr line for `-p`: tokens, cache traffic and list-price cost.
+///
+/// `print` mode used to end at the assistant text, so a scripted operator had
+/// no idea what the turn cost while the TUI and RPC modes both reported it.
+/// The price is per model, because a fallback chain can produce a session with
+/// more than one rate; an unpriced row makes the total a floor (`$0.01+`), never
+/// a confidently smaller bill.
+fn session_usage_line(
+    usage: &epsilon_contracts::message::Usage,
+    by_model: &std::collections::BTreeMap<String, epsilon_contracts::message::Usage>,
+) -> Option<String> {
+    let total = usage
+        .input
+        .saturating_add(usage.output)
+        .saturating_add(usage.cache_read)
+        .saturating_add(usage.cache_write);
+    if total == 0 {
+        return None;
+    }
+    let mut cost = 0u64;
+    // No per-model map means no catalog row either. Treating that as zero would
+    // print `$0` for a faux or custom model: the exact confident-lie the floor
+    // rule exists to prevent.
+    let mut unpriced = by_model.is_empty();
+    for (id, usage) in by_model {
+        match epsilon_llm::catalog::lookup_model(id) {
+            Some(info) => {
+                cost = cost.saturating_add(epsilon_core::cache_stats::usage_cost_micro(usage, info))
+            }
+            None => unpriced = true,
+        }
+    }
+    let cost = match (cost, unpriced) {
+        (0, true) => "unpriced".to_string(),
+        (c, true) => format!(
+            "{}+ (floor)",
+            epsilon_core::cache_stats::format_cost_micro(c)
+        ),
+        (c, false) => epsilon_core::cache_stats::format_cost_micro(c),
+    };
+    Some(format!(
+        "tokens: {} in / {} out · cache {} read / {} write · cost {}",
+        epsilon_core::cache_stats::fmt_tokens(usage.input),
+        epsilon_core::cache_stats::fmt_tokens(usage.output),
+        epsilon_core::cache_stats::fmt_tokens(usage.cache_read),
+        epsilon_core::cache_stats::fmt_tokens(usage.cache_write),
+        cost,
+    ))
 }
 
 /// What an admitted `serve` run that failed must print, or `None` when it succeeded.
@@ -1734,6 +1908,11 @@ async fn tui_mode(
                 approvals,
                 initial_task,
                 model_id,
+                default_model: shared
+                    .project
+                    .model_id
+                    .clone()
+                    .or_else(epsilon_core::config::load_model_id),
                 live: live_fetcher(),
                 startup_notices,
                 trust_review_pending: shared.trust_review_pending,
@@ -1770,7 +1949,11 @@ async fn serve_mode(shared: &SharedRun, initial_task: Option<String>, port: u16)
         approvals: Arc::clone(&approvals) as Arc<dyn ApprovalUi>,
         mcp_servers: &shared.mcp_servers,
         mcp_http_servers: &shared.mcp_http_servers,
-        session_file: ".epsilon/sessions/serve.jsonl".to_string(),
+        session_file: epsilon_cli::runtime::fresh_session_file(
+            epsilon_cli::runtime::now_millis(),
+            &epsilon_contracts::new_id("ses"),
+            &shared.workspace,
+        ),
         confinement: &shared.confinement,
         lsp: shared.lsp,
         model_id: &shared.model_id,
@@ -1828,7 +2011,13 @@ async fn serve_mode(shared: &SharedRun, initial_task: Option<String>, port: u16)
     // /healthz must carry `authorization: Bearer <token>`. Serve mode is a trust
     // boundary; without the token a local process or webpage could drive runs.
     let state = {
-        let st = epsilon_server::ServeState::with_boot_token(agent, approvals);
+        let st = match epsilon_server::ServeState::with_boot_token(agent, approvals) {
+            Ok(st) => st,
+            Err(e) => {
+                eprintln!("serve: {e}");
+                return 1;
+            }
+        };
         if let Some(t) = st.auth_token.as_ref() {
             eprintln!("  auth: authorization: Bearer {t}");
         }
@@ -2461,6 +2650,75 @@ mod print_outcome_tests {
                 .unwrap()
                 .contains("output-token limit")
         );
+    }
+
+    #[test]
+    fn headless_usage_line_prices_known_models_and_floors_unknown_ones() {
+        let zero = Usage::default();
+        assert!(
+            session_usage_line(&zero, &std::collections::BTreeMap::new()).is_none(),
+            "a run with no usage says nothing"
+        );
+        let usage = Usage {
+            input: 1_000,
+            output: 500,
+            ..Usage::default()
+        };
+        let mut by_model = std::collections::BTreeMap::new();
+        let line = session_usage_line(&usage, &std::collections::BTreeMap::new()).expect("a line");
+        assert!(
+            line.contains("unpriced"),
+            "no model map means no price, not a free run: {line}"
+        );
+        by_model.insert("deepseek-flash".to_string(), usage);
+        let line = session_usage_line(&usage, &by_model).expect("a line");
+        assert!(line.contains("1,000 in"), "{line}");
+        assert!(
+            line.contains("cost $"),
+            "a priced model gets dollars: {line}"
+        );
+        assert!(!line.contains("floor"), "{line}");
+
+        let mut unknown = std::collections::BTreeMap::new();
+        unknown.insert("not-a-catalog-model".to_string(), usage);
+        let line = session_usage_line(&usage, &unknown).expect("a line");
+        assert!(
+            line.contains("unpriced") || line.contains("floor"),
+            "an unknown model is never silently free: {line}"
+        );
+    }
+
+    #[test]
+    fn the_credential_warning_names_plaintext_and_the_env_alternative() {
+        let warning = plaintext_credential_warning(
+            std::path::Path::new("/home/u/.config/epsilon/auth.json"),
+            "deepseek",
+        );
+        assert!(warning.contains("plaintext"), "{warning}");
+        assert!(warning.contains("environment variable"), "{warning}");
+        assert!(warning.contains("deepseek"), "{warning}");
+    }
+
+    #[test]
+    fn list_models_prints_the_snapshot_date_and_filters_by_provider() {
+        let all = list_models_text(None).expect("bundled catalog");
+        assert!(
+            all.starts_with(&format!(
+                "catalog snapshot {}",
+                epsilon_llm::catalog::CATALOG_SNAPSHOT_DATE
+            )),
+            "the date is the first fact a reader needs: {all}"
+        );
+        assert!(all.contains("-tok"), "rows carry their context window");
+        let deepseek = list_models_text(Some("deepseek")).expect("known provider");
+        for line in deepseek.lines().skip(1) {
+            assert!(line.contains("deepseek"), "filter leaked a row: {line}");
+            assert!(line.contains("-tok"), "a row lost its budget: {line}");
+        }
+        assert!(deepseek.lines().count() > 1, "at least one deepseek row");
+        let err = list_models_text(Some("not-a-provider")).expect_err("unknown provider");
+        assert!(err.contains("not-a-provider"), "{err}");
+        assert!(err.contains("bundled providers"), "{err}");
     }
 
     #[test]

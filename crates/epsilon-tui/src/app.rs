@@ -12,7 +12,6 @@ use crossterm::event::{
     Event as TermEvent, EventStream, KeyCode, KeyEvent, KeyEventKind, KeyModifiers,
 };
 use epsilon_contracts::agent_event::{AgentEvent, PermissionDecision};
-use epsilon_contracts::content::UserContent;
 use epsilon_contracts::message::Message;
 use epsilon_core::Agent;
 use epsilon_safety::{ChannelApprovalUi, PendingAsk};
@@ -85,6 +84,13 @@ pub struct TuiConfig {
     pub initial_task: Option<String>,
     /// Active model id (already resolved by the CLI through flag > config > default).
     pub model_id: String,
+    /// The *saved* default the picker marks and orders second: project
+    /// `[model] id` when the workspace has one, else the global value.
+    ///
+    /// Carried from composition rather than re-read here. `App::new` used to
+    /// load only the global key, so a project that saved its own default still
+    /// saw another model marked in the picker while the run used the project's.
+    pub default_model: Option<String>,
     /// Live per-provider listing capability; absent without the `real` feature.
     pub live: Option<LiveFetcher>,
     /// Startup diagnostics flushed as notices once the UI is live (project
@@ -331,7 +337,7 @@ pub(crate) struct App {
     /// M20: providers whose live listing already landed this session (auto-fetch
     /// runs once per provider for providers with NO entry; entries with an
     /// age use the 60-minute rule instead, so a stale listing refetches even
-    /// though this session answered once. Ctrl+F force-refreshes regardless).
+    /// though this session answered once. Ctrl+G force-refreshes regardless).
     live_fetched: std::collections::BTreeSet<String>,
     fetched_tx: tokio::sync::mpsc::UnboundedSender<(String, Result<Vec<String>, String>)>,
     notices_tx: tokio::sync::mpsc::UnboundedSender<String>,
@@ -440,13 +446,41 @@ pub(crate) struct App {
     /// can predict from the screen. One until the first paint, so a key
     /// before the first frame still moves.
     timeline_capacity: usize,
-    /// Phase 3 (TUI as IDE): workspace tree sidebar open (F6). When open the
-    /// tree owns the keyboard like every other overlay (see `overlay_open`).
+    /// The workspace explorer is **visible**.
+    ///
+    /// Visibility and focus are separate facts, and separating them is what lets
+    /// the explorer be part of the default IDE layout. The previous single flag
+    /// meant "visible *and* owns the keyboard", so a persistent sidebar either
+    /// could not exist or would swallow every keystroke meant for the composer.
     pub(crate) tree_open: bool,
+    /// The explorer currently owns the keyboard (vs. merely being docked).
+    ///
+    /// Focus is what `overlay_open` and the key router read; `tree_open` only
+    /// decides whether the panel is painted.
+    pub(crate) tree_focused: bool,
     /// Cursor row within `tree_rows`.
     tree_cursor: usize,
+    /// First tree row painted, kept between frames so a refresh does not jump the
+    /// viewport back to the top.
+    tree_scroll: usize,
+    /// Row slots the last paint had, so PageDown is the distance the reader can
+    /// actually see rather than a guess.
+    tree_capacity: usize,
     /// Visible rows from the last `refresh_tree`.
     tree_rows: Vec<crate::tree::TreeRow>,
+    /// Path/mtime/size stamp of the walk that produced `tree_rows`. The poll
+    /// compares this before rebuilding rows a frame does not need.
+    tree_stamp: crate::tree::TreeStamp,
+    /// Working-tree changes from `git status`, keyed by workspace-relative path.
+    tree_git: std::collections::BTreeMap<String, crate::git::Status>,
+    /// Directories containing a changed path, so a folded directory still shows
+    /// that something under it moved.
+    tree_changed_dirs: std::collections::BTreeSet<String>,
+    /// Next scheduled workspace poll. Only runs while the explorer is visible.
+    tree_poll_at: std::time::Instant,
+    /// Next scheduled `git status` poll (a second signal for index/commit
+    /// changes that leave file mtimes untouched).
+    git_poll_at: std::time::Instant,
     /// Collapsed directory rels; everything starts expanded.
     tree_collapsed: std::collections::BTreeSet<String>,
     /// Whether the last refresh hit the row budget (drawn as a capped note).
@@ -564,6 +598,11 @@ pub(crate) struct App {
     changes_rows: Vec<(String, String)>,
     /// What the panel title names the cutoff as: `this session` or `this workspace`.
     changes_scope: String,
+    /// `/skills` and `/subagent`: one read-only browser over the catalog. The
+    /// transcript list was complete but long and scrolled the conversation away;
+    /// a panel keeps the selected item, its reason and the exact command that
+    /// changes it in one place.
+    catalog: Option<crate::app::catalog::CatalogPanel>,
     /// `/settings`: the in-TUI chooser. Rows are computed, not stored, so the
     /// value a row shows is the value the next Enter will change.
     settings_open: bool,
@@ -581,6 +620,9 @@ pub(crate) struct App {
     /// banishes on the first dispatch exactly like on the first turn, so a
     /// `/help` screen is never crowded by the block that pointed at it.
     has_run_command: bool,
+    /// True for the current frame when an exit request was refused, so an open
+    /// file viewer can expose the refusal above its covered transcript.
+    quit_refused: bool,
     /// P-047: `/scoped-models` checklist over the F2 cycle scope. Staged ==
     /// `favorites` (the cycle list reads it, so Space rescopes live); the
     /// file moves only on Ctrl+S. `scope_snapshot` is the pre-open list Esc
@@ -860,6 +902,9 @@ impl App {
     /// level is captured through `agent`, which is also why this takes the
     /// handle instead of reading it in the caller.
     fn toggle_favorite(&mut self, agent: &Arc<Agent>, id: &str) {
+        if self.refuse_unroutable_model(id) {
+            return;
+        }
         // Favorites stay user-global by design (see `project_dir_or_global`),
         // but a test override diverts them like every other TUI write —
         // otherwise any test driving Ctrl+F writes the developer's real config.
@@ -935,12 +980,38 @@ impl App {
         epsilon_core::config::global_dir()
     }
 
+    /// Re-record the project trust hash after **this application** wrote its own
+    /// preference into `<workspace>/.epsilon/config.toml`.
+    ///
+    /// The hash exists to tell a user that a *repository* changed the rules under
+    /// them. A model or thinking choice this window just persisted is not that
+    /// kind of change, but it lives in the same file — so without this, every
+    /// switch invalidated the hash and the next launch held all submits for a
+    /// trust review of the app's own edit. External edits are unaffected: this
+    /// records the bytes on disk only after the successful write that produced
+    /// them, and the launch path still re-reads the hash.
+    fn record_own_project_write(&self, dir: &std::path::Path) {
+        let project = self.workspace_root.join(".epsilon");
+        if dir != project {
+            return;
+        }
+        if let Some(hash) =
+            epsilon_core::config::current_project_config_hash_in(&self.workspace_root)
+        {
+            let _ =
+                epsilon_core::config::accept_project_config_hash_in(&self.workspace_root, &hash);
+        }
+    }
+
     /// Save a model id as the default (P-254): persisted immediately and
     /// reflected in memory, so the picker orders and marks it without a
     /// restart. Writes to the resolver's dir — the project's own file when the
     /// workspace has one — and a test override in tests, which is what keeps a
     /// global write a thing tests never do.
     fn save_default_model(&mut self, id: &str) {
+        if self.refuse_unroutable_model(id) {
+            return;
+        }
         let Some(dir) = self.project_dir_or_global() else {
             self.ui
                 .push_notice("default not saved: no home directory resolved");
@@ -991,6 +1062,8 @@ impl App {
         if let Err(e) = epsilon_core::config::save_preset_in(&dir, preset_name) {
             self.ui
                 .push_notice(format!("permission preset {preset_name} not saved: {e}"));
+        } else {
+            self.record_own_project_write(&dir);
         }
     }
 
@@ -1022,6 +1095,8 @@ impl App {
                 "plan mode {} not saved: {e}",
                 if on { "on" } else { "off" }
             ));
+        } else {
+            self.record_own_project_write(&dir);
         }
     }
 
@@ -1490,6 +1565,8 @@ impl App {
         if let Err(e) = epsilon_core::config::save_thinking_level_in(&dir, level) {
             self.ui
                 .push_notice(format!("thinking level not saved: {e}"));
+        } else {
+            self.record_own_project_write(&dir);
         }
     }
 
@@ -1622,10 +1699,46 @@ impl App {
         ));
     }
 
+    /// Whether the runtime can actually route this model id.
+    ///
+    /// A live `/models` listing, a recent and a favourite are all *claims about
+    /// ids*. Only two things can become a request: a bundled catalog row (which
+    /// carries the wire) and a declared custom provider prefix. Persisting an id
+    /// with neither is how a picker choice made the next launch fail with
+    /// `unknown model`.
+    fn model_is_routable(&self, id: &str) -> bool {
+        epsilon_llm::catalog::lookup_model(id).is_some()
+            || self.customs.iter().any(|c| c.matches_id(id))
+    }
+
+    /// Refuse an id the runtime cannot route, and say what to do instead.
+    fn refuse_unroutable_model(&mut self, id: &str) -> bool {
+        if self.model_is_routable(id) {
+            return false;
+        }
+        let provider = self
+            .live_cache
+            .iter()
+            .find(|entry| entry.ids.iter().any(|live| live == id))
+            .map(|entry| entry.provider.as_str());
+        let source = provider
+            .map(|p| format!(" (live-listed by {p})"))
+            .unwrap_or_default();
+        self.ui.push_notice(format!(
+            "{id}{source} is not in the bundled catalog, so no wire can route it — \
+             choose a catalogued model, a declared custom provider id, or wait for the \
+             catalog to include it"
+        ));
+        true
+    }
+
     /// Switch the session model, persist choice + recents, and tell the user.
     fn apply_model(&mut self, agent: &Arc<Agent>, id: String) {
         if id == self.model_id {
             self.ui.push_notice(format!("model already {id}"));
+            return;
+        }
+        if self.refuse_unroutable_model(&id) {
             return;
         }
         // Auth hint parity (pi/opencode show "needs auth" in the picker; Epsilon
@@ -1657,6 +1770,9 @@ impl App {
         let dir = self.project_dir_or_global();
         match dir.map(|d| epsilon_core::config::save_model_id_in(&d, &id)) {
             Some(Ok(path)) => {
+                if let Some(dir) = self.project_dir_or_global() {
+                    self.record_own_project_write(&dir);
+                }
                 self.model_id = id.clone();
                 let mut msg = format!("model switched to {id} — saved to {}", path.display());
                 if !auth_ready {
@@ -1781,14 +1897,14 @@ impl App {
         LiveRefreshDecision::Fetch
     }
 
-    /// Request the provider's live listing (M13 Ctrl+F; M20 auto-fetch on open).
+    /// Request the provider's live listing (Ctrl+G; M20 auto-fetch on open).
     ///
     /// Stage-aware: in stage 2 it lists THAT provider; from stage 1 it lists the
     /// highlighted provider directly. Passes the PROVIDER name to the fetcher —
     /// M17 passed a model id here, which `catalog::live_models` always rejected,
     /// so live fetch never actually worked until now.
     ///
-    /// `force` = explicit user action (Ctrl+F): retries even if this provider
+    /// `force` = explicit user action (Ctrl+G): retries even if this provider
     /// already answered, and surfaces failures as notices. Auto-fetch stays
     /// silent on failure and refetches only stale entries (older than the
     /// 60-minute rule) — a stale bundled row beats nagging on every
@@ -1831,12 +1947,16 @@ impl App {
         // `resolve_api_key` is the same resolution the fetcher itself uses (stored
         // credential, then env var), so this cannot drift from what the request would have
         // done — it asks the real question instead of guessing with a second copy of the
-        // precedence rules. `Ctrl+F` (`force`) still speaks, because there the reader is
+        // precedence rules. `Ctrl+G` (`force`) still speaks, because there the reader is
         // asking about this provider on purpose and silence would be its own defect.
         if epsilon_llm::catalog::resolve_api_key(&provider).is_none() {
             if force {
+                let refresh = self
+                    .keybindings
+                    .key_text("app.live.refresh")
+                    .unwrap_or_else(|| "the refresh key".to_string());
                 self.notice(format!(
-                    "no API key for '{provider}' — set one with `/login {provider}`, then Ctrl+F"
+                    "no API key for '{provider}' — set one with `/login {provider}`, then {refresh}"
                 ));
             }
             return;
@@ -2291,6 +2411,7 @@ mod view;
 
 mod commands;
 
+mod catalog;
 mod panels;
 // The panel surface, named rather than glob-imported: `draw()` is the only caller, and a list
 // keeps the set of things drawn over the transcript readable in one place.
@@ -2359,10 +2480,39 @@ impl TranscriptGeometry {
     }
 }
 
+/// Keep the selected tree row inside the viewport the panel is about to paint.
+///
+/// The cursor is application state and the viewport is draw state, so this is
+/// the one place both exist. It runs **before** the rows are built, which makes
+/// PageUp/PageDown and End work from a capacity the reader can actually see;
+/// measuring after the paint would leave the first page key guessing.
+fn ensure_tree_cursor_visible(app: &mut App, rect: Rect, docked: bool) {
+    let capacity = crate::tree::row_capacity(rect, app.tree_capped, docked).max(1);
+    if app.tree_cursor < app.tree_scroll {
+        app.tree_scroll = app.tree_cursor;
+    } else if app.tree_cursor >= app.tree_scroll.saturating_add(capacity) {
+        app.tree_scroll = app.tree_cursor + 1 - capacity;
+    }
+    app.tree_scroll = app.tree_scroll.min(app.tree_rows.len().saturating_sub(1));
+    app.tree_capacity = capacity;
+}
+
 /// The too-small fallback cannot paint the approval dialog, so it must also make
 /// sure `handle_key` refuses to answer one: `approval_painted_id` records which
 /// ask a frame actually showed, and clearing it here means no key can authorize
 /// work the user never saw. That behaviour is preserved from M94 unchanged.
+/// Draw the terminal's window frame and return the content rectangle inside it.
+///
+/// The frame is the app's outermost box. It is deliberately **not** drawn on a
+/// terminal too small to hold both the frame and the layout: at 44×10 the frame
+/// would leave 42×8, which fails [`crate::ui::layout::Regions::too_small`] and
+/// turns a usable small screen into the "terminal too small" message. Below the
+/// threshold the layout speaks for itself.
+///
+/// The border colour is state, not decoration: a pending ask is the warning hue
+/// (the run is blocked on the user), a live run is the accent, and rest is the
+/// quiet border. The title repeats the state in a word so colour is never the
+/// only carrier.
 fn draw(f: &mut Frame<'_>, app: &mut App) {
     let area = f.area();
     // A parked model question opens here, on the next frame after the turn
@@ -2401,33 +2551,34 @@ fn draw(f: &mut Frame<'_>, app: &mut App) {
         );
         return;
     }
-    // Tree sidebar, docked RIGHT with a one-column gutter: transcript | gap | tree.
-    // The pane scales with the window (30% clamped to 24–38 columns) instead of a
-    // fixed width, and the transcript keeps its own floor (`MIN_WIDTH`);
-    // narrower than that, the tree draws as a full-area overlay after the
-    // shell — one draw function, two rects.
-    let side_w = (area.width * 30 / 100).clamp(24, 38);
-    let sidebar_wide = app.tree_open && area.width >= side_w + 1 + crate::ui::layout::MIN_WIDTH;
-    let main = if sidebar_wide {
-        let chunks = ratatui::layout::Layout::default()
-            .direction(ratatui::layout::Direction::Horizontal)
-            .constraints([
-                ratatui::layout::Constraint::Min(crate::ui::layout::MIN_WIDTH),
-                ratatui::layout::Constraint::Length(1),
-                ratatui::layout::Constraint::Length(side_w),
-            ])
-            .split(area);
+    // The project explorer docks RIGHT with a one-column gutter:
+    // workspace | gap | tree. The split lives in `layout::Explorer` so the
+    // geometry, the responsive floor and the tests cannot drift apart.
+    let explorer = crate::ui::layout::Explorer::split(area, app.tree_open);
+    let main = explorer.main;
+    let tree_toggle = app
+        .keybindings
+        .key_text("app.tree.toggle")
+        .unwrap_or_default();
+    if let Some(rect) = explorer.tree {
+        ensure_tree_cursor_visible(app, rect, true);
         crate::tree::draw_tree(
             f,
-            chunks[2],
-            &app.tree_rows,
-            app.tree_cursor,
-            app.tree_capped,
+            crate::tree::TreeView {
+                rect,
+                docked: true,
+                theme: &app.theme,
+                rows: &app.tree_rows,
+                git: &app.tree_git,
+                changed_dirs: &app.tree_changed_dirs,
+                cursor: app.tree_cursor,
+                scroll: app.tree_scroll,
+                focused: app.tree_focused,
+                capped: app.tree_capped,
+                toggle_key: &tree_toggle,
+            },
         );
-        chunks[0]
-    } else {
-        area
-    };
+    }
     // The composer wraps to the same width the shell will draw it at, so the
     // caret lands in the column the text actually occupies.
     let draft_width = crate::ui::shell::composer_text_width(main.width, &app.theme.glyphs);
@@ -2509,7 +2660,7 @@ fn draw(f: &mut Frame<'_>, app: &mut App) {
         draw_picker(f, app, f.area());
     }
     if app.palette_open {
-        draw_palette(f, app, f.area());
+        draw_palette(f, app, main);
     }
     if app.auth_prompt_open {
         draw_auth_prompt(f, app, f.area());
@@ -2530,6 +2681,9 @@ fn draw(f: &mut Frame<'_>, app: &mut App) {
     if app.changes_open {
         draw_changes(f, app, f.area());
     }
+    if app.catalog.is_some() {
+        catalog::draw(f, app, f.area());
+    }
     if app.settings_open {
         draw_settings(f, app, f.area());
     }
@@ -2539,16 +2693,36 @@ fn draw(f: &mut Frame<'_>, app: &mut App) {
     if app.timeline_open {
         draw_timeline(f, app, f.area());
     }
-    if app.tree_open && !sidebar_wide {
-        // The overlay covers the transcript: clear first, or the two texts
-        // interleave on narrow screens (read on a 60x20 frame).
-        f.render_widget(ratatui::widgets::Clear, f.area());
+    // A visible but unfocused explorer never covers the workspace. When the
+    // window is too narrow to dock it, it becomes a full-area panel only while
+    // focused — F6 is what opens this view, and Esc hands the frame back.
+    if app.tree_focused && explorer.tree.is_none() {
+        // Leave the header and footer standing: they still say where the
+        // keyboard is and which keys leave it, and a full-bleed panel that
+        // covers the only hint row is a keyboard trap on a 60-column window.
+        let band = Rect {
+            x: area.x,
+            y: area.y + 1,
+            width: area.width,
+            height: area.height.saturating_sub(2),
+        };
+        f.render_widget(ratatui::widgets::Clear, band);
+        ensure_tree_cursor_visible(app, band, false);
         crate::tree::draw_tree(
             f,
-            f.area(),
-            &app.tree_rows,
-            app.tree_cursor,
-            app.tree_capped,
+            crate::tree::TreeView {
+                rect: band,
+                docked: false,
+                theme: &app.theme,
+                rows: &app.tree_rows,
+                git: &app.tree_git,
+                changed_dirs: &app.tree_changed_dirs,
+                cursor: app.tree_cursor,
+                scroll: app.tree_scroll,
+                focused: true,
+                capped: app.tree_capped,
+                toggle_key: &tree_toggle,
+            },
         );
     }
     if app.viewer_open() {
@@ -2567,18 +2741,19 @@ fn draw(f: &mut Frame<'_>, app: &mut App) {
             })
             .collect();
         if let Some(viewer) = app.viewer_tabs.get_mut(tab) {
-            // **The band, not the frame.** The panel is centred in the rows
-            // between the header and the footer, so a 4/5-width editor never
-            // reaches the header's measurements or the footer's hints — and
-            // `draw_viewer` clears the band, so the transcript behind it is
-            // gone rather than sliced in half by the panel's left rail. Passing
-            // `f.area()` did both wrong: the panel covered the composer's row,
-            // and every row it occupied still showed the live screen on either
-            // side of it.
+            // **The band, not the frame, and the whole width of it.** The panel
+            // is centred in the rows between the header and the footer, so a
+            // 4/5-width editor never reaches the header's measurements or the
+            // footer's hints — and `draw_viewer` clears the band, so the screen
+            // behind it is gone rather than sliced in half by the panel's rail.
+            // The width is `area`, not `main`: with the explorer docked, `main`
+            // stops at the explorer's gutter, and the live tree stayed painted
+            // down the right-hand side of an otherwise full-screen editor. The
+            // explorer is a workspace surface, not part of the editor's frame.
             let band = Rect {
-                x: main.x,
+                x: area.x,
                 y: main.y + 1,
-                width: main.width,
+                width: area.width,
                 height: main.height.saturating_sub(4),
             };
             // The undo chord, resolved through the table rather than written:

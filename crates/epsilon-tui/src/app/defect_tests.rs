@@ -304,6 +304,13 @@ fn the_file_editor_clears_the_screen_behind_it() {
         app.active_viewer().is_some_and(|v| v.editing),
         "precondition: the editor, not the viewer"
     );
+    // The panel's own footer row names the undo chord, so the chord is what
+    // identifies the row. It is resolved from the live table, so a rebinding
+    // moves the marker with the hint.
+    let undo = app
+        .keybindings
+        .key_text("tui.editor.undo")
+        .expect("tui.editor.undo is bound");
 
     let (buffer, rows) = render_buffer(&mut app, 80, 24);
     let top = rows
@@ -323,7 +330,7 @@ fn the_file_editor_clears_the_screen_behind_it() {
         .expect("the panel's right rail");
     let bottom = rows
         .iter()
-        .rposition(|r| r.contains("type/enter"))
+        .rposition(|r| r.contains(&format!("{undo} undo")))
         .expect("the editor's own footer row");
     let mut leaked = Vec::new();
     for y in top + 1..bottom {
@@ -368,10 +375,27 @@ fn the_editor_find_bar_names_the_backward_step() {
         .iter()
         .position(|r| r.contains("/eedle"))
         .unwrap_or_else(|| panic!("the find row is not on screen: {rows:#?}"));
+    // **The step row is its own row now.** The query and the steps used to
+    // share one line, and the steps were the first thing the narrow explorer
+    // column trimmed away — so the keys that step through the matches were
+    // missing exactly when the panel was narrowest. The row is separate for
+    // that reason, and this asserts the words are on the screen at all.
+    let step_row = rows
+        .iter()
+        .find(|r| r.contains("enter/n next"))
+        .unwrap_or_else(|| panic!("the find bar's step row is not on screen: {rows:#?}"));
     assert!(
-        rows[find_row].contains("enter/n next · p previous · esc close"),
+        step_row.contains("enter/n next · p previous · esc close"),
         "the find row must name both steps the way the transcript search does: {:?}",
-        rows[find_row]
+        step_row
+    );
+    assert!(
+        find_row
+            < rows
+                .iter()
+                .position(|r| r.contains("enter/n next"))
+                .unwrap(),
+        "the step row follows the query row: {rows:#?}"
     );
 }
 
@@ -416,9 +440,17 @@ fn a_wrapped_answer_draws_one_marker_and_continuation_rules() {
         .position(|r| r.contains("The answer begins here"))
         .expect("the streaming answer is on screen");
     assert!(
-        tail[tail_first].starts_with(UNICODE.assistant),
-        "streaming: the first row carries the marker: {:?}",
+        tail[tail_first].starts_with(UNICODE.vertical),
+        "streaming: the first row sits inside the card: {:?}",
         tail[tail_first]
+    );
+    assert!(
+        tail[..tail_first]
+            .iter()
+            .rev()
+            .find(|row| row.contains("assistant"))
+            .is_some_and(|row| row.contains(UNICODE.top_left)),
+        "streaming: the answer opens its own card: {tail:#?}"
     );
     for word in ["distinctive phrase", "closing phrase"] {
         let at = tail
@@ -449,27 +481,41 @@ fn a_wrapped_answer_draws_one_marker_and_continuation_rules() {
         .iter()
         .position(|r| r.contains("closing phrase"))
         .expect("the wrapped tail row");
+    let title = rows[..first]
+        .iter()
+        .rposition(|r| r.contains(UNICODE.top_left) && r.contains("assistant"))
+        .unwrap_or_else(|| panic!("the answer has no card title: {rows:#?}"));
     assert!(
-        rows[first].starts_with(UNICODE.assistant),
-        "the line's FIRST row carries the role marker: {:?}",
+        rows[title].contains("assistant"),
+        "the card title names the role: {:?}",
+        rows[title]
+    );
+    assert!(
+        rows[first].starts_with(UNICODE.vertical),
+        "the answer body sits inside the card rail: {:?}",
         rows[first]
     );
-    for (name, row) in [("middle", middle), ("tail", tail_row)] {
+    for (name, row) in [("first", first), ("middle", middle), ("tail", tail_row)] {
         assert!(
-            rows[row].starts_with(UNICODE.vertical),
-            "the {name} continuation row must draw the rule, not repeat the marker: {:?}",
+            rows[row].starts_with(UNICODE.vertical) && rows[row].ends_with(UNICODE.vertical),
+            "the {name} card row must be bounded by rails: {:?}",
             rows[row]
         );
     }
-    // And the marker is not on any of them: a paragraph is not a list.
-    let markers = rows
+    // The card title is the only role marker; a paragraph body is not a list.
+    let markers = rows[first..=tail_row]
         .iter()
-        .filter(|r| r.trim_start().starts_with(UNICODE.assistant))
+        .filter(|r| r.contains(UNICODE.assistant))
         .count();
     assert_eq!(
-        markers, 1,
-        "one answer, one marker — not one per wrapped row: {rows:#?}"
+        markers, 0,
+        "the wrapped body must not repeat the role marker: {rows:#?}"
     );
+    let titles = rows[..=tail_row]
+        .iter()
+        .filter(|r| r.contains(UNICODE.top_left) && r.contains("assistant"))
+        .count();
+    assert_eq!(titles, 1, "one answer, one card title: {rows:#?}");
 }
 
 /// **Defect 7: the editor never named the undo key it implements.**
@@ -489,7 +535,7 @@ fn the_editor_footer_names_the_undo_key() {
     let rows = render_rows(&mut app, 80, 24);
     let footer = rows
         .iter()
-        .find(|r| r.contains("type/enter"))
+        .find(|r| r.contains(&format!("{undo} undo")))
         .unwrap_or_else(|| panic!("the editor's footer is not on screen: {rows:#?}"));
     assert!(
         footer.contains(&format!("{undo} undo")),
@@ -577,13 +623,16 @@ async fn an_unmatched_at_fragment_says_so_on_the_frame() {
     );
 }
 
-/// **Defect 10: the command palette touched the frame edge at 60 columns.**
+/// **The command palette is the composer's width, not the frame's.**
 ///
-/// `Width::Fixed(64)` was clamped to the frame's width, so a 60-column terminal
-/// drew a 60-column box flush against both edges while every other overlay kept a
-/// margin. The height already reserved two rows; the width now reserves two columns.
+/// The box has now been wrong in both directions. `Width::Fixed(64)` was clamped
+/// to the frame, so a 60-column terminal drew it flush while every other overlay
+/// kept a margin; then an 80%-of-frame share put its rails over the explorer and
+/// left the filter line it belongs to narrower than the box describing it. The
+/// command palette is the command line's long form, so it takes the workspace
+/// column: the same edge the composer and the transcript use.
 #[tokio::test]
-async fn the_palette_keeps_a_margin_at_60_columns() {
+async fn the_palette_matches_the_composer_width() {
     let (mut app, agent, _rx) = test_app();
     super::keys::handle_key(
         &mut app,
@@ -597,67 +646,103 @@ async fn the_palette_keeps_a_margin_at_60_columns() {
     );
     assert!(app.palette_open, "precondition: the palette is open");
 
-    let rows = render_rows(&mut app, 60, 20);
-    let title = rows
-        .iter()
-        .position(|r| r.contains("commands"))
-        .unwrap_or_else(|| panic!("the palette is not on screen: {rows:#?}"));
-    // The panel's own left rail, not the first non-blank cell on the row: the
-    // welcome screen's `E P S I L O N` is still drawn behind the palette at
-    // this width, and it starts in column 0.
-    let left = rows[title]
-        .find(app.theme.glyphs.top_left)
-        .unwrap_or_else(|| panic!("the palette's left rail is not on screen: {rows:#?}"));
-    assert_eq!(
-        left, 1,
-        "the palette must keep a column of frame either side, like every other overlay: {:?}",
-        rows[title]
-    );
-    // And the same box at 80 columns, where nothing about the width changes.
-    let rows = render_rows(&mut app, 80, 24);
-    let title = rows
-        .iter()
-        .position(|r| r.contains("commands"))
-        .expect("the palette at 80");
-    assert_eq!(
-        rows[title].find(app.theme.glyphs.top_left),
-        Some(8),
-        "80 columns: {:?}",
-        rows[title]
-    );
-    // **And nothing live shows through the band.** The margin fix cleared the
-    // box's own area only, so at 60 columns the transcript row sharing the
-    // bottom rail's row still printed through the margin — `▎╰────╯`, a rail
-    // that reads as broken. The palette now clears its row band across the
-    // full width before it draws, and this is the assertion that keeps it:
-    // every column either side of the box's rails is blank on every row the
-    // box occupies.
-    let band_top = title;
-    let band_bottom = rows
-        .iter()
-        .enumerate()
-        .skip(title)
-        .find(|(_, r)| r.contains(app.theme.glyphs.bottom_left))
-        .map(|(i, _)| i)
-        .unwrap_or_else(|| panic!("the palette's bottom rail is not on screen: {rows:#?}"));
-    for (i, row) in rows.iter().enumerate().take(band_bottom + 1).skip(band_top) {
-        let l = row
-            .find(app.theme.glyphs.top_left)
-            .or_else(|| row.find(app.theme.glyphs.vertical))
-            .unwrap_or(0);
-        let r = row
-            .rfind(app.theme.glyphs.top_right)
-            .or_else(|| row.rfind(app.theme.glyphs.vertical))
-            .unwrap_or(row.len());
-        for (c, ch) in row.chars().enumerate() {
-            if c < l || c > r {
-                assert_eq!(
-                    ch, ' ',
-                    "row {i} shows live page content ({ch:?}) beside the palette: {row:?}"
-                );
-            }
-        }
+    for (w, h) in [(60u16, 20u16), (80, 24), (100, 30)] {
+        let rows = render_rows(&mut app, w, h);
+        let title = rows
+            .iter()
+            .position(|r| r.contains("commands"))
+            .unwrap_or_else(|| panic!("{w}x{h}: the palette is not on screen: {rows:#?}"));
+        // **Character positions, not byte offsets.**
+        //
+        // `str::find` and `str::rfind` return a **byte** index. The row's rule is
+        // a run of `─` (U+2500), which is three bytes each, so the byte index of
+        // the closing rail in a 60-column row is 157 while the row is 60
+        // characters wide. Comparing a byte offset against a character count
+        // asserts a falsehood — and it fails on the *correct* frame.
+        //
+        // The frame is measured in cells, so the row is measured in characters.
+        let chars: Vec<char> = rows[title].chars().collect();
+        // The panel's own rails, not the first non-blank cell on the row: the
+        // welcome screen is still drawn behind the palette at 60 columns.
+        assert_eq!(
+            chars
+                .iter()
+                .position(|c| *c == app.theme.glyphs.top_left.chars().next().unwrap()),
+            Some(0),
+            "{w}x{h}: the palette must start on the composer's edge, not inset: {:?}",
+            rows[title]
+        );
+        assert_eq!(
+            chars
+                .iter()
+                .rposition(|c| *c == app.theme.glyphs.top_right.chars().next().unwrap()),
+            Some(w as usize - 1),
+            "{w}x{h}: the palette must end on the composer's edge: {:?}",
+            rows[title]
+        );
+        // The composer is the same column: its left rail is in column 0, and the
+        // prompt starts immediately inside it. That is the equality this test is
+        // named for, read off the frame rather than from a width constant.
+        let composer = rows
+            .iter()
+            .find(|r| r.contains("describe a task"))
+            .unwrap_or_else(|| panic!("{w}x{h}: the composer is not on screen"));
+        let inside = composer
+            .strip_prefix(app.theme.glyphs.vertical)
+            .unwrap_or(composer);
+        assert!(
+            inside.starts_with('\u{276f}') || inside.starts_with('>'),
+            "{w}x{h}: the composer prompt is not inside its left rail: {composer:?}"
+        );
     }
+}
+
+/// **A refused exit is visible on the frame, even under an open file viewer.**
+///
+/// The refusal is pushed to the transcript, and the file viewer is a panel
+/// centred over the transcript band — so a notice-only refusal is a refusal
+/// the reader cannot see, and they press `Ctrl+Q` again. The footer's mode
+/// word is the one row that is always drawn, so the refusal is named there.
+///
+/// This is the test that makes `quit_refused` a real field rather than a
+/// write-only one: without it the flag could be set and never read, and the
+/// frame would show nothing.
+#[tokio::test]
+async fn a_refused_quit_says_so_on_the_frame_under_a_file_viewer() {
+    let (mut app, agent, _rx) = test_app();
+    // The workspace is a temp directory: the test writes a file into it, and a
+    // test that writes into the repository leaves the repository dirty.
+    let dir = tempfile::tempdir().expect("a temporary workspace");
+    app.workspace_root = dir.path().to_path_buf();
+    std::fs::write(app.workspace_root.join("dirty.txt"), "first\n").unwrap();
+    let mut viewer = crate::tree::open_viewer(&app.workspace_root, "dirty.txt").expect("opens");
+    // Edit the buffer, then leave edit mode: that is the state `has_unsaved`
+    // reports — the draft is kept, the tab is not in edit mode, and closing it
+    // would lose the change. The guard is about the tab's state, not about how
+    // the tab got there.
+    viewer.edit_lines = vec!["first".into(), "edited".into()];
+    viewer.editing = false;
+    assert!(
+        viewer.has_unsaved(),
+        "precondition: the tab holds unsaved edits outside edit mode"
+    );
+    app.viewer_tabs = vec![viewer];
+
+    assert!(
+        !app.run_command(&agent, crate::picker::Command::Quit),
+        "the exit must be refused while a tab holds unsaved edits"
+    );
+
+    let rows = render_rows(&mut app, 80, 24);
+    let footer = rows
+        .iter()
+        .rev()
+        .find(|r| r.contains("quit refused"))
+        .unwrap_or_else(|| panic!("the refused exit must be named on the frame: {rows:#?}"));
+    assert!(
+        footer.contains("quit refused"),
+        "the refusal is the footer's mode word: {footer:?}"
+    );
 }
 
 /// **Defect 11: a card that was streaming output read `pending`.**

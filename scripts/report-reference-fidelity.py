@@ -28,8 +28,8 @@ import sys
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 REFERENCE_ROOTS = {
-    "pi-tui.md": os.path.join(ROOT, "references", "pi-1.0.0"),
-    "dsh-desktop.md": os.path.join(ROOT, "references", "deepseek-harness-dsh-v0.2.1-alpha.1"),
+    "pi-tui.md": os.path.join(ROOT, "references", "pi-1.3.0"),
+    "dsh-desktop.md": os.path.join(ROOT, "references", "deepseek-harness-dsh-v0.2.1-rc.2"),
 }
 
 CITE = re.compile(r"`([\w./-]+?\.(?:ts|tsx|rs|json|md)):(\d+)(?:-(\d+))?`")
@@ -105,8 +105,8 @@ def main() -> int:
     scored = 0
     for name, root in REFERENCE_ROOTS.items():
         matrix = os.path.join(ROOT, "docs", "parity", name)
-        if not os.path.isdir(root):
-            print(f"{name}: vendored tree absent; skipped")
+        if not os.path.isfile(matrix) or not os.path.isdir(root):
+            print(f"{name}: matrix or vendored tree absent; skipped")
             continue
         for number, rid, behaviour, reference in data_rows(matrix):
             total_rows += 1

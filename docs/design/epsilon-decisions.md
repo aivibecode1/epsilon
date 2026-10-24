@@ -2,8 +2,8 @@
 
 For contributors tracing design intent and historical amendments. This relocated
 record includes pre-existing M33–M79 amendments; adopting it does not certify their
-implementation claims. [Current architecture](epsilon-architecture.md) and
-[the audit](../../audit/README.md) describe observed behavior. ADR-002 callback parity,
+implementation claims. [Current architecture](../02-ARCHITECTURE.md) and
+the audit describe observed behavior. ADR-002 callback parity,
 ADR-014 types-only/enforcement claims, M65 observer scope, M68 check outcomes and
 M75 final-entry refusal have documented implementation drift. This relocation
 changes no runtime behavior or accepted port target.
@@ -12,7 +12,13 @@ Format per ADR: **Decision** -> **Alternatives considered** -> **Why this is bes
 (citing Phase 1-2 findings) -> **"Is this truly the best possible choice?"** honest answer.
 Status: all Accepted for v1 unless noted. Superseded ADRs are kept at the bottom.
 
-Citation key: `HA` = docs/research/harness-analysis.md, `CA` = docs/research/comparative-analysis.md.
+Citation key: `HA` and `CA` refer to the pre-consolidation research notes
+(`docs/research/harness-analysis.md` and `comparative-analysis.md`), which were
+removed in the structure cleanup. Treat those markers, `docs/milestones/*`,
+`docs/plans/*` and `audit/*` paths in this historical ADR log as citations to
+removed records, not live links. The surviving conclusions are in
+[`08-ARCHITECTURE-REVIEW.md`](../08-ARCHITECTURE-REVIEW.md) and
+[`docs/references/`](../references/README.md).
 
 ---
 
@@ -56,7 +62,7 @@ promised above remain an open commitment in the current audit.
 
 **M89 amendment — the callbacks exist.** The four seams this ADR promised are now
 implemented as `epsilon_contracts::turn::TurnHooks` (M89,
-[docs/milestones/M89-turn-hooks.md](../../docs/milestones/M89-turn-hooks.md)): the loop calls
+docs/milestones/M89-turn-hooks.md): the loop calls
 `prepare_next_turn` immediately after `TurnEnd` and `should_stop_after_turn` on the replaced
 context, both before any queue polling; a stop ends the run without draining steering or
 follow-ups and without the stuck-run notice (pi `agent-loop.ts:224–257`); a returned
@@ -97,7 +103,7 @@ resume-without-reinventing-the-loop.
 > directly. The title and the Decision below are the decision *as taken*, kept unedited
 > because that is what an ADR log is for — but a reader who stops at line 93 has the
 > wiring backwards, and this heading is one of the three files
-> [`../START-HERE.md`](../START-HERE.md) tells a newcomer to read first.
+> [`../START-HERE.md`](../01-OVERVIEW.md) tells a newcomer to read first.
 >
 > Verified 2026-10-04: `grep -c '^name = "genai"' Cargo.lock` → `0`.
 
@@ -582,6 +588,9 @@ edited, because a historical decision record that keeps being rewritten is no lo
 current count is in [`../../README.md`](../../README.md) and in `AGENTS.md` §3, and this line is
 the pointer to them.)*
 
+*(Amended 2026-10-24: the current tree has **thirteen** crates after ADR-039 removed
+`epsilon-desktop`. The heading is historical; `AGENTS.md` §3 is the live map.)*
+
 **Decision.** epsilon-{contracts,llm,session,core,tools,safety,ext,mcp,lsp,tui,server,cli};
 
 *Amendment (M79):* `epsilon-lsp` joins as the twelfth member (see the ADR-014 amendment below).
@@ -862,6 +871,16 @@ credentials** — client ids are env-or-config and never another project's regis
 picker's auth detection is still "is a credential usable", never a value shown on screen. The
 label at the top of this ADR is therefore stale: auth here is no longer env-var-only.
 
+**Amendment (2026-10-24, Pi parity).** Pi 1.3.0 stores the same
+`~/.pi/agent/auth.json` plaintext credential file with mode `0o600`
+(`packages/coding-agent/src/core/auth-storage.ts`, `AUTH_FILE_WRITE_OPTIONS`) and
+creates the agent directory with mode `0o700`; it does not use an OS keyring for
+that file. Epsilon's store is therefore reference-parity, not a missing port, and
+is stronger in one respect: it writes through a temporary file and rename rather
+than truncating in place. The OS-keyring backend remains optional hardening. If
+it is added, it needs its own ADR, migration path and tests; it is not a blocker
+for Pi-parity release.
+
 *Precedence.* ADR-012's own M12 amendment already recorded the model precedence as
 `--model` flag > project config > global saved > default, and the CLI has implemented exactly
 that since M12: `crates/epsilon-cli/src/main.rs` resolves the candidate as
@@ -916,12 +935,12 @@ own route — its "desktop" is an Electron shell that spawns a Node child runnin
 web profile and points a `BrowserWindow` at it over HTTP. We are taking DSH's *workflow*, not
 its *carrier*.
 
-> **Citation corrected 2026-10-03.** This paragraph originally cited
-> `references/deepseek-harness-dsh-v0.2.0-rc.1/apps/desktop/src/main.ts:408,421`. That version
-> is **not vendored** — `references/` holds only `deepseek-harness-dsh-v0.2.1-alpha.1` — so a
-> reader could not open the line. The claim is unchanged; the evidence now points at the tree
+> **Citation corrected 2026-10-03, re-pointed 2026-10-18.** This paragraph originally cited
+> `references/deepseek-harness-dsh-v0.2.0-rc.1/apps/desktop/src/main.ts:408,421`. That exact
+> revision is **not vendored** — the tree here is `deepseek-harness-dsh-v0.2.1-rc.2` — so a
+> reader could not open the line. The claim is unchanged; the evidence points at the tree
 > that is actually here:
-> `references/deepseek-harness-dsh-v0.2.1-alpha.1/apps/desktop/src/host-process.ts:189`
+> `references/deepseek-harness-dsh-v0.2.1-rc.2/apps/desktop/src/host-process.ts:189`
 > (the shell spawns a Node child running the Desktop Host),
 > `apps/desktop-host/src/index.ts:103-104` (that child serves on `http://127.0.0.1:<port>` and
 > reports the URL over IPC), `apps/desktop/src/main.ts:450-452` (the shell keeps it as
@@ -1605,7 +1624,7 @@ each alters what a user sees.
 - **ADR-006 amendment (M203) — a goal is a session-log fact, and its activation is not durable.** One long-running objective per session, ported from DSH's goal domain: every mutation appends a complete post-mutation snapshot (or a revisioned tombstone) as a new `EntryKind::Goal` entry, and the current goal is a fold over those entries in file order — the same shape `labels()` already had, and for the same reason (the log is the only authority, so a restart, a fork and a resume need no migration and "what was the objective" has one answer). Three of DSH's rules are kept verbatim because each one is a failure the naive version has: **compare-and-set** on `{id, revision}`, so a model tool call that read the goal ten calls ago cannot overwrite a change the user made in between (a `/goal` command carries no ref, because the user is looking at the goal); **process-local activation**, so a durable `active` goal does not arm a process that has not asked — the permission to work unattended must not survive a restart, since the person who granted it is not necessarily the person who opens the session next; and **one current goal**, replaceable only when the current one is terminal, which is what stops `/goal` being a command a user has to undo before it works again. Two rules are relaxed deliberately and recorded: a `Set` whose revision does not follow the previous one is applied rather than refused (refusing to derive state because a number skipped turns a writer's bug into an unreadable view, and the compare-and-set still guards every mutation), and the goal is not scoped to the active branch (navigating a branch rewinds a conversation, not an objective). `GoalError::NoStore` is Epsilon's own: DSH's goal service always has a session log, and this harness has frontends without one, where "no goal is set" would tell a user their objective is unset when nothing they type could ever set it.
 - **ADR-008 amendment (M203) — the objective rides the CONTEXT tier, and no goal changes a byte.** A set goal is rendered as `<session_goal>` at the *end* of the CONTEXT tier: it changes when someone changes the goal, which is rare, so it belongs in the tier whose contract is "stable while the thing it describes is unchanged" rather than in the volatile tier, where it would move the byte boundary a provider's prompt cache keys on for a value that did not. Only the objective's words are rendered — no id, no revision, no round counter, because a number that moves every round would rewrite that prefix every round; the model has `get_goal` for those. And because the block is emitted only when a goal exists, a session without one produces a prompt byte-identical to what every earlier build produced: the STABLE fingerprint is untouched, so this feature cannot cost a cached prefix.
 - **ADR-011 amendment (M204) — the frontend owns the round driver, and five conditions decide.** Continuing a goal between turns is a *frontend* behaviour, not a loop change: the TUI watches its own turn ends and calls `Agent::goal_begin_round`, which is the same division DSH draws between its goal domain and `goal-round-driver`. The loop (ADR-002) is untouched. Five conditions, each one a way the harness could otherwise do something the person in front of it did not ask for: the goal is continuable — **re-read from the log at the decision**, so a `complete` from a tool during the turn stops the loop on the same frame; nothing is in flight and no permission ask is parked; **the composer is empty**, because a user mid-sentence has not asked for another round and starting one would race their Enter (the round is held, not lost); and the run produced at least one message, because a provider failure produces none and repeating it would spend the whole budget on a loop that cannot progress. Two rules keep the driver from fighting the user: **an abort disarms** (Esc withdraws the permission to continue, leaving the durable goal intact — and the disarm hangs on the *request*, not on whether a cancel token happened to be live, which is both the honest rule and what makes the branch testable through the real key handler), and **creating or resuming a goal starts its first round**, because a goal that parked an objective and sat there is a note rather than work. The continuation is one ordinary user-role message: it is logged and echoed like a typed turn, and deliberately *not* put through the composer's submit path, which would offer it back through Up-arrow and write it to the global prompt-history file.
-- **ADR-012 amendment (2026-09-29, decision only; plan 019) — one reader of `config.toml`, and parsed values cross the seam.** A12 measured the same rule written twice in crates that cannot see each other: `global_dir()` exists byte-for-byte identically in `epsilon-core/src/config.rs:37` and `epsilon-llm/src/auth.rs`, and three separate readers parse one global `config.toml` (`core::config` for `[tui]`/model/recents, `epsilon-llm::custom` for `[provider_custom]` — which is why `epsilon-llm` carries a `toml` dependency at all — and `oauth_login` for `[oauth.<provider>] client_id`). Two copies of one rule cannot disagree visibly, which is this repository's D-class: a path rule that changes in one place and not the other produces a config file one crate reads and another cannot find, with no error anywhere. **The obvious fix is blocked by law rather than by taste**: `epsilon-llm` may not depend on `epsilon-core` (the DAG runs core → llm), `epsilon-contracts` is types-and-traits-only with zero behaviour, and a new crate needs an ADR to hold one function. So the decision is the inversion this repository already uses twice — `register_builtins_with_skills` (the frontend discovers, the crate receives) and `ToolContext::task_host` (the crate asks, the owner answers): **`epsilon-core::config` is the only reader; everything a lower crate needs arrives as a value.** The credential store takes its directory as a parameter rather than resolving it; custom providers arrive as parsed rows, with `CustomProvider::from_config` (already pure) as the seam and `toml` leaving `epsilon-llm`'s manifest; OAuth client ids arrive as values; and the project-config parse moves next to the trust hash so "what the hash covers" and "what the settings are" cannot drift. No new crate, no behaviour in contracts, no config cache — a cache would add an invalidation question (`/reload` exists) that nobody has asked. Execution order, per-step evidence and limits: [`docs/plans/019-one-config-reader.md`](../plans/019-one-config-reader.md).- **ADR-D01 (deferred): WASM extension sandbox.** Revisit if process-isolation overhead ever
+- **ADR-012 amendment (2026-09-29, decision only; plan 019) — one reader of `config.toml`, and parsed values cross the seam.** A12 measured the same rule written twice in crates that cannot see each other: `global_dir()` exists byte-for-byte identically in `epsilon-core/src/config.rs:37` and `epsilon-llm/src/auth.rs`, and three separate readers parse one global `config.toml` (`core::config` for `[tui]`/model/recents, `epsilon-llm::custom` for `[provider_custom]` — which is why `epsilon-llm` carries a `toml` dependency at all — and `oauth_login` for `[oauth.<provider>] client_id`). Two copies of one rule cannot disagree visibly, which is this repository's D-class: a path rule that changes in one place and not the other produces a config file one crate reads and another cannot find, with no error anywhere. **The obvious fix is blocked by law rather than by taste**: `epsilon-llm` may not depend on `epsilon-core` (the DAG runs core → llm), `epsilon-contracts` is types-and-traits-only with zero behaviour, and a new crate needs an ADR to hold one function. So the decision is the inversion this repository already uses twice — `register_builtins_with_skills` (the frontend discovers, the crate receives) and `ToolContext::task_host` (the crate asks, the owner answers): **`epsilon-core::config` is the only reader; everything a lower crate needs arrives as a value.** The credential store takes its directory as a parameter rather than resolving it; custom providers arrive as parsed rows, with `CustomProvider::from_config` (already pure) as the seam and `toml` leaving `epsilon-llm`'s manifest; OAuth client ids arrive as values; and the project-config parse moves next to the trust hash so "what the hash covers" and "what the settings are" cannot drift. No new crate, no behaviour in contracts, no config cache — a cache would add an invalidation question (`/reload` exists) that nobody has asked. Execution order, per-step evidence and limits: `docs/plans/019-one-config-reader.md`.- **ADR-D01 (deferred): WASM extension sandbox.** Revisit if process-isolation overhead ever
   matters or component model stabilizes further.
 - **ADR-D02 (deferred): Windows ACL restricted-token confinement backend.** Post-v1; requires
   dedicated security review; job-object limits ship meanwhile.
@@ -2018,7 +2037,7 @@ The palette no longer shows a key for "Connect provider", because there is not o
 **What this ADR does not do.** It does **not** move the registry into `epsilon-contracts`. The
 larger unification — one `REGISTRY` table with per-frontend capability declared as data,
 replacing `COMMAND_HEADS`, `ALIAS_HEADS`, `SLASH_ITEMS`, `DEFAULTS`, `SUPPORTED` and `head_of` — is
-designed and recorded in [`docs/STATUS.md`](../STATUS.md) and is **not implemented**. This ADR
+designed and recorded in [`docs/STATUS.md`](../04-STATUS.md) and is **not implemented**. This ADR
 fixes the two lies that are user-visible today, without the 350-line move that carries the most
 risk. The invariant in `AGENTS.md` §2.4 stands; this is a step toward it, not its completion.
 
@@ -2888,9 +2907,9 @@ a twenty-row body, the composer took row 21, and **seventeen blank body rows** s
 newest text and the input — while an answer streamed in, it arrived as far from the composer as
 the screen allows. pi does the same thing by construction — its `ScrollView` computes
 `maxScrollTop = max(0, contentHeight - viewportHeight)`
-([`references/pi-1.0.0/packages/tui/src/components/scroll-view.ts:129`](../../references/pi-1.0.0/packages/tui/src/components/scroll-view.ts))
+([`references/pi-1.3.0/packages/tui/src/components/scroll-view.ts:129`](../../references/pi-1.3.0/packages/tui/src/components/scroll-view.ts))
 so short content parks at offset 0, and the fixed input dock is a separate `VStack`
-([`chat-viewport.ts:31-45`](../../references/pi-1.0.0/packages/coding-agent/src/modes/interactive/chat-viewport.ts)).
+([`chat-viewport.ts:31-45`](../../references/pi-1.3.0/packages/coding-agent/src/modes/interactive/chat-viewport.ts)).
 Epsilon is a port of pi, so matching it was the default — **and the default was the defect here,
 because our two front ends disagreed**: the desktop follows its tail through egui's
 `ScrollArea::stick_to_bottom`
@@ -3117,8 +3136,8 @@ agent, mouse, palette) that meets or beats the reference UX on hardware the proj
 
 **Decision: remove `crates/epsilon-desktop` and everything that exists only for it.**
 The crate is deleted; the workspace no longer members it; the `eframe`/`egui` pins leave
-with it (no remaining crate reads them). `docs/parity/dsh-desktop.md` is retired, not
-deleted: it keeps its rows frozen as history under a RETIRED banner, and the parity gates
+with it (no remaining crate reads them). The DSH desktop matrix was removed with the
+documentation consolidation on 2026-10-18; the parity gates
 (`check-parity-citations`, `check-citation-placement`, `check-parity-counts`) read the live
 `pi-tui.md` matrix only. `check-verb-counts` stays a leg and guards the removal itself —
 it fails if the crate, the member entry, the GUI pins, or the retirement banner go missing
@@ -3192,7 +3211,7 @@ directions at once.
 per-minute limit) and a phrase naming the **account** is a bill (backoff never puts
 money in). pi resolves the collision the same way — its non-retryable pattern is
 tested first and `"429 quota exceeded"` is pinned non-retryable
-(`references/pi-1.0.0/packages/ai/src/utils/retry.ts:246-251`,
+(`references/pi-1.3.0/packages/ai/src/utils/retry.ts:246-251`,
 `test/retry.test.ts:80-86`); this ADR records that we follow the precedence, not the
 literal spelling.
 
@@ -3222,7 +3241,7 @@ thinking — Anthropic (`output_tokens_details.thinking_tokens`), Chat Completio
 (`output_tokens_details.reasoning_tokens`), Gemini (`thoughtsTokenCount`) — and
 we threw the split away: every `Usage` carried input/output/cache with no record
 of which output was reasoning. Pi keeps it as `Usage.reasoning`
-(`references/pi-1.0.0/packages/ai/src/types.ts:427-448`): *"a subset of
+(`references/pi-1.3.0/packages/ai/src/types.ts:427-448`): *"a subset of
 `output`: `output` already includes these tokens. Set to a number (possibly 0)
 by providers that expose a reasoning breakdown; left undefined by providers
 that don't."* The wire disagreements that matter: Completions/Responses/Anthropic
@@ -4558,3 +4577,1011 @@ said).
 **Revisit trigger.** A real server proves `publish_timeout` wrong for
 queries (slow indexers marking broken on every cold query) — then the
 timeout, not the multiplex, is the behaviour being changed.
+
+---
+
+## ADR-058: Project-wide diagnostics sweep on write/edit success
+
+**Status: accepted (behaviour change, 2026-10-17).**
+
+**The problem.** A write/edit note that reports only the touched file
+(`crates/epsilon-tools/src/files.rs` `diagnostics_note`) stays silent
+while the edit breaks a dependent the model cannot see. opencode's
+write surfaces up to 5 other broken files alongside the touched one
+(`references/opencode-1.18.34/packages/opencode/src/tool/write.ts:74-90`);
+this harness reports the touched file and stops (gap analysis #13/SMALL).
+
+**Decision: a capped sweep through the existing one-method seam.**
+
+- *Sweep (`crates/epsilon-tools/src/files.rs` `project_sweep`, beside
+  `diagnostics_note`).* The sweep composes `DiagnosticsProvider::
+  after_change` over the rest of the workspace — no new provider method,
+  the trait stays one method. Candidates come from the tool walker
+  (`crate::util::walk_files`), so ignore rules and caps match grep and
+  glob; unreadable files are skipped exactly like the touched file is.
+- *Shape.* The touched-file block keeps its exact format and stays
+  first. Past it, only when other files actually have errors: one header
+  (`LSP errors in N other file(s):`), one `relative/path: first line`
+  per file, at most `MAX_PROJECT_DIAGNOSTICS_FILES = 5` (the opencode
+  constant, `tool/write.ts:18`), then a `(+M more)` tail. A clean rest
+  of the project appends nothing — diagnostics silence stays the clean
+  contract — and a failed edit shows no sweep, because failure paths
+  return before the note is ever built.
+- *Deviation from opencode, stated.* opencode's edit surfaces only the
+  current file (`tool/edit.ts:196-211`); Epsilon sweeps on edit too,
+  because an edit breaks dependents as easily as a write and the
+  silent-when-clean guard keeps the noise equivalent. opencode reads one
+  cached map (`lsp.diagnostics()`); Epsilon pays one `after_change` per
+  QUERIED file, capped at 25 same-directory-first candidates with a scope
+  note when files go unchecked — the bound that keeps edits interactive
+  until the seam grows a cached project-diagnostics query.
+
+**Alternatives.** (a) A new provider method returning the whole project
+map — refused: the brief forbids expanding the seam, and the sweep
+composes from the existing surface. (b) opencode's per-file headers
+with a full block each — refused: five full blocks is noise where one
+line each carries the file and the error. (c) Sweeping on failure too —
+refused: a failed edit left no new bytes, and the error must stay about
+the failure.
+
+**Why best for Epsilon.** The smallest change that closes the gap: one
+private helper plus one constant, the walker the tools already own, the
+seam the tests already fake. No new dependency, no new trait method, the
+touched format untouched, the silence contract kept.
+
+**Deliberately NOT built:** extension filtering, import-graph relevance
+ordering, richer per-file detail in the sweep lines.
+
+**Amendment (integrator, same day).** The first cut bounded the DISPLAY
+(5 + count) but queried every walked file — one language-server
+roundtrip each (didOpen/didChange + publish wait), so an edit in a big
+workspace hung on hundreds of roundtrips. The sweep now queries at most
+25 candidates, same-directory first, and reports its scope when files go
+unchecked ("sweep checked the nearest 25 of N files"); silence still
+means "nothing found in scope". The model-metadata and cached-map
+upgrades stay future work per the trigger below.
+
+**Revisit trigger.** Measured per-edit latency on a real server (then
+the seam grows a cached project-diagnostics query and the O(N) loop
+goes); or a same-directory ordering miss that an import graph would
+have caught (then relevance grows and the cap of 5 stays).
+
+---
+
+## ADR-059: Multi-file atomic `apply_patch` tool (opencode envelope, Epsilon transaction)
+
+**Status: accepted (behaviour change, 2026-10-17).**
+
+**The problem.** A multi-file change costs one approval per file and one
+round-trip per edit, and a patch that fails halfway leaves half a change
+behind. opencode answers with a single atomic envelope — one `patchText`
+with `Add`/`Update`/`Delete`/`Move` hunks, one permission ask, all files
+or none (`references/opencode-1.18.34/packages/opencode/src/tool/apply_patch.ts:38-53`,
+`:72-215`, `:217-258`) — which this harness lacks (the gap ADR-054
+explicitly deferred: "Deliberately NOT built: … apply_patch").
+
+**Decision: port the envelope verbatim, run it as a 5-phase Epsilon transaction.**
+
+- *Envelope (`crates/epsilon-tools/src/apply_patch.rs`, `descriptions/apply_patch.txt`).*
+  `*** Begin Patch` … `*** End Patch` with `*** Add File:` / `*** Update File:`
+  (optional `*** Move to:`) / `*** Delete File:` headers and `@@` hunks of
+  ` ` / `-` / `+` lines plus `*** End of File`, parsed per opencode
+  `patch/index.ts:70-241` including the blank-line-merges-chunks shape its
+  "missing second chunk context" test pins. Unified-diff input and heredoc
+  wrappers are refused with text naming the envelope (opencode silently
+  strips heredocs, `patch/index.ts:176-183` — here that guess is refused);
+  unknown `***` headers fail with a 1-based line offset.
+- *Matching: Exact + LineTrimmed + WhitespaceNormalized only, forward from
+  the previous hunk, no cross-file uniqueness.* opencode tries exact,
+  rstrip, trim, Unicode-normalized (`patch/index.ts:460-484`); the Unicode
+  stage (fancy quotes/dashes) is dropped — a guess about punctuation is
+  not a paste artifact — and the whitespace stage collapses runs (Epsilon's
+  `edit` already owns that shape). `@@` context seeks first, `*** End of
+  File` anchors from the end, pure-`+` chunks append, identical old/new
+  refuses. Duplicates with distinct context both apply; paraphrase fails.
+- *Transaction.* Parse → verify everything in memory (a bad file B leaves
+  file A byte- and mtime-identical) → checkpoint N pre-images with
+  `tool="apply_patch"` (one turn anchor covers N entries — no new anchor
+  type) → apply under a new global patch mutex (`mutation.rs`
+  `with_patch_mutex`; per-path queues would interleave disjoint patches)
+  amending each post-image as its bytes land → advisory diagnostics. Any
+  write failure rolls back through the existing `restore()`, disclosing
+  per file `restored <path>` or why it could not be.
+- *Approval: one.* Capability `edit`, pattern the sorted comma-joined
+  relpaths (a `gate_subject` multi-path arm whose four `***` prefixes must
+  stay identical to the parser's), `resource_key` `None` (the planner keeps
+  its barrier), preview the concatenated per-file unified diffs capped
+  through `truncate_output` (`None` when unverifiable). Output is `A`/`M`/`D`
+  summary lines with fuzzy-strategy notes plus the full diff, spilled with
+  a locator when capped.
+- *Guards.* Oversize/binary/outside-workspace/stale refuse exactly like
+  `write`/`edit` (same `read_text_for_edit`, `resolve_or_refuse`,
+  `read_log::verify` calls); moves check the destination under the write
+  rule when it exists.
+
+**Alternatives.** (a) The full opencode matcher incl. Unicode punctuation:
+refused — the three kept stages are paste artifacts, the fourth is
+authorship. (b) Per-path queues instead of a global mutex: refused — two
+patches to disjoint files would interleave mid-transaction. (c) A new
+checkpoint anchor type per patch: refused — the turn range already covers
+N entries, and a second anchor vocabulary is a second undo to teach.
+
+**Why best for Epsilon.** The envelope is the model's already-learned
+surface (verbatim grammar, opencode's own edge shapes pinned by ported
+tests); everything behind it is an existing seam — matcher family,
+unified diff, truncate+spill, checkpoints+`restore()`, the `edit`
+capability. No new crate, no new dep, no new anchor, no new capability.
+
+**Deliberately NOT built:** heredoc acceptance, unified-diff acceptance,
+the Unicode-punctuation match stage, model-conditional registry swapping
+(opencode shows `apply_patch` *instead of* `edit`/`write` for GPT models;
+here all three register — model gating is a catalog decision with its own
+ADR, not a quiet swap), formatting/LSP touch-and-refresh on apply (the
+diagnostics ride advisory-only through the existing provider seam).
+
+**Revisit trigger.** A model family that cannot write the envelope
+reliably (then the registry question — not the grammar — reopens with
+measured format-compliance rates); or patches large enough that per-file
+queues plus a two-phase commit beat one global mutex (then the mutex —
+not the phase order — changes, with contention numbers).
+
+## ADR-060: The project explorer is the default IDE layout, with visibility separate from focus
+
+**Status: accepted (behaviour change, 2026-10-17).**
+
+**The problem.** The terminal was described as an IDE, but the workspace tree
+started hidden behind F6 (`tree_open: false`) and the single flag meant both
+"paint the panel" and "own every keystroke". A user could not see the project and
+type into the composer at the same time; making the tree default-visible without
+splitting the flag would have swallowed the first character of every prompt.
+
+**Decision.** One docked explorer, open from the first frame, with two state
+bits. `tree_open` paints; `tree_focused` routes keys. The run loop calls
+`App::show_explorer()` (visible, not focused). `layout::Explorer` owns the
+right-hand split: 24–38 columns, 30% preferred, one gutter column, and the
+workspace keeps its 44-column floor. Below that floor a *focused* explorer is a
+band between the header and footer — it never squeezes the transcript and never
+covers the hint row. `F6` focuses a resting explorer and hides a focused one;
+`Esc` returns focus without closing it. `tree::draw_tree` uses the shared
+`overlay::Panel`, theme fold glyphs, a selection bar, display-width truncation
+and a measured scroll viewport. The title names the live `F6` chord.
+
+**Consequences.** Opening a file no longer closes the explorer: the viewer takes
+the keyboard and the project map stays visible. `overlay_open` asks about focus,
+not visibility, so a docked tree does not disable composer hints. A narrow
+window hides a resting tree until F6 focuses it.
+
+**Revisit trigger.** A user-model test shows the docked panel costs more
+transcript than it returns at 80 columns, or a persisted collapse/width model is
+requested; then the split width moves into config, not into a second layout path.
+
+## ADR-061: Settings writes refuse corruption, publish atomically, and re-record the app's own trust hash
+
+**Status: accepted (data-loss and correctness fix, 2026-10-17).**
+
+**The problem.** Every `config.toml` writer read with
+`.ok().and_then(parse).unwrap_or_default()` and then `fs::write`. One typo plus a
+model switch replaced the user's custom providers, OAuth client ids, skill roots
+and favourites with a one-key file. The write was also unlocked and non-atomic.
+Separately, model/thinking/preset/plan writes go into the trust-hashed project
+config; the app's own edit invalidated the hash, so the next launch held every
+submit for a review of Epsilon's change.
+
+**Decision.** `epsilon-core::config::read_config_table` treats a missing file as
+empty and a present-but-unparsable one as an error that names the path and leaves
+the bytes alone. `write_config_atomic` stages and renames. Every TOML writer uses
+both. After a successful project write, `App::record_own_project_write` records
+the hash of the exact file on disk in `.epsilon/trust.json`; the launch path and
+external edits are unchanged. A corrupt global `trust.json` is likewise never
+overwritten (TUI store).
+
+**Deliberately not done.** Full YAML/TOML comment preservation (`toml::Table`
+reorders keys and drops comments) and a cross-process config lock. Both are real
+next steps, but neither is allowed to delay refusing a destructive write.
+
+**Revisit trigger.** Concurrent frontends measurably lose updates, or users need
+comments preserved; then a locked `toml_edit` writer replaces the helper behind
+the same two functions.
+
+## ADR-062: Skill compatibility roots, exact body files, and precedence
+
+**Status: accepted (compatibility fix, 2026-10-17).**
+
+**Decision.** Add Pi's global `~/.pi/agent/skills` (honouring
+`PI_CODING_AGENT_DIR`), DSH's `DSH_HOME`/`DSH_AGENTS_HOME`, and opencode's
+singular `.opencode/skill`. Epsilon's own roots are **last**, so a skill written
+for this harness wins a name clash; DSH's project-dsh precedes project-agents.
+`Skill` and `LoadableSkill` carry the resolved body `file`, and the loader no
+longer guesses between `<root>/SKILL.md` and `<root>/<name>.md` (a root-level
+`SKILL.md` used to make every flat skill load the wrong body). Frontmatter
+handles BOM, CRLF, quotes and block scalars, counts descriptions in characters,
+and `.system` children are skipped. Recursion below a root remains deliberately
+out of scope and is documented as a divergence from Pi/opencode.
+
+## ADR-063: Live tool replacement, once-only delegated usage, and a persisted explorer
+
+**Status: accepted (correctness and UX fixes, 2026-10-17).**
+
+**The problem.** Three reload/lifecycle surfaces lied. `/reload` updated
+`agent.set_skills` but not the already-built `skill` tool, so the next catalog
+advertised a skill the tool still refused until restart; `/skill off` had the
+same split. A background `task` status poll returned the child's last usage
+every time, so the parent billed it once per poll. And F6 hid the explorer for
+one process only, so the IDE layout reset on every launch.
+
+**Decision.** `ToolRegistry` holds its map behind an `RwLock`; `register(&mut
+self)` remains for composition, while `insert`/`remove` work on the shared
+registry. `Agent::replace_tool`/`remove_tool` expose that to the reload path, and
+`epsilon_runtime::sync_skill_tool` is the one filter for model-invocable,
+enabled skills; it removes the tool when nothing is loadable. `TaskEntry` carries
+`usage_reported`; `TaskHost::take_task_usage` returns the spend once and sets the
+bit, while `TaskSnapshot::usage` still feeds display. `[tui] explorer` is read at
+launch and written only when visibility changes, not on focus changes.
+
+**Deliberately not done.** The registry swap is not a general plugin-hot-reload
+framework: only the skill tool has a reason to change today. Background usage is
+folded through a weak self-handle when the child settles, so it no longer waits
+for a poll; a parent that has already been dropped leaves the numbers on the
+snapshot for a later rehydrate.
+
+**Revisit trigger.** A tool whose data changes on a timer or a file watch needs
+the same seam and a generation counter; or a background child must report
+partial usage mid-run rather than only at settlement.
+
+## ADR-064: Test fixtures own a config root
+
+**Status: accepted (test-isolation fix, 2026-10-17).**
+
+`TUI` tests adapted the product by writing its real global state: prompt
+history, trust decisions and favourites accumulated on the developer machine,
+and frame tests inherited ambient `[thinking]` values. The fixture now sets
+`config_dir_override` to a temporary directory and keeps it for the fixture's
+lifetime; tests that assert production resolver order clear the override
+explicitly. This is the first step of the larger rule in AGENTS §7; the
+remaining ambient reads in `App::new` are recorded in STATUS.
+## ADR-065: Diagnostics read trust; they do not record it
+
+**Status: accepted (2026-10-17).**
+
+`epsilon doctor` called the writeful `load_project_config` twice. The first call
+recorded first sight; the second then saw a hash with no remembered entry and
+reported `Changed`, so a first-run workspace looked untrusted and the next launch
+prompted. `read_project_config` is now the read-only sibling: same parse, same
+decision table, no write. The launch path keeps `load_project_config` and its
+first-sight recording. Both the project-hash file and the global per-path store
+refuse to overwrite a present-but-unparsable file; a corrupt store is evidence,
+not an empty map.
+## ADR-066: Pick a model from a list that says how old it is
+
+**Status: accepted (2026-10-17).**
+
+The stage-2 model picker listed a live provider's models without its
+`live: provider (age)` line, while `/catalog` had shown that line since ADR-047;
+the ADR and the `LiveCacheEntry::from_cache` comment both claimed the picker
+footer carried it. The contract was false on the surface where a reader chooses
+a model. The stage-2 panel now renders the shared `picker::live_status` line
+above its hints and reserves a row for it.
+
+Opening `/models` now highlights the current model's provider when that provider
+has a live listing, so the "opening refreshes" promise on `/catalog` refreshes
+the provider it names. A provider without a listing endpoint (faux, local) leaves
+the cursor at row 0, where no fetch is promised.
+
+`--list-models` gained the same truth in the other direction: it prints
+`CATALOG_SNAPSHOT_DATE`, and a stored credential reads `key (stored)` instead of
+`(set ENV_VAR)`. It asks `row_credentials_ready`, the same predicate the picker
+and doctor use.
+## ADR-067: Credential edge cases fail open for reading, closed for writing
+
+**Status: accepted (2026-10-17).**
+
+Four credential paths disagreed about what "a stored key" means.
+
+- `auto_real` scanned `std::env::var_os` directly for a fallback, so a provider
+  logged in through `epsilon auth login` was invisible when no model was saved:
+  `epsilon` started faux and `--provider real` failed. It now uses
+  `suggested_ready_model`, the same stored-then-env predicate the picker and
+  doctor use.
+- `resolve_api_key` returned early when no home directory resolved, which
+  disabled the documented env fallback in CI. The store directory is now
+  optional; the env lookup runs either way.
+- A successful OAuth exchange followed by a failed store write re-read the old
+  expired token and failed the request. The refresh path returns the fresh
+  access token to the in-flight request even when the rotated pair could not be
+  persisted; the next launch may need a re-login, which is the honest cost of a
+  read-only config directory.
+- `auth.json` was parsed as one map. One malformed entry made every provider look
+  logged out. Reads now keep the valid entries; writes still refuse to overwrite
+  a file that is present but unparsable.
+
+The live-refresh notice and hints also name the bound key (`Ctrl+G` by default)
+rather than the neighboring favourite key.
+## ADR-068: The picker marks the default the launch resolved
+
+**Status: accepted (2026-10-17).**
+
+`TuiConfig::default_model` now carries `project [model] id` when present, else
+the global value, from the same `SharedRun` composition already used by
+`resolve_launch`. `App::new` still loads the global key as a fallback for tests
+and bare construction, but the run loop overwrites the mirror before the first
+frame. A workspace that saved its own default no longer sees a different model
+flagged in the picker while the header names the project's model.
+## ADR-069: An untrusted project cannot set permission policy
+
+**Status: accepted (security fix, 2026-10-17).**
+
+`build_runtime` gated skills, extensions and MCP servers on `project_trusted`,
+but it passed the project's `[[rules]]` to the permission engine and its
+`[permissions] preset` to the preset resolver unconditionally. A repository the
+user had explicitly refused could therefore add an `allow` rule or select
+`danger-full-access`. The trust decision now drops both and emits one notice
+naming what was ignored. Model, thinking and plan values still apply: a model
+choice is not a policy grant, and plan mode only restricts. The preset resolver
+receives `None` for the project tier when untrusted, so a global or flag value
+still wins normally.
+## ADR-070: Re-billed cache tokens carry their own model price
+
+**Status: accepted (2026-10-17).**
+
+`CacheStats::rebilled_cost_micro` summed every re-billed token in the session
+and multiplied it by `calls.last().model`'s input rate. That is the exact defect
+`breakdown_per_model` exists to prevent on the cost screen, repeated one layer
+down: a session that ran cheap then expensive charged the early tokens at the
+late rate. The method now walks the calls, prices each `ReBilled { tokens }`
+against its own model row, and returns `None` if any of them is unknown — a
+partial sum would understate the bill. The token total stays session-wide.
+## ADR-071: One trust store, owned by composition
+
+**Status: accepted (code-quality and correctness dedup, 2026-10-17).**
+
+`epsilon-tui/src/trust_store.rs` was a full second implementation of the
+per-path trust store that `epsilon-runtime` already owns for the launch-time
+decision. The two had drifted: the TUI copy sorted keys through `BTreeMap`
+insertion and refused corrupt files, while the runtime copy sorted explicitly
+and (before this round) replaced them. `epsilon-tui` already depends on
+`epsilon-runtime`, so the module is now a re-export. The runtime implementation
+keeps the no-clobber rule and gained the TUI copy's inheritance/child-override/
+sorted-key tests. This removes a second writer of one security-sensitive file.
+## ADR-072: An empty directory is a visible row in the project explorer
+
+**Status: accepted (2026-10-17).**
+
+The explorer built its directory rows from file paths: every directory was a
+prefix of some file. An empty directory therefore had no row at all, and a
+freshly created folder looked like it did not exist until something was written
+into it. `epsilon_core::walk::walk_paths` now returns files and directories from
+one traversal with the same `IgnoreSet`, hidden-directory and link rules;
+`build_visible_rows_with_dirs` accepts the explicit directory list. One row
+budget covers both kinds, so a huge tree still truncates predictably, and hidden
+directories remain excluded exactly as the tool walk excludes them.
+## ADR-073: One money formatter
+
+**Status: accepted (2026-10-17).**
+
+`/session` printed its cache re-bill estimate with `cache_stats::fmt_cost`
+(four decimals, always), while the header printed the same session's cost with
+`ui::format::format_cost` (adaptive 4/3/2/0 decimals). The cache report named
+`$0.0120` three lines after the cost line named `$0.012`. The adaptive rule is
+the better one and now lives in `epsilon_core::cache_stats::format_cost_micro`;
+the TUI formatter delegates to it. Integer micro-USD remains the stored unit.
+## ADR-074: Collapsed explorer directories are per-workspace state
+
+**Status: accepted (2026-10-17).**
+
+The explorer remembered whether it was open but not which directories were
+collapsed, so every launch re-opened the whole tree. The collapsed set now lives
+under `[tui.explorer_collapsed]`, keyed by the workspace path; values are
+workspace-relative, `/`-separated directory paths, capped at 200. It is written
+through `read_config_table` and `write_config_atomic`, refuses a corrupt config,
+and removes the entry when the last directory expands. A global flat list was
+rejected: collapsing `src` in one repository must not hide `src` in another.
+Width remains derived from the frame; there is no resize gesture to persist.
+## ADR-075: `-p` reports usage and cost on stderr
+
+**Status: accepted (2026-10-17).**
+
+The headless print mode ended at the assistant text, so a scripted operator
+could not see what the run consumed while the TUI and RPC modes both exposed it.
+After a successful run it now writes one stderr line:
+
+    tokens: 1,000 in / 500 out · cache 0 read / 0 write · cost $0.0004
+
+The price is summed from `session_usage_by_model` at each model's own catalog
+rates, using `cache_stats::usage_cost_micro`; an unknown model makes the total a
+floor (`$0.01+ (floor)`) or `unpriced`, never a smaller confident number. Stdout
+still contains only the assistant reply, so shell capture is unchanged. Zero
+usage prints nothing.
+## ADR-076: Storing a credential says it is plaintext
+
+**Status: accepted (2026-10-17).**
+
+The credential store still has no OS keyring (ADR-079 records the owner's
+accepted preview trade-off). What the command line could stop doing is implying
+otherwise: `auth login` now prints a stderr warning naming the plaintext file
+and the environment-variable alternative; `auth list` repeats the note; `--help`
+labels the file plaintext; `docs/user/auth.md` says it in a blockquote. The
+warning is deliberately on stderr so a script capturing the key path on stdout
+is unaffected, and it is emitted only after the save succeeds. This is honesty,
+not a security fix: file permissions and the atomic write are unchanged.
+## ADR-077: A custom provider prefix is routing, not part of the model name
+
+**Status: accepted (bug fix, 2026-10-17).**
+
+`[provider_custom.lmstudio]` declares an endpoint; the user selects
+`lmstudio/qwen2.5-7b-instruct`. The prefix belongs to local routing. The
+OpenAI-compatible wire sent the whole string as the request's `"model"`, so a
+correctly configured LM Studio (whose model is `qwen2.5-7b-instruct`) answered
+"unknown model". The Responses wire already stripped it; the chat-completions
+wire did not.
+
+`custom::wire_model_id` now strips only when the id is genuinely custom:
+`catalog::lookup_model` wins first, so OpenRouter's `vendor/model` ids, Bedrock
+ARNs, and a catalog row shadowed by a same-named custom declaration keep their
+slash. Both `DirectProvider::stream` and `try_stream_direct` call the one
+helper. The endpoint still receives the full id; only the request body's model
+name changes.
+## ADR-078: Live-only ids stay visible and unavailable
+
+**Status: accepted (deliberate scope decision, 2026-10-17).**
+
+A provider's `/models` answer carries an id and almost nothing else. Epsilon's
+routing and display need context window, max output, input/output/cache prices,
+tool support, vision support and a reasoning shape. The catalog supplies those;
+the live listing does not. Synthesizing them from a sibling row would make a
+model look selectable while the harness guesses its window and bills it at the
+wrong rates, and sending tools or images to a model that lacks them fails at
+request time.
+
+So a live id that is not in the catalog stays visible in `/models` with
+`[unavailable]` and is not selectable. That is the honest state: the provider
+has the model, this harness cannot route it correctly. The supported paths are
+a bundled catalog row or a `[provider_custom.<name>]` declaration, where the
+user supplies the endpoint and accepts responsibility for the model name.
+Revisit when the live overlay carries full metadata (Pi's `mergeModels`) or a
+provider publishes it; until then, routing is refused rather than guessed.
+## ADR-079: Plaintext credential storage is accepted for the preview
+
+**Status: accepted by owner instruction (2026-10-17).**
+
+AGENTS §6 previously called `auth.json` plaintext a known open violation and
+required an OS credential store before the objective could complete. The owner
+has accepted the trade-off for this preview: keys remain in
+`<config dir>/auth.json` with mode 0600 on Unix, a 0700 directory, an atomic
+rename, refusal of command-line keys, and a loud warning at login/list. This is
+deliberately **not** a release-grade secret store. The keyring migration stays
+the upgrade path and needs a new owner decision, a dependency (or platform
+credential API) and an existing-store migration; none is invented here. No
+other plaintext secret format may be added under this decision.
+
+**Amendment (2026-10-24, Pi parity).** Pi 1.3.0's
+`packages/coding-agent/src/core/auth-storage.ts` writes its own plaintext
+`agent/auth.json` with mode `0o600` and a `0o700` directory; it does not use an OS
+keyring for that file. Epsilon's store is therefore reference-parity and stronger
+in using a tempfile+rename. The keyring remains optional hardening, not a release
+blocker; "not a release-grade secret store" remains a warning, not a parity gap.
+
+## ADR-080: A dirty file-editor draft remains recoverable until saved or discarded
+
+**Status: accepted (TUI data-loss fix, 2026-10-19).**
+
+**Problem.** The viewer kept a dirty `edit_lines` buffer when Escape returned to
+view mode, but the view painted the original file. Re-entering edit mode reloaded
+those original lines, saving refused outside edit mode, and `Command::Quit`
+checked only whether an agent run was active
+(`crates/epsilon-tui/src/tree.rs:538-560,607-615,894-920`;
+`crates/epsilon-tui/src/app/session.rs:465-519`;
+`crates/epsilon-tui/src/app/commands.rs:2262-2281`). A normal quit could
+therefore discard the only copy of a file edit.
+
+**Decision.** One dirty-buffer rule applies across the editor and viewer:
+`start_edit` resumes an existing draft; view mode draws that draft and offers the
+bound save key; checkpoint-backed `save_viewer` accepts it from either mode.
+Ctrl+Q and `/quit` refuse while any viewer tab is dirty. The existing two-stage
+tab close remains the explicit discard path. Stale-file and checkpoint-failure
+guards keep the draft intact.
+
+**Alternatives.** Auto-saving on quit writes files without an explicit save
+action. Discarding on Escape would contradict the existing per-tab draft behavior.
+A second persistence format would duplicate the checkpoint store. Reusing the
+current buffer and checkpoint path is smaller and preserves the user's choice.
+
+**Evidence.** `viewer_dirty_buffer_remains_visible_reeditable_and_savable`
+asserts production frames at 80×24 and 100×30. The
+`quit_refuses_unsaved_viewer_edits_in_inactive_tabs` test checks the exit guard
+across tabs; `viewer_dirty_tab_arms_before_closing` keeps explicit discard covered.
+
+**Revisit trigger.** If users require drafts to survive process termination, add a
+durable draft format through a separate migration/retention decision, not silent
+autosave.
+
+## ADR-081: Esc-abort retains queued messages and the current composer draft
+
+**Status: accepted (input-preservation fix, 2026-10-19).**
+
+**Problem.** While a run streams, submits enter the steering queue
+(`crates/epsilon-tui/src/app.rs:1505-1512`). Esc previously drained that queue,
+restored only the last message's first text block, and overwrote the current
+composer draft. The regression test now pins two steering messages, a follow-up,
+an `@`-expanded message and a live draft together
+(`crates/epsilon-tui/src/app/tests.rs:11046-11162`). A TUI message can carry an
+`@`-reference expansion as a second text block
+(`crates/epsilon-core/src/references.rs:369-381`).
+
+**Decision.** Esc cancels the active run but does not dequeue steering or
+follow-up messages and does not replace the composer
+(`crates/epsilon-tui/src/app/keys.rs:2471-2480`). Unconsumed messages stay as
+their original `Message` values, so content blocks and order are not flattened.
+A notice states that the draft is kept and queued prompts remain pending. The
+next run follows the existing queue order: its explicit prompt is recorded
+first, then steering drains; follow-ups still run at the next natural stop
+(`crates/epsilon-core/src/run_.rs:170-176,292-324,736-742`). Alt+Q remains the
+explicit steering-to-editor action.
+
+**Alternatives.** Pi's TUI clears both queues and joins queued strings before
+the current editor text (`references/pi-1.3.0/packages/coding-agent/src/modes/interactive/interactive-mode.ts:4722-4734`,
+`references/pi-1.3.0/packages/coding-agent/src/modes/interactive/interactive-mode.ts:4756-4774`);
+Esc calls that path (`references/pi-1.3.0/packages/coding-agent/src/modes/interactive/interactive-mode.ts:3072-3075`).
+Epsilon's queued messages carry structured content, so keeping the core queue
+intact is the smaller lossless choice.
+
+**Evidence.** `abort_keeps_queued_steering_followups_and_the_current_draft`
+stages two steering messages, an `@` reference, a follow-up and a live draft,
+then aborts through the real key handler and checks the retained messages after
+the run ends.
+
+**Revisit trigger.** If users need to reorder or edit follow-ups in the TUI,
+add a dedicated queue view that preserves `Message` structure; do not flatten
+those entries into the composer.
+
+## ADR-082: The TUI file viewer reads a bounded preview
+
+**Status: accepted (resource-bound fix, 2026-10-19).**
+
+**Problem.** The pre-change `open_viewer` read the full file and materialized
+its lines before keeping only 2,000, so one long line bypassed the cap. The
+viewer opens synchronously from the tree and `/changes` key paths
+(`crates/epsilon-tui/src/app/keys.rs:1065-1080,1388-1397`). The bounded reader and
+one-line regression now pin the byte ceiling
+(`crates/epsilon-tui/src/tree.rs:475-529,1129-1170`).
+
+**Decision.** Read at most 256 KiB plus one probe byte, keep no more than
+2,000 lines, and mark either cut as a partial preview. A partial preview cannot
+enter edit mode; the frame and refusal name both limits. The standard library's
+`Read::take` is sufficient. The byte ceiling matches the model-facing read-page
+budget (`crates/epsilon-tools/src/util.rs:10-14`); no dependency or config knob
+is added.
+
+**Reference comparison.** DSH's `WorkspaceFiles.read` cuts one line window
+from a stream and stops after the requested page
+(`references/deepseek-harness-dsh-v0.2.1-rc.2/packages/api/workspace-files/src/index.ts:106-159`,
+`references/deepseek-harness-dsh-v0.2.1-rc.2/packages/api/workspace-files/src/index.ts:234-247`).
+Pi's read tool truncates only after `ops.readFile` has loaded and split the whole
+file (`references/pi-1.3.0/packages/coding-agent/src/core/tools/read.ts:153-177`),
+so that implementation is not a memory-bound preview pattern.
+
+**Known limit.** The viewer shows only the bounded prefix. Navigating to later
+byte/line windows is deferred; larger files remain available through an external
+editor.
+
+**Revisit trigger.** Users need to inspect later ranges in the IDE; then add
+windowed reads rather than raising the whole-file buffer limit.
+
+## ADR-083: Bundled skills are opt-in and install as ordinary SKILL.md files
+
+**Status: accepted (2026-10-23).**
+
+**Problem.** Epsilon shipped no skills of its own. The useful procedures lived
+in `.agents/skills/` for contributors and in the vendored references, so a user
+who installed the binary got no benefit from them unless they found and copied
+a directory. Adding a second "built-in" loader would have created two answers to
+"which skills exist" — the defect AGENTS.md §2.2 names.
+
+**Decision.** Twelve skills are compiled into the binary
+(`crates/epsilon-core/src/builtin_skills.rs` plus assets). They are **off** until
+`/skill <name> on` writes `<config>/builtin-skills/<name>/SKILL.md`, plus any
+files the body refers to (the `improve` skill carries three reference pages).
+From then on they are ordinary discovered skills: the same parser, catalog,
+`skill` tool, scope labels and `/reload`. `off` removes the copy only when every
+owned file equals the bundled text; an edited copy is the user's work and is left
+in place with a message, and a missing bundled file is repaired on the next
+enable. `/skills` lists every built-in with its description, why it is useful,
+its credit where it is adapted from an upstream MIT skill, and `[on]`/`[off]`,
+whether or not it is installed.
+
+**Why not an enable-list.** Discovered skills use a disable-list because an
+enable-list would silently disable a user's skills the day a config file gained
+a `[skills]` section. Built-ins start absent, so file presence *is* the opt-in
+state and there is no list to drift.
+
+**Evidence.** `builtin_skills::tests` covers discovery after install,
+idempotence, refusal to overwrite or remove an edited copy, and the
+nothing-installed default. `a_builtin_skill_is_off_until_enabled_and_off_again_after_disable`
+drives `/skills` and `/skill` through the real key handler and checks the frame,
+the installed file, the agent's skill list and the catalog. A separate
+`catalog_with_disabled` test pins that `/skill off` also removes the skill from
+the prompt, not only from the tool.
+
+**Revisit trigger.** If a skill must ship that cannot be a plain `SKILL.md`
+(needs a binary or a generated index), that is a new packaging decision, not a
+second loader added here.
+
+## ADR-084: REA is an optional, pinned MCP integration with a per-server deadline
+
+**Status: accepted (2026-10-23).**
+
+**Problem.** Epsilon can analyse source but not a stripped binary or a shipped
+Electron bundle. REA is a strong MIT-licensed MCP server for exactly that, but
+its package is an npm runtime dependency, its native analysis can outlast the
+120-second MCP call deadline, and the Windows launch needs a `cmd.exe` wrapper.
+Leaving those three facts to a copy-pasted config snippet produces integrations
+that fail in ways that look like harness bugs.
+
+**Decision.** `epsilon --rea` attaches `rea-agents@6.7.0` over stdio; the
+Windows wrapper and the 900-second deadline live in
+`epsilon-runtime::integrations`. An explicit `[[mcp_servers]]`/`--mcp` entry
+named `rea` wins, so the switch never registers a duplicate. `McpServerConfig` and
+`HttpServerConfig` gained an optional `timeout_secs` (default 120, valid 1–86,400)
+because the deadline is a property of the server, not of the transport.
+Attribution: REA by morluto, MIT, <https://github.com/morluto/rea>, documented in
+`docs/references/rea.md` and `docs/user/reverse-engineering.md`. No REA code or
+schema is vendored.
+
+**Security.** An MCP server is a child process outside the sandbox, gated by the
+same project-trust and permission rules as any other server. The documentation
+states that its output is untrusted input and that credentials never belong on
+the command line.
+
+**Evidence.** `integrations::tests` pins the package, the `mcp` subcommand, the
+platform command and the deadline. `timeout_secs_is_per_server_and_invalid_values_reject_the_entry`
+proves the timeout is per entry and that `0` is refused with a notice naming the
+entry.
+
+**Revisit trigger.** A new REA major version or a changed package runner is a
+deliberate version bump with a fresh check of its MCP contract; do not unpin it.
+
+## ADR-085: Installation is a source build through a checked installer
+
+**Status: accepted (2026-10-23).**
+
+**Problem.** The documented install was `cargo install --path crates/epsilon-cli`,
+which works but leaves the user to resolve the toolchain, a PATH entry, and (on
+this project's own machine) the in-tree build failure. A second platform-specific
+story would drift from the first.
+
+**Decision.** `install.ps1` (Windows) and `install.sh` (macOS/Linux) share one
+contract: verify Rust 1.88+, build with `cargo install --locked --force`, put
+`CARGO_TARGET_DIR` outside the checkout when it is unset, verify `epsilon
+--version` unless `--no-verify`, and print the exact install path plus the PATH
+line when it is missing. `--prefix`/`-Prefix` selects a root. There is no
+prebuilt artifact and no second install method.
+
+**Evidence.** Both scripts were run on this tree; the installed binary's version
+and the installer output are recorded in `docs/04-STATUS.md` for the round that
+installed it.
+
+**Revisit trigger.** A release artifact pipeline would replace the source build,
+not wrap it; that needs its own ADR.
+
+## ADR-086: The composer is a box, and assistant prose carries its own marker
+
+**Status: accepted (2026-10-23).**
+
+**Problem.** The composer was de-boxed deliberately: a prompt row and one rule
+above it, on the argument that a second frame would compete with the transcript.
+On a real 80×24 screen the result was a prompt that read as another line of
+output, and an assistant answer whose only role signal was a background band —
+which a 16-colour or `NO_COLOR` terminal does not draw. The screen was quiet, but
+the two surfaces a user acts on were the least marked.
+
+**Decision.** The composer is drawn as one box: the layout's existing gap row is
+the titled top border (`╭─ prompt ─╮`), the existing composer-rule row is the
+bottom, and the two side rails cost two columns of text width rather than two
+rows. The border uses `border_focus` while the composer owns the keyboard and
+`border` otherwise. Assistant prose always carries the assistant marker on its
+first row and the vertical rail on continuation rows; the user turn keeps its
+cursor bar and prompt glyph. Colour reinforces those glyphs but is no longer the
+only carrier.
+
+There is deliberately **no outer full-screen frame**. A second border around the
+whole terminal would nest two boxes around the same content, and the
+`ratatui-tui` review rule is one border between the terminal edge and content.
+The composer is the control, so it gets the box; overlays already draw their own;
+the transcript stays a rail-based reading surface.
+
+The footer's location label follows the same "identity survives" rule: it never
+prints the same ellipsis twice, and when `…\epsilon-tui` does not fit it shows the
+plain leaf rather than cutting the leaf to `…\silon-tui`. At 80 columns with the
+docked explorer the footer is about 55 cells, whose quarter is 13; the leaf is 11.
+
+**Evidence.** `the_composer_box_sits_between_the_transcript_and_the_footer`,
+`the_shell_shows_a_header_a_body_and_a_footer_at_every_supported_size`,
+`the_palette_matches_the_composer_width` and
+`the_composer_width_matches_what_the_composer_draws` assert the box and the
+caret/wrap contract on real frames. `an_answer_and_its_reasoning_are_distinguishable_on_a_real_frame_without_colour`
+asserts the marker in both the banded and bandless cases. The 80×24 and 100×30
+frames were rendered and read before the test changes.
+
+**Revisit trigger.** If a future layout removes the composer's reserved gap or
+rule rows, the box needs a different source of rows; do not spend a transcript
+row on it without a measured frame cost.
+
+## ADR-087: Built-in subagent roles are opt-in agent definitions
+
+**Status: accepted (2026-10-23).**
+
+**Problem.** Epsilon could delegate work with the `task` tool, but a fresh
+install had no agent definitions. The roles a parent most needs — explore,
+review, verify, implement — existed as prose in skills and as ad-hoc prompts, so
+every session re-derived them. Auto-loading four roles would change what the
+model may delegate without the user asking.
+
+**Decision.** Four subagent roles are compiled into the binary
+(`crates/epsilon-core/src/builtin_subagents.rs` plus assets). `/subagent` opens
+the browser with description, why, and `[on]`/`[off]`. `/subagent <name> on` writes
+an ordinary `<config>/builtin-agents/<name>.md`; discovery treats it exactly like a
+hand-written agent definition, and `epsilon-runtime::agent_user_roots` puts the
+built-in root before the user root so a user file of the same name wins. The
+child still passes the parent's permission gate; a tool not in the subagent
+role's subset is not offered at all, and a tool in the subset can still be
+refused. `off` removes only a pristine copy.
+
+The four roles are `explore` (read-only map), `review` (spec first, then
+quality), `verify` (run the project's checks and report), and `implement`
+(one scoped change with tests). They are not a second permission model and not a
+second composition point.
+
+**Evidence.** `builtin_subagents::tests` covers discovery after install, the tool
+subset round-trip, idempotence, the nothing-installed default and refusal to
+overwrite an edited file. `a_builtin_subagent_is_off_until_enabled_and_removed_again`
+drives `/subagent` through the real key handler and checks the frame, the file and
+`discover_agents`. `agent_user_roots` is covered by the runtime composition tests.
+
+**Revisit trigger.** A subagent role that needs a tool subset the registry cannot
+express, or a per-role permission policy, is a new design; do not add a
+parallel loader.
+
+## ADR-088: Quoted agent descriptions are a supported scalar
+
+**Status: accepted (2026-10-23).**
+
+**Problem.** Agent frontmatter was parsed with `split_once(':')` and the value
+kept verbatim. A bundled description containing `: ` therefore arrived at the
+task list with literal quote characters, so the model saw `"Read-only ..."` and
+the subagent test failed. The skills parser already stripped one matching pair;
+the agent parser did not.
+
+**Decision.** `name` and `description` values strip one matching pair of single
+or double quotes before they become an `AgentDef`. This is deliberately not a
+YAML parser: no escapes, no folded scalars, no type coercion. A value that needs
+more than quoting is a reason to write plain text, not to grow the parser.
+
+**Evidence.** `builtin_subagents::tests::every_subagent_renders_a_definition_discovery_accepts`
+asserts the description round-trips; the existing `discovers_parses_and_sorts`
+and `tools_list_spelling_and_project_shadow` tests keep unquoted and list forms
+working.
+
+## ADR-089: `/skills` and `/subagent` open a browser, not a transcript list
+
+**Status: accepted (2026-10-23).**
+
+**Problem.** The transcript listing was complete but it grew with every
+discovered skill: twelve built-ins plus a user's roots could be dozens of rows,
+each carrying its description and reason on one line. To compare two skills the
+reader scrolled the conversation away; the panel's detail was never in one
+place, and the command that changes a row was a separate paragraph below.
+
+**Decision.** Bare `/skills` and bare `/subagent` open a read-only browser panel.
+The browser holds a windowed list (state, name, purpose) and a detail block for
+the selected row: description, why, credit, scope and the exact writer command.
+`up`/`down`/`PageUp`/`PageDown`/`Home`/`End` move, `Enter` puts the selected
+writer command on the prompt (it does not run it), and `Esc` closes; `/skill` and
+`/subagent <name> on|off` remain the only writers. The panel is centred over the
+transcript and clears its band, like every other overlay. The old transcript
+listing is removed rather than kept as a second presentation.
+
+**Why read-only.** A panel that also wrote would be a second settings path, with
+its own reload and error handling. Keeping the command as the one writer means
+the browser can only show what the command layer already does, and the test for
+the browser is the test for the command.
+
+**Evidence.** `the_skills_listing_draws_the_scope_label_on_a_real_frame` selects
+a workspace skill and a home skill and asserts the scope in the frame;
+`a_clean_reload_still_lists_the_skills_and_says_nothing_about_them` selects
+discovered rows and reads their descriptions; `a_builtin_skill_is_off_until_enabled_and_off_again_after_disable`
+and the subagent twin close the browser with Esc before running the writer.
+`catalog::tests` pin selection bounds and the detail/action line.
+`the_frame_is_exactly_as_wide_as_asked` covers the shared panel geometry.
+
+**Revisit trigger.** If the browser needs filtering or writes, it needs a
+selection/filter model and a reload contract, not another ad-hoc overlay.
+
+## ADR-090: The delegated role is a subagent, not a harness
+
+**Status: accepted (2026-10-23).**
+
+**Problem.** The first built-in role browser used `/harness` and called each row a
+"harness". That collides with Epsilon's own definition of the word: the harness is
+the whole program that runs the model. It also diverges from DeepSeek Harness,
+the reference implementation that most directly shaped this delegation model.
+
+**Decision.** The built-in roles are **subagent roles**, the browser command is
+`/subagent` (with `/subagents` as the plural alias), and the toggle is
+`/subagent <name> on|off`. "Harness" is reserved for the program. The agent
+definitions still live under `<config>/builtin-agents/` because they are agent
+definitions; the directory is not a second role vocabulary.
+
+The reference behavior is in `references/deepseek-harness-dsh-v0.2.1-rc.2`: its
+delegation tool defaults to `toolName: 'subagent'`
+([`packages/subagent/tool-subagent/src/index.ts:82`](../../references/deepseek-harness-dsh-v0.2.1-rc.2/packages/subagent/tool-subagent/src/index.ts)),
+the child is described as a subagent
+([same file, line 129](../../references/deepseek-harness-dsh-v0.2.1-rc.2/packages/subagent/tool-subagent/src/index.ts)),
+and the UI package is `client/ui-subagent`. Epsilon adopts the vocabulary, not
+that code; its delegation tool remains `task`, and it keeps its own agent
+definitions rather than DSH's Agent Preset registry.
+
+**Evidence.** `a_subagent_toggle_takes_a_name_and_an_explicit_state` covers both
+spellings; `a_builtin_subagent_is_off_until_enabled_and_removed_again` drives the
+real command and checks the installed definition; `catalog::tests` and
+`the_skills_listing_draws_the_scope_label_on_a_real_frame` cover the browser. The
+old `/harness` spelling is intentionally not retained.
+
+**Revisit trigger.** If the project later adopts DSH-style agent presets, the
+command can grow preset selection; it should not reintroduce "harness" for a
+child role.
+## ADR-091: User and assistant messages are independent cards
+
+**Status: accepted (2026-10-24).**
+
+**Problem.** User and assistant messages ran together as one text block. The
+two-column gutter identified the role, but a long conversation had no boundary
+around a message; in a 16-colour or `NO_COLOR` terminal the filled user band
+disappeared entirely. A header-only divider was tried first, but it still read as
+a sectioned document rather than distinct messages. The owner chose independent
+cards and accepted the density trade.
+
+**Decision.** Each user and assistant message is a four-sided card:
+
+```text
+╭─ ▎ you ──────────────────────────────────────╮
+│ run the tests                                │
+╰──────────────────────────────────────────────╯
+╭─ ▪ assistant ────────────────────────────────╮
+│ The retry lives in src/retry.rs.             │
+╰──────────────────────────────────────────────╯
+```
+
+The card is built in the render cache from the same transcript line: a top
+border, body rows wrapped to `frame_width - 4`, and a bottom border. The body is
+bounded by vertical rails and padded to the frame edge. There is no blank row
+between cards; the bottom border of one and the top border of the next are the
+separation, so each card costs two chrome rows rather than three. The header
+replaces the blank that `push_line` used to insert at a prose boundary.
+
+The live streaming answer gets the same card while it streams, including a bottom
+border that moves down as tokens arrive; it does not change shape on commit. Tool
+cards keep their existing title-and-rail treatment; they are already distinct
+objects and are not wrapped again. Notices and reasoning stay ordinary rows.
+
+The borders are presentation kinds (`LineKind::MessageHeader` for the top/bottom
+and `LineKind::MessageBody` for the rails), inserted by the render cache and never
+pushed into transcript state. `decorate` paints them edge-to-edge without adding
+the two-column gutter.
+
+**Density.** At 80×24 the transcript shows roughly four to five messages instead
+of seven to nine under the header-only version. At 100×30 it shows six to seven.
+That is the accepted cost of this decision; scrollback is how longer history is
+read. The card body therefore uses the space between the rails and the card costs
+no horizontal margin beyond the two rail columns.
+
+**Evidence.** `render_cache::tests::a_user_row_carries_one_marker_not_two` pins
+the card title, rail and bottom border;
+`app::defect_tests::a_wrapped_answer_draws_one_marker_and_continuation_rules`
+pins the streaming and committed card bodies across wrapped rows;
+`state::tests::blocks_separate_on_kind_change_only` pins no blank at prose
+boundaries and blanks around tool cards;
+`app::golden::a_user_turn_carries_its_gutter_and_band_on_a_real_frame` and
+`a_wrapped_banded_message_keeps_every_row_inside_the_frame` now assert card
+bounds and the single prompt marker; the 80×24 and 100×30 frame dumps show the
+two cards.
+
+**Revisit trigger.** A compact mode that collapses cards to a top/bottom border
+without side rails, or a turn-level card grouping the answer and its tool calls,
+is a separate decision. Tool-card boxing is also separate; neither is claimed
+here.
+## ADR-092: The explorer polls the workspace and paints its working-tree state
+
+**Status: accepted (2026-10-24).**
+
+**Problem.** The explorer was a startup snapshot. A file written by the agent,
+another editor or a build did not appear until the user pressed `r`, and a
+modified file had no visual difference at all. A tree that is stale is worse than
+a tree that is absent: it looks authoritative.
+
+**Decision.** While the explorer is visible, the run loop polls it on two clocks:
+
+- Every 900 ms it re-walks the workspace (bounded by the existing row budget) and
+  builds a sorted stamp of path, mtime and size. If the stamp is unchanged, no
+  rows are rebuilt and no frame is drawn.
+- Every 3 s it runs `git status --porcelain=v1 -z --untracked-files=all` and
+  updates the working-tree markers. This is the second signal because an index
+  operation or commit changes no file mtime.
+
+The selected path is preserved across a rebuild, not the row index, so a file
+appearing above the cursor does not move the reader's selection.
+
+The tree paints the state it receives:
+
+- A right-aligned status column: `A` added, `M` modified, `?` untracked, `D`
+  deleted, `R` renamed, `!` conflicted, coloured by meaning.
+- A roll-up dot on a directory containing a changed descendant, so a collapsed
+  fold cannot hide a change.
+- `│` indentation guides capped at six levels, instead of blank indent columns.
+
+No filesystem-watcher dependency is added. The poll is a bounded walk plus one
+subprocess; it is the smallest mechanism that also catches changes made outside
+this process and does not add a second event loop. A hidden explorer costs
+nothing; opening or focusing it refreshes immediately.
+
+**Evidence.** `git::tests::porcelain_status_maps_to_the_tree_vocabulary` pins the
+status parser without requiring a repository; `a_changed_file_marks_every_parent_directory`
+pins the roll-up. `app::tests::a_tree_poll_picks_up_a_new_file_and_keeps_the_selection`
+covers a new file and an in-place edit; `a_tree_poll_with_no_change_is_a_no_op`
+pins the no-redraw path; `the_tree_marks_modified_and_new_files_on_the_frame`
+reads the status column from a real frame. The `tree-status` frame fixture
+(`--ignored`) shows the guides, `M`, `?` and the directory dot at 100×30.
+
+**Revisit trigger.** If the measured walk/status cost becomes visible on a large
+workspace, move the poll to a worker thread or add a native watcher; both are
+larger changes than this one and need their own evidence. This ADR does not claim
+a watcher.
+
+**Security amendment (2026-10-24).** The first implementation spawned `git` by
+name. On Windows, `CreateProcess` searches the process's current directory before
+PATH, so a workspace containing `git.exe` could execute when the explorer opened;
+`git status` can also run a repository-configured `core.fsmonitor` command. The
+status reader now resolves `git` only through absolute PATH entries and runs it
+with `-c core.fsmonitor=false`. A workspace can no longer choose the executable or
+run a hook through the poll. The same rule applies to any future subprocess the
+tree starts automatically.
+
+## ADR-093: The cache tail breakpoint follows the last user-role turn
+
+**Status: accepted (2026-10-24).**
+
+**Problem.** The Anthropic tail `cache_control` marker was placed on the last
+`Message::User`. Anthropic sends tool results under `"role": "user"`, so after the
+first tool call the marker stayed at the original prompt and every tool result was
+outside the cached prefix. A tool-heavy turn reprocessed all of its results at
+full price. The wire also emitted each tool result as its own user message even
+though Anthropic expects the results of parallel calls in one user turn; the
+function's own comment claimed they collapsed, and the loop did not.
+
+Pi places the marker on the last user **or** tool-result message
+(`anthropic-messages.ts:1529-1553`, `convertMessages`). That is the boundary that
+moves forward with each tool round-trip and is reused by the next call.
+
+**Decision.** `CachePolicy::mark_last_user_turn` means the last user-role turn:
+`Message::User` or `Message::ToolResult`. Consecutive tool results are collected
+into one user message with one `tool_result` content block per call; the cache
+marker lands on the last block of that grouped turn. The policy still spends
+three of Anthropic's four breakpoints: last tool, system, tail. The field was
+renamed from `mark_last_user_message` because the old name described the defective
+behaviour.
+
+**Evidence.** `cache_breakpoints::the_tail_breakpoint_is_on_the_last_user_role_turn_not_the_first`
+builds a two-tool-turn body and asserts the marker is on the final tool-result
+message; `parallel_tool_results_share_one_message_and_mark_the_last_block` pins
+the grouping and last-block placement. The test package is `--features real`
+because it builds the real Anthropic wire body.
+
+**Revisit trigger.** If Anthropic changes the role of tool results or adds
+provider-specific cache retention, this policy needs the same kind of wire test.
+The fourth breakpoint remains unspent; using it requires a measured reason, not
+symmetric-looking JSON.
+
+**OpenAI/Mistral affinity (2026-10-24).** Pi sends a session id as
+`prompt_cache_key`; `LlmContext` deliberately has no session id, so the wire
+sends a stable FNV-1a key over model + system prompt + first user text. It is
+stable across tool round-trips and process restarts, and is sent only to
+first-party OpenAI and Mistral hosts. Arbitrary OpenAI-compatible endpoints and
+DeepSeek do not receive a field they may reject.

@@ -485,6 +485,93 @@ pub(crate) fn validate_url(url: &str) -> Result<reqwest::Url, String> {
     }
 }
 
+/// Whether an address is on the public internet.
+///
+/// `webfetch` is a tool the model drives, and a page it fetched can steer the
+/// next call. A loopback or link-local destination is how a fetch reaches the
+/// harness's own admin surface, a local database, or cloud metadata
+/// (`169.254.169.254`) — none of which a web fetch is asking for. The check is
+/// on addresses, not on host spelling, so `127.0.0.1.nip.io` cannot pass by
+/// looking like a name.
+pub(crate) fn is_public_ip(ip: std::net::IpAddr) -> bool {
+    use std::net::IpAddr;
+    match ip {
+        IpAddr::V4(v4) => {
+            !(v4.is_private()
+                || v4.is_loopback()
+                || v4.is_link_local()
+                || v4.is_broadcast()
+                || v4.is_documentation()
+                || v4.is_unspecified()
+                || v4.is_multicast()
+                // 100.64.0.0/10 — carrier-grade NAT, not reachable from a
+                // public request but routable on a shared network.
+                || (v4.octets()[0] == 100 && (64..=127).contains(&v4.octets()[1])))
+        }
+        IpAddr::V6(v6) => {
+            // `::ffff:127.0.0.1` must be judged as its IPv4 self, or the
+            // loopback check is one spelling away from being bypassed.
+            if let Some(v4) = v6.to_ipv4_mapped() {
+                return is_public_ip(IpAddr::V4(v4));
+            }
+            !(v6.is_loopback()
+                || v6.is_unspecified()
+                || v6.is_multicast()
+                || v6.is_unique_local()
+                || v6.is_unicast_link_local())
+        }
+    }
+}
+
+/// Resolve a URL's host once, reject a non-public destination, and return the
+/// address to pin the connection to.
+///
+/// Resolving here and then letting the HTTP client resolve again would leave a
+/// DNS-rebinding window: the first answer public, the second one loopback.
+/// Reqwest's `.resolve()` fixes the name to the address that was checked, while
+/// keeping the Host header and TLS name.
+async fn pin_public_destination(
+    url: &reqwest::Url,
+) -> Result<Option<std::net::SocketAddr>, String> {
+    use std::net::{IpAddr, SocketAddr, ToSocketAddrs};
+
+    let host = url
+        .host_str()
+        .ok_or_else(|| "the URL has no host".to_string())?
+        .to_string();
+    let port = url.port_or_known_default().unwrap_or(443);
+
+    if let Ok(ip) = host.parse::<IpAddr>() {
+        return if is_public_ip(ip) {
+            Ok(None)
+        } else {
+            Err(format!(
+                "refusing to fetch a non-public address ({ip}); webfetch only reaches the public internet"
+            ))
+        };
+    }
+
+    let resolved = tokio::task::spawn_blocking(move || {
+        (host.as_str(), port)
+            .to_socket_addrs()
+            .map(|addrs| addrs.collect::<Vec<SocketAddr>>())
+    })
+    .await
+    .map_err(|e| format!("DNS lookup task failed: {e}"))?
+    .map_err(|e| format!("DNS lookup failed: {e}"))?;
+
+    if resolved.is_empty() {
+        return Err("DNS lookup returned no addresses".to_string());
+    }
+    if let Some(bad) = resolved.iter().find(|addr| !is_public_ip(addr.ip())) {
+        return Err(format!(
+            "refusing to fetch a host that resolves to a non-public address ({})",
+            bad.ip()
+        ));
+    }
+    Ok(resolved.first().copied())
+}
+
 /// Map a failed HTTP status into a short error string (snippet of body).
 fn status_error(status: u16, snippet: &str) -> String {
     let head: String = snippet.chars().take(2000).collect();
@@ -506,17 +593,32 @@ impl Tool for WebFetchTool {
         let args: WebFetchArgs = serde_json::from_value(call.args)
             .map_err(|e| ToolFailure::msg(format!("invalid arguments for 'webfetch': {e}")))?;
 
-        let _url = validate_url(&args.url).map_err(ToolFailure::msg)?;
+        let url = validate_url(&args.url).map_err(ToolFailure::msg)?;
 
         if ctx.token.is_cancelled() {
             return Err(ToolFailure::msg("webfetch cancelled"));
         }
 
+        // Check and pin the destination before a client exists. A redirect is
+        // not followed at all: the URL the approval dialog named is the URL
+        // fetched, and a 302 to loopback or metadata is refused rather than
+        // silently visited.
+        let pinned = pin_public_destination(&url)
+            .await
+            .map_err(ToolFailure::msg)?;
+        let host = url.host_str().unwrap_or_default().to_string();
+
         ensure_crypto_provider();
-        let client = reqwest::Client::builder()
+        let mut builder = reqwest::Client::builder()
             .timeout(std::time::Duration::from_secs(FETCH_TIMEOUT_SECS))
             .connect_timeout(std::time::Duration::from_secs(CONNECT_TIMEOUT_SECS))
-            .user_agent("epsilon-webfetch/0.1")
+            .redirect(reqwest::redirect::Policy::none())
+            .user_agent("epsilon-webfetch/0.1");
+        if let Some(addr) = pinned {
+            // The checked address, not a second DNS answer (rebinding window).
+            builder = builder.resolve(&host, addr);
+        }
+        let client = builder
             .build()
             .map_err(|e| ToolFailure::msg(format!("client init failed: {e}")))?;
 
@@ -529,13 +631,23 @@ impl Tool for WebFetchTool {
         // fetch_fut uses String as its error so cap-exceeded branches do not need
         // a `From<io::Error> for reqwest::Error` impl (reqwest 0.13 has none).
         let fetch_fut = async {
-            let resp = client
+            let mut resp = client
                 .get(&url_for_fetch)
                 .header(reqwest::header::ACCEPT, accept)
                 .send()
                 .await
                 .map_err(|e| e.to_string())?;
             let status = resp.status();
+            if status.is_redirection() {
+                let to = resp
+                    .headers()
+                    .get(reqwest::header::LOCATION)
+                    .and_then(|v| v.to_str().ok())
+                    .unwrap_or("(no Location header)");
+                return Err(format!(
+                    "HTTP {status}: webfetch does not follow redirects (target: {to})"
+                ));
+            }
             let content_type = resp
                 .headers()
                 .get(reqwest::header::CONTENT_TYPE)
@@ -586,14 +698,19 @@ impl Tool for WebFetchTool {
                 ));
             }
 
-            let bytes = resp.bytes().await.map_err(|e| e.to_string())?;
-            if bytes.len() > MAX_FETCH_BYTES {
-                return Err(format!(
-                    "response too large ({} bytes > {MAX_FETCH_BYTES} cap)",
-                    bytes.len()
-                ));
+            // Stream into the cap rather than buffering the whole body first: a
+            // chunked response has no content-length to check, and `bytes()`
+            // would allocate it in full before the post-hoc rejection.
+            let mut body: Vec<u8> = Vec::new();
+            while let Some(chunk) = resp.chunk().await.map_err(|e| e.to_string())? {
+                if body.len().saturating_add(chunk.len()) > MAX_FETCH_BYTES {
+                    return Err(format!(
+                        "response too large (over {MAX_FETCH_BYTES} bytes; stopped reading)"
+                    ));
+                }
+                body.extend_from_slice(&chunk);
             }
-            let text = String::from_utf8_lossy(&bytes).into_owned();
+            let text = String::from_utf8_lossy(&body).into_owned();
             Ok((status.as_u16(), content_type, text, textual))
         };
 
@@ -752,7 +869,10 @@ mod tests {
 
 #[cfg(test)]
 mod format_tests {
-    use super::{WebFetchArgs, WebFetchFormat, WebFetchTool, accept_header_for, convert_body};
+    use super::{
+        WebFetchArgs, WebFetchFormat, WebFetchTool, accept_header_for, convert_body,
+        ensure_crypto_provider, is_public_ip,
+    };
     use epsilon_contracts::tool::Tool;
 
     const FIXTURE_HTML: &str = "<!DOCTYPE html><html><head><title>T</title><style>body{color:red}</style></head>\
@@ -849,22 +969,57 @@ mod format_tests {
     /// The webfetch client must build in a process that never made an HTTPS
     /// request before: reqwest is `rustls-no-provider`, so without an
     /// explicit install the FIRST client construction panics instead of
-    /// returning a network error. This drives `execute` (not just a bare
-    /// builder) against a refused port: pre-fix it panics at client
-    /// construction; post-fix it returns a network failure. Run FILTERED
-    /// in a fresh process for the honest RED — in a full suite another
-    /// test may have installed the process default first, which is exactly
-    /// the ordering accident this guards against.
+    /// returning a network error. This drives the same two calls `execute`
+    /// makes before the request, without touching the network.
+    #[test]
+    fn the_client_builds_with_no_prior_https_in_the_process() {
+        ensure_crypto_provider();
+        reqwest::Client::builder()
+            .build()
+            .expect("the provider is installed before the first client");
+    }
+
+    /// The destination guard: loopback, private, link-local and metadata
+    /// addresses are not the public internet, and a fetch refuses before a
+    /// request is sent.
+    #[test]
+    fn only_public_addresses_pass_the_destination_guard() {
+        for ip in [
+            "127.0.0.1",
+            "10.0.0.1",
+            "172.16.0.1",
+            "192.168.1.1",
+            "169.254.169.254",
+            "0.0.0.0",
+            "100.64.0.1",
+            "::1",
+            "::ffff:127.0.0.1",
+            "fd00::1",
+            "fe80::1",
+        ] {
+            assert!(
+                !is_public_ip(ip.parse().expect("a test address")),
+                "{ip} must not pass the destination guard"
+            );
+        }
+        for ip in ["1.1.1.1", "8.8.8.8", "2606:4700:4700::1111"] {
+            assert!(
+                is_public_ip(ip.parse().expect("a test address")),
+                "{ip} is a public address"
+            );
+        }
+    }
+
     #[tokio::test]
-    async fn execute_builds_its_client_with_no_prior_https_in_the_process() {
+    async fn execute_refuses_a_loopback_destination_before_any_request() {
         let dir = tempfile::tempdir().unwrap();
         let tool = WebFetchTool::new();
         let call = epsilon_contracts::tool::ToolInvocation {
-            tool_call_id: "client-test".into(),
+            tool_call_id: "loopback-test".into(),
             args: serde_json::json!({"url": "http://127.0.0.1:9/nope"}),
         };
         let ctx = epsilon_contracts::tool::ToolContext {
-            session_id: "client-test".into(),
+            session_id: "loopback-test".into(),
             observation_scope: std::sync::Arc::new(()),
             cwd: dir.path().to_path_buf(),
             spill_dir: dir.path().join(".epsilon/spill"),
@@ -875,10 +1030,10 @@ mod format_tests {
         let err = tool
             .execute(call, ctx, std::sync::Arc::new(|_| {}))
             .await
-            .expect_err("nothing listens on the discard port");
+            .expect_err("loopback is refused");
         assert!(
-            !format!("{err:?}").contains("CryptoProvider"),
-            "a network failure, not a provider panic: {err:?}"
+            format!("{err:?}").contains("non-public"),
+            "the refusal names the destination: {err:?}"
         );
     }
 }

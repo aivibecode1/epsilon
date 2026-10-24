@@ -530,3 +530,83 @@ async fn env_read_ask_flow_end_to_end() {
         PermissionRequest { ref capability, .. } if capability == "read"
     ));
 }
+
+/// **A read-only tool runs without a permission dialog.**
+///
+/// This is the end-to-end proof of F17: the default ruleset named nine
+/// capabilities and the registry registers eighteen, so `find` — a *read* —
+/// matched no rule, fell through to `Ask`, and a user who had granted
+/// nothing met a dialog for it.
+///
+/// The test drives a real `find` call through the real loop, with a UI that
+/// would *deny* every ask. If the tool still asked, the call would fail. It
+/// does not ask, so the call succeeds.
+///
+/// The control is the pair: `bash` still asks, because it leaves the
+/// workspace, and a dialog for the shell is the posture the defaults
+/// promise. One test, both halves — so a change that made everything ask
+/// would fail here too.
+#[tokio::test]
+async fn a_read_only_tool_runs_without_a_dialog_and_the_shell_still_asks() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join("a.rs"), "fn main() {}\n").unwrap();
+
+    // A UI that denies everything: any ask refuses the call, so a call that
+    // succeeds is a call that did not ask.
+    let ui = Arc::new(RecordingUi {
+        answers: Mutex::new(vec![]),
+        seen: Mutex::new(vec![]),
+    });
+    let gate = Arc::new(RulesetGate::new(Arc::clone(&ui) as Arc<dyn ApprovalUi>));
+
+    // First a read-only tool.
+    let steps = [
+        FauxStep::call("tc_find", "find", serde_json::json!({"pattern": "*.rs"})),
+        FauxStep::say("found it"),
+    ];
+    let run = run_agent(steps.to_vec(), Arc::clone(&gate), dir.path())
+        .join()
+        .await;
+    let found = run
+        .produced
+        .iter()
+        .any(|m| matches!(m, Message::ToolResult(t) if t.tool_name == "find" && !t.is_error));
+    assert!(
+        found,
+        "a read-only tool must run without asking; produced={:?} reason={:?}",
+        run.produced
+            .iter()
+            .map(|m| format!("{m:?}"))
+            .collect::<Vec<_>>(),
+        run.reason
+    );
+    assert_eq!(
+        ui.seen.lock().unwrap().len(),
+        0,
+        "a read-only tool must not ask at all: {:?}",
+        ui.seen.lock().unwrap()
+    );
+
+    // And then the shell, which does leave the workspace.
+    let steps = [
+        FauxStep::call("tc_bash", "bash", serde_json::json!({"command": "echo hi"})),
+        FauxStep::say("ran it"),
+    ];
+    let run = run_agent(steps.to_vec(), gate, dir.path()).join().await;
+    assert!(
+        !run.produced.iter().any(|m| {
+            matches!(m, Message::ToolResult(t) if t.tool_name == "bash" && !t.is_error)
+        }),
+        "the shell must not run when the ask is denied"
+    );
+    assert_eq!(
+        ui.seen.lock().unwrap().len(),
+        1,
+        "the shell asks exactly once: {:?}",
+        ui.seen.lock().unwrap()
+    );
+    assert!(matches!(
+        ui.seen.lock().unwrap()[0],
+        PermissionRequest { ref capability, .. } if capability == "bash"
+    ));
+}

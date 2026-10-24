@@ -288,7 +288,7 @@ pub fn gather(inputs: &Inputs<'_>) -> Facts {
     // ---- model + credentials -----------------------------------------------------------------
     // The launch's precedence, verbatim: `--model` > project config > global saved (M40).
     // Asking the same three places is what keeps this report from disagreeing with the run.
-    let (project, _, _) = crate::runtime::load_project_config(inputs.workspace);
+    let (project, project_decision, _) = crate::runtime::read_project_config(inputs.workspace);
     let (requested_raw, source) = if let Some(m) = inputs.model_arg {
         (Some(m.to_string()), "--model")
     } else if let Some(m) = project.model_id.clone() {
@@ -375,14 +375,19 @@ pub fn gather(inputs: &Inputs<'_>) -> Facts {
         project_config.exists(),
     ));
     if project_config.exists() {
-        // The same call the launch path makes (M39/M45), so the report cannot disagree with it:
-        // hash trust composes with a remembered per-path decision.
-        let (_, decision, _) = crate::runtime::load_project_config(inputs.workspace);
+        // **One load, one decision.** This used to call `load_project_config` a
+        // second time; the first call records first sight, so the second saw a
+        // hash with no remembered entry and reported `Changed` — a diagnostic
+        // told a first-run workspace it was untrusted. The decision captured
+        // above is the launch path's own answer.
         let remembered =
             crate::runtime::ProjectTrustStore::open().and_then(|store| store.get(inputs.workspace));
         f.project_trusted = Some(match remembered {
             Some(explicit) => explicit,
-            None => !matches!(decision, crate::runtime::TrustDecision::Changed { .. }),
+            None => !matches!(
+                project_decision,
+                crate::runtime::TrustDecision::Changed { .. }
+            ),
         });
     }
 

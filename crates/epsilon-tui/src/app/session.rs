@@ -20,6 +20,16 @@
 
 use super::*;
 
+/// How often a visible explorer re-walks the workspace. One second is fast
+/// enough to see an agent's write land, and the walk is bounded by
+/// [`crate::tree::TREE_ROW_BUDGET`].
+const TREE_POLL: std::time::Duration = std::time::Duration::from_millis(900);
+
+/// How often the git status column refreshes independently of file mtimes.
+/// Index/commit changes do not touch a file's mtime, so this is the second
+/// signal; it is slower because `git status` is a subprocess.
+const GIT_POLL: std::time::Duration = std::time::Duration::from_millis(3000);
+
 impl App {
     pub(super) fn new(
         model_id: String,
@@ -160,8 +170,16 @@ impl App {
             timeline_capacity: 1,
             timeline_entries: Vec::new(),
             tree_open: false,
+            tree_focused: false,
             tree_cursor: 0,
+            tree_scroll: 0,
+            tree_capacity: 1,
             tree_rows: Vec::new(),
+            tree_stamp: Vec::new(),
+            tree_git: std::collections::BTreeMap::new(),
+            tree_changed_dirs: std::collections::BTreeSet::new(),
+            tree_poll_at: std::time::Instant::now(),
+            git_poll_at: std::time::Instant::now(),
             tree_collapsed: std::collections::BTreeSet::new(),
             tree_capped: false,
             viewer_tabs: Vec::new(),
@@ -222,6 +240,7 @@ impl App {
             changes_open: false,
             changes_index: 0,
             changes_rows: Vec::new(),
+            catalog: None,
             changes_scope: String::new(),
             settings_open: false,
             settings_index: 0,
@@ -230,6 +249,7 @@ impl App {
             // `settings_preset` above); synced when `/settings` opens.
             settings_plan: false,
             has_run_command: false,
+            quit_refused: false,
             scope_open: false,
             scope_index: 0,
             scope_snapshot: Vec::new(),
@@ -287,13 +307,85 @@ impl App {
         self.session_browser = Some(browser);
     }
 
-    /// Phase 3 (TUI as IDE): workspace tree sidebar (F6). Opens focused and
-    /// rebuilds from the workspace; closing returns the keyboard to the composer.
+    /// Show the workspace explorer without taking the keyboard.
+    ///
+    /// This is the **default layout** call: a launch opens the project on the
+    /// right while the composer keeps focus, so the reader can see the workspace
+    /// and start typing without a mode switch. Called once by the run loop, not
+    /// from `App::new`, so a unit fixture does not pay for a filesystem walk.
+    pub(super) fn show_explorer(&mut self) {
+        self.tree_open = true;
+        self.tree_focused = false;
+        self.refresh_tree();
+    }
+
+    /// Focus an explorer that is already visible, or open and focus it.
+    ///
+    /// Refreshes on every focus rather than on a timer: the workspace changes
+    /// outside this process (an agent edit, a save, another editor), and the
+    /// moment a reader reaches for the tree is exactly when it must be current.
+    pub(super) fn focus_tree(&mut self) {
+        self.tree_open = true;
+        self.tree_focused = true;
+        self.refresh_tree();
+    }
+
+    /// F6's cycle: hidden → visible and focused; visible but resting → focused;
+    /// focused → hidden. A tree that is merely docked never owns the keyboard.
+    ///
+    /// A visibility change is persisted; a focus-only change is not. The
+    /// preference is `[tui] explorer`, the same global display tier as
+    /// `[tui] theme`, because it describes this terminal, not this repository.
     pub(super) fn toggle_tree(&mut self) {
-        self.tree_open = !self.tree_open;
-        if self.tree_open {
-            self.tree_cursor = 0;
-            self.refresh_tree();
+        if self.tree_open && self.tree_focused {
+            self.tree_open = false;
+            self.tree_focused = false;
+            self.persist_explorer_visible(false);
+        } else {
+            let was_visible = self.tree_open;
+            self.focus_tree();
+            if !was_visible {
+                self.persist_explorer_visible(true);
+            }
+        }
+    }
+
+    /// Persist the collapsed directory set for this workspace.
+    ///
+    /// A view preference, so a failed write is a notice, not a toast-and-continue
+    /// lie: the tree still collapses for this run either way.
+    pub(super) fn persist_tree_collapsed(&mut self) {
+        let dir = self
+            .config_dir_override
+            .clone()
+            .or_else(epsilon_core::config::global_dir);
+        let Some(dir) = dir else {
+            return;
+        };
+        if let Err(e) = epsilon_core::config::save_explorer_collapsed_in(
+            &dir,
+            &self.workspace_root,
+            &self.tree_collapsed,
+        ) {
+            self.ui
+                .push_notice(format!("explorer layout not saved: {e}"));
+        }
+    }
+
+    /// Write the explorer's visibility through the test override or global dir.
+    fn persist_explorer_visible(&mut self, visible: bool) {
+        let dir = self
+            .config_dir_override
+            .clone()
+            .or_else(epsilon_core::config::global_dir);
+        let Some(dir) = dir else {
+            self.ui
+                .push_notice("explorer preference not saved: no config directory resolved");
+            return;
+        };
+        if let Err(e) = epsilon_core::config::save_explorer_visible_in(&dir, visible) {
+            self.ui
+                .push_notice(format!("explorer preference not saved: {e}"));
         }
     }
 
@@ -303,18 +395,90 @@ impl App {
     /// an empty tree with an honest empty state, not an error: the walk
     /// already returns no rows there, and refusing to open would hide exactly
     /// the message that teaches it (the P-243 rule, applied here).
+    /// Rebuild the explorer and its git markers now.
+    ///
+    /// Also called by collapse/expand and the explicit `r` key. The scheduled
+    /// path uses [`Self::poll_tree`], which is allowed to do nothing.
     pub(super) fn refresh_tree(&mut self) {
+        self.tree_poll_at = std::time::Instant::now() + TREE_POLL;
+        self.git_poll_at = std::time::Instant::now() + GIT_POLL;
+        let (walked, stamp) = self.walk_tree();
+        self.apply_tree(walked, stamp);
+        self.refresh_git_status();
+    }
+
+    /// Poll the workspace while the explorer is visible.
+    ///
+    /// Two clocks: the walk/mtime stamp catches added, removed and edited files
+    /// without a filesystem-watcher dependency; `git status` catches index and
+    /// commit changes that leave mtimes untouched. Returns whether anything the
+    /// frame draws changed, so an idle TUI does not redraw on every tick.
+    pub(super) fn poll_tree(&mut self) -> bool {
+        let now = std::time::Instant::now();
+        let mut changed = false;
+        if now >= self.tree_poll_at {
+            self.tree_poll_at = now + TREE_POLL;
+            let (walked, stamp) = self.walk_tree();
+            if stamp != self.tree_stamp {
+                self.apply_tree(walked, stamp);
+                changed = true;
+                self.refresh_git_status();
+            }
+        }
+        if now >= self.git_poll_at {
+            self.git_poll_at = now + GIT_POLL;
+            changed |= self.refresh_git_status();
+        }
+        changed
+    }
+
+    fn walk_tree(&self) -> (epsilon_core::walk::WalkedPaths, crate::tree::TreeStamp) {
         let ignore = epsilon_core::ignore::IgnoreSet::load(
             &self.workspace_root,
             crate::at_files::AT_IGNORE_FILES,
         );
         let mut budget = crate::tree::TREE_ROW_BUDGET;
-        let paths = epsilon_core::walk::walk_files(&self.workspace_root, &ignore, &mut budget);
-        self.tree_capped = paths.len() >= crate::tree::TREE_ROW_BUDGET;
-        self.tree_rows = crate::tree::build_visible_rows(&paths, &self.tree_collapsed);
+        let walked = epsilon_core::walk::walk_paths(&self.workspace_root, &ignore, &mut budget);
+        let stamp = crate::tree::stamp(&self.workspace_root, &walked.files, &walked.dirs);
+        (walked, stamp)
+    }
+
+    fn apply_tree(
+        &mut self,
+        walked: epsilon_core::walk::WalkedPaths,
+        stamp: crate::tree::TreeStamp,
+    ) {
+        let selected = self
+            .tree_rows
+            .get(self.tree_cursor)
+            .map(|row| row.rel.clone());
+        self.tree_capped = walked.files.len() + walked.dirs.len() >= crate::tree::TREE_ROW_BUDGET;
+        self.tree_rows = crate::tree::build_visible_rows_with_dirs(
+            &walked.files,
+            &walked.dirs,
+            &self.tree_collapsed,
+        );
+        self.tree_stamp = stamp;
+        if let Some(rel) = selected
+            && let Some(index) = self.tree_rows.iter().position(|row| row.rel == rel)
+        {
+            self.tree_cursor = index;
+        }
         if self.tree_cursor >= self.tree_rows.len() {
             self.tree_cursor = self.tree_rows.len().saturating_sub(1);
         }
+        self.tree_scroll = self.tree_scroll.min(self.tree_rows.len().saturating_sub(1));
+    }
+
+    /// Refresh only the working-tree markers. Returns whether the map changed.
+    fn refresh_git_status(&mut self) -> bool {
+        let next = crate::git::status(&self.workspace_root);
+        if next == self.tree_git {
+            return false;
+        }
+        self.tree_git = next;
+        self.tree_changed_dirs = crate::git::changed_dirs(&self.tree_git);
+        true
     }
 
     /// Whether the read-only file viewer is open.
@@ -386,7 +550,7 @@ impl App {
         let Some(viewer) = self.active_viewer() else {
             return;
         };
-        if !viewer.editing {
+        if !viewer.is_dirty() && !viewer.has_unsaved() {
             return;
         }
         let rel = viewer.rel.clone();

@@ -244,12 +244,15 @@ Two things are worth checking as you go:
 Extensions run as child processes. An MCP server can instead live at a URL and
 speak StreamableHTTP. Each `[[mcp_servers]]` entry is one or the other:
 `command` spawns stdio, `url` dials HTTP. Both together — or neither — is
-rejected with the entry named.
+rejected with the entry named. The table lives in the workspace
+`.epsilon/config.toml` (the project layer); a one-run server can be passed with
+`--mcp`/`--mcp-http` instead.
 
 ```toml
 [[mcp_servers]]
 name = "docs"
 url = "https://mcp.example.com/mcp"
+timeout_secs = 300
 
 [mcp_servers.headers]
 "x-api-key" = "only-in-this-file"
@@ -267,6 +270,10 @@ Rules, all enforced when the entry is read, not when the first call runs:
   refused outright.
 - `accept`, `mcp-session-id` and `last-event-id` cannot be set. They belong
   to the transport.
+- `timeout_secs` is the per-call deadline for that server. It defaults to 120
+  and accepts 1–86,400. A server whose work legitimately outlasts two minutes
+  (REA's native analysis is the example) should set it rather than weaken the
+  deadline for every server.
 - There is no OAuth. A bearer token is static configuration.
 - The legacy SSE transport is not accepted. An entry shaped for it is
   rejected with its name.

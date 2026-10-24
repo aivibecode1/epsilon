@@ -56,8 +56,45 @@ pub const MAX_DEPTH: usize = 16;
 /// **truncated, not failed**: the caller still gets a usable list and can say it is partial.
 pub fn walk_files(root: &Path, ignore: &IgnoreSet, budget: &mut usize) -> Vec<String> {
     let mut out = Vec::new();
-    walk_inner(root, root, 0, ignore, budget, &mut out);
+    let mut ignored_dirs = Vec::new();
+    let mut sink = WalkSink {
+        files: &mut out,
+        dirs: &mut ignored_dirs,
+        collect_dirs: false,
+    };
+    walk_inner(root, root, 0, ignore, budget, &mut sink);
     out
+}
+
+/// Files **and** directories, for a project explorer that must show an empty directory.
+///
+/// Separate from [`walk_files`] rather than a flag on it: a directory row spends
+/// the explorer's row budget, while a tool asking "which files" must keep every
+/// unit of its budget for files. Both share the traversal and the ignore rules.
+#[derive(Debug, Default, Clone, PartialEq, Eq)]
+pub struct WalkedPaths {
+    /// Workspace-relative files, `/`-joined.
+    pub files: Vec<String>,
+    /// Workspace-relative directories, `/`-joined, empty directories included.
+    pub dirs: Vec<String>,
+}
+
+/// Walk the workspace once for files and directories.
+pub fn walk_paths(root: &Path, ignore: &IgnoreSet, budget: &mut usize) -> WalkedPaths {
+    let mut walked = WalkedPaths::default();
+    let mut sink = WalkSink {
+        files: &mut walked.files,
+        dirs: &mut walked.dirs,
+        collect_dirs: true,
+    };
+    walk_inner(root, root, 0, ignore, budget, &mut sink);
+    walked
+}
+
+struct WalkSink<'a> {
+    files: &'a mut Vec<String>,
+    dirs: &'a mut Vec<String>,
+    collect_dirs: bool,
 }
 
 fn walk_inner(
@@ -66,7 +103,7 @@ fn walk_inner(
     depth: usize,
     ignore: &IgnoreSet,
     budget: &mut usize,
-    out: &mut Vec<String>,
+    sink: &mut WalkSink<'_>,
 ) {
     if depth > MAX_DEPTH || *budget == 0 {
         return;
@@ -128,9 +165,16 @@ fn walk_inner(
         }
 
         if is_dir {
-            walk_inner(root, &path, depth + 1, ignore, budget, out);
+            if sink.collect_dirs {
+                sink.dirs.push(relative.clone());
+                *budget = budget.saturating_sub(1);
+                if *budget == 0 {
+                    return;
+                }
+            }
+            walk_inner(root, &path, depth + 1, ignore, budget, sink);
         } else {
-            out.push(relative);
+            sink.files.push(relative);
             *budget -= 1;
         }
     }
@@ -218,6 +262,41 @@ mod tests {
         let out = walk_files(dir.path(), &ignore, &mut budget);
         assert_eq!(out.len(), 1, "one row of budget, one row of output");
         assert_eq!(budget, 0);
+    }
+
+    /// **An empty directory is a visible part of a project.** Deriving the tree
+    /// only from file paths lost it entirely — the explorer looked like the
+    /// directory did not exist.
+    #[test]
+    fn walk_paths_reports_empty_directories_and_counts_them_against_the_budget() {
+        let dir = workspace();
+        std::fs::create_dir_all(dir.path().join("empty")).unwrap();
+        std::fs::create_dir_all(dir.path().join("src").join("nested")).unwrap();
+        let ignore = IgnoreSet::load(dir.path(), IGNORE_FILES);
+        let mut budget = ROW_BUDGET;
+        let walked = walk_paths(dir.path(), &ignore, &mut budget);
+        assert!(walked.dirs.contains(&"empty".to_string()), "{walked:?}");
+        assert!(
+            walked.dirs.contains(&"src/nested".to_string()),
+            "a nested empty directory is reported too: {walked:?}"
+        );
+        assert!(
+            !walked.dirs.iter().any(|d| d.starts_with(".hidden")),
+            "hidden directories keep the same rule as walk_files: {walked:?}"
+        );
+        assert!(
+            walked.files.contains(&"src/lib.rs".to_string()),
+            "files and directories come from one traversal"
+        );
+        // The explorer's row budget is spent on both kinds.
+        let mut tight = 1usize;
+        let walked = walk_paths(dir.path(), &ignore, &mut tight);
+        assert_eq!(
+            walked.files.len() + walked.dirs.len(),
+            1,
+            "one row of budget, one row of output"
+        );
+        assert_eq!(tight, 0);
     }
 
     #[test]

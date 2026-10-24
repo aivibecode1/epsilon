@@ -91,17 +91,22 @@ impl StreamFn for FallbackProvider {
                 .map(|c| c.name.as_str())
                 .or_else(|| crate::catalog::lookup_model(id).map(|m| m.provider))
                 .unwrap_or("");
-            crate::providers::ensure_oauth_fresh(provider).await;
+            let fresh_oauth = crate::providers::ensure_oauth_fresh(provider).await;
             let cand = self.chain.iter().find(|c| &c.model_id == id);
-            let key = match cand {
-                Some(c) => c.api_key.clone(),
-                None => {
-                    // The caller-requested model may not be in our chain; its
-                    // auth resolves on the spot like DirectProvider does.
-                    // M28: custom ids (`lmstudio/foo`) resolve under the custom
-                    // provider's name (stored key first, then its env_key).
-                    crate::catalog::resolve_api_key(provider)
-                }
+            let key = match fresh_oauth {
+                // The exchange just minted this token; use it even if persisting
+                // the rotated pair failed.
+                Some(token) => Some(token),
+                None => match cand {
+                    Some(c) => c.api_key.clone(),
+                    None => {
+                        // The caller-requested model may not be in our chain; its
+                        // auth resolves on the spot like DirectProvider does.
+                        // M28: custom ids (`lmstudio/foo`) resolve under the custom
+                        // provider's name (stored key first, then its env_key).
+                        crate::catalog::resolve_api_key(provider)
+                    }
+                },
             };
             let Some(key) = key else {
                 last_error =

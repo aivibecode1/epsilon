@@ -40,7 +40,7 @@ presets clears the session's always-allow memory.
 ```sh
 --preset auto                  # today's behavior under a name (default)
 --preset workspace-write       # reads and writes under the workspace; asks outside it
---preset read-only              # denies write/edit/bash/shell; reads stay free
+--preset read-only              # denies every mutating capability; reads stay free
 --preset danger-full-access     # allows everything nothing forbids
 ```
 
@@ -56,34 +56,47 @@ reports the state, `/plan on` restricts at once, `/plan off` asks first
 (disabling is the privilege-raising direction, so it confirms exactly like
 `danger-full-access`). Both directions persist to `[plan] mode` (project file
 first, then global); a launch resolves flag → project → global. The header shows a `plan` chip while it is on, and
-the `/settings` panel carries the state as a row. Denies the same four
-capabilities as the launch flag (write, edit, bash, shell) with the same
-limits; clears the session's always-allow memory in both directions.
+the `/settings` panel carries the state as a row. Plan mode denies every capability
+outside an explicit read-only allowlist — `write`, `edit`, `apply_patch`, `bash`, `shell`,
+and any MCP or extension tool that is not on the list. An unknown tool is **denied**, not
+offered as an ask the user could approve. It clears the session's always-allow memory in
+both directions.
+
+`--sandbox read-only` also forces the session permission preset to `read-only`: the shell
+flag is not narrower than the tool gate, and the two must agree about what the session may
+do.
 
 ## Layer 2 — OS confinement for shell commands
 
 ```sh
 --sandbox auto        # default: best backend, fail closed when none exists
---sandbox read-only   # commands may look, not touch (workspace mounted read-only
-                      # where the backend supports it)
+--sandbox read-only   # commands may look, not touch: bwrap mounts the workspace
+                      # read-only. On Windows this is refused, because a Job
+                      # Object cannot enforce a filesystem boundary
 --sandbox off         # no confinement at all — trusted automation only; warns loudly
 ```
 
 Backends: **Job Objects** on Windows, **bubblewrap** on Linux.
 
-Honest limits (evidence in [`../../audit/03-defects.md`](../../audit/03-defects.md)):
+Honest limits (current state in [`../04-STATUS.md`](../04-STATUS.md)):
 
 - Windows Job Object confinement is **partial** relative to bwrap: it bounds process
   resources and process ownership, but does not restrict filesystem or network access.
-  A read-only mode label is not an OS-enforced Windows write restriction. See
-  [the architecture guide](../design/epsilon-architecture.md#tools-and-execution-boundaries)
-  for the implemented boundaries.
-- Path containment for the file tools is lexical; symlink/alias traversal is a **known open
-  defect (F09)**, not a guaranteed boundary. Treat workspace trust accordingly.
+  A read-only shell request is therefore **refused** on Windows rather than run under a
+  label the OS does not enforce; use `/plan` for a read-only session. See
+  [the architecture guide](../02-ARCHITECTURE.md#tools-and-execution-boundaries) for the
+  implemented boundaries.
+- Path containment for the file tools resolves the existing prefix and compares it to
+  the canonical workspace. Symlinks and Windows junctions are not followed by directory
+  walks; deceptive Windows spellings (`.env.`, `.env `, `::$DATA`) are refused before
+  policy.
 - macOS has no confinement backend: with `--sandbox auto` on macOS, shell commands fail
   closed (refuse to run) rather than run unconfined.
-- Process-isolation gaps (descendant processes outliving cancellation) are tracked as
-  F11/F12 in the ledger.
+- A timed-out or cancelled unconfined command now kills its process tree (process group
+  on Unix, `taskkill /T` on Windows), not only the direct child.
+- Session transcripts and spill files live under `.epsilon/` in the workspace, in
+  owner-only files. They are not outside the repository; review a clone before continuing
+  a session in it.
 
 ## Credential hygiene
 
@@ -91,9 +104,10 @@ Shell execution filters credential-shaped environment variables. This is not a
 secret-isolation guarantee: native reads, readable host files, subprocess-specific
 environments and unrecognized variable names need separate controls.
 
-Displayed shell output is capped, but the current parent collector buffers complete
-output first (F12). Spill-file availability does not establish bounded live memory.
-Timeout/cancellation and inherited-pipe cleanup gaps are tracked in F11.
+Displayed shell output is capped, and the parent capture is bounded: one stream holds at
+most 8 MiB in memory (head and tail), and the tool result keeps 64 KiB with an omission
+marker and a spill locator. A command that floods cannot grow the harness without bound.
+Timeout and cancellation kill the process tree.
 
 ## Secret files: what is refused, and what is not
 

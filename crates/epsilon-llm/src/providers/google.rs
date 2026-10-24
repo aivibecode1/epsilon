@@ -239,6 +239,11 @@ pub(crate) fn google_on_event(
     st: &mut HttpEventStream,
 ) -> Option<Vec<StreamEvent>> {
     let v: serde_json::Value = serde_json::from_str(&ev.data).ok()?;
+    // A blocked prompt can arrive with `usageMetadata` and no candidate at all.
+    // Read usage before requiring the candidate, or the billed input is lost.
+    if let Some(usage) = v.get("usageMetadata").filter(|u| !u.is_null()) {
+        st.seed_usage_compat(usage);
+    }
     let candidate = v.pointer("/candidates/0")?;
     // Accumulate across ALL parts: a single chunk can carry text AND a functionCall
     // (model narrates then calls) — returning on the first text part would drop
@@ -280,10 +285,6 @@ pub(crate) fn google_on_event(
             st.feed_tool_json_at(idx, &args.to_string());
             st.close_tool_call();
         }
-    }
-    // usageMetadata appears on chunks once generation completes.
-    if let Some(usage) = v.get("usageMetadata").filter(|u| !u.is_null()) {
-        st.seed_usage_compat(usage);
     }
     let done = candidate
         .get("finishReason")

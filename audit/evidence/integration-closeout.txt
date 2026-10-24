@@ -1,3 +1,0 @@
-INSTALL_RC=0 DEMO_RC=0 CLEAN_RC=0
-Filesystem      Size  Used Avail Use% Mounted on
-C:              477G  417G   60G  88% /c

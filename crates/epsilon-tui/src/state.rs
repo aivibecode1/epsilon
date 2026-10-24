@@ -135,6 +135,14 @@ pub enum LineKind {
     /// are never this kind, so search, counts and the separation rule never
     /// see it.
     CardBody,
+    /// The divider that opens a user or assistant message in the card chat.
+    /// Presentation-only, like [`LineKind::CardBody`]; the render cache inserts
+    /// the card's top and bottom borders with this kind and the draw path paints
+    /// them edge-to-edge without a gutter.
+    MessageHeader,
+    /// A message card's inner row: `│ text │`, already padded to the frame. The
+    /// draw path must not add the two-column gutter again.
+    MessageBody,
 }
 
 use std::collections::BTreeMap;
@@ -282,7 +290,7 @@ pub enum CardStatus {
     /// command the reader cancelled is the C-110 lie in a new place — a defect
     /// reported where there was a decision. Pi spells the same distinction
     /// `(cancelled)` and puts it where Epsilon puts the status word
-    /// (`references/pi-1.0.0/packages/coding-agent/src/modes/interactive/components/bash-execution.ts:189`,
+    /// (`references/pi-1.3.0/packages/coding-agent/src/modes/interactive/components/bash-execution.ts:189`,
     /// against `(exit N)` at `:192`).
     ///
     /// `Stopped` stays the *turn-level* statement (a card the abort found in
@@ -319,7 +327,7 @@ pub fn cancelled_command(text: &str) -> bool {
 /// the seconds fall rather than the number the frame that happened to be drawn
 /// first saw. Pi draws exactly this — `Retrying (attempt/max) in Ns... (KEY to
 /// cancel)` with a `CountdownTimer` re-rendering each whole second
-/// (`references/pi-1.0.0/packages/coding-agent/src/modes/interactive/components/status-indicator.ts:56,64`
+/// (`references/pi-1.3.0/packages/coding-agent/src/modes/interactive/components/status-indicator.ts:56,64`
 /// and `components/countdown-timer.ts:20-32`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct RetryWait {
@@ -2110,9 +2118,14 @@ impl UiState {
             line.kind,
             LineKind::ToolCall | LineKind::ToolResultOk | LineKind::ToolResultErr
         );
+        // User and assistant messages carry their own card divider at render
+        // time. A blank row before them would be a second separator for the
+        // same boundary and would spend the row the divider needs.
+        let has_message_header = matches!(line.kind, LineKind::User | LineKind::Assistant);
         if line.kind != LineKind::Blank
             && let Some(last) = self.lines.last()
             && last.kind != LineKind::Blank
+            && !has_message_header
             && (card_kind || last.kind != line.kind)
         {
             self.lines.push(TranscriptLine::plain(LineKind::Blank, ""));
@@ -4069,10 +4082,9 @@ mod tests {
         );
     }
 
-    /// Block separation (P-122/P-126): a blank row between blocks, never before
-    /// the first line, never twice, and never inside one kind's continuation —
-    /// so an assistant block after user text is separated, back-to-back user
-    /// lines are not, and nothing dangles at either end.
+    /// Block separation (P-122/P-126): user and assistant messages now carry a
+    /// render-time card divider instead of a blank row; cards still separate on
+    /// every call, and a blank is never doubled or left dangling.
     #[test]
     fn blocks_separate_on_kind_change_only() {
         let mut st = UiState::new();
@@ -4082,13 +4094,25 @@ mod tests {
         let kinds: Vec<LineKind> = st.lines().iter().map(|l| l.kind).collect();
         assert_eq!(
             kinds,
+            vec![LineKind::User, LineKind::User, LineKind::Assistant],
+            "message dividers replace the blank at a user/assistant boundary: {kinds:?}"
+        );
+
+        st.push_line(TranscriptLine::plain(LineKind::ToolCall, "bash"));
+        st.push_line(TranscriptLine::plain(LineKind::ToolResultOk, "done"));
+        let kinds: Vec<LineKind> = st.lines().iter().map(|l| l.kind).collect();
+        assert_eq!(
+            kinds,
             vec![
                 LineKind::User,
                 LineKind::User,
+                LineKind::Assistant,
                 LineKind::Blank,
-                LineKind::Assistant
+                LineKind::ToolCall,
+                LineKind::Blank,
+                LineKind::ToolResultOk,
             ],
-            "blank exactly at the kind change: {kinds:?}"
+            "tool cards keep a blank on each side; headers only replace prose boundaries: {kinds:?}"
         );
     }
 

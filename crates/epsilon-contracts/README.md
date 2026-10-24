@@ -6,7 +6,7 @@ The shared vocabulary every other crate compiles against: messages, provider str
 events, agent events, session-log entries, tool descriptors, the command registry both front
 ends read, and the traits that connect them. It owns types and trait signatures only — no
 decisions, no filesystem, no I/O — and has zero internal dependencies, deliberately
-([architecture §2](../../docs/design/epsilon-architecture.md)).
+([architecture §2](../../docs/02-ARCHITECTURE.md)).
 
 ## How it connects
 

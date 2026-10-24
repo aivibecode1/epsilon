@@ -582,6 +582,14 @@ impl SessionStore {
         let path = path.as_ref().to_path_buf();
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent)?;
+            // Session transcripts carry the conversation and any secret a tool
+            // printed. They live under the workspace, where a broad `git add -A`
+            // or a shared checkout can read them; owner-only is the floor.
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt;
+                let _ = std::fs::set_permissions(parent, std::fs::Permissions::from_mode(0o700));
+            }
         }
         // M61: one writer per session file. The check is `create_new` on
         // `<file>.lock` (atomic on NTFS and POSIX), and the holder heartbeats it
@@ -609,11 +617,22 @@ impl SessionStore {
             }
         };
         let preexisting = path.exists();
-        let file = OpenOptions::new()
-            .read(true)
-            .append(true)
-            .create(true)
-            .open(&path)?;
+        let mut options = OpenOptions::new();
+        options.read(true).append(true).create(true);
+        // Owner-only at creation, not after it: the mode is part of the open.
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::OpenOptionsExt;
+            options.mode(0o600);
+        }
+        let file = options.open(&path)?;
+        // Tighten a file that already existed (an older session may have been
+        // created 0644); `mode` above only covers the create case.
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let _ = std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600));
+        }
 
         let mut store = Self {
             path,
@@ -931,6 +950,17 @@ impl SessionStore {
     /// found (indexing stopped there; call [`Self::truncate_to_index`] to remove it). A complete
     /// but unrecognized line is an `Err`, not a `false` — the file must not be repaired.
     pub fn reindex(&mut self) -> Result<bool, StoreError> {
+        // **Refuse an oversized file before reading it.** `read_to_string`
+        // would allocate the whole thing first; a repo-shipped or shared
+        // multi-gigabyte `.jsonl` should get a sentence, not take the process
+        // down. The refusal leaves the file untouched.
+        let len = self.file.metadata()?.len();
+        if len > crate::MAX_SESSION_FILE_BYTES {
+            return Err(StoreError::Io(std::io::Error::other(format!(
+                "session file is {len} bytes; refusing to load more than {} bytes",
+                crate::MAX_SESSION_FILE_BYTES
+            ))));
+        }
         self.file.seek(SeekFrom::Start(0))?;
         let mut raw = String::new();
         (&self.file).read_to_string(&mut raw)?;

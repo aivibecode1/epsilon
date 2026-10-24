@@ -65,6 +65,30 @@ pub fn lookup_custom<'a>(
     customs.iter().find(|c| c.matches_id(model_id))
 }
 
+/// The model name to send to a provider: a custom id's `<name>/` prefix is a
+/// local routing key, not part of the remote model name.
+///
+/// The endpoint already identifies the provider, so `lmstudio/qwen2.5` must
+/// reach LM Studio as `qwen2.5` — sending the prefix is how a correctly
+/// configured local model produced an "unknown model" 404. Catalog ids keep
+/// their full spelling: OpenRouter's `anthropic/...` and Bedrock's ARNs are
+/// remote names, not local prefixes.
+pub fn wire_model_id<'a>(model_id: &'a str, customs: &[CustomProvider]) -> &'a str {
+    // Catalog rows always win over a same-named custom declaration (`wire_for`
+    // says so); their slash belongs to the remote name, so only a genuinely
+    // custom id gets its prefix removed.
+    if crate::catalog::lookup_model(model_id).is_none()
+        && lookup_custom(customs, model_id).is_some()
+    {
+        model_id
+            .split_once('/')
+            .map(|(_, rest)| rest)
+            .unwrap_or(model_id)
+    } else {
+        model_id
+    }
+}
+
 /// The custom providers this process was given, read by everyone who needs them.
 ///
 /// **M225: the value is installed once, and every reader reads it.** `load_custom_providers` used to
@@ -131,6 +155,35 @@ mod tests {
         );
         assert!(!c.matches_id("openai/gpt-4"));
         assert!(!c.matches_id("no-slash"));
+    }
+
+    #[test]
+    fn a_custom_prefix_is_stripped_before_the_wire_but_catalog_ids_are_not() {
+        let customs =
+            vec![CustomProvider::from_config("lmstudio", "http://localhost:1234/v1", "").unwrap()];
+        assert_eq!(
+            wire_model_id("lmstudio/qwen2.5-7b-instruct", &customs),
+            "qwen2.5-7b-instruct",
+            "the endpoint names the provider; the remote model is the suffix"
+        );
+        assert_eq!(
+            wire_model_id("anthropic/claude-sonnet-4", &customs),
+            "anthropic/claude-sonnet-4",
+            "a catalog id's slash is part of its remote name (OpenRouter)"
+        );
+        // A custom row that shadows a catalog provider's name must not strip a
+        // catalog id: catalog routing wins, so the slash is still remote.
+        let shadow =
+            vec![CustomProvider::from_config("aion-labs", "http://localhost:9/v1", "").unwrap()];
+        assert_eq!(
+            wire_model_id("aion-labs/aion-3.0", &shadow),
+            "aion-labs/aion-3.0",
+        );
+        assert_eq!(
+            wire_model_id("lmstudio/", &customs),
+            "",
+            "an empty suffix is preserved so the provider can reject it"
+        );
     }
 
     /// M225: what was installed is what every reader gets, and a second install replaces the first.

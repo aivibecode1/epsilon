@@ -78,12 +78,19 @@ impl ProviderWire for AnthropicWire {
         // the body is not mutated while it is being read, and because the decision is a
         // property of the conversation rather than of any one block's shape.
         let tail_break = crate::cache_policy::CachePolicy::DEFAULT
-            .mark_last_user_message
-            .then(|| last_user_message_index(&ctx.messages))
+            .mark_last_user_turn
+            .then(|| last_user_turn_index(&ctx.messages))
             .flatten();
+        // Consecutive tool results are one user-role turn on the wire, not one
+        // message per result. Grouping them is both the shape Anthropic expects
+        // after parallel tool calls and the boundary the cache marker lands on.
+        let mut pending_tool_results: Vec<serde_json::Value> = Vec::new();
+        let mut pending_is_tail = false;
         for (index, m) in ctx.messages.iter().enumerate() {
             match m {
                 Message::User(u) => {
+                    flush_tool_results(&mut messages, &mut pending_tool_results, pending_is_tail);
+                    pending_is_tail = false;
                     let mut blocks = user_blocks(u);
                     if Some(index) == tail_break {
                         mark_last_block(&mut blocks);
@@ -91,6 +98,8 @@ impl ProviderWire for AnthropicWire {
                     messages.push(json!({"role": "user", "content": blocks}));
                 }
                 Message::Assistant(a) => {
+                    flush_tool_results(&mut messages, &mut pending_tool_results, pending_is_tail);
+                    pending_is_tail = false;
                     // Assistant turns carry text + thinking + tool_use blocks.
                     let mut blocks = Vec::new();
                     for b in &a.content {
@@ -122,11 +131,23 @@ impl ProviderWire for AnthropicWire {
                     }
                 }
                 Message::ToolResult(t) => {
-                    messages.push(tool_result_block(model, t));
+                    let mut message = tool_result_block(model, t);
+                    if let Some(content) = message
+                        .get_mut("content")
+                        .and_then(serde_json::Value::as_array_mut)
+                        && let Some(block) = content.pop()
+                    {
+                        pending_tool_results.push(block);
+                    }
+                    pending_is_tail |= Some(index) == tail_break;
                 }
-                Message::Custom(_) => {}
+                Message::Custom(_) => {
+                    flush_tool_results(&mut messages, &mut pending_tool_results, pending_is_tail);
+                    pending_is_tail = false;
+                }
             }
         }
+        flush_tool_results(&mut messages, &mut pending_tool_results, pending_is_tail);
 
         let tools: Vec<serde_json::Value> = ctx
             .tools
@@ -327,12 +348,39 @@ fn mark_last_block(blocks: &mut [serde_json::Value]) {
     }
 }
 
-/// The index of the **last** user message, or `None` when there is none.
+/// Flush grouped tool-result blocks as one user-role turn.
+///
+/// `mark_tail` is true when the last message before the flush was the cache
+/// boundary; the marker belongs on the last block of the group, not on an
+/// earlier sibling.
+fn flush_tool_results(
+    messages: &mut Vec<serde_json::Value>,
+    pending: &mut Vec<serde_json::Value>,
+    mark_tail: bool,
+) {
+    if pending.is_empty() {
+        return;
+    }
+    if mark_tail && let Some(last) = pending.last_mut() {
+        last["cache_control"] = crate::cache_policy::ephemeral();
+    }
+    messages.push(json!({
+        "role": "user",
+        "content": std::mem::take(pending),
+    }));
+}
+
+/// The index of the **last user-role turn**: a user message or a tool-result
+/// message, because both are sent under `"role": "user"`.
 ///
 /// Last, not first: the point is a prefix that does not move while the turn's own tool
-/// round-trips extend the transcript after it.
-fn last_user_message_index(messages: &[Message]) -> Option<usize> {
-    messages.iter().rposition(|m| matches!(m, Message::User(_)))
+/// round-trips extend the transcript after it. Tool results are included because pi
+/// marks the last user/system message on the wire (`anthropic-messages.ts:1529-1553`);
+/// stopping at the prompt leaves every result after it uncached.
+fn last_user_turn_index(messages: &[Message]) -> Option<usize> {
+    messages
+        .iter()
+        .rposition(|m| matches!(m, Message::User(_) | Message::ToolResult(_)))
 }
 
 /// Tool results replay as a user turn carrying `tool_result` blocks (pi's

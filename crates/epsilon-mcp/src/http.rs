@@ -322,7 +322,7 @@ pub async fn attach_http_server(
     cfg: &HttpServerConfig,
 ) -> Result<usize, String> {
     let connector: Arc<dyn Connector> = Arc::new(HttpConnector::connect(cfg).await?);
-    crate::bridge(registry, &cfg.name, connector).await
+    crate::bridge_with_timeout(registry, &cfg.name, connector, cfg.timeout_secs).await
 }
 
 /// One entry point for both transports: stdio keeps its scrubbed spawn, HTTP

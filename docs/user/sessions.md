@@ -17,9 +17,10 @@ Sessions written before that directory existed are still directly in
 read both layouts, so nothing has to be moved and no history is rewritten. New files
 never go into the flat directory again.
 
-TUI: `/new` `/resume` `/sessions` `/session` `/tree` `/timeline` `/fork` `/clone` for
-lifecycle; `/export` (html/json) writes to `.epsilon/exports/`; `/import` `/share` `/copy`
-move transcripts around; `/search` finds text across history; `/name` renames; `/compact`
+TUI: `/new` `/resume` `/sessions` `/session` `/fork` `/clone` for lifecycle;
+`/branch` opens the branch browser (aliases `/timeline` and `/tree`);
+`/export` (html/json) writes to `.epsilon/exports/`; `/import` `/share` `/copy` move
+transcripts around; `/search` finds text across history; `/name` renames; `/compact`
 compresses context.
 
 CLI:
@@ -42,7 +43,7 @@ second case looks like a hang for about six seconds:
 
 > **This said "four seconds" until 2026-10-04.** M293 widened the window and updated
 > `crates/epsilon-session/src/lease.rs` — whose own comment records the change — but not this
-> page or [`../glossary.md`](../glossary.md). Two documents describing one constant is how a
+> page or [`../glossary.md`](../06-GLOSSARY.md). Two documents describing one constant is how a
 > reader ends up with a number the code does not use.
 
 Locks left by a process that is gone are also **reaped at launch** (a lock untouched for thirty
@@ -80,8 +81,8 @@ Practical guidance:
 
 - Back up `.epsilon/sessions/` privately before reopening damaged files: a genuinely torn tail
   is still repaired in place, and only your own copy proves what was there.
-- `/tree` currently shows the active branch; `/fork` copies the file without switching
-  to it. These are not complete pi session workflows.
+- `/branch` (aliases `/tree`, `/timeline`) shows the active branch; `/fork` copies the
+  file without switching to it. These are not complete pi session workflows.
 
 ## Checkpoints (revert)
 

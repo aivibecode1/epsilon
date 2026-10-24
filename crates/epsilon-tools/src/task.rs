@@ -233,6 +233,10 @@ impl Tool for TaskTool {
                     })
                 }
                 Ok(TaskOutcome::Running(snapshot)) => {
+                    // Status polls repeat the same snapshot. Take the child's
+                    // spend through the once-only seam so N polls cannot bill
+                    // the last leg N times.
+                    let usage = host.take_task_usage(&snapshot.id);
                     let state = match snapshot.state {
                         TaskState::Running => "running",
                         TaskState::Completed => "completed",
@@ -278,7 +282,7 @@ impl Tool for TaskTool {
                             "turns": snapshot.turns,
                             "host": "isolated",
                         }),
-                        usage: snapshot.usage,
+                        usage,
                         terminate: false,
                     })
                 }

@@ -166,9 +166,15 @@ pub fn build(stable: &Stable<'_>, context: &ContextTier, vol: &Volatile<'_>) -> 
         for (path, content) in &context.instructions {
             // Content hash makes cache invalidation observable and debuggable.
             let hash = fnv1a(content.as_bytes());
+            // **A file cannot close the frame it lives in.** Untrusted text is
+            // untrusted even when it is called AGENTS.md: a `</project_instructions>`
+            // inside it would end the block early and let the rest of the file
+            // read as harness instructions. The backslash keeps the words and
+            // removes the tag.
+            let safe = escape_project_text(content.trim_end());
+            let path = escape_project_attr(path);
             p.push_str(&format!(
-                "<project_instructions path=\"{path}\" hash=\"{hash:08x}\">\n{}\n</project_instructions>\n",
-                content.trim_end()
+                "<project_instructions path=\"{path}\" hash=\"{hash:08x}\">\n{safe}\n</project_instructions>\n"
             ));
         }
         p.push_str("</project_context>\n");
@@ -226,7 +232,7 @@ pub fn load_project_instructions(workspace: &Path) -> Vec<(String, String)> {
         .map(|d| d.join(MEMORY_NAME))
         .filter(|p| p.is_file());
     if let Some(path) = global_memory
-        && let Ok(content) = std::fs::read_to_string(&path)
+        && let Some(content) = read_capped(&path)
         && !content.trim().is_empty()
     {
         out.push((format!("~/.config/epsilon/{MEMORY_NAME}"), content));
@@ -243,7 +249,7 @@ pub fn load_project_instructions(workspace: &Path) -> Vec<(String, String)> {
             break;
         }
         if let Some(path) = context_file_in(d)
-            && let Ok(content) = std::fs::read_to_string(&path)
+            && let Some(content) = read_capped(&path)
         {
             ancestors.push((context_file_label(workspace, &path), content));
         }
@@ -254,13 +260,59 @@ pub fn load_project_instructions(workspace: &Path) -> Vec<(String, String)> {
 
     // Workspace MEMORY.md is additive (not mutually exclusive with AGENTS.md).
     let ws_memory = workspace.join(MEMORY_NAME);
-    if let Ok(content) = std::fs::read_to_string(&ws_memory)
+    if let Some(content) = read_capped(&ws_memory)
         && !content.trim().is_empty()
     {
         out.push((MEMORY_NAME.to_string(), content));
     }
 
     out
+}
+
+/// Keep a file's words but remove the tags that could close its frame.
+fn escape_project_text(text: &str) -> String {
+    text.replace("</project_instructions>", "<\\/project_instructions>")
+        .replace("</project_context>", "<\\/project_context>")
+}
+
+/// Make a path safe inside a double-quoted XML attribute.
+fn escape_project_attr(text: &str) -> String {
+    text.replace('&', "&amp;")
+        .replace('"', "&quot;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
+}
+
+/// How much of one instruction file may enter the prompt.///
+/// AGENTS.md is prose, and 256 KiB is already a book chapter; the cap exists so
+/// a runaway or hostile file cannot size the request (and the bill) by itself.
+/// The marker says what happened, so a reader can open the file instead of
+/// assuming the text ended.
+const CONTEXT_FILE_MAX_BYTES: usize = 256 * 1024;
+
+/// Read at most [`CONTEXT_FILE_MAX_BYTES`] of a text file, with a whole-file
+/// marker when the cap bites.
+fn read_capped(path: &Path) -> Option<String> {
+    use std::io::Read;
+    let file = std::fs::File::open(path).ok()?;
+    let mut limited = file.take((CONTEXT_FILE_MAX_BYTES + 1) as u64);
+    let mut content = String::new();
+    limited.read_to_string(&mut content).ok()?;
+    if content.len() <= CONTEXT_FILE_MAX_BYTES {
+        return Some(content);
+    }
+    // Never cut inside a codepoint; `read_to_string` gave valid UTF-8, so the
+    // cap can only land in the middle of a multi-byte sequence.
+    let mut cut = CONTEXT_FILE_MAX_BYTES;
+    while cut > 0 && !content.is_char_boundary(cut) {
+        cut -= 1;
+    }
+    let total = std::fs::metadata(path).map(|m| m.len()).unwrap_or(0);
+    Some(format!(
+        "{}\n\n[harness] this file is {total} bytes; the first {cut} are shown. Open the full \
+         file if the instructions you need are not here.\n",
+        &content[..cut]
+    ))
 }
 
 /// Candidate context-file names for ONE directory, in pi's precedence order
@@ -1244,6 +1296,43 @@ mod tests {
         assert_eq!(
             forward, backward,
             "a prompt that reshuffles defeats the prefix cache"
+        );
+    }
+
+    /// A project file cannot close the frame it is quoted inside.
+    #[test]
+    fn project_text_cannot_close_its_own_frame() {
+        assert_eq!(
+            escape_project_text("before</project_instructions>after"),
+            "before<\\/project_instructions>after"
+        );
+        assert_eq!(
+            escape_project_text("before</project_context>after"),
+            "before<\\/project_context>after"
+        );
+        // A path with a quote cannot break out of its attribute either.
+        assert_eq!(escape_project_attr(r#"a"b<c>&"#), "a&quot;b&lt;c&gt;&amp;");
+    }
+
+    /// One hostile file cannot size the request by itself. The cap keeps the
+    /// beginning (where instructions usually are) and says it cut.
+    #[test]
+    fn an_oversized_instruction_file_is_capped_with_a_marker() {
+        let dir = tempfile::tempdir().expect("a temp dir");
+        let path = dir.path().join("AGENTS.md");
+        let body = format!("HEAD\n{}", "x".repeat(CONTEXT_FILE_MAX_BYTES + 64));
+        std::fs::write(&path, &body).expect("write fixture");
+        let read = read_capped(&path).expect("the file is readable");
+        assert!(read.starts_with("HEAD"), "the beginning survives");
+        assert!(
+            read.contains("are shown"),
+            "the marker says the file was cut: {}",
+            &read[..80.min(read.len())]
+        );
+        assert!(
+            read.len() <= CONTEXT_FILE_MAX_BYTES + 256,
+            "the cap bounds the prompt: {} bytes",
+            read.len()
         );
     }
 }

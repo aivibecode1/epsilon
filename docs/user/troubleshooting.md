@@ -30,5 +30,5 @@ sandbox backend, session store, and project trust — without starting a run.
 ## Still stuck
 
 - `epsilon --help` — the shipped binary is the full reference.
-- Check [`../../audit/03-defects.md`](../../audit/03-defects.md) — your symptom
-  may be a known open defect, not your setup.
+- Check [`../04-STATUS.md`](../04-STATUS.md) — your symptom may be a known limitation,
+  not your setup.

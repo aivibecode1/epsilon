@@ -48,13 +48,15 @@ if (-not $env:CARGO_BUILD_JOBS) { $env:CARGO_BUILD_JOBS = "1" }
 # A longer path passes and a shorter one fails, so it is not path length; and
 # changing only the last name -- `Epsilone`, `EpsilonX`, `Xpsilon`, `epsilonn`
 # -- all pass, so it is not the name. Something outside the compiler is holding
-# this tree, and this is what that looks like from inside `c1.dll`. See
-# `agents/memory/build-blockers-resolved.md`.
+# this tree, and this is what that looks like from inside `c1.dll`.
 #
-# `%TEMP%\epsilon-target` is used rather than a fixed drive path: it is on the
-# same volume, it survives no configuration, and it is the one place a build
-# artifact is expected to be disposable.
-$env:CARGO_TARGET_DIR = Join-Path $env:TEMP "epsilon-target"
+# `%TEMP%\epsilon-target` is the default rather than a fixed drive path: it is on
+# the same volume, it survives no configuration, and it is the one place a build
+# artifact is expected to be disposable. A caller that already has a warm cache
+# elsewhere may set CARGO_TARGET_DIR; the battery then uses it and logs it.
+if (-not $env:CARGO_TARGET_DIR) {
+    $env:CARGO_TARGET_DIR = Join-Path $env:TEMP "epsilon-target"
+}
 
 # The MSVC build environment, loaded before anything runs.
 #
@@ -176,8 +178,7 @@ $gates = @(
     # 2026-09-28 left 40 dead relative links across the docs and nothing
     # noticed, because a dead citation looks exactly like a live one until a
     # reader follows it. It costs a second and it is the only check that can
-    # see this class. `audit/history/` is excluded on purpose: it is superseded
-    # and deliberately unrepaired (AGENTS.md).
+    # see this class.
     @{ Name = "check-links"; Exe = "python"; Args = @("scripts/check-links.py", "--quiet") },
     # Cargo does not merge a package `[lints]` table with `[workspace.lints]`: a
     # package table REPLACES it unless it says `workspace = true`, and cargo

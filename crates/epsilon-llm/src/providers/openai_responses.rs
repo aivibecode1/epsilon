@@ -228,6 +228,11 @@ impl ProviderWire for OpenAiResponsesWire {
         if max_out >= RESPONSES_MIN_OUTPUT_TOKENS {
             body["max_output_tokens"] = json!(max_out);
         }
+        if super::is_first_party_host(&self.base_url, "api.openai.com")
+            && let Some(key) = ctx.prompt_cache_key(model)
+        {
+            body["prompt_cache_key"] = json!(key);
+        }
         Ok(body)
     }
 
@@ -493,6 +498,10 @@ mod tests {
         assert_eq!(body["model"], "gpt-5.6");
         assert_eq!(body["stream"], true);
         assert_eq!(body["store"], false);
+        assert!(
+            body["prompt_cache_key"].is_string(),
+            "OpenAI Responses gets a stable cache-affinity key: {body}"
+        );
         // system + user, input_text vocabulary (never chat roles/content strings).
         let input = body["input"].as_array().unwrap();
         assert_eq!(input[0]["role"], "system");

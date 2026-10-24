@@ -6,6 +6,13 @@ providers with a credential, a live listing fetched from the provider's own
 `[unavailable]` rows rather than dropped, so the running state stays visible
 in the surface that changes it.
 
+**A live listing is not a route.** The bundled catalog carries the wire a
+request needs; an id that appears only in a provider's `/models` page is shown
+struck and cannot be applied, saved as the default, or favourited. Before this
+rule the picker wrote such an id into `[model] id` and the next launch failed
+with `unknown model`. Use a catalogued model, or declare a custom provider whose
+`<name>/` prefix routes the id.
+
 ## Live listings
 
 Opening `/models` (or entering a provider) fetches that provider's live
@@ -17,7 +24,9 @@ keeps the last good listing with its real age rather than clearing it.
 Offline builds never fetch and browse the bundle only.
 
 `/catalog` reports the bundled snapshot date plus each live listing's age
-(`refreshed <age> ago (this session)`, `from startup cache, <age> ago — auto-refreshes on open`, or `not fetched yet — opening refreshes`).
+(`refreshed <age> ago (this session)`, `from startup cache, <age> ago — auto-refreshes on open`, or `not fetched yet — opening refreshes`). The provider's
+model list repeats the same line above its key hints, so the age of the list is
+visible while choosing from it.
 
 ## Retired models
 

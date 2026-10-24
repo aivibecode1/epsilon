@@ -24,6 +24,68 @@ use crate::state::LineKind;
 /// Columns reserved at the left of every transcript row.
 pub const GUTTER: usize = 2;
 
+/// The top border of a user or assistant card: `╭─ ▎ you ─────╮`.
+pub(crate) fn card_top(kind: LineKind, width: usize, theme: &Theme) -> Vec<(String, Style)> {
+    let (marker, label, style) = if kind == LineKind::User {
+        (theme.glyphs.cursor_bar, "you", theme.user())
+    } else {
+        (theme.glyphs.assistant, "assistant", theme.assistant())
+    };
+    let mut left = format!(
+        "{}{} {} {} ",
+        theme.glyphs.top_left, theme.glyphs.horizontal, marker, label
+    );
+    if crate::ui::layout::display_width(&left) + 1 >= width {
+        left = crate::wrap::fit_width_with(&left, width, theme.glyphs.ellipsis);
+        return vec![(left, style)];
+    }
+    let fill = width
+        .saturating_sub(crate::ui::layout::display_width(&left))
+        .saturating_sub(1);
+    vec![
+        (left, style),
+        (theme.glyphs.horizontal.repeat(fill), theme.faint()),
+        (theme.glyphs.top_right.to_string(), theme.faint()),
+    ]
+}
+
+/// The bottom border of a user or assistant card: `╰────────────╯`.
+pub(crate) fn card_bottom(width: usize, theme: &Theme) -> Vec<(String, Style)> {
+    let inner = width
+        .saturating_sub(crate::ui::layout::display_width(theme.glyphs.bottom_left))
+        .saturating_sub(crate::ui::layout::display_width(theme.glyphs.bottom_right));
+    vec![(
+        format!(
+            "{}{}{}",
+            theme.glyphs.bottom_left,
+            theme.glyphs.horizontal.repeat(inner),
+            theme.glyphs.bottom_right
+        ),
+        theme.faint(),
+    )]
+}
+
+/// One inner card row: a vertical rail, the content padded to `inner_width`,
+/// and the closing rail.
+pub(crate) fn card_body(
+    content: Vec<(String, Style)>,
+    inner_width: usize,
+    theme: &Theme,
+) -> Vec<(String, Style)> {
+    let mut row = Vec::with_capacity(content.len() + 3);
+    row.push((format!("{} ", theme.glyphs.vertical), theme.faint()));
+    let mut used = 0;
+    for (text, style) in content {
+        used += crate::ui::layout::display_width(&text);
+        row.push((text, style));
+    }
+    if used < inner_width {
+        row.push((" ".repeat(inner_width - used), Style::default()));
+    }
+    row.push((format!(" {}", theme.glyphs.vertical), theme.faint()));
+    row
+}
+
 /// The glyph and body style for one transcript row.
 ///
 /// Returns `(gutter_glyph, gutter_style, body_style, band)`, where `band` is the
@@ -61,14 +123,12 @@ pub fn row_style(theme: &Theme, kind: LineKind) -> (String, Style, Style, Style)
             theme.text(),
             theme.surface_user(),
         ),
-        // The model's prose is the default surface: no marker, no band, while the
-        // band is there to say so. See the fallback note above for the other half.
+        // The model's prose is the page, but it still gets one marker so a
+        // reader can tell where an answer begins without relying on a band
+        // that only truecolor draws. Continuations use the vertical rail, so a
+        // long answer is one column, not a field of repeated glyphs.
         LineKind::Assistant => (
-            if bands {
-                " ".to_string()
-            } else {
-                glyphs.assistant.to_string()
-            },
+            glyphs.assistant.to_string(),
             theme.assistant(),
             theme.assistant(),
             Style::default(),
@@ -135,6 +195,14 @@ pub fn row_style(theme: &Theme, kind: LineKind) -> (String, Style, Style, Style)
             Style::default(),
             Style::default(),
         ),
+        // The card-chat borders and body rows are painted edge-to-edge by
+        // `decorate`; they have no gutter of their own.
+        LineKind::MessageHeader | LineKind::MessageBody => (
+            String::new(),
+            Style::default(),
+            Style::default(),
+            Style::default(),
+        ),
         // A card's body nests under its title: the continuation rule, not
         // the result's tick. No band (the title carries the card's state).
         LineKind::CardBody => (
@@ -177,6 +245,21 @@ pub fn decorate(
     body: Vec<Span<'static>>,
     width: usize,
 ) -> Line<'static> {
+    // The card-chat divider is already a full-width row: it supplies its own
+    // role label and rule, so the two-column gutter would indent and duplicate
+    // the role. Return it exactly as built, padded to the frame edge — the cache
+    // builds it at body width and the divider deliberately has no gutter.
+    if kind == LineKind::MessageHeader || kind == LineKind::MessageBody {
+        let mut spans = body;
+        let used: usize = spans
+            .iter()
+            .map(|s| crate::ui::layout::display_width(&s.content))
+            .sum();
+        if used < width {
+            spans.push(Span::raw(" ".repeat(width - used)));
+        }
+        return Line::from(spans);
+    }
     let (glyph, gutter_style, _body_style, band) = row_style(theme, kind);
     let glyph = if continued {
         theme.glyphs.vertical.to_string()

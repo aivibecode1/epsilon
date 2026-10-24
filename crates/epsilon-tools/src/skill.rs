@@ -52,9 +52,14 @@ pub struct LoadableSkill {
     /// One-line purpose, shown when the model asks for something unavailable.
     pub description: String,
     /// Directory containing `SKILL.md` — or, for a flat `<name>.md` skill, the
-    /// parent skills root itself. Discovery sets this (its `Skill::dir` documents
-    /// the two shapes); the loader below reads whichever shape is on disk.
+    /// parent skills root itself. Used for the bundle file sample and base-dir
+    /// guidance.
     pub dir: PathBuf,
+    /// The exact file to read, resolved by discovery. The loader never guesses
+    /// between `<dir>/SKILL.md` and `<dir>/<name>.md`: a flat skill shares its
+    /// root with its siblings, and that guess could open a root-level
+    /// `SKILL.md` instead of the skill the model named.
+    pub file: PathBuf,
 }
 
 /// Arguments for the skill tool.
@@ -180,24 +185,15 @@ impl Tool for SkillTool {
             )));
         };
 
-        let bundle = skill.dir.join("SKILL.md");
-        // `dir` is the bundle directory — or, for a flat `<name>.md` skill, its
-        // parent root. The bundle shape is tried first so every skill that loads today
-        // loads byte-identical tomorrow; the flat fallback only fires where no bundle
-        // exists. The containment check keeps the name inside the root: `join` with
-        // an absolute or `..`-carrying name would otherwise escape it, and the name
-        // arrives from model input via `find`, not from validated discovery.
-        let is_bundle = bundle.is_file();
-        let flat = skill.dir.join(format!("{}.md", skill.name));
-        let path = if is_bundle {
-            bundle
-        } else if flat.parent().is_some_and(|parent| parent == skill.dir) && flat.is_file() {
-            flat
-        } else {
-            // Neither shape: report the bundle path, which is the shape discovery
-            // promises and the one every skill on disk today uses.
-            skill.dir.join("SKILL.md")
-        };
+        // Discovery resolved the exact file. Re-deriving it here was the G4
+        // defect: a flat skill's `dir` is the shared root, so trying
+        // `<root>/SKILL.md` first could open a root-level bundle instead of the
+        // `<root>/<name>.md` the model asked for.
+        let is_bundle = skill
+            .file
+            .file_name()
+            .is_some_and(|name| name == "SKILL.md");
+        let path = skill.file.clone();
         let raw = std::fs::read_to_string(&path).map_err(|e| {
             ToolFailure::msg(format!(
                 "cannot read skill '{}' at {}: {e}",
@@ -285,10 +281,21 @@ mod tests {
         SkillTool::new(
             skills
                 .into_iter()
-                .map(|(name, description, dir)| LoadableSkill {
-                    name: name.into(),
-                    description: description.into(),
-                    dir,
+                .map(|(name, description, dir)| {
+                    // Test fixtures use the same two shapes discovery produces:
+                    // a bundle directory with SKILL.md, or a flat root holding
+                    // `<name>.md`. Production never guesses (see `LoadableSkill::file`).
+                    let file = if dir.join("SKILL.md").is_file() {
+                        dir.join("SKILL.md")
+                    } else {
+                        dir.join(format!("{name}.md"))
+                    };
+                    LoadableSkill {
+                        name: name.into(),
+                        description: description.into(),
+                        file,
+                        dir,
+                    }
                 })
                 .collect(),
         )
@@ -369,6 +376,34 @@ mod tests {
             "frontmatter is harness metadata, not skill material: {text}"
         );
         assert_eq!(out.details["skill"], "alpha");
+    }
+
+    /// **The root-level `SKILL.md` trap.** A flat skill shares its root with its
+    /// siblings; the old loader tried `<root>/SKILL.md` first and would open the
+    /// root document instead of `<root>/<name>.md`. Discovery now hands over the
+    /// resolved file, and this fixture makes the old guess produce the wrong body.
+    #[tokio::test]
+    async fn a_flat_skill_beside_a_root_level_skill_md_loads_its_own_file() {
+        let tmp = tempfile::tempdir().expect("tmp");
+        std::fs::write(tmp.path().join("SKILL.md"), "ROOT DOCUMENT").expect("root doc");
+        std::fs::write(
+            tmp.path().join("alpha.md"),
+            "---\nname: alpha\ndescription: d\n---\n\nALPHA BODY\n",
+        )
+        .expect("flat skill");
+        let tool = SkillTool::new(vec![LoadableSkill {
+            name: "alpha".into(),
+            description: "d".into(),
+            dir: tmp.path().to_path_buf(),
+            file: tmp.path().join("alpha.md"),
+        }]);
+        let out = run(&tool, "alpha").await.expect("loads");
+        let text = text_of(&out);
+        assert!(text.contains("ALPHA BODY"), "{text}");
+        assert!(
+            !text.contains("ROOT DOCUMENT"),
+            "the root SKILL.md must not be loaded in place of the flat skill: {text}"
+        );
     }
 
     #[tokio::test]

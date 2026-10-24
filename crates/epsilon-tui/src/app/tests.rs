@@ -17,6 +17,7 @@ use super::tests_support::{
 };
 use crossterm::event::KeyEventState;
 use epsilon_contracts::agent_event::{PermissionDecision, PermissionRequest};
+use epsilon_contracts::content::UserContent;
 use epsilon_contracts::message::UserMessage;
 use epsilon_safety::{ApprovalUi, ChannelApprovalUi};
 
@@ -1564,7 +1565,7 @@ async fn slash_model_direct_applies_instantly() {
     // deepseek-v4-pro: resolvable in the test catalog (exactly one
     // candidate). Unresolvable text opens the picker instead — see
     // model_partial_opens_the_picker_prefilled. A name that resolves in
-    // production but not here (e.g. deepseek-chat) would test blind apply,
+    // production but not here (e.g. deepseek-flash) would test blind apply,
     // which no longer exists by design.
     assert!(!type_and_enter(&mut app, &agent, "/model deepseek-v4-pro"));
     assert_eq!(
@@ -1918,29 +1919,43 @@ async fn every_command_head_is_reachable_from_the_palette() {
         );
     }
     // The frame: 43 rows scroll sanely at both sizes, with UNICODE pins. The
-    // fragments are palette-row text (`set model by id` is the `/model`
+    // fragments are palette-row text (`Switch or pick a model` is the `/model`
     // description), never welcome-screen words, so the asserts cannot pass on
     // the screen behind the overlay.
     app.theme.glyphs = crate::ui::theme::UNICODE;
     app.palette_open = true;
     for (width, height) in [(80u16, 24u16), (100u16, 30u16)] {
-        let frame = render_rows(&mut app, width, height).join("\n");
+        let frame = render_rows(&mut app, width, height);
+        let screen = frame.join("\n");
+        let first = frame
+            .iter()
+            .find(|row| row.contains("/model"))
+            .unwrap_or_else(|| {
+                panic!("{width}x{height}: the first palette row is on screen:\n{screen}")
+            });
         assert!(
-            frame.contains("/model · set model by id"),
-            "{width}x{height}: the first palette row is on screen:\n{frame}"
+            first.contains("Switch or pick a model"),
+            "{width}x{height}: the command and its description share one row:\n{screen}"
         );
         // Scrolled to the end: the last row names the file tree, the first
         // has scrolled away, and the draw did not panic on a 43-row list in
         // a ~10-row box.
         app.picker_index = entries.len() - 1;
-        let frame = render_rows(&mut app, width, height).join("\n");
+        let frame = render_rows(&mut app, width, height);
+        let screen = frame.join("\n");
+        let last = frame
+            .iter()
+            .find(|row| row.contains("Files"))
+            .unwrap_or_else(|| {
+                panic!("{width}x{height}: the scrolled palette names the file tree:\n{screen}")
+            });
         assert!(
-            frame.contains("Files · workspace tree"),
-            "{width}x{height}: the scrolled palette names the file tree:\n{frame}"
+            last.contains("workspace tree"),
+            "{width}x{height}: the direct action keeps its description:\n{screen}"
         );
         assert!(
-            !frame.contains("set model by id"),
-            "{width}x{height}: the first row scrolled away:\n{frame}"
+            !screen.contains("Switch or pick a model"),
+            "{width}x{height}: the first row scrolled away:\n{screen}"
         );
         app.picker_index = 0;
     }
@@ -1954,10 +1969,16 @@ async fn every_command_head_is_reachable_from_the_palette() {
     app.input = "hotkeys".into();
     app.cursor_chars = app.input.chars().count();
     for (width, height) in [(80u16, 24u16), (100u16, 30u16)] {
-        let frame = render_rows(&mut app, width, height).join("\n");
+        let screen = render_rows(&mut app, width, height).join("\n");
+        let row = screen
+            .lines()
+            .find(|row| row.contains("/hotkeys"))
+            .unwrap_or_else(|| {
+                panic!("{width}x{height}: the filtered palette names the match:\n{screen}")
+            });
         assert!(
-            frame.contains("/hotkeys · show all keyboard shortcuts"),
-            "{width}x{height}: the filtered palette names the match:\n{frame}"
+            row.contains("Show keyboard shortcuts"),
+            "{width}x{height}: the filtered row keeps its description:\n{screen}"
         );
     }
 }
@@ -2870,8 +2891,8 @@ async fn trust_gate_blocks_f2_favorite_cycling() {
     let (mut app, agent, (_f, _n)) = test_app();
     let cfg = tempfile::tempdir().expect("a config dir");
     app.config_dir_override = Some(cfg.path().to_path_buf());
-    app.favorites = vec!["faux-1".into(), "deepseek-chat".into()];
-    app.favorite_thinking = vec![("deepseek-chat".into(), "high".into())];
+    app.favorites = vec!["faux-1".into(), "deepseek-flash".into()];
+    app.favorite_thinking = vec![("deepseek-flash".into(), "high".into())];
     // Isolated workspace, same reason as
     // `trust_review_holds_submits_until_answered`: the accept below writes
     // `.epsilon/trust.json`, which must not collide with parallel tests.
@@ -2890,7 +2911,7 @@ async fn trust_gate_blocks_f2_favorite_cycling() {
     // After accepting, cycling applies model + remembered level as usual.
     assert!(!type_and_enter(&mut app, &agent, "trust"));
     handle_key(&mut app, &agent, key(KeyCode::F(2)));
-    assert_eq!(app.model_id, "deepseek-chat");
+    assert_eq!(app.model_id, "deepseek-flash");
     assert_eq!(
         agent.thinking_level(),
         epsilon_contracts::ThinkingLevel::High
@@ -3120,7 +3141,7 @@ async fn favorites_section_orders_above_recents_and_marks_stars() {
     let rows = crate::picker::build_rows_with(
         "",
         "faux-1",
-        &["deepseek-chat".to_string()],
+        &["deepseek-flash".to_string()],
         &["kimi-k2.6".to_string()],
         None,
         &[],
@@ -3131,7 +3152,7 @@ async fn favorites_section_orders_above_recents_and_marks_stars() {
     assert_eq!(rows[0].id, "faux-1");
     let ids: Vec<&str> = rows.iter().map(|r| r.id.as_str()).collect();
     let fav_pos = ids.iter().position(|i| *i == "kimi-k2.6").unwrap();
-    let rec_pos = ids.iter().position(|i| *i == "deepseek-chat").unwrap();
+    let rec_pos = ids.iter().position(|i| *i == "deepseek-flash").unwrap();
     assert!(fav_pos < rec_pos, "favorite must precede recent: {ids:?}");
     assert_eq!(rows[fav_pos].provider, "favorite");
     assert!(rows[fav_pos].is_favorite);
@@ -3173,9 +3194,9 @@ async fn f2_cycles_favorites_and_guides_when_empty() {
     handle_key(&mut app, &agent, key(KeyCode::F(2)));
     assert_eq!(app.model_id, "faux-1", "nothing to cycle through");
 
-    app.favorites = vec!["faux-1".into(), "deepseek-chat".into()];
+    app.favorites = vec!["faux-1".into(), "deepseek-flash".into()];
     handle_key(&mut app, &agent, key(KeyCode::F(2)));
-    assert_eq!(app.model_id, "deepseek-chat", "forward cycle");
+    assert_eq!(app.model_id, "deepseek-flash", "forward cycle");
     handle_key(&mut app, &agent, key(KeyCode::F(2)));
     assert_eq!(app.model_id, "faux-1", "wraps around");
 
@@ -3184,7 +3205,7 @@ async fn f2_cycles_favorites_and_guides_when_empty() {
         &agent,
         KeyEvent::new(KeyCode::F(2), KeyModifiers::SHIFT),
     );
-    assert_eq!(app.model_id, "deepseek-chat", "shift = backward");
+    assert_eq!(app.model_id, "deepseek-flash", "shift = backward");
 
     // The switch is reported, not silent: Pi prints `Switched to <name>`, this
     // prints the same fact in its own words (P-038). Transcript lines only —
@@ -3203,11 +3224,11 @@ async fn f2_cycles_favorites_and_guides_when_empty() {
     // asserting the real global file here races every other TUI test's
     // writes (lesson 16b). What F2 owns: session state + in-memory mirrors.
     assert_eq!(
-        app.model_id, "deepseek-chat",
+        app.model_id, "deepseek-flash",
         "cycle switched the session model"
     );
     assert!(
-        app.recents.first().map(String::as_str) == Some("deepseek-chat"),
+        app.recents.first().map(String::as_str) == Some("deepseek-flash"),
         "in-memory recents updated with the cycled-to model"
     );
 }
@@ -3225,11 +3246,11 @@ async fn f2_applies_the_favorite_remembered_thinking_level() {
     let (mut app, agent, (_f, _n)) = test_app();
     let cfg = tempfile::tempdir().expect("a config dir");
     app.config_dir_override = Some(cfg.path().to_path_buf());
-    app.favorites = vec!["faux-1".into(), "deepseek-chat".into()];
-    app.favorite_thinking = vec![("deepseek-chat".into(), "high".into())];
+    app.favorites = vec!["faux-1".into(), "deepseek-flash".into()];
+    app.favorite_thinking = vec![("deepseek-flash".into(), "high".into())];
 
     handle_key(&mut app, &agent, key(KeyCode::F(2)));
-    assert_eq!(app.model_id, "deepseek-chat");
+    assert_eq!(app.model_id, "deepseek-flash");
     assert_eq!(
         agent.thinking_level(),
         epsilon_contracts::ThinkingLevel::High,
@@ -3322,9 +3343,22 @@ async fn slash_popup_offers_discovered_skills() {
         description: "Record changes".into(),
         dir: std::path::PathBuf::from("skills/commit"),
         disable_model_invocation: false,
+        file: std::path::PathBuf::from("skills/commit/SKILL.md"),
     }]);
     // The popup reads the cached rows, refreshed where app meets agent.
     app.refresh_skills(&agent);
+    // `/reload` must also replace the live tool, not only the catalog: a new
+    // skill used to be advertised while the old tool still answered "no such
+    // skill". Removing every loadable skill removes the tool rather than
+    // leaving one with an empty list.
+    assert!(!agent.has_tool("skill"), "the fixture starts without one");
+    epsilon_runtime::sync_skill_tool(&agent, &agent.skills(), &[]);
+    assert!(agent.has_tool("skill"), "reload registers the tool");
+    epsilon_runtime::sync_skill_tool(&agent, &agent.skills(), &["commit".to_string()]);
+    assert!(
+        !agent.has_tool("skill"),
+        "disabling the last loadable skill removes the tool"
+    );
     for c in "/skil".chars() {
         handle_key(&mut app, &agent, key(KeyCode::Char(c)));
     }
@@ -3466,6 +3500,7 @@ async fn slash_popup_completes_skill_names() {
         description: "Record changes".into(),
         dir: std::path::PathBuf::from("skills/commit"),
         disable_model_invocation: false,
+        file: std::path::PathBuf::from("skills/commit/SKILL.md"),
     }]);
     app.refresh_skills(&agent);
     for c in "/skill c".chars() {
@@ -4599,17 +4634,8 @@ async fn an_empty_session_says_which_picker_was_asked_for() {
     type_and_enter(&mut app, &agent, "/tree");
     let texts: Vec<String> = app.ui.lines().iter().map(|l| l.text.clone()).collect();
     assert!(
-        texts.join("\n").contains("tree: session is empty"),
-        "the /tree notice must name tree, got {texts:?}"
-    );
-
-    let (mut app2, agent2, (_f2, _n2)) = test_app();
-    let _dir2 = seed_branch(&agent2, &[]);
-    type_and_enter(&mut app2, &agent2, "/timeline");
-    let texts2: Vec<String> = app2.ui.lines().iter().map(|l| l.text.clone()).collect();
-    assert!(
-        texts2.join("\n").contains("timeline: session is empty"),
-        "the /timeline notice must name timeline, got {texts2:?}"
+        texts.join("\n").contains("timeline: session is empty"),
+        "the /tree alias reports the canonical picker, got {texts:?}"
     );
 }
 
@@ -4937,7 +4963,7 @@ async fn the_slash_popup_fits_the_description_it_offers() {
 
     // The whole description of a matched command, not a clipped prefix of it.
     assert!(
-        screen.contains("browse session files in this workspace"),
+        screen.contains("Browse and resume saved sessions"),
         "the slash popup clipped the description it is offering\n{screen}"
     );
     assert!(
@@ -4963,8 +4989,8 @@ async fn the_slash_popup_fits_the_description_it_offers() {
         let at = row.find(needle).expect("just checked");
         row[..at].chars().count()
     };
-    let short_desc = column_of("search this session's history");
-    let long_desc = column_of("enable/disable models");
+    let short_desc = column_of("Search the transcript");
+    let long_desc = column_of("Choose models for F2 cycling");
     assert_eq!(
         short_desc, long_desc,
         "every command's description must start in one character column; \
@@ -4982,38 +5008,54 @@ async fn the_slash_popup_fits_the_description_it_offers() {
     );
 }
 
-/// A description too long for one line wraps onto an indented continuation
-/// rather than being cut — and the continuation is a whole phrase, not a
-/// one-word orphan like `g)` on a line of its own.
+/// A long description keeps one row and truncates in place, with a mark.
+///
+/// The old popup wrapped a description onto continuation lines. That read well
+/// at 56 columns but made a list row's height depend on its text, so the
+/// selection could move without the list moving by the same amount. The column
+/// layout states the width in one place: a description that does not fit is cut
+/// with the repertoire's ellipsis, and at a truly narrow width it is dropped
+/// rather than pushing the command name off the row.
 #[tokio::test]
-async fn a_long_slash_description_wraps_to_a_whole_continuation_line() {
-    let (mut app, agent, _rx) = test_app();
-    for c in "/se".chars() {
-        handle_key(&mut app, &agent, key(KeyCode::Char(c)));
-    }
-    assert!(app.slash_open, "the popup is open");
-
-    let screen = render_rows(&mut app, 80, 24).join("\n");
-    // `/scoped_models`'s description is 72 characters and does not fit beside
-    // its name, so it continues on a second row indented under the column.
-    assert!(
-        screen.contains("(underscore spell"),
-        "the long description's first part is on screen\n{screen}"
-    );
-    assert!(
-        screen.contains("spelling)"),
-        "the long description's continuation must be readable, not truncated\n{screen}"
-    );
-    // The orphan rule: a continuation line holds a phrase, never a lone token.
-    for row in screen
-        .lines()
-        .filter(|r| r.contains("/scoped_models") || r.contains("spelling"))
-    {
-        let trimmed = row.trim();
-        assert!(
-            trimmed.len() > 4,
-            "a wrapped line must carry a phrase, not an orphan: {trimmed:?}\n{screen}"
+async fn a_long_slash_description_stays_on_its_command_row() {
+    for (width, height) in [(80u16, 24u16), (44, 24)] {
+        let (mut app, agent, _rx) = test_app();
+        // The ellipsis is repertoire-dependent; pin the Unicode table so this
+        // asserts the layout, not which console the test runner pretends to be.
+        app.theme.glyphs = crate::ui::theme::UNICODE;
+        for c in "/se".chars() {
+            handle_key(&mut app, &agent, key(KeyCode::Char(c)));
+        }
+        assert!(app.slash_open, "typing `/se` opens the command popup");
+        let screen = render_rows(&mut app, width, height).join("\n");
+        let matches = screen
+            .lines()
+            .filter(|row| row.contains("/scoped_models"))
+            .count();
+        assert_eq!(
+            matches, 1,
+            "{width}x{height}: the long description must not wrap the command onto a second row\
+             \n{screen}"
         );
+        let row = screen
+            .lines()
+            .find(|row| row.contains("/scoped_models"))
+            .expect("the row is on screen");
+        assert!(
+            row.chars().count() <= width as usize,
+            "{width}x{height}: the row overflows the frame: {row:?}"
+        );
+        if width == 44 {
+            assert!(
+                row.contains('…'),
+                "44 columns: the description is cut with a mark, not silently: {row:?}"
+            );
+        } else {
+            assert!(
+                row.contains("Choose models for F2 cycling"),
+                "80 columns: the description fits whole: {row:?}"
+            );
+        }
     }
 }
 
@@ -5078,19 +5120,39 @@ async fn a_user_row_and_an_answer_are_distinct_on_screen() {
             .iter()
             .position(|r| r.contains("Paris is the capital of France."))
             .unwrap_or_else(|| panic!("the answer is on screen: {rows:?}"));
+        let user_title_y = user_y - 1;
+        let answer_title_y = answer_y - 1;
 
-        let (user_glyph, user_fg) = first_glyph(&buffer, user_y as u16);
-        let (answer_glyph, answer_fg) = first_glyph(&buffer, answer_y as u16);
+        assert!(
+            rows[user_title_y].contains(" you "),
+            "the user card title names the speaker: {:?}",
+            rows[user_title_y]
+        );
+        assert!(
+            rows[answer_title_y].contains(" assistant "),
+            "the answer card title names the speaker: {:?}",
+            rows[answer_title_y]
+        );
+        let rail = app.theme.glyphs.vertical;
+        assert!(
+            rows[user_y].starts_with(&format!("{rail} "))
+                && rows[answer_y].starts_with(&format!("{rail} ")),
+            "both bodies sit inside their cards: {:?} / {:?}",
+            rows[user_y],
+            rows[answer_y]
+        );
+
+        let (user_glyph, user_fg) = first_glyph(&buffer, user_title_y as u16);
+        let (answer_glyph, answer_fg) = first_glyph(&buffer, answer_title_y as u16);
 
         assert_eq!(
-            user_glyph,
-            app.theme.glyphs.cursor_bar.to_string(),
-            "the user row is marked with the cursor bar ({mode:?})"
+            user_glyph, app.theme.glyphs.top_left,
+            "the card title begins the user card ({mode:?})"
         );
         assert_eq!(
             user_fg,
             Some(want_user),
-            "the user row's colour under {mode:?}"
+            "the user card title's colour under {mode:?}"
         );
         assert_eq!(
             answer_fg,
@@ -5162,13 +5224,13 @@ async fn a_finished_answer_separates_from_the_composer_it_feeds() {
         let rows = render_rows(&mut app, width, 30);
         let composer_y = rows
             .iter()
-            .rposition(|r| r.starts_with('❯') && r.contains(crate::ui::composer::PLACEHOLDER))
+            .rposition(|r| r.contains(crate::ui::composer::PLACEHOLDER))
             .unwrap_or_else(|| panic!("{width}: no composer row in:\n{}", rows.join("\n")));
-        assert!(composer_y > 2, "{width}: composer has nothing above it");
-        let above = rows[composer_y - 1].trim();
-        assert_eq!(
-            above, "",
-            "{width}: the row above the composer must be blank, not {above:?}"
+        assert!(composer_y > 3, "{width}: composer has nothing above it");
+        let above = rows[composer_y - 1].trim_end();
+        assert!(
+            above.contains("prompt") && above.contains(app.theme.glyphs.top_left),
+            "{width}: the composer must be introduced by its box title, not {above:?}"
         );
 
         // Not an empty frame passing by accident: the answer is on screen, and it
@@ -5229,6 +5291,7 @@ async fn no_slash_command_panics_when_typed() {
             || app.settings_open
             || app.auth_prompt_open
             || app.palette_open
+            || app.catalog.is_some()
             || app.trust_review_pending;
         assert!(
             after.len() > before || opened_something,
@@ -5280,6 +5343,7 @@ async fn no_slash_command_panics_when_typed() {
             || app.settings_open
             || app.auth_prompt_open
             || app.palette_open
+            || app.catalog.is_some()
             || app.trust_review_pending;
         assert!(
             after.len() > before || opened_something,
@@ -5289,52 +5353,6 @@ async fn no_slash_command_panics_when_typed() {
             before
         );
     }
-}
-
-/// `/open` in the terminal names the window instead of failing unknown (D-046/S-105).
-///
-/// The head parses (it is in COMMAND_HEADS for the window's parser), but this
-/// frontend is bound to its process directory — so the sentence must name where
-/// the door lives, not report a typo. RED first: the notice reads "unknown command".
-#[tokio::test]
-async fn open_in_the_terminal_names_the_window() {
-    let (mut app, agent, _rx) = test_app();
-    assert!(!type_and_enter(&mut app, &agent, "/open /tmp"));
-    let texts: Vec<String> = app.ui.lines().iter().map(|l| l.text.clone()).collect();
-    assert!(
-        texts
-            .iter()
-            .any(|t| t.contains("/open") && t.contains("desktop window")),
-        "the refusal must name the command and where it works: {texts:?}"
-    );
-    assert!(
-        texts.iter().any(|t| t.contains("/resume")),
-        "and offer the terminal's nearest door: {texts:?}"
-    );
-    // And the palette row — `/open` is now listed, where the hand-written
-    // palette never offered it — refuses by name through the real key path,
-    // not just when typed: open the palette, move to its row, press Enter.
-    let (mut app, agent, _rx) = test_app();
-    assert!(!handle_key(&mut app, &agent, ctrl(KeyCode::Char('p'))));
-    assert!(app.palette_open, "the palette opens");
-    let entries = crate::picker::filter_palette("", &app.keybindings);
-    app.picker_index = entries
-        .iter()
-        .position(|e| e.command.trim() == "/open")
-        .expect("/open has a palette row");
-    assert!(!handle_key(&mut app, &agent, key(KeyCode::Enter)));
-    assert!(!app.palette_open, "choosing the row closes the palette");
-    let texts: Vec<String> = app.ui.lines().iter().map(|l| l.text.clone()).collect();
-    assert!(
-        texts
-            .iter()
-            .any(|t| t.contains("/open") && t.contains("desktop window")),
-        "the palette row must refuse by name too: {texts:?}"
-    );
-    assert!(
-        texts.iter().any(|t| t.contains("/resume")),
-        "and offer the terminal's nearest door: {texts:?}"
-    );
 }
 
 #[tokio::test]
@@ -6122,13 +6140,20 @@ async fn viewer_tabs_open_switch_and_close() {
     // Rows are dirs-first, then files: a.txt first.
     handle_key(&mut app, &agent, key(KeyCode::Enter));
     assert!(app.viewer_open(), "Enter opens the first tab");
-    assert!(!app.tree_open, "the tree yields on open, like every picker");
-    // F6 brings the tree back over the viewer; Enter opens the second file
-    // as a second tab instead of replacing the first.
+    assert!(
+        app.tree_open && !app.tree_focused,
+        "the explorer stays docked while the file takes the keyboard"
+    );
+    // F6 moves focus to the tree; Enter opens the second file as a second tab
+    // instead of replacing the first.
     handle_key(&mut app, &agent, key(KeyCode::F(6)));
-    assert!(app.tree_open, "F6 yields to the tree with tabs kept");
+    assert!(app.tree_focused, "F6 focuses the tree with tabs kept");
     handle_key(&mut app, &agent, key(KeyCode::Down));
     handle_key(&mut app, &agent, key(KeyCode::Enter));
+    assert!(
+        app.tree_open && !app.tree_focused,
+        "opening the second tab returns the keyboard to the viewer, not the tree"
+    );
     assert_eq!(
         app.viewer_tabs.len(),
         2,
@@ -6214,6 +6239,128 @@ async fn viewer_dirty_tab_arms_before_closing() {
     assert!(app.ui.lines().len() > before, "the arm names its cost");
     handle_key(&mut app, &agent, key(KeyCode::Esc));
     assert!(!app.viewer_open(), "second Esc closes the dirty tab");
+}
+
+/// A dirty buffer stays visible and saveable after Esc leaves edit mode.
+#[tokio::test]
+async fn viewer_dirty_buffer_remains_visible_reeditable_and_savable() {
+    let (mut app, agent, _receivers, dir) = test_app_with_store();
+    std::fs::write(dir.path().join("edit.txt"), "base\n").unwrap();
+    handle_key(&mut app, &agent, key(KeyCode::F(6)));
+    let idx = app
+        .tree_rows
+        .iter()
+        .position(|row| row.rel == "edit.txt")
+        .expect("edit file is in the tree");
+    app.tree_cursor = idx;
+    handle_key(&mut app, &agent, key(KeyCode::Enter));
+    assert!(app.viewer_open(), "tree Enter opens the viewer tab");
+
+    handle_key(&mut app, &agent, key(KeyCode::Char('e')));
+    handle_key(&mut app, &agent, key(KeyCode::End));
+    handle_key(&mut app, &agent, key(KeyCode::Char('!')));
+    handle_key(&mut app, &agent, key(KeyCode::Esc));
+    handle_key(&mut app, &agent, key(KeyCode::Esc));
+    assert!(
+        app.active_viewer()
+            .is_some_and(|v| !v.editing && v.has_unsaved()),
+        "leaving edit mode keeps the draft in its tab"
+    );
+
+    for (width, height) in [(80u16, 24u16), (100, 30)] {
+        let screen = render_rows(&mut app, width, height).join("\n");
+        assert!(
+            screen.contains("base!") && screen.contains("modified"),
+            "the pending buffer is visible at {width}x{height}: {screen}"
+        );
+        assert!(
+            screen.contains("save"),
+            "the view-mode frame offers the save action at {width}x{height}: {screen}"
+        );
+        assert!(
+            screen.contains("esc close"),
+            "the dirty viewer names how to close or discard at {width}x{height}: {screen}"
+        );
+        assert!(
+            screen.contains("e resume edit"),
+            "the dirty viewer names how to re-enter edit mode at {width}x{height}: {screen}"
+        );
+    }
+
+    handle_key(&mut app, &agent, key(KeyCode::Char('e')));
+    assert_eq!(
+        app.active_viewer().map(|v| v.edit_lines[0].as_str()),
+        Some("base!"),
+        "re-entering edit mode must not reload the original file over the draft"
+    );
+    handle_key(&mut app, &agent, key(KeyCode::Esc));
+    handle_key(&mut app, &agent, key(KeyCode::Esc));
+    handle_key(
+        &mut app,
+        &agent,
+        key_mod(KeyModifiers::ALT, KeyCode::Char('s')),
+    );
+    assert_eq!(
+        std::fs::read_to_string(dir.path().join("edit.txt")).unwrap(),
+        "base!\n",
+        "Alt+S saves the preserved view-mode buffer"
+    );
+    assert!(
+        app.active_viewer().is_some_and(|v| !v.has_unsaved()),
+        "the saved view is clean"
+    );
+}
+
+/// Ctrl+Q and `/quit` refuse to exit while any open file tab has unsaved edits.
+#[tokio::test]
+async fn quit_refuses_unsaved_viewer_edits_in_inactive_tabs() {
+    let (mut app, agent, _receivers, dir) = test_app_with_store();
+    std::fs::write(dir.path().join("a.txt"), "first\n").unwrap();
+    std::fs::write(dir.path().join("b.txt"), "second\n").unwrap();
+    app.viewer_tabs = vec![
+        crate::tree::open_viewer(&app.workspace_root, "a.txt").expect("first opens"),
+        crate::tree::open_viewer(&app.workspace_root, "b.txt").expect("second opens"),
+    ];
+    app.viewer_tab = 1;
+    handle_key(&mut app, &agent, key(KeyCode::Char('e')));
+    handle_key(&mut app, &agent, key(KeyCode::End));
+    handle_key(&mut app, &agent, key(KeyCode::Char('!')));
+    handle_key(
+        &mut app,
+        &agent,
+        key_mod(KeyModifiers::ALT, KeyCode::Char('[')),
+    );
+    assert_eq!(app.viewer_tab, 0, "the dirty tab is now inactive");
+
+    assert!(
+        !handle_key(&mut app, &agent, ctrl(KeyCode::Char('q'))),
+        "Ctrl+Q must not discard a dirty tab"
+    );
+    assert!(
+        !app.run_command(&agent, crate::picker::Command::Quit),
+        "/quit must share the same unsaved-buffer guard"
+    );
+    assert!(
+        app.viewer_tabs.get(1).is_some_and(|v| v.is_dirty()),
+        "the inactive tab's draft remains intact"
+    );
+
+    handle_key(
+        &mut app,
+        &agent,
+        key_mod(KeyModifiers::ALT, KeyCode::Char(']')),
+    );
+    handle_key(
+        &mut app,
+        &agent,
+        key_mod(KeyModifiers::ALT, KeyCode::Char('s')),
+    );
+    assert_eq!(
+        std::fs::read_to_string(dir.path().join("b.txt")).unwrap(),
+        "second!\n",
+        "the dirty tab remains reachable and saveable"
+    );
+    assert!(handle_key(&mut app, &agent, ctrl(KeyCode::Char('q'))));
 }
 
 /// Phase 3, viewer find: `/` searches the open file, Enter steps through matches.
@@ -6319,6 +6466,36 @@ fn viewer_edit_of_a_truncated_file_is_refused_with_a_notice() {
         assert!(
             screen.contains("edit unavailable"),
             "footer names the refused key at {width}x{height}: {screen}"
+        );
+    }
+}
+
+/// A byte-truncated single line is named on the real viewer frame and stays read-only.
+#[test]
+fn viewer_byte_truncated_preview_is_named_and_not_editable() {
+    const CAP: usize = crate::tree::VIEWER_BYTE_CAP;
+    let (mut app, agent, _receivers, dir) = test_app_with_store();
+    std::fs::write(dir.path().join("one-line.log"), vec![b'x'; CAP + 32]).unwrap();
+    handle_key(&mut app, &agent, key(KeyCode::F(6)));
+    let idx = app
+        .tree_rows
+        .iter()
+        .position(|row| row.rel == "one-line.log")
+        .expect("long file is in the tree");
+    app.tree_cursor = idx;
+    handle_key(&mut app, &agent, key(KeyCode::Enter));
+
+    handle_key(&mut app, &agent, key(KeyCode::Char('e')));
+    assert!(
+        app.active_viewer()
+            .is_some_and(|v| !v.editing && v.truncated),
+        "a byte-truncated preview must refuse edit mode"
+    );
+    for (width, height) in [(80u16, 24u16), (100, 30)] {
+        let screen = render_rows(&mut app, width, height).join("\n");
+        assert!(
+            screen.contains("preview capped") && screen.contains("edit unavailable"),
+            "the frame names the byte cap and refused edit at {width}x{height}: {screen}"
         );
     }
 }
@@ -6761,6 +6938,7 @@ fn the_skills_listing_carries_a_description_per_skill() {
         description: description.into(),
         dir: std::path::PathBuf::from("/tmp").join(name),
         disable_model_invocation: manual,
+        file: std::path::PathBuf::from("/tmp").join(name).join("SKILL.md"),
     };
     let skills = vec![
         mk("commit", "write a conventional commit message", false),
@@ -6826,6 +7004,7 @@ fn the_skills_listing_names_the_scope_each_skill_came_from() {
     let mk = |dir: std::path::PathBuf| Skill {
         name: "commit".into(),
         description: "write a conventional commit message".into(),
+        file: dir.join("SKILL.md"),
         dir,
         disable_model_invocation: false,
     };
@@ -8916,6 +9095,152 @@ async fn a_model_switch_is_recorded_where_a_resume_will_find_it() {
     );
 }
 
+/// **An unroutable live id is refused before it can be persisted.**
+///
+/// The picker used to treat a live `/models` listing as selectable, then write
+/// the id into `[model] id`; the next launch failed with `unknown model` because
+/// only a bundled catalog row carries a wire. A listing is evidence an id
+/// exists, not evidence this runtime can speak to it.
+/// The model picker carries the live listing's age. `/catalog` had this line;
+/// the surface where the model is actually chosen did not, despite ADR-047.
+#[tokio::test]
+async fn the_model_picker_names_the_live_lists_freshness() {
+    let (mut app, _agent, _receivers) = test_app();
+    app.model_id = "deepseek-v4-pro".into();
+    app.picker_open = true;
+    app.picker_provider = Some("deepseek".into());
+    app.live_cache = vec![crate::app::LiveCacheEntry {
+        provider: "deepseek".into(),
+        ids: vec!["deepseek-v4-pro".into()],
+        fetched_at_ms: now_ms(),
+        from_cache: false,
+    }];
+    let screen = render_rows(&mut app, 100, 30).join("\n");
+    assert!(
+        screen.contains("live: deepseek") && screen.contains("refreshed"),
+        "the picker must name the listing and its age: {screen}"
+    );
+}
+
+/// Opening `/models` targets the provider the session is on, because
+/// `/catalog` promises that this is what refreshes. The old cursor at row 0
+/// often fetched a different provider.
+#[tokio::test]
+async fn opening_the_model_picker_targets_the_current_provider() {
+    let (mut app, _agent, _receivers) = test_app();
+    // A bare catalogued id belongs to `deepseek`; the prefixed
+    // `deepseek/deepseek-chat-v3.1` is an OpenRouter row and would (correctly)
+    // highlight OpenRouter instead.
+    app.model_id = "deepseek-v4-pro".into();
+    app.open_model_picker();
+    let rows = crate::picker::build_provider_rows(&app.model_id, &app.customs);
+    assert_eq!(
+        rows.get(app.picker_index).map(|r| r.id.as_str()),
+        Some("deepseek"),
+        "the live-capable current provider must be highlighted: {rows:?}"
+    );
+}
+
+#[tokio::test]
+async fn a_live_only_model_is_refused_before_it_becomes_the_saved_model() {
+    let (mut app, agent, _receivers) = test_app();
+    let cfg = tempfile::tempdir().expect("a config dir");
+    app.config_dir_override = Some(cfg.path().to_path_buf());
+    app.live_cache = vec![crate::app::LiveCacheEntry {
+        provider: "deepseek".into(),
+        ids: vec!["deepseek/not-in-the-bundle".into()],
+        fetched_at_ms: 1,
+        from_cache: true,
+    }];
+    let before = app.model_id.clone();
+    app.apply_model(&agent, "deepseek/not-in-the-bundle".into());
+    assert_eq!(app.model_id, before, "the session model did not move");
+    assert_eq!(
+        epsilon_core::config::load_model_id_in(cfg.path()),
+        None,
+        "and no unroutable id reached the file a launch reads"
+    );
+    let said = app
+        .ui
+        .lines()
+        .iter()
+        .map(|l| l.text.clone())
+        .collect::<Vec<_>>()
+        .join("\n");
+    assert!(
+        said.contains("not in the bundled catalog") && said.contains("live-listed by deepseek"),
+        "the refusal names the id's source and the reason: {said}"
+    );
+
+    // The default picker is the same promise: refusing to apply but saving as a
+    // default would move the same failure to the next launch.
+    app.save_default_model("deepseek/not-in-the-bundle");
+    assert_eq!(app.default_model, None);
+}
+
+/// A declared custom-provider id is routable even though no catalog row exists.
+#[tokio::test]
+async fn a_declared_custom_provider_id_remains_selectable() {
+    let (mut app, agent, _receivers) = test_app();
+    let cfg = tempfile::tempdir().expect("a config dir");
+    app.config_dir_override = Some(cfg.path().to_path_buf());
+    app.customs = vec![epsilon_llm::custom::CustomProvider {
+        name: "local".into(),
+        base_url: "http://127.0.0.1:1234/v1".into(),
+        env_key: String::new(),
+    }];
+    app.apply_model(&agent, "local/qwen2.5-7b".into());
+    assert_eq!(app.model_id, "local/qwen2.5-7b");
+    assert_eq!(
+        epsilon_core::config::load_model_id_in(cfg.path()).as_deref(),
+        Some("local/qwen2.5-7b"),
+        "the custom route is real, so persisting it is safe"
+    );
+}
+
+/// **The app's own preference write keeps the project trusted.**
+///
+/// Model, thinking, preset and plan choices live in the trust-hashed project
+/// config. Recording only the switch meant the next launch saw a hash mismatch
+/// and held every submit for a review of Epsilon's own edit. The hash must move
+/// with the bytes the app wrote.
+#[tokio::test]
+async fn an_app_preference_write_records_the_project_hash_it_produced() {
+    let (mut app, _agent, _receivers) = test_app();
+    let ws = tempfile::tempdir().expect("a workspace");
+    std::fs::create_dir_all(ws.path().join(".epsilon")).unwrap();
+    std::fs::write(
+        ws.path().join(".epsilon").join("config.toml"),
+        "[model]\nid = \"old\"\n",
+    )
+    .unwrap();
+    epsilon_core::config::accept_project_config_hash_in(ws.path(), "stale-hash").unwrap();
+    app.workspace_root = ws.path().to_path_buf();
+
+    // The writer path, then the hash recorder the four preference writers call.
+    // (An override cannot be used here: `project_dir_or_global` gives it
+    // precedence, by design, so the write would land outside the workspace.)
+    let project = ws.path().join(".epsilon");
+    epsilon_core::config::save_model_id_in(&project, "deepseek-flash").unwrap();
+    app.record_own_project_write(&project);
+
+    let trust = std::fs::read_to_string(ws.path().join(".epsilon").join("trust.json")).unwrap();
+    let recorded = serde_json::from_str::<serde_json::Value>(&trust)
+        .unwrap()
+        .get("config_sha256")
+        .and_then(|v| v.as_str())
+        .map(str::to_string);
+    assert_eq!(
+        recorded,
+        epsilon_core::config::current_project_config_hash_in(ws.path()),
+        "the recorded hash must describe the file the app just wrote"
+    );
+    assert!(
+        recorded.as_deref() != Some("stale-hash"),
+        "the stale pre-write hash must not survive"
+    );
+}
+
 /// **Criterion 7: a `/think` switch is recorded where a resume will find it.**
 ///
 /// `context_settings` has walked `thinking_level_change` entries since the
@@ -9000,12 +9325,12 @@ async fn a_favourites_remembered_level_does_not_become_the_default() {
         epsilon_contracts::ThinkingLevel::Medium,
     )
     .unwrap();
-    app.favorites = vec!["faux-1".into(), "deepseek-chat".into()];
-    app.favorite_thinking = vec![("deepseek-chat".into(), "max".into())];
+    app.favorites = vec!["faux-1".into(), "deepseek-flash".into()];
+    app.favorite_thinking = vec![("deepseek-flash".into(), "max".into())];
 
     handle_key(&mut app, &agent, key(KeyCode::F(2)));
 
-    assert_eq!(app.model_id, "deepseek-chat", "the cycle switched model");
+    assert_eq!(app.model_id, "deepseek-flash", "the cycle switched model");
     assert_eq!(
         agent.thinking_level(),
         epsilon_contracts::ThinkingLevel::Max,
@@ -9166,6 +9491,9 @@ async fn a_resumed_launch_draws_the_composed_model_not_the_launch_one() {
 #[tokio::test]
 async fn a_model_choice_is_remembered_for_the_workspace_that_made_it() {
     let (mut app, _agent, _receivers) = test_app();
+    // This test is about the production resolver order (project beats global);
+    // the fixture's default config isolation would make the override win.
+    app.config_dir_override = None;
     let ws = tempfile::tempdir().expect("a workspace");
     app.workspace_root = ws.path().to_path_buf();
     let project = ws.path().join(".epsilon");
@@ -10269,8 +10597,8 @@ fn streaming_text_is_separated_from_the_previous_block() {
         .position(|r| r.contains("working on it"))
         .expect("the live tail is on screen");
     assert!(
-        rows[tail - 1].trim().is_empty(),
-        "a blank row separates the tail from the card:\n{frame}"
+        rows[tail - 1].contains("assistant"),
+        "the streaming answer opens its own card:\n{frame}"
     );
 }
 
@@ -10286,7 +10614,7 @@ fn streaming_text_is_separated_from_the_previous_block() {
 //
 // Roadmap item 5 said this "wants its own decision". The decision is taken here
 // and the reason is stated in the test that pins it: pi's own `ScrollView` is
-// top-anchored by construction (`references/pi-1.0.0/packages/tui/src/components/
+// top-anchored by construction (`references/pi-1.3.0/packages/tui/src/components/
 // scroll-view.ts`, `maxScrollTop = max(0, contentHeight - viewportHeight)`, so
 // short content parks at offset 0), and Epsilon is a port of pi — but the
 // desktop front end already follows the chat convention through
@@ -10389,13 +10717,13 @@ fn a_streaming_tail_arrives_next_to_the_composer() {
     });
 
     let rows = render_rows(&mut app, 80, 24);
-    let last_row = crate::ui::layout::Regions::split(Rect::new(0, 0, 80, 24), 1)
-        .gap
-        .y as usize
-        - 1;
+    let text_row = rows
+        .iter()
+        .position(|row| row.contains("first line of the answer"))
+        .expect("the streaming body is on screen");
     assert!(
-        rows[last_row].contains("first line of the answer"),
-        "the streaming tail must sit directly above the ending blank:\n{rows:#?}"
+        rows[text_row + 1].starts_with(app.theme.glyphs.bottom_left),
+        "the streaming card closes directly above the ending blank:\n{rows:#?}"
     );
 }
 
@@ -10475,8 +10803,8 @@ fn reasoning_and_the_answer_separate_while_streaming() {
             .expect("the answer tail is on screen");
         assert!(answer > reasoning, "reasoning streams first:\n{frame}");
         assert!(
-            rows[answer - 1].trim().is_empty(),
-            "the row between them must be blank at {width}:\n{frame}"
+            rows[answer - 1].contains("assistant"),
+            "the answer opens its own card at {width}:\n{frame}"
         );
     }
 }
@@ -10752,6 +11080,124 @@ fn alt_q_restores_queued_messages_with_a_count() {
             .any(|l| l.text.contains("No queued messages")),
         "empty must say so: {:?}",
         app.ui.lines().iter().map(|l| &l.text).collect::<Vec<_>>()
+    );
+}
+
+/// Esc stops the active request without draining queued messages or replacing the draft.
+#[tokio::test]
+async fn abort_keeps_queued_steering_followups_and_the_current_draft() {
+    use epsilon_contracts::agent_event::AgentEvent;
+    use epsilon_contracts::content::UserContent;
+    use epsilon_contracts::message::Message;
+    use std::sync::Arc;
+
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join("notes.txt"), "file snapshot at queue time").unwrap();
+    let (ftx, _frx) = tokio::sync::mpsc::unbounded_channel();
+    let (ntx, mut _nrx) = tokio::sync::mpsc::unbounded_channel();
+    let (otx, _orx) = tokio::sync::mpsc::unbounded_channel();
+    let mut app = App::new("faux-1".into(), ftx, ntx, otx, dir.path().to_path_buf());
+    app.default_model = None;
+    app.config_dir_override = Some(tempfile::tempdir().expect("test config").keep());
+
+    let approvals = Arc::new(ChannelApprovalUi::new());
+    let gate = Arc::new(epsilon_safety::RulesetGate::new(
+        Arc::clone(&approvals) as Arc<dyn epsilon_safety::ApprovalUi>
+    ));
+    let provider = epsilon_core::testing::SlowProvider::new(
+        epsilon_llm::FauxProvider::new(vec![epsilon_llm::FauxStep::say("never reached")]),
+        5_000,
+    );
+    let agent = Agent::new(
+        epsilon_core::LoopLimits::default(),
+        Arc::new(epsilon_llm::PanicGuard(provider)),
+        Arc::new(epsilon_core::ToolRegistry::new()),
+        gate,
+        dir.path().to_path_buf(),
+    );
+    let mut events = agent.subscribe();
+    let run = tokio::spawn({
+        let agent = Arc::clone(&agent);
+        let prompt = epsilon_core::references::user_message(dir.path(), "start the run");
+        async move { agent.run(prompt).await }
+    });
+
+    tokio::time::timeout(std::time::Duration::from_secs(2), async {
+        loop {
+            let event = events.recv().await.expect("agent event channel stays open");
+            super::apply_with_scroll(&mut app, &event);
+            if matches!(&*event, AgentEvent::TurnStart { .. }) {
+                break;
+            }
+        }
+    })
+    .await
+    .expect("the provider turn starts");
+    assert!(
+        app.ui.running(),
+        "the production event marks the run active"
+    );
+
+    let attached = app.submit_text("inspect @notes.txt".into());
+    agent.steer(attached);
+    assert_eq!(
+        agent.steer_queue_len(),
+        1,
+        "the first prompt queues as steering"
+    );
+    assert!(!type_and_enter(&mut app, &agent, "second queued prompt"));
+    assert_eq!(agent.steer_queue_len(), 2, "the second prompt queues too");
+    app.input = "queued follow-up".into();
+    app.cursor_chars = app.input.chars().count();
+    handle_key(&mut app, &agent, key_mod(KeyModifiers::ALT, KeyCode::Enter));
+    app.input = "unfinished composer draft".into();
+    app.cursor_chars = app.input.chars().count();
+    assert_eq!(agent.steer_queue_len(), 2);
+    assert_eq!(agent.followup_queue_len(), 1);
+
+    assert!(!handle_key(&mut app, &agent, key(KeyCode::Esc)));
+    assert_eq!(
+        app.input, "unfinished composer draft",
+        "abort keeps the draft"
+    );
+    let notices: Vec<String> = std::iter::from_fn(|| _nrx.try_recv().ok()).collect();
+    assert!(
+        notices
+            .iter()
+            .any(|notice| notice.contains("steering/follow-up queues retained")),
+        "the user is told the queued work remains: {notices:?}"
+    );
+    let outcome = tokio::time::timeout(std::time::Duration::from_secs(2), run)
+        .await
+        .expect("cancellation ends the provider wait")
+        .expect("the run task does not panic")
+        .expect("the aborted run is represented in-band");
+    assert_eq!(
+        outcome.reason,
+        epsilon_contracts::agent_event::TurnEndReason::Aborted
+    );
+    assert_eq!(agent.steer_queue_len(), 2, "both prompts remain queued");
+    assert_eq!(
+        agent.followup_queue_len(),
+        1,
+        "the follow-up remains queued"
+    );
+
+    let queued = agent.drain_steering_all();
+    assert_eq!(queued.len(), 2);
+    let Message::User(first) = &queued[0] else {
+        panic!("the first queued message remains a user message")
+    };
+    assert_eq!(
+        first.content.len(),
+        2,
+        "the @ reference snapshot is preserved"
+    );
+    assert!(
+        matches!(&first.content[0], UserContent::Text { text } if text == "inspect @notes.txt")
+    );
+    assert!(
+        matches!(&first.content[1], UserContent::Text { text } if text.contains("file snapshot at queue time"))
     );
 }
 
@@ -11051,6 +11497,28 @@ async fn f6_opens_the_workspace_tree_showing_its_files() {
     );
 }
 
+/// A collapsed directory is remembered for this workspace, and only for it.
+#[tokio::test]
+async fn tree_collapse_persists_per_workspace() {
+    let (mut app, agent, _receivers, dir) = test_app_with_store();
+    std::fs::create_dir_all(dir.path().join("src")).unwrap();
+    std::fs::write(dir.path().join("src").join("lib.rs"), "").unwrap();
+    let config_dir = app.config_dir_override.clone().expect("test config dir");
+    handle_key(&mut app, &agent, key(KeyCode::F(6)));
+    app.tree_cursor = 0;
+    handle_key(&mut app, &agent, key(KeyCode::Left));
+    assert!(app.tree_collapsed.contains("src"));
+    assert!(
+        epsilon_core::config::load_explorer_collapsed_in(&config_dir, dir.path()).contains("src"),
+        "the collapse is on disk"
+    );
+    handle_key(&mut app, &agent, key(KeyCode::Right));
+    assert!(
+        epsilon_core::config::load_explorer_collapsed_in(&config_dir, dir.path()).is_empty(),
+        "expanding clears the saved collapse"
+    );
+}
+
 /// The tree navigates, collapses, opens the viewer, and `@` inserts `@path`.
 #[tokio::test]
 async fn tree_navigate_collapse_and_enter_inserts_at_path() {
@@ -11097,7 +11565,10 @@ async fn tree_navigate_collapse_and_enter_inserts_at_path() {
     assert!(app.tree_open, "closing the viewer returns to the tree");
     let quit = handle_key(&mut app, &agent, key(KeyCode::Char('@')));
     assert!(!quit);
-    assert!(!app.tree_open, "@ closes the tree");
+    assert!(
+        app.tree_open && !app.tree_focused,
+        "@ keeps the explorer docked and hands the keyboard to the composer"
+    );
     assert_eq!(
         app.input, "@main.rs ",
         "file inserts an @-reference, got {:?}",
@@ -11105,13 +11576,14 @@ async fn tree_navigate_collapse_and_enter_inserts_at_path() {
     );
 }
 
-/// Esc closes the tree without touching the draft; an empty workspace names itself.
+/// Esc returns focus from the tree without closing it or touching the draft; F6
+/// then hides the resting panel. An empty workspace names itself.
 #[tokio::test]
-async fn tree_esc_closes_and_empty_workspace_names_itself() {
+async fn tree_esc_returns_focus_and_f6_hides_the_resting_panel() {
     let (mut app, agent, _receivers, _dir) = test_app_with_store();
     handle_key(&mut app, &agent, key(KeyCode::Char('x')));
     handle_key(&mut app, &agent, key(KeyCode::F(6)));
-    assert!(app.tree_open);
+    assert!(app.tree_open && app.tree_focused);
     let frame = render_rows(&mut app, 80, 24).join("\n");
     assert!(
         frame.contains("empty workspace"),
@@ -11119,11 +11591,24 @@ async fn tree_esc_closes_and_empty_workspace_names_itself() {
     );
     let quit = handle_key(&mut app, &agent, key(KeyCode::Esc));
     assert!(!quit);
-    assert!(!app.tree_open);
+    assert!(
+        app.tree_open && !app.tree_focused,
+        "Esc hands the keyboard back but leaves the project map docked"
+    );
     assert_eq!(
         app.input, "x",
         "Esc must not eat the draft, got {:?}",
         app.input
+    );
+    // F6 focuses the resting panel; F6 again hides it.
+    handle_key(&mut app, &agent, key(KeyCode::F(6)));
+    assert!(app.tree_focused, "F6 focuses a visible, resting explorer");
+    handle_key(&mut app, &agent, key(KeyCode::F(6)));
+    assert!(!app.tree_open && !app.tree_focused, "second F6 hides it");
+    let cfg = app.config_dir_override.clone().expect("test config dir");
+    assert!(
+        !epsilon_core::config::load_explorer_visible_in(&cfg),
+        "hiding the explorer is a persisted display preference"
     );
 }
 
@@ -11311,9 +11796,9 @@ async fn viewer_edit_mode_types_and_ctrl_s_saves_undoably() {
     );
 }
 
-/// Esc with a dirty buffer arms first and discards only on the second press.
+/// Esc arms first, then returns to view with the dirty draft retained but unsaved.
 #[tokio::test]
-async fn viewer_esc_arms_before_discarding_dirty_edits() {
+async fn viewer_esc_arms_then_keeps_dirty_buffer_in_view() {
     let (mut app, agent, _receivers, dir) = test_app_with_store();
     std::fs::write(dir.path().join("d.txt"), "keep\n").unwrap();
     handle_key(&mut app, &agent, key(KeyCode::F(6)));
@@ -11334,11 +11819,20 @@ async fn viewer_esc_arms_before_discarding_dirty_edits() {
         "first Esc with dirty buffer must arm, not discard"
     );
     handle_key(&mut app, &agent, key(KeyCode::Esc));
-    assert!(!app.viewer_editing(), "second Esc discards");
+    assert!(!app.viewer_editing(), "second Esc returns to view mode");
+    assert!(
+        app.active_viewer().is_some_and(|v| v.has_unsaved()),
+        "the dirty buffer remains in the tab"
+    );
+    let screen = render_rows(&mut app, 80, 24).join("\n");
+    assert!(
+        screen.contains("keep!"),
+        "the retained draft stays visible: {screen}"
+    );
     assert_eq!(
         std::fs::read_to_string(dir.path().join("d.txt")).unwrap(),
         "keep\n",
-        "discarded edits must never reach the file"
+        "leaving edit mode does not save implicitly"
     );
 }
 
@@ -11426,18 +11920,138 @@ async fn tree_sidebar_docks_right_with_a_separating_gap() {
     handle_key(&mut app, &agent, key(KeyCode::F(6)));
     assert!(app.tree_open);
     let rows = render_rows(&mut app, 100, 30);
-    let tree_col = rows[0].find("tree").expect("tree title on the top row");
+    let tree_col = rows[0]
+        .find("Files")
+        .expect("explorer title on the top row");
     assert!(
         tree_col > 50,
         "tree must dock right of the transcript, found at col {tree_col}"
     );
-    // Separating gap: a blank column between transcript and tree border.
-    let left_edge = rows[0].find('┌').expect("tree border");
-    assert!(left_edge > 50);
-    let gap = &rows[0][..left_edge];
+    // A sidebar, not a second box: one vertical rail and a blank gutter.
+    let rail = rows[0]
+        .find(app.theme.glyphs.vertical)
+        .expect("the sidebar rail on the header row");
+    assert!(rail > 50, "the rail is right of the transcript: {rail}");
     assert!(
-        gap.ends_with(' ') || gap.ends_with('│'),
-        "a gutter must separate transcript from tree"
+        rows[0][..rail].ends_with(' '),
+        "a gutter must separate the header from the tree: {:?}",
+        rows[0]
+    );
+}
+
+/// **The default IDE layout**: a launch docks the project explorer on the right
+/// while the composer keeps the keyboard.
+///
+/// This is the distinction the old single `tree_open` flag could not express. A
+/// sidebar that owns every keystroke on launch is a modal window bolted to the
+/// side of the app, not an IDE.
+#[tokio::test]
+async fn the_default_layout_docks_the_explorer_without_stealing_the_composer() {
+    let (mut app, agent, _receivers, dir) = test_app_with_store();
+    std::fs::write(dir.path().join("main.rs"), "fn main() {}\n").unwrap();
+    std::fs::create_dir_all(dir.path().join("src")).unwrap();
+    std::fs::write(dir.path().join("src").join("lib.rs"), "").unwrap();
+    app.show_explorer();
+    assert!(app.tree_open, "the project is visible from the first frame");
+    assert!(
+        !app.tree_focused,
+        "however useful, the explorer must not swallow the first keystroke"
+    );
+    // Typing still reaches the composer.
+    handle_key(&mut app, &agent, key(KeyCode::Char('h')));
+    handle_key(&mut app, &agent, key(KeyCode::Char('i')));
+    assert_eq!(app.input, "hi", "the composer kept focus");
+    let rows = render_rows(&mut app, 100, 30);
+    let top = &rows[0];
+    let files = top
+        .find("Files")
+        .expect("the explorer is on the first frame");
+    assert!(
+        files > 50,
+        "the default explorer lives on the RIGHT: {top:?}"
+    );
+    assert!(
+        rows.iter().any(|r| r.contains("main.rs")) && rows.iter().any(|r| r.contains("lib.rs")),
+        "the default explorer lists the workspace: {rows:#?}"
+    );
+    assert!(
+        rows.last().is_some_and(|r| r.contains("insert")),
+        "the composer, not the tree, is the active mode: {:?}",
+        rows.last()
+    );
+}
+
+/// An empty directory is part of the project, not invisible.
+#[tokio::test]
+async fn the_explorer_shows_an_empty_directory() {
+    let (mut app, _agent, _receivers, dir) = test_app_with_store();
+    std::fs::create_dir_all(dir.path().join("empty")).unwrap();
+    std::fs::write(dir.path().join("main.rs"), "fn main() {}\n").unwrap();
+    app.show_explorer();
+    let rows = render_rows(&mut app, 100, 30).join("\n");
+    assert!(
+        rows.contains("empty/"),
+        "an empty directory must have a row: {rows}"
+    );
+}
+
+/// A tree longer than the panel scrolls with the selection instead of painting
+/// rows past the frame.
+#[tokio::test]
+async fn a_long_explorer_keeps_the_selected_row_on_screen() {
+    let (mut app, agent, _receivers, dir) = test_app_with_store();
+    for i in 0..80 {
+        std::fs::write(dir.path().join(format!("file_{i:03}.txt")), "x\n").unwrap();
+    }
+    app.show_explorer();
+    app.focus_tree();
+    let target = app
+        .tree_rows
+        .iter()
+        .position(|r| r.rel == "file_070.txt")
+        .expect("file_070 listed");
+    app.tree_cursor = target;
+    let rows = render_rows(&mut app, 80, 16);
+    assert!(
+        app.tree_scroll > 0,
+        "a row past the viewport must scroll the panel"
+    );
+    assert!(
+        rows.iter().any(|r| r.contains("file_070.txt")),
+        "the selected row must be visible, not merely selected: {rows:#?}"
+    );
+    // PageUp moves by the painted capacity, not a guessed constant.
+    assert!(app.tree_capacity > 1, "capacity must be measured");
+    handle_key(&mut app, &agent, key(KeyCode::PageUp));
+    assert_eq!(app.tree_cursor, target - app.tree_capacity);
+}
+
+/// On a narrow window the explorer cannot dock, so it is a band between the
+/// header and footer rather than a full-bleed screen that hides its own keys.
+#[tokio::test]
+async fn a_narrow_explorer_is_a_panel_between_header_and_footer() {
+    let (mut app, _agent, _receivers, dir) = test_app_with_store();
+    std::fs::write(dir.path().join("main.rs"), "fn main() {}\n").unwrap();
+    app.show_explorer();
+    let rows = render_rows(&mut app, 60, 20);
+    assert!(
+        !rows.iter().any(|r| r.contains("Files")),
+        "a resting explorer must not cover a narrow workspace: {rows:#?}"
+    );
+    app.focus_tree();
+    let rows = render_rows(&mut app, 60, 20);
+    assert!(
+        rows.iter().any(|r| r.contains("Files")),
+        "focus opens the narrow explorer: {rows:#?}"
+    );
+    assert!(
+        rows.last()
+            .is_some_and(|r| r.contains("tree") || r.contains("hide")),
+        "the footer must survive so the escape is discoverable: {rows:#?}"
+    );
+    assert!(
+        rows[0].contains("idle") || rows[0].contains("insert"),
+        "the header must survive: {rows:#?}"
     );
 }
 
@@ -11612,5 +12226,102 @@ async fn delete_removes_the_character_under_the_file_editor_cursor() {
         app.active_viewer().expect("viewer").edit_lines[0],
         "abcd",
         "ctrl+z undoes the deletion too"
+    );
+}
+
+/// **The explorer is a view of the workspace, not a startup snapshot.**
+///
+/// A file written by the agent (or another process) must appear without the user
+/// pressing `r`, and the selected row must survive the rebuild — otherwise the
+/// fix for "I have to refresh manually" replaces it with "the tree jumps while I
+/// am reading".
+#[test]
+fn a_tree_poll_picks_up_a_new_file_and_keeps_the_selection() {
+    let (mut app, _agent, _rx) = test_app();
+    let workspace = tempfile::tempdir().unwrap();
+    std::fs::write(workspace.path().join("alpha.rs"), "fn alpha() {}\n").unwrap();
+    app.workspace_root = workspace.path().to_path_buf();
+    app.show_explorer();
+    let alpha = app
+        .tree_rows
+        .iter()
+        .position(|row| row.rel == "alpha.rs")
+        .expect("the first file is visible");
+    app.tree_cursor = alpha;
+
+    std::fs::write(workspace.path().join("beta.rs"), "fn beta() {}\n").unwrap();
+    app.tree_poll_at = std::time::Instant::now();
+    app.git_poll_at = std::time::Instant::now() + std::time::Duration::from_secs(60);
+    assert!(app.poll_tree(), "the new file must mark the frame dirty");
+    assert!(
+        app.tree_rows.iter().any(|row| row.rel == "beta.rs"),
+        "the poll must rebuild the visible rows: {:?}",
+        app.tree_rows
+    );
+    assert_eq!(
+        app.tree_rows[app.tree_cursor].rel, "alpha.rs",
+        "a rebuild must keep the selected path, not the old index"
+    );
+
+    // Modification is the second half of the report. The visible names do not
+    // change here, so only the stamp can tell the poll that a redraw is needed.
+    std::fs::write(
+        workspace.path().join("alpha.rs"),
+        "fn alpha() { /* edited */ }\n",
+    )
+    .unwrap();
+    app.tree_poll_at = std::time::Instant::now();
+    assert!(
+        app.poll_tree(),
+        "editing an existing file must also invalidate the tree"
+    );
+}
+
+/// A second poll with no writes is free: no walk rebuild, no frame invalidation.
+#[test]
+fn a_tree_poll_with_no_change_is_a_no_op() {
+    let (mut app, _agent, _rx) = test_app();
+    let workspace = tempfile::tempdir().unwrap();
+    std::fs::write(workspace.path().join("alpha.rs"), "fn alpha() {}\n").unwrap();
+    app.workspace_root = workspace.path().to_path_buf();
+    app.show_explorer();
+    app.tree_poll_at = std::time::Instant::now();
+    app.git_poll_at = std::time::Instant::now() + std::time::Duration::from_secs(60);
+    assert!(!app.poll_tree(), "an unchanged workspace must not redraw");
+}
+
+/// The status column is the part that makes "modified" visible; the refresh
+/// alone would rebuild the same names and leave the reader unable to tell what
+/// changed.
+#[test]
+fn the_tree_marks_modified_and_new_files_on_the_frame() {
+    let (mut app, _agent, _rx) = test_app();
+    let workspace = tempfile::tempdir().unwrap();
+    std::fs::write(workspace.path().join("alpha.rs"), "fn alpha() {}\n").unwrap();
+    std::fs::write(workspace.path().join("beta.rs"), "fn beta() {}\n").unwrap();
+    app.workspace_root = workspace.path().to_path_buf();
+    app.show_explorer();
+    app.tree_git
+        .insert("alpha.rs".to_string(), crate::git::Status::Modified);
+    app.tree_git
+        .insert("beta.rs".to_string(), crate::git::Status::Untracked);
+    app.tree_changed_dirs = crate::git::changed_dirs(&app.tree_git);
+
+    let rows = render_rows(&mut app, 100, 30);
+    let alpha = rows
+        .iter()
+        .find(|row| row.contains("alpha.rs"))
+        .expect("alpha is on the frame");
+    let beta = rows
+        .iter()
+        .find(|row| row.contains("beta.rs"))
+        .expect("beta is on the frame");
+    assert!(
+        alpha.trim_end().ends_with('M'),
+        "modified file must carry the status column: {alpha:?}"
+    );
+    assert!(
+        beta.trim_end().ends_with('?'),
+        "untracked file must carry the status column: {beta:?}"
     );
 }

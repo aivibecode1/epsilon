@@ -18,6 +18,8 @@
 
 use ratatui::Frame;
 use ratatui::layout::Rect;
+use ratatui::text::{Line, Span};
+use ratatui::widgets::Paragraph;
 
 use crate::ui::composer;
 use crate::ui::footer::{self, Hints};
@@ -117,25 +119,109 @@ where
         regions.gap,
     );
 
-    // One rule, and it is the composer's. It was two — the second sat between the
-    // header and the transcript, drawn by this same function in this same style,
-    // so neither line said what it divided while the pair cost a row of
-    // conversation at every terminal size.
+    // The composer is a box, not a bare rule: the top border reuses the blank
+    // row the layout already reserved, the bottom border reuses the rule row, and
+    // the side rails cost two columns of text width rather than two rows. It is
+    // the one control the user's hands are on, so it is also the one border whose
+    // colour changes with focus.
+    let composer_area = draw_composer_box(f, &regions, theme, shell.composer_focused);
     composer::draw(
         f,
-        regions.composer,
+        composer_area,
         theme,
         &shell.draft,
         shell.caret.0,
         shell.caret.1,
         shell.composer_focused,
     );
-    composer::draw_rule(f, regions.composer_rule, theme);
     footer::draw(f, regions.footer, theme, &shell.hints);
 
     Painted {
         transcript: regions.transcript,
         composer: regions.composer,
+    }
+}
+
+/// Draw the composer's box and return the rectangle its text may occupy.
+///
+/// The box reuses existing rows: [`Regions::gap`] becomes the top border and
+/// [`Regions::composer_rule`] the bottom. That keeps every geometry invariant in
+/// [`crate::ui::layout`] — and every test that measures the transcript viewport —
+/// while giving the prompt the same visual weight as the conversation.
+fn draw_composer_box(f: &mut Frame<'_>, regions: &Regions, theme: &Theme, focused: bool) -> Rect {
+    let full = regions.composer;
+    if full.width < 12
+        || full.height == 0
+        || regions.gap.height == 0
+        || regions.composer_rule.height == 0
+    {
+        return full;
+    }
+    let style = if focused {
+        theme.border_focus()
+    } else {
+        theme.border()
+    };
+    let glyphs = &theme.glyphs;
+    let width = full.width as usize;
+
+    // `╭─ prompt ───╮` — the label is part of the border, so the box says what
+    // it is without another row of chrome.
+    let label = " prompt ";
+    let mut top = Vec::with_capacity(5);
+    top.push(Span::styled(glyphs.top_left, style));
+    top.push(Span::styled(glyphs.horizontal, style));
+    if width >= 12 {
+        top.push(Span::styled(label, theme.title()));
+        top.push(Span::styled(
+            glyphs.horizontal.repeat(width.saturating_sub(11)),
+            style,
+        ));
+    } else {
+        top.push(Span::styled(
+            glyphs.horizontal.repeat(width.saturating_sub(2)),
+            style,
+        ));
+    }
+    top.push(Span::styled(glyphs.top_right, style));
+    f.render_widget(Line::from(top), regions.gap);
+
+    let bottom = vec![
+        Span::styled(glyphs.bottom_left, style),
+        Span::styled(glyphs.horizontal.repeat(width.saturating_sub(2)), style),
+        Span::styled(glyphs.bottom_right, style),
+    ];
+    f.render_widget(Line::from(bottom), regions.composer_rule);
+
+    // Side rails. They are drawn before the text so the text, which is inset by
+    // one column on each side, never paints over them.
+    let rails: Vec<Line<'static>> = (0..full.height)
+        .map(|_| Line::from(Span::styled(glyphs.vertical, style)))
+        .collect();
+    f.render_widget(
+        Paragraph::new(rails.clone()),
+        Rect {
+            x: full.x,
+            y: full.y,
+            width: 1,
+            height: full.height,
+        },
+    );
+    f.render_widget(
+        Paragraph::new(rails),
+        Rect {
+            x: full.x + full.width - 1,
+            y: full.y,
+            width: 1,
+            height: full.height,
+        },
+    );
+
+    Rect {
+        x: full.x + 1,
+        y: full.y,
+        width: full.width - 2,
+        height: full.height,
     }
 }
 
@@ -173,7 +259,10 @@ pub fn paint_too_small(f: &mut Frame<'_>, area: Rect, theme: &Theme, _glyphs: &G
 /// two must agree exactly: wrap to a different width and the caret lands in the
 /// wrong column.
 pub fn composer_text_width(frame_width: u16, glyphs: &Glyphs) -> usize {
-    (frame_width as usize).saturating_sub(composer::gutter_width(glyphs))
+    // Two columns are the box's side rails. The caller wraps the draft before
+    // `paint` and the shell draws it inside those rails; counting only the prompt
+    // gutter here put the last wrapped column under the right rail.
+    (frame_width as usize).saturating_sub(composer::gutter_width(glyphs) + 2)
 }
 
 #[cfg(test)]
@@ -253,15 +342,16 @@ mod tests {
                 footer.contains("enter") || footer.contains("send"),
                 "{w}x{h} footer: {footer:?}"
             );
-            // Exactly one full-width rule, between the composer and the footer.
-            // There used to be two, and `filter` must never see an empty row:
-            // ''.chars().all(..) is vacuously true, which once made this count
-            // every blank row too.
-            let rules = rows
+            // The composer is a box: a top and bottom border with rails. It is
+            // no longer a bare full-width rule, so count the box's corners.
+            let boxed = rows
                 .iter()
-                .filter(|r| !r.is_empty() && r.chars().all(|c| c == '-'))
+                .filter(|r| {
+                    (r.starts_with('+') || r.starts_with('╭') || r.starts_with('╰'))
+                        && (r.ends_with('+') || r.ends_with('╮') || r.ends_with('╯'))
+                })
                 .count();
-            assert_eq!(rules, 1, "{w}x{h} drew {rules} rules: {rows:#?}");
+            assert!(boxed >= 2, "{w}x{h} drew no composer box: {rows:#?}");
         }
     }
 
@@ -291,6 +381,28 @@ mod tests {
         assert!(
             welcome_at < body_at,
             "welcome must pin above the body:\n{body}"
+        );
+    }
+
+    #[test]
+    fn the_rule_fills_its_row_exactly() {
+        // The bare rule became the composer box's bottom border. It still has to
+        // span the full frame exactly once; a box that leaves a ragged right edge
+        // is the same defect under a new name.
+        let rows = render(60, 20, false);
+        let rule = rows
+            .iter()
+            .find(|row| {
+                row.len() == 60
+                    && row.starts_with('+')
+                    && row.ends_with('+')
+                    && row[1..59].chars().all(|c| c == '-')
+            })
+            .unwrap_or_else(|| panic!("no full-width composer rule: {rows:#?}"));
+        assert_eq!(
+            crate::ui::layout::display_width(rule),
+            60,
+            "the composer rule must fill its row exactly"
         );
     }
 

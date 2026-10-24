@@ -270,6 +270,45 @@ impl Sandbox for NullSandbox {
 /// whatever arrived is the whole point of a timeout here.
 pub type SharedBuf = std::sync::Arc<std::sync::Mutex<Vec<u8>>>;
 
+/// The most one output stream may hold in memory.
+///
+/// The shell tool's own result cap is 64 KiB head+tail, but the drain used to
+/// keep **every** byte until the process exited and only then truncate — so
+/// `yes` or `cat /dev/urandom` could exhaust the harness before the cap was
+/// ever consulted. Eight megabytes is far above any real command's useful
+/// output and bounded well below the machine's memory.
+pub const CAPTURED_OUTPUT_CAP: usize = 8 * 1024 * 1024;
+
+/// Append to a bounded capture, keeping the first half and the newest tail.
+///
+/// The head is where a command says what it is doing and the tail is where it
+/// says why it failed; the middle is the part a reader and the model can lose.
+/// Dropping the front instead would turn every truncated result into an
+/// unexplained tail.
+fn push_bounded(guard: &mut Vec<u8>, bytes: &[u8], cap: usize) {
+    if bytes.is_empty() {
+        return;
+    }
+    let cap = cap.max(1);
+    if guard.len().saturating_add(bytes.len()) <= cap {
+        guard.extend_from_slice(bytes);
+        return;
+    }
+    // Keep the first half of the cap as head, then append and trim the tail to
+    // the remaining half. The `drain` is one memmove, not one per chunk, and
+    // it only runs after the cap is crossed.
+    let head = cap / 2;
+    if guard.len() > head {
+        guard.truncate(head);
+    }
+    guard.extend_from_slice(bytes);
+    let tail = cap - head;
+    if guard.len() > cap {
+        let drop = guard.len() - tail;
+        guard.drain(..drop);
+    }
+}
+
 /// An empty shared buffer for [`drain_pipe`].
 pub fn new_shared_buf() -> SharedBuf {
     std::sync::Arc::new(std::sync::Mutex::new(Vec::new()))
@@ -300,7 +339,7 @@ pub async fn drain_pipe(
             Ok(0) => break,
             Ok(n) => {
                 if let Ok(mut guard) = into.lock() {
-                    guard.extend_from_slice(&buf[..n]);
+                    push_bounded(&mut guard, &buf[..n], CAPTURED_OUTPUT_CAP);
                 }
                 if let Some(s) = &sink {
                     s(&String::from_utf8_lossy(&buf[..n]));
@@ -681,6 +720,31 @@ mod tests {
                 "{dimension} IS enforced by a job object: {missing:?}"
             );
         }
+    }
+
+    /// The capture is bounded and keeps both ends: a command that floods does
+    /// not grow memory without limit, and the reader still gets the head (what
+    /// it was doing) and the tail (why it failed).
+    #[test]
+    fn a_flooding_pipe_is_captured_to_a_bounded_head_and_tail() {
+        let cap = 64;
+        let mut buf: Vec<u8> = Vec::new();
+        push_bounded(&mut buf, b"HEAD", cap);
+        for _ in 0..100 {
+            push_bounded(&mut buf, b"0123456789", cap);
+        }
+        push_bounded(&mut buf, b"TAIL", cap);
+        assert!(buf.len() <= cap, "the capture stays bounded: {}", buf.len());
+        assert!(
+            buf.starts_with(b"HEAD"),
+            "the beginning of the output survives: {:?}",
+            String::from_utf8_lossy(&buf)
+        );
+        assert!(
+            buf.ends_with(b"TAIL"),
+            "the end of the output survives: {:?}",
+            String::from_utf8_lossy(&buf)
+        );
     }
 
     /// Every backend's answer must be internally consistent, whoever it is.

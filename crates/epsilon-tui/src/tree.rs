@@ -9,21 +9,59 @@
 //! so no conversion happens at this boundary.
 
 use std::collections::{BTreeMap, BTreeSet};
+use std::io::Read;
+use std::path::Path;
 
 use ratatui::Frame;
 use ratatui::layout::Rect;
 use ratatui::text::Line;
-use ratatui::widgets::{Block, Borders, Paragraph};
+use ratatui::widgets::{Clear, Paragraph};
+
+use crate::ui::layout::{Priority, side_by_side};
+use crate::ui::overlay::{self, Panel};
+use crate::ui::theme::Theme;
 
 /// The tree's own row budget from the shared traversal: larger than `@`
 /// completion's 200 (a tree shows a workspace, a popup ranks a keystroke),
 /// still bounded so a huge tree cannot eat the toggle.
 pub const TREE_ROW_BUDGET: usize = 500;
 
+/// A cheap content stamp for the explorer: path, mtime and size for files, and
+/// the path alone for directories (an empty directory has no file to stat).
+///
+/// The stamp is what lets the run loop answer "did the workspace change?" without
+/// rebuilding the visible rows every tick. `git status` remains the second signal:
+/// a file added to the index or a commit changes no mtime but does change status.
+pub(crate) type TreeStamp = Vec<(String, u64, u64)>;
+
+/// Build a deterministic stamp for a completed walk.
+pub(crate) fn stamp(root: &Path, files: &[String], dirs: &[String]) -> TreeStamp {
+    let mut out = Vec::with_capacity(files.len() + dirs.len());
+    for rel in dirs {
+        out.push((rel.clone(), 0, 0));
+    }
+    for rel in files {
+        let meta = std::fs::metadata(root.join(rel)).ok();
+        let modified = meta
+            .as_ref()
+            .and_then(|meta| meta.modified().ok())
+            .and_then(|time| time.duration_since(std::time::UNIX_EPOCH).ok())
+            .map(|duration| duration.as_nanos().min(u64::MAX as u128) as u64)
+            .unwrap_or(0);
+        let len = meta.as_ref().map(|meta| meta.len()).unwrap_or(0);
+        out.push((rel.clone(), modified, len));
+    }
+    out.sort_by(|a, b| a.0.cmp(&b.0));
+    out
+}
+
 /// Lines a viewer keeps from one file: the whole small file, the head of a big one.
-/// A viewer pages text for reading, it is not an editor buffer — and an unbounded
-/// read hands one pasted log file the whole frame budget on every draw.
 pub const VIEWER_LINE_CAP: usize = 2000;
+/// Bytes a viewer reads synchronously from one file before marking its preview partial.
+///
+/// The same 256 KiB budget bounds model-facing file pages in `epsilon-tools/src/util.rs`.
+/// ponytail: fixed preview prefix; add page navigation only if users need later file ranges.
+pub(crate) const VIEWER_BYTE_CAP: usize = 256 * 1024;
 
 /// One visible row: a directory derived from path prefixes, or a walked file.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -36,6 +74,14 @@ pub struct TreeRow {
     pub depth: usize,
     /// Directories expand and collapse; files open (insert `@path`).
     pub is_dir: bool,
+    /// For a directory: whether its children are visible. Always `false` for a
+    /// file, which has no fold state to draw.
+    ///
+    /// Carried on the row rather than re-derived from the collapsed set at draw
+    /// time, because the row is the only thing the draw path has: a panel that
+    /// re-read application state to choose its glyph would be a second source of
+    /// truth for "is this open".
+    pub expanded: bool,
 }
 
 /// Visible rows for `paths` with `collapsed` directories folded away.
@@ -46,7 +92,32 @@ pub struct TreeRow {
 /// Deterministic by construction (`BTreeMap`), so the tree never jumps between
 /// refreshes and a test is not flaky rather than wrong.
 pub fn build_visible_rows(paths: &[String], collapsed: &BTreeSet<String>) -> Vec<TreeRow> {
+    build_visible_rows_with_dirs(paths, &[], collapsed)
+}
+
+/// [`build_visible_rows`] with explicit directories, so an **empty** directory
+/// still has a row. A file-only walk can only infer directories that contain a
+/// file, which makes an empty directory indistinguishable from one that does
+/// not exist.
+pub fn build_visible_rows_with_dirs(
+    paths: &[String],
+    dirs: &[String],
+    collapsed: &BTreeSet<String>,
+) -> Vec<TreeRow> {
     let mut is_dir: BTreeMap<String, bool> = BTreeMap::new();
+    // Every directory and its ancestors are directories even with no file under
+    // them; this is the half a file-derived tree could not express.
+    for d in dirs {
+        let parts: Vec<&str> = d.split('/').collect();
+        let mut prefix = String::new();
+        for part in &parts {
+            if !prefix.is_empty() {
+                prefix.push('/');
+            }
+            prefix.push_str(part);
+            is_dir.insert(prefix.clone(), true);
+        }
+    }
     for p in paths {
         let parts: Vec<&str> = p.split('/').collect();
         let mut prefix = String::new();
@@ -57,10 +128,8 @@ pub fn build_visible_rows(paths: &[String], collapsed: &BTreeSet<String>) -> Vec
             prefix.push_str(part);
             is_dir.entry(prefix.clone()).or_insert(true);
         }
-        // A walked path is a file; a prefix that is also walked whole stays a dir.
-        if !is_dir.contains_key(p) {
-            is_dir.insert(p.clone(), false);
-        }
+        // A walked path is a file; a prefix that is also a directory stays one.
+        is_dir.entry(p.clone()).or_insert(false);
     }
     let mut kids: BTreeMap<String, Vec<String>> = BTreeMap::new();
     for rel in is_dir.keys() {
@@ -105,6 +174,7 @@ fn render_level(
             name: short_name(rel).to_string(),
             rel: rel.clone(),
             is_dir: dir,
+            expanded: dir && !collapsed.contains(rel),
         });
         if dir && !collapsed.contains(rel) {
             render_level(kids, is_dir, collapsed, rel.clone(), depth + 1, out);
@@ -119,37 +189,238 @@ fn parent_of(rel: &str) -> String {
     }
 }
 
-/// Draw the tree into `rect`: bordered box, cursor row marked, empty workspace
-/// named rather than blank. One function for both placements (sidebar rect when
-/// wide, full area when narrow) so the two cannot drift apart.
-pub(crate) fn draw_tree(
-    f: &mut Frame<'_>,
-    rect: Rect,
-    rows: &[TreeRow],
-    cursor: usize,
-    capped: bool,
-) {
+/// How many row slots a tree panel has before the capped notice.
+pub(crate) fn row_capacity(rect: Rect, capped: bool, docked: bool) -> usize {
+    // A docked sidebar owns its title row and has no frame; the narrow band is
+    // a framed Panel with a top and bottom rail.
+    let chrome = if docked { 1 } else { 2 };
+    (rect.height.saturating_sub(chrome) as usize).saturating_sub(usize::from(capped))
+}
+
+/// Draw the explorer into `rect`.
+///
+/// One function for both placements (docked on the right when wide, full-area
+/// when narrow and focused), so the two cannot drift apart. The frame comes from
+/// [`Panel`], the same chrome every overlay uses: rounded corners from the active
+/// glyph table, an accent edge only while the panel owns the keyboard, and an
+/// ASCII fallback on a legacy console. A `Block` with its own defaults was the
+/// previous shape, and it drew a second border vocabulary beside the rest of the
+/// IDE.
+///
+/// The cursor row is marked with the shared selection bar and, when it is the
+/// current directory, an honest fold glyph; filenames are truncated by display
+/// width rather than by bytes so a CJK name cannot push the frame apart.
+pub(crate) struct TreeView<'a> {
+    /// The rectangle the frame occupies (docked cell or narrow band).
+    pub rect: Rect,
+    /// The resolved look.
+    pub theme: &'a Theme,
+    /// Visible rows for this frame.
+    pub rows: &'a [TreeRow],
+    /// Working-tree status, keyed by workspace-relative path.
+    pub git: &'a BTreeMap<String, crate::git::Status>,
+    /// Directories with a changed descendant, so a fold cannot hide a change.
+    pub changed_dirs: &'a BTreeSet<String>,
+    /// Selected row index.
+    pub cursor: usize,
+    /// First row to paint.
+    pub scroll: usize,
+    /// Whether the panel owns the keyboard.
+    pub focused: bool,
+    /// Whether discovery stopped at the row budget.
+    pub capped: bool,
+    /// The live focus/hide chord, resolved from the binding table.
+    pub toggle_key: &'a str,
+    /// `true` for the right-hand dock; `false` for the narrow focused band.
+    ///
+    /// The dock is a **sidebar**, not a boxed overlay: one vertical rail, a title
+    /// on the header row, and no top/bottom/right frame to collide with the
+    /// shell. The band is a temporary surface and keeps the shared `Panel`.
+    pub docked: bool,
+}
+
+/// Draw the explorer, returning the visible row capacity so page keys can use it.
+pub(crate) fn draw_tree(f: &mut Frame<'_>, view: TreeView<'_>) -> usize {
+    let TreeView {
+        rect,
+        theme,
+        rows,
+        git,
+        changed_dirs,
+        cursor,
+        scroll,
+        focused,
+        capped,
+        toggle_key,
+        docked,
+    } = view;
+    // The panel names the key that focuses/hides it, because a docked surface
+    // with no printed chord is furniture. The chord comes from the live binding
+    // table, so it moves when the binding does.
+    let title = if !docked && focused {
+        // The narrow band has no right-aligned title slot; name the way back in
+        // the title itself, or the only exit hint is a footer line that may be
+        // the first thing a 60-column screen trims.
+        format!("Files · {} · esc back", rows.len())
+    } else {
+        format!("Files · {}", rows.len())
+    };
+    let body_rows = if docked {
+        // A docked explorer is a sidebar, not an overlay. One rail at its left
+        // edge, a title on the header row, no top/bottom/right frame. The old
+        // full `Panel` put a second box inside the shell, so the header grew a
+        // `+ Files` lid and the tree paid two rows for borders it did not need.
+        f.render_widget(Clear, rect);
+        let rail_style = if focused {
+            theme.border_focus()
+        } else {
+            theme.border()
+        };
+        let rail: Vec<Line<'static>> = (0..rect.height)
+            .map(|_| {
+                Line::from(ratatui::text::Span::styled(
+                    theme.glyphs.vertical,
+                    rail_style,
+                ))
+            })
+            .collect();
+        f.render_widget(
+            Paragraph::new(rail),
+            Rect {
+                x: rect.x,
+                y: rect.y,
+                width: 1,
+                height: rect.height,
+            },
+        );
+        let title_width = rect.width.saturating_sub(3) as usize;
+        let hint = if focused { "esc back" } else { toggle_key };
+        let right = if hint.is_empty() {
+            Vec::new()
+        } else {
+            vec![ratatui::text::Span::styled(hint.to_string(), theme.dim())]
+        };
+        let title_line = side_by_side(
+            vec![ratatui::text::Span::styled(title.clone(), theme.title())],
+            right,
+            title_width,
+            Priority::Right,
+        );
+        f.render_widget(
+            Paragraph::new(title_line),
+            Rect {
+                x: rect.x + 2,
+                y: rect.y,
+                width: title_width as u16,
+                height: 1,
+            },
+        );
+        row_capacity(rect, capped, true)
+    } else {
+        let panel = Panel {
+            theme,
+            area: rect,
+            title: &title,
+            focused,
+            border: None,
+        };
+        let inner = panel.open(f);
+        row_capacity(rect, capped, false).min(inner.height as usize)
+    };
+    let body = if docked {
+        Rect {
+            x: rect.x + 2,
+            y: rect.y + 1,
+            width: rect.width.saturating_sub(3),
+            height: rect.height.saturating_sub(1),
+        }
+    } else {
+        Panel {
+            theme,
+            area: rect,
+            title: &title,
+            focused,
+            border: None,
+        }
+        .inner()
+    };
+    let width = body.width as usize;
     let mut lines: Vec<Line<'static>> = Vec::new();
     if rows.is_empty() {
-        lines.push(Line::from("  (empty workspace)"));
-    }
-    for (i, row) in rows.iter().enumerate() {
-        let indent = "  ".repeat(row.depth);
-        let marker = if i == cursor { "> " } else { "  " };
-        let label = if row.is_dir {
-            format!("{marker}{indent}{}/", row.name)
-        } else {
-            format!("{marker}{indent}{}", row.name)
-        };
-        lines.push(Line::from(label));
-    }
-    if capped {
-        lines.push(Line::from(format!(
-            "  ... capped at {TREE_ROW_BUDGET} rows"
+        lines.push(Line::from(ratatui::text::Span::styled(
+            "  (empty workspace)",
+            theme.dim(),
         )));
     }
-    let block = Block::default().borders(Borders::ALL).title("tree");
-    f.render_widget(Paragraph::new(lines).block(block), rect);
+    let start = scroll.min(rows.len().saturating_sub(1));
+    for (i, row) in rows.iter().enumerate().skip(start).take(body_rows) {
+        // Deep trees are real, and an indent that grows without a ceiling spends
+        // the entire panel on blank columns at depth 20. Capping at six guide
+        // levels still shows nesting, while leaving room for a name at 24 columns.
+        // Guides are the same `│` the rest of the frame uses, so a nested file
+        // reads as inside its parent rather than as an unrelated indented name.
+        let indent = format!("{} ", theme.glyphs.vertical).repeat(row.depth.min(6));
+        let fold = if row.is_dir {
+            if row.expanded {
+                theme.glyphs.fold_open
+            } else {
+                theme.glyphs.fold_closed
+            }
+        } else {
+            " "
+        };
+        let slash = if row.is_dir { "/" } else { "" };
+        let label = format!("{indent}{fold} {}{slash}", row.name);
+        let status = if row.is_dir {
+            changed_dirs
+                .contains(&row.rel)
+                .then_some((theme.glyphs.bullet, theme.warn()))
+        } else {
+            git.get(&row.rel)
+                .map(|status| (status.marker(), status_style(theme, *status)))
+        };
+        let mut line = overlay::list_row(
+            theme,
+            i == cursor,
+            &label,
+            status.map(|(marker, _)| marker),
+            width,
+        );
+        // `list_row` right-aligns metadata in the faint style. A status marker is
+        // a signal, not a hint: colour it after the fact rather than duplicating
+        // the row layout. If the metadata was dropped for width, the last span is
+        // the label and is deliberately left alone.
+        if let Some((marker, style)) = status
+            && let Some(span) = line.spans.last_mut()
+            && span.content == marker
+        {
+            span.style = style;
+        }
+        lines.push(line);
+    }
+    if capped && body.height > 0 {
+        lines.push(Line::from(ratatui::text::Span::styled(
+            format!(
+                "  {} capped at {TREE_ROW_BUDGET} entries",
+                theme.glyphs.ellipsis
+            ),
+            theme.dim(),
+        )));
+    }
+    f.render_widget(Paragraph::new(lines), body);
+    body_rows.max(1)
+}
+
+/// Colour the working-tree marker by meaning. Added/untracked are new work
+/// (success), modified is unfinished work (warning), deleted/conflicted is
+/// destructive (danger), and a rename is a move (accent).
+fn status_style(theme: &Theme, status: crate::git::Status) -> ratatui::style::Style {
+    match status {
+        crate::git::Status::Added | crate::git::Status::Untracked => theme.success(),
+        crate::git::Status::Modified => theme.warn(),
+        crate::git::Status::Deleted | crate::git::Status::Conflict => theme.danger(),
+        crate::git::Status::Renamed => theme.accent(),
+    }
 }
 
 #[cfg(test)]
@@ -188,6 +459,20 @@ mod tests {
     }
 
     #[test]
+    fn an_empty_directory_gets_a_row_beside_the_files() {
+        let rows = build_visible_rows_with_dirs(
+            &["src/main.rs".to_string()],
+            &["src".to_string(), "empty".to_string()],
+            &BTreeSet::new(),
+        );
+        let rels: Vec<&str> = rows.iter().map(|r| r.rel.as_str()).collect();
+        assert!(rels.contains(&"empty"), "empty dir is visible: {rels:?}");
+        let empty = rows.iter().find(|r| r.rel == "empty").expect("row");
+        assert!(empty.is_dir && empty.expanded);
+        assert!(rels.contains(&"src/main.rs"), "{rels:?}");
+    }
+
+    #[test]
     fn empty_workspace_is_no_rows_not_a_panic() {
         assert!(rows(&[], &[]).is_empty());
     }
@@ -212,10 +497,10 @@ pub struct FileViewer {
     pub lines: Vec<String>,
     /// First visible line index.
     pub scroll: usize,
-    /// True when the file held more lines than the cap.
+    /// True when the preview hit either the line or byte cap.
     pub truncated: bool,
-    /// Exact bytes at open time: the changed-underneath guard compares against
-    /// these, so a file without a trailing newline does not read as changed.
+    /// Bytes captured at open, bounded by [`VIEWER_BYTE_CAP`]. A partial preview
+    /// cannot be edited, so only complete previews use these for save guards.
     pub opened_bytes: Vec<u8>,
     /// Edit mode (Phase 3 editor slice): the buffer below is live.
     pub editing: bool,
@@ -225,7 +510,8 @@ pub struct FileViewer {
     pub edit_row: usize,
     /// Cursor column within the row, in characters.
     pub edit_col: usize,
-    /// First Esc with a dirty buffer arms; the second discards.
+    /// Esc's warning stage: in edit mode the second press returns to the view
+    /// with the draft kept; in view mode it closes the tab without saving.
     pub discard_armed: bool,
     /// Undo history for the edit buffer. The same
     /// [`crate::undo::UndoStack`] the composer uses, over a snapshot shape that
@@ -262,27 +548,47 @@ pub(super) struct FileSnapshot {
     pub(super) col: usize,
 }
 
-/// Read `rel` under `root` for viewing. Refuses (rather than guessing) when the
-/// file cannot be read as text or is a directory — a viewer that showed decoded
-/// garbage or a listing would be a different feature wearing this one's name.
+/// Read at most one preview window, plus one byte to detect a byte-capped file.
+fn read_viewer_preview(reader: &mut impl Read) -> Result<(Vec<u8>, bool), std::io::Error> {
+    let mut bytes = Vec::with_capacity(VIEWER_BYTE_CAP + 1);
+    reader
+        .take((VIEWER_BYTE_CAP + 1) as u64)
+        .read_to_end(&mut bytes)?;
+    let byte_truncated = bytes.len() > VIEWER_BYTE_CAP;
+    bytes.truncate(VIEWER_BYTE_CAP);
+    Ok((bytes, byte_truncated))
+}
+
+/// Read a bounded preview of `rel` under `root`. Refuses a directory or a
+/// preview containing NUL bytes rather than showing a listing or decoded binary
+/// data under the name of a text viewer.
 pub fn open_viewer(root: &std::path::Path, rel: &str) -> Result<FileViewer, String> {
     let path = root.join(rel);
     if path.is_dir() {
         return Err(format!("{rel} is a directory, not a file"));
     }
-    let bytes = std::fs::read(&path).map_err(|e| format!("cannot read {rel}: {e}"))?;
+    let mut file = std::fs::File::open(&path).map_err(|e| format!("cannot read {rel}: {e}"))?;
+    let (bytes, byte_truncated) =
+        read_viewer_preview(&mut file).map_err(|e| format!("cannot read {rel}: {e}"))?;
     if bytes.contains(&0) {
         return Err(format!("{rel} is not text"));
     }
-    let text = String::from_utf8_lossy(&bytes);
-    let all: Vec<String> = text.lines().map(str::to_string).collect();
-    let truncated = all.len() > VIEWER_LINE_CAP;
-    let lines = all.into_iter().take(VIEWER_LINE_CAP).collect();
+    let (lines, line_truncated) = {
+        let text = String::from_utf8_lossy(&bytes);
+        let mut lines: Vec<String> = text
+            .lines()
+            .take(VIEWER_LINE_CAP + 1)
+            .map(str::to_string)
+            .collect();
+        let line_truncated = lines.len() > VIEWER_LINE_CAP;
+        lines.truncate(VIEWER_LINE_CAP);
+        (lines, line_truncated)
+    };
     Ok(FileViewer {
         rel: rel.to_string(),
         lines,
         scroll: 0,
-        truncated,
+        truncated: byte_truncated || line_truncated,
         opened_bytes: bytes,
         editing: false,
         edit_lines: Vec::new(),
@@ -300,26 +606,32 @@ pub fn open_viewer(root: &std::path::Path, rel: &str) -> Result<FileViewer, Stri
 }
 
 impl FileViewer {
-    /// Enter edit mode: the buffer starts as the file on screen. Refuses
-    /// (returns false and changes nothing) when the file continued past
-    /// `VIEWER_LINE_CAP`: the buffer would be the capped head, and saving
-    /// it would cut the tail off the file.
+    /// Enter edit mode: a clean tab starts from the file, while a tab with a
+    /// retained draft resumes that buffer. Refuses (returns false and changes
+    /// nothing) when the preview hit either cap, because saving a partial head
+    /// would cut the rest of the file off.
     pub fn start_edit(&mut self) -> bool {
         if self.truncated {
             return false;
         }
+        // Esc may leave a dirty draft in the tab. Re-entering edit mode resumes
+        // that buffer; reloading `lines` here would silently replace the user's
+        // only copy with the on-disk version.
+        let resume_draft = self.has_unsaved();
         self.editing = true;
-        self.edit_lines = self.lines.clone();
-        if self.edit_lines.is_empty() {
-            self.edit_lines.push(String::new());
+        if !resume_draft {
+            self.edit_lines = self.lines.clone();
+            if self.edit_lines.is_empty() {
+                self.edit_lines.push(String::new());
+            }
+            self.edit_row = 0;
+            self.edit_col = 0;
+            // A fresh edit session starts with a fresh history: the pre-existing
+            // state IS the baseline the user undoes back to, so there is nothing to
+            // undo until they change something.
+            self.undo_stack = crate::undo::UndoStack::new();
         }
-        self.edit_row = 0;
-        self.edit_col = 0;
         self.discard_armed = false;
-        // A fresh edit session starts with a fresh history: the pre-existing
-        // state IS the baseline the user undoes back to, so there is nothing to
-        // undo until they change something.
-        self.undo_stack = crate::undo::UndoStack::new();
         true
     }
 
@@ -457,7 +769,7 @@ impl FileViewer {
     /// arm returns before the find arm ever runs. Searching `edit_lines` here is
     /// what makes the same query answer "where is this in *my* text".
     pub fn find_recompute(&mut self) {
-        let source: &[String] = if self.editing {
+        let source: &[String] = if self.editing || self.has_unsaved() {
             &self.edit_lines
         } else {
             &self.lines
@@ -662,6 +974,8 @@ pub(crate) fn draw_viewer(
             crate::keybindings::alt_name(),
             if viewer.is_dirty() { " (modified)" } else { "" }
         )
+    } else if viewer.has_unsaved() {
+        format!("view {} (modified)", viewer.rel)
     } else {
         format!("view {}", viewer.rel)
     };
@@ -675,7 +989,7 @@ pub(crate) fn draw_viewer(
     let inner = panel.open(f);
     // One line is the footer; the rest is text.
     let capacity = inner.height.saturating_sub(1).max(1) as usize;
-    let body: &[String] = if viewer.editing {
+    let body: &[String] = if viewer.editing || viewer.has_unsaved() {
         &viewer.edit_lines
     } else {
         &viewer.lines
@@ -699,7 +1013,12 @@ pub(crate) fn draw_viewer(
     // where one spare row happens to fit the find line. With three input rows there
     // is no spare, and the reservation is what makes the query and the replacement
     // reachable instead of off-screen.
-    let input_rows = usize::from(viewer.find_open) + usize::from(viewer.replace_open) + 1; // the hint row, always
+    // Find takes two rows: the query it is searching for, then the keys that
+    // move through the matches. On one row the hint was silently clipped at the
+    // width the explorer leaves (`enter/n next · p previous · esc close` did not
+    // survive 44 columns), which is the "unexplained quieter panel" defect in a
+    // new place.
+    let input_rows = usize::from(viewer.find_open) * 2 + usize::from(viewer.replace_open) + 1; // hint row, always
     let body_rows = capacity.saturating_sub(input_rows).max(1);
     let end = (start + body_rows).min(body.len());
     let mut lines: Vec<Line<'static>> = Vec::new();
@@ -741,7 +1060,10 @@ pub(crate) fn draw_viewer(
     }
     if viewer.truncated && !viewer.editing {
         lines.push(Line::from(ratatui::text::Span::styled(
-            format!("... showing the first {VIEWER_LINE_CAP} lines"),
+            format!(
+                "... preview capped at {VIEWER_LINE_CAP} lines / {} KiB",
+                VIEWER_BYTE_CAP / 1024
+            ),
             theme.dim(),
         )));
     }
@@ -770,15 +1092,15 @@ pub(crate) fn draw_viewer(
             ratatui::text::Span::styled("/", theme.accent()),
             ratatui::text::Span::raw(viewer.find_query.clone()),
             ratatui::text::Span::styled("\u{2588}", theme.accent()),
-            // The same vocabulary the transcript search uses (M157's panel),
-            // because `p` is bound here too: `Up`, `PageUp` and `p` all step
-            // back (`app/keys.rs`), and a hint row that names only the forward
-            // step hides half the keys it describes.
-            ratatui::text::Span::styled(
-                format!("  {count} · enter/n next · p previous · esc close"),
-                theme.dim(),
-            ),
+            ratatui::text::Span::styled(format!("  {count}"), theme.dim()),
         ]));
+        // Its own row, so the words survive the width the explorer leaves. The
+        // vocabulary matches the transcript search (M157): `Up`, `PageUp` and
+        // `p` all step back, so naming only the forward step hides half the keys.
+        lines.push(Line::from(ratatui::text::Span::styled(
+            "  enter/n next · p previous · esc close",
+            theme.dim(),
+        )));
     }
 
     // **The replacement line, drawn where it can be seen.**
@@ -796,30 +1118,31 @@ pub(crate) fn draw_viewer(
     }
 
     let hints: &[(&str, &str)] = if viewer.editing {
-        &[
-            ("type/enter", "edit"),
-            (&save, "save"),
-            (undo, "undo"),
-            ("esc", "cancel"),
-        ]
+        &[(&save, "save"), (undo, "undo"), ("esc", "cancel")]
+    } else if viewer.has_unsaved() {
+        // This tab left edit mode with a draft still in memory. Name the save
+        // path here; hiding it in edit-only chrome would strand that draft.
+        &[(&save, "save"), ("esc", "close"), ("e", "resume edit")]
     } else if viewer.truncated {
         // Invariant 7: `e` does not edit a capped file (`start_edit`
         // refuses), so the footer must not offer it as edit.
         &[
-            ("↑↓/pgup/pgdn", "scroll"),
-            ("/", "find"),
             ("e", "edit unavailable"),
             ("esc", "close"),
+            ("↑↓/pgup/pgdn", "scroll"),
+            ("/", "find"),
         ]
     } else {
         &[
-            ("↑↓/pgup/pgdn", "scroll"),
-            ("/", "find"),
             ("e", "edit"),
             ("esc", "close"),
+            ("↑↓/pgup/pgdn", "scroll"),
+            ("/", "find"),
         ]
     };
-    lines.push(Line::from(overlay::hint_row(theme, hints).spans));
+    lines.push(Line::from(
+        overlay::hint_row_in(theme, hints, inner.width as usize).spans,
+    ));
     f.render_widget(Paragraph::new(lines), inner);
     // The caret, in panel coordinates from the character column.
     if viewer.editing
@@ -867,6 +1190,50 @@ mod viewer_tests {
         let viewer = open_viewer(dir.path(), "big.log").expect("big opens");
         assert_eq!(viewer.lines.len(), VIEWER_LINE_CAP);
         assert!(viewer.truncated, "the cap must be announced, not silent");
+    }
+
+    #[test]
+    fn a_single_huge_line_is_truncated_by_bytes_and_cannot_be_edited() {
+        const CAP: usize = VIEWER_BYTE_CAP;
+        let dir = workspace();
+        let body = vec![b'x'; CAP + 32];
+        std::fs::write(dir.path().join("one-line.log"), &body).unwrap();
+
+        let mut viewer = open_viewer(dir.path(), "one-line.log").expect("preview opens");
+        assert!(
+            viewer.truncated,
+            "the byte cap, not only line count, applies"
+        );
+        assert_eq!(viewer.lines.len(), 1, "the preview keeps the first line");
+        assert_eq!(viewer.lines[0].len(), CAP, "the line is bounded by bytes");
+        assert!(
+            viewer.opened_bytes.len() <= CAP,
+            "the editor must not retain the whole oversized file"
+        );
+        assert!(
+            !viewer.start_edit(),
+            "a partial preview cannot become an edit buffer"
+        );
+    }
+
+    #[test]
+    fn viewer_preview_reads_only_the_cap_plus_one_probe_byte() {
+        let bytes = vec![b'x'; VIEWER_BYTE_CAP + 32];
+        let mut reader = std::io::Cursor::new(bytes);
+        let (preview, truncated) = read_viewer_preview(&mut reader).expect("read succeeds");
+        assert!(truncated);
+        assert_eq!(preview.len(), VIEWER_BYTE_CAP);
+        assert_eq!(
+            reader.position(),
+            (VIEWER_BYTE_CAP + 1) as u64,
+            "the probe detects truncation without reading the tail"
+        );
+
+        let mut small = std::io::Cursor::new(b"small".to_vec());
+        let (complete, truncated) = read_viewer_preview(&mut small).expect("small read succeeds");
+        assert!(!truncated);
+        assert_eq!(complete, b"small");
+        assert_eq!(small.position(), 5);
     }
 
     #[test]

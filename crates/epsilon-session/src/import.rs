@@ -329,6 +329,15 @@ fn json_err(e: serde_json::Error) -> StoreError {
 /// silently drop. (The store's torn-tail rule answers a different question — whether a file can
 /// be *opened* without inventing an ending.)
 fn read_pi_archive(source: &Path) -> Result<PiArchive, StoreError> {
+    // Same whole-file bound as the store: an import is deliberate, but the
+    // file is still untrusted input and must not be able to size the process.
+    let len = std::fs::metadata(source)?.len();
+    if len > crate::MAX_SESSION_FILE_BYTES {
+        return Err(StoreError::Io(std::io::Error::other(format!(
+            "import file is {len} bytes; refusing to load more than {} bytes",
+            crate::MAX_SESSION_FILE_BYTES
+        ))));
+    }
     let text = std::fs::read_to_string(source)?;
     let mut header: Option<SessionHeader> = None;
     let mut entries: Vec<SourceEntry> = Vec::new();

@@ -628,10 +628,16 @@ pub(crate) fn handle_key(app: &mut App, agent: &Arc<Agent>, key: KeyEvent) -> bo
     if app.search.is_some() && !app.keybindings.matches("app.exit", &key) {
         return handle_search_key(app, key);
     }
+    // The skills/subagent browser is a reader with no text field. It must own
+    // the keyboard while open, or an arrow meant for its list scrolls the
+    // transcript instead.
+    if app.catalog.is_some() && !app.keybindings.matches("app.exit", &key) {
+        return catalog::handle_key(app, key);
+    }
     // Phase 3 (TUI as IDE): the file viewer owns the keyboard while open —
     // Esc closes, arrows and page keys scroll. Placed above the tree branch:
     // the viewer opens from the tree, so the tree would otherwise eat Esc.
-    if app.viewer_open() && !app.tree_open && !app.keybindings.matches("app.exit", &key) {
+    if app.viewer_open() && !app.tree_focused && !app.keybindings.matches("app.exit", &key) {
         // Phase 3 viewer tabs: switching works in view and edit modes alike
         // — every tab owns its buffer, so leaving a dirty tab loses nothing.
         if app.keybindings.matches("app.viewer.tabNext", &key) {
@@ -642,17 +648,17 @@ pub(crate) fn handle_key(app: &mut App, agent: &Arc<Agent>, key: KeyEvent) -> bo
             app.switch_viewer_tab(false);
             return false;
         }
-        // F6 yields to the tree: with tabs kept, the sidebar (which co-draws
-        // beside the viewer) takes the keyboard, and its Esc hands back.
-        // Without this the tree would be visible but dead behind the viewer.
+        // F6 moves focus to the explorer, which co-draws beside the viewer; its
+        // Esc hands the keyboard back. The viewer stays open underneath, so this
+        // is a focus change rather than closing one surface to reach another.
         if app.keybindings.matches("app.tree.toggle", &key) {
-            app.tree_open = true;
+            app.focus_tree();
             return false;
         }
         // Edit mode owns the keystroke vocabulary: printable text edits, Enter
-        // splits, Backspace deletes-or-joins, Esc is two-stage against data
-        // loss (first press arms when dirty, second discards), alt+s saves
-        // through a checkpoint. Arrows move in both modes.
+        // splits, Backspace deletes-or-joins. Esc leaves a dirty buffer in the
+        // tab so it can be reviewed, resumed or saved; closing the tab is a
+        // separate, explicitly confirmed discard. Alt+S saves through a checkpoint.
         if app.viewer_editing() {
             match key.code {
                 KeyCode::Esc => {
@@ -662,9 +668,13 @@ pub(crate) fn handle_key(app: &mut App, agent: &Arc<Agent>, key: KeyEvent) -> bo
                         if let Some(v) = app.active_viewer_mut() {
                             v.discard_armed = true;
                         }
+                        let save = app
+                            .keybindings
+                            .key_text("app.viewer.save")
+                            .map(|key| format!("{key} saves"))
+                            .unwrap_or_else(|| "saving is unbound".to_string());
                         app.ui.push_notice(format!(
-                            "edits not saved — Esc again discards them, {}+s saves",
-                            crate::keybindings::alt_name()
+                            "edits not saved — Esc again returns to view with the draft; {save}"
                         ));
                     } else if let Some(v) = app.active_viewer_mut() {
                         v.editing = false;
@@ -786,6 +796,17 @@ pub(crate) fn handle_key(app: &mut App, agent: &Arc<Agent>, key: KeyEvent) -> bo
             }
             return false;
         }
+        // The dirty preview is still the editor's buffer. Saving from this mode
+        // is necessary because Esc leaves the buffer in the tab rather than
+        // discarding it.
+        if app.keybindings.matches("app.viewer.save", &key) {
+            if app.active_viewer().is_some_and(|v| v.has_unsaved()) {
+                app.save_viewer();
+            } else {
+                app.ui.push_notice("no unsaved file edits to save");
+            }
+            return false;
+        }
         // Phase 3 viewer find: while a find is open it owns the keyboard,
         // like every overlay. Printable keys narrow the query (so `e` types
         // here rather than starting an edit — Esc first, then `e`); Enter and
@@ -849,8 +870,19 @@ pub(crate) fn handle_key(app: &mut App, agent: &Arc<Agent>, key: KeyEvent) -> bo
                             Err(_) => false,
                         }
                     });
+                    let save_key = app.keybindings.key_text("app.viewer.save");
                     app.ui.push_notice(if can_save {
-                        "unsaved edits — Esc again closes without saving, alt+s saves".to_string()
+                        match save_key {
+                            Some(key) => {
+                                format!(
+                                    "unsaved edits — Esc again closes without saving, {key} saves"
+                                )
+                            }
+                            None => {
+                                "unsaved edits — Esc again closes without saving; save is unbound"
+                                    .to_string()
+                            }
+                        }
                     } else {
                         "edits can't be saved — the file changed on disk — Esc again discards them"
                             .to_string()
@@ -858,11 +890,10 @@ pub(crate) fn handle_key(app: &mut App, agent: &Arc<Agent>, key: KeyEvent) -> bo
                 } else {
                     app.close_viewer_tab();
                     if !app.viewer_open() {
-                        // Return to the tree: it stayed open beneath single-file
-                        // viewing, and tabs keep that contract — closing the
-                        // last tab reveals the files, it does not strand the
-                        // reader at the composer.
+                        // Closing the last file returns the keyboard to the
+                        // project map that stayed docked beside it.
                         app.tree_open = true;
+                        app.tree_focused = true;
                     }
                 }
             }
@@ -889,8 +920,9 @@ pub(crate) fn handle_key(app: &mut App, agent: &Arc<Agent>, key: KeyEvent) -> bo
                         .map(|v| v.rel.clone())
                         .unwrap_or_default();
                     app.ui.push_notice(format!(
-                        "{rel} is too large to edit here (showing the first {} lines) — saving would cut the rest; open it in an editor",
-                        crate::tree::VIEWER_LINE_CAP
+                        "{rel} is too large to edit here (preview capped at {} lines / {} KiB) — saving would cut the rest; open it in an editor",
+                        crate::tree::VIEWER_LINE_CAP,
+                        crate::tree::VIEWER_BYTE_CAP / 1024
                     ));
                 }
             }
@@ -932,19 +964,47 @@ pub(crate) fn handle_key(app: &mut App, agent: &Arc<Agent>, key: KeyEvent) -> bo
         }
         return false;
     }
-    // Phase 3 (TUI as IDE): the workspace tree owns the keyboard while open,
-    // like every other overlay. Esc/F6 always closes, so there is no trap;
-    // anything unhandled is swallowed, not typed into a composer the reader
-    // is not looking at. `app.exit` keeps its precedence (quitting drops the
-    // parked ask fail-closed, wherever the keyboard is).
-    if app.tree_open && !app.keybindings.matches("app.exit", &key) {
+    // The workspace explorer owns the keyboard only while **focused**. It may be
+    // docked and visible without focus — that is the default IDE layout — and in
+    // that state every key belongs to the composer or viewer behind it. F6
+    // focuses a resting tree and hides a focused one; Esc hands the keyboard back
+    // without closing the panel, so focus is never trapped.
+    if app.tree_focused && !app.keybindings.matches("app.exit", &key) {
         if app.keybindings.matches("app.tree.toggle", &key) {
-            app.tree_open = false;
+            app.toggle_tree();
             return false;
         }
         match key.code {
             KeyCode::Esc => {
-                app.tree_open = false;
+                app.tree_focused = false;
+            }
+            KeyCode::PageUp => {
+                let page = app.tree_capacity.max(1);
+                app.tree_cursor = app.tree_cursor.saturating_sub(page);
+            }
+            KeyCode::PageDown => {
+                let total = app.tree_rows.len();
+                if total > 0 {
+                    app.tree_cursor = (app.tree_cursor + app.tree_capacity.max(1)).min(total - 1);
+                }
+            }
+            KeyCode::Home => {
+                app.tree_cursor = 0;
+            }
+            KeyCode::End => {
+                app.tree_cursor = app.tree_rows.len().saturating_sub(1);
+            }
+            KeyCode::Char('r') | KeyCode::Char('R') => {
+                let selected = app
+                    .tree_rows
+                    .get(app.tree_cursor)
+                    .map(|row| row.rel.clone());
+                app.refresh_tree();
+                if let Some(rel) = selected
+                    && let Some(i) = app.tree_rows.iter().position(|row| row.rel == rel)
+                {
+                    app.tree_cursor = i;
+                }
             }
             KeyCode::Up => {
                 let total = app.tree_rows.len();
@@ -963,6 +1023,7 @@ pub(crate) fn handle_key(app: &mut App, agent: &Arc<Agent>, key: KeyEvent) -> bo
                 if let Some(row) = app.tree_rows.get(app.tree_cursor).cloned() {
                     if row.is_dir && !app.tree_collapsed.contains(&row.rel) {
                         app.tree_collapsed.insert(row.rel.clone());
+                        app.persist_tree_collapsed();
                         app.refresh_tree();
                         if let Some(i) = app.tree_rows.iter().position(|r| r.rel == row.rel) {
                             app.tree_cursor = i;
@@ -986,6 +1047,7 @@ pub(crate) fn handle_key(app: &mut App, agent: &Arc<Agent>, key: KeyEvent) -> bo
                     && row.is_dir
                     && app.tree_collapsed.remove(&row.rel)
                 {
+                    app.persist_tree_collapsed();
                     app.refresh_tree();
                     if let Some(i) = app.tree_rows.iter().position(|r| r.rel == row.rel) {
                         app.tree_cursor = i;
@@ -1000,6 +1062,7 @@ pub(crate) fn handle_key(app: &mut App, agent: &Arc<Agent>, key: KeyEvent) -> bo
                         } else {
                             app.tree_collapsed.insert(row.rel.clone());
                         }
+                        app.persist_tree_collapsed();
                         app.refresh_tree();
                         if let Some(i) = app.tree_rows.iter().position(|r| r.rel == row.rel) {
                             app.tree_cursor = i;
@@ -1010,11 +1073,12 @@ pub(crate) fn handle_key(app: &mut App, agent: &Arc<Agent>, key: KeyEvent) -> bo
                         // gestures because they are two intentions.
                         match crate::tree::open_viewer(&app.workspace_root, &row.rel) {
                             Ok(viewer) => {
-                                // Tabs keep the tree's contract: Enter opens and
-                                // the tree yields (every picker closes on
-                                // select); Esc on the last tab reopens it.
+                                // The explorer stays docked beside the open file:
+                                // the whole point of an IDE layout is that opening
+                                // one file does not erase the project map. Only
+                                // the keyboard moves, to the viewer.
                                 app.open_viewer_tab(viewer);
-                                app.tree_open = false;
+                                app.tree_focused = false;
                             }
                             Err(e) => {
                                 app.ui.push_notice(e);
@@ -1025,8 +1089,8 @@ pub(crate) fn handle_key(app: &mut App, agent: &Arc<Agent>, key: KeyEvent) -> bo
             }
             // `@` inserts a file reference the model's own read tool will
             // honour (same workspace-relative spelling `@` completion and the
-            // tools use), at the caret; the tree closes so the composer owns
-            // the keyboard again.
+            // tools use), at the caret. The explorer stays visible; only focus
+            // returns to the composer, where the reference just landed.
             KeyCode::Char('@') => {
                 if let Some(row) = app.tree_rows.get(app.tree_cursor).cloned()
                     && !row.is_dir
@@ -1035,7 +1099,7 @@ pub(crate) fn handle_key(app: &mut App, agent: &Arc<Agent>, key: KeyEvent) -> bo
                     for c in insert.chars() {
                         app.insert_char(c);
                     }
-                    app.tree_open = false;
+                    app.tree_focused = false;
                 }
             }
             _ => {}
@@ -2411,26 +2475,14 @@ pub(crate) fn handle_key(app: &mut App, agent: &Arc<Agent>, key: KeyEvent) -> bo
                     app.notice("goal disarmed by the abort — `/goal resume` continues it");
                 }
                 if cancelled {
-                    // M30: drain queued steering so it doesn't leak into the
-                    // next run, and restore the last message to the editor so
-                    // the user can re-edit rather than losing it.
-                    let drained = agent.drain_steering_all();
-                    if let Some(last_user_text) = drained.into_iter().rev().find_map(|m| {
-                        if let Message::User(u) = m {
-                            u.content.into_iter().find_map(|c| match c {
-                                UserContent::Text { text } => Some(text),
-                                _ => None,
-                            })
-                        } else {
-                            None
-                        }
-                    }) {
-                        app.input = last_user_text.clone();
-                        app.cursor_chars = last_user_text.chars().count();
-                        app.notice("abort requested — queued text restored to editor");
-                    } else {
-                        app.notice("abort requested — cancelling current run…");
-                    }
+                    // Keep queued messages as `Message`s rather than flattening them into the
+                    // single-line editor. An expanded @-reference has a second text block, and
+                    // replacing the editor also destroys a draft typed after the queue was sent.
+                    // Unconsumed messages remain in the agent queue for the next run; Alt+Q is
+                    // still the explicit path to pull steering text into the editor.
+                    app.notice(
+                        "abort requested — draft kept; steering/follow-up queues retained (Alt+Q restores steering)",
+                    );
                 }
                 false
             } else {
@@ -3017,16 +3069,7 @@ pub(crate) fn handle_key(app: &mut App, agent: &Arc<Agent>, key: KeyEvent) -> bo
 /// viewer, tree, palette, picker, timeline — so the wheel and the arrows
 /// always agree about where the reader is.
 fn scroll_focused_overlay(app: &mut App, up: bool) {
-    if let Some(v) = app.active_viewer_mut() {
-        if up {
-            v.scroll = v.scroll.saturating_sub(3);
-        } else {
-            let max = v.lines.len().saturating_sub(1);
-            v.scroll = (v.scroll + 3).min(max);
-        }
-        return;
-    }
-    if app.tree_open {
+    if app.tree_focused {
         let total = app.tree_rows.len();
         if up {
             app.tree_cursor = app
@@ -3035,6 +3078,15 @@ fn scroll_focused_overlay(app: &mut App, up: bool) {
                 .min(total.saturating_sub(1));
         } else if total > 0 {
             app.tree_cursor = (app.tree_cursor + 1).min(total - 1);
+        }
+        return;
+    }
+    if let Some(v) = app.active_viewer_mut() {
+        if up {
+            v.scroll = v.scroll.saturating_sub(3);
+        } else {
+            let max = v.lines.len().saturating_sub(1);
+            v.scroll = (v.scroll + 3).min(max);
         }
         return;
     }
@@ -3115,6 +3167,12 @@ pub(crate) fn handle_term_event(app: &mut App, agent: &Arc<Agent>, ev: TermEvent
                     app.insert_char(c);
                 }
                 app.think_pick_index = 0;
+            } else if app.tree_focused {
+                // The explorer has no text field. Dropping the paste silently is
+                // worse than refusing it: the user cannot tell whether the text
+                // went somewhere invisible.
+                app.ui
+                    .push_notice("files: no text field here — esc returns to the composer");
             } else {
                 let marker = crate::kill_ring::make_paste_marker(app.next_paste_id, &text);
                 if marker.starts_with(crate::kill_ring::MARKER_PREFIX) {

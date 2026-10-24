@@ -251,8 +251,27 @@ pub fn global_dir() -> Option<PathBuf> {
     Some(home_dir()?.join(".config").join("epsilon"))
 }
 
+/// Parse auth.json one entry at a time.
+///
+/// A whole-map `from_str` made one malformed provider hide every other
+/// credential: the user looked logged out everywhere because one entry was
+/// damaged. The good entries are the ones a request can still use; the bad
+/// key is dropped, and a later save refuses to overwrite the corrupt file via
+/// `existing_auth_map`, so the evidence remains until the user repairs it.
 fn parse_auth_map(raw: &str) -> std::collections::BTreeMap<String, StoredCredential> {
-    serde_json::from_str(raw).unwrap_or_default()
+    let Ok(value) = serde_json::from_str::<serde_json::Value>(raw) else {
+        return Default::default();
+    };
+    let Some(obj) = value.as_object() else {
+        return Default::default();
+    };
+    obj.iter()
+        .filter_map(|(provider, entry)| {
+            serde_json::from_value::<StoredCredential>(entry.clone())
+                .ok()
+                .map(|credential| (provider.clone(), credential))
+        })
+        .collect()
 }
 
 /// Cross-process guard for auth.json read-modify-write cycles. `create_new`
@@ -377,8 +396,7 @@ pub fn save_credential_full_in(
     if key.trim().is_empty() {
         return Err("refusing to store an empty API key".into());
     }
-    std::fs::create_dir_all(config_dir)
-        .map_err(|e| format!("create {}: {e}", config_dir.display()))?;
+    create_private_dir(config_dir)?;
     let _lock = acquire_auth_lock(config_dir)?;
     let path = auth_path_in(config_dir);
 
@@ -569,8 +587,7 @@ pub fn save_oauth_full_in(
     if refresh.trim().is_empty() || access.trim().is_empty() {
         return Err("refusing to store an empty OAuth token".into());
     }
-    std::fs::create_dir_all(config_dir)
-        .map_err(|e| format!("create {}: {e}", config_dir.display()))?;
+    create_private_dir(config_dir)?;
     let _lock = acquire_auth_lock(config_dir)?;
     let path = auth_path_in(config_dir);
     let mut map = existing_auth_map(&path)?.unwrap_or_default();
@@ -676,8 +693,7 @@ pub fn store_refreshed_oauth_in(
     if fresh.access.trim().is_empty() || fresh.refresh.trim().is_empty() {
         return Err("refusing to store an empty refreshed OAuth token".into());
     }
-    std::fs::create_dir_all(config_dir)
-        .map_err(|e| format!("create {}: {e}", config_dir.display()))?;
+    create_private_dir(config_dir)?;
     let _lock = acquire_auth_lock(config_dir)?;
     let path = auth_path_in(config_dir);
     // No-clobber, same as every other write: corrupt stays corrupt.
@@ -779,17 +795,45 @@ fn write_auth_file(
     let serialized =
         serde_json::to_string_pretty(map).map_err(|e| format!("serialize auth: {e}"))?;
     // Same-dir tmp + atomic rename: a crash mid-write leaves the previous file
-    // intact instead of a torn auth.json. 0600 lands on the tmp BEFORE the
-    // rename so the secret is never visible at default perms, even briefly.
+    // intact instead of a torn auth.json.
+    //
+    // **0600 is applied at creation, not after.** `fs::write` followed by chmod
+    // left the secret readable at the umask for that window; the old comment
+    // claimed the opposite because it described the intent rather than the code.
     let tmp = path.with_extension("tmp");
+    #[cfg(unix)]
+    {
+        use std::io::Write;
+        use std::os::unix::fs::OpenOptionsExt;
+        let mut file = std::fs::OpenOptions::new()
+            .write(true)
+            .create(true)
+            .truncate(true)
+            .mode(0o600)
+            .open(&tmp)
+            .map_err(|e| format!("write {}: {e}", tmp.display()))?;
+        file.write_all(serialized.as_bytes())
+            .map_err(|e| format!("write {}: {e}", tmp.display()))?;
+    }
+    #[cfg(not(unix))]
     std::fs::write(&tmp, serialized).map_err(|e| format!("write {}: {e}", tmp.display()))?;
+    std::fs::rename(&tmp, path).map_err(|e| format!("publish {}: {e}", path.display()))?;
+    Ok(())
+}
+
+/// Create a credential directory that only this user can list (0700 on Unix).
+///
+/// A 0600 file inside a 0755 directory still leaks its existence and the
+/// provider set; pi and DSH both close that half. On Windows the profile ACL is
+/// the platform's answer, as the module comment records.
+fn create_private_dir(dir: &Path) -> Result<(), String> {
+    std::fs::create_dir_all(dir).map_err(|e| format!("create {}: {e}", dir.display()))?;
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
-        std::fs::set_permissions(&tmp, std::fs::Permissions::from_mode(0o600))
-            .map_err(|e| format!("chmod {}: {e}", tmp.display()))?;
+        std::fs::set_permissions(dir, std::fs::Permissions::from_mode(0o700))
+            .map_err(|e| format!("chmod {}: {e}", dir.display()))?;
     }
-    std::fs::rename(&tmp, path).map_err(|e| format!("publish {}: {e}", path.display()))?;
     Ok(())
 }
 
@@ -1023,6 +1067,27 @@ mod tests {
             load_credentials_in(dir).is_empty(),
             "corrupt auth.json fails open (advisory read contract)"
         );
+    }
+
+    /// One damaged provider must not hide the others. The whole-map parse used
+    /// to return empty for this file, so a working key disappeared because an
+    /// unrelated entry had the wrong type.
+    #[test]
+    fn one_corrupt_auth_entry_does_not_hide_the_others() {
+        let tmp = tempfile::tempdir().expect("tmp");
+        let dir = tmp.path();
+        std::fs::write(
+            auth_path_in(dir),
+            r#"{"deepseek":{"type":"api","key":"sk-ok"},"broken":{"type":"api","key":12}}"#,
+        )
+        .unwrap();
+        let creds = load_credentials_in(dir);
+        assert_eq!(
+            creds.get("deepseek").and_then(|c| c.key()),
+            Some("sk-ok"),
+            "the usable credential survives its damaged neighbour"
+        );
+        assert!(!creds.contains_key("broken"));
     }
 
     #[test]

@@ -1,42 +1,80 @@
-#!/usr/bin/env bash
+#!/usr/bin/env sh
 # Clear the Rust build cache after a build or test round.
 #
-# The host drive is chronically near-full, so a full `target/` (35-40 GB) is
-# not a cache, it is an outage. This is the "clear the cache after every build
-# or test" step, written down once so it is not a remembered command.
+# A full target directory is disposable build output. On the development machine
+# it is also 4-35 GB, which is why clearing it is a written-down step rather
+# than a remembered command.
 #
 # Usage:
-#   scripts/clear-cache.sh            # clear the shared target dir
-#   scripts/clear-cache.sh --report   # say what it freed, delete nothing
+#   scripts/clear-cache.sh                 # clear the shared target dir
+#   scripts/clear-cache.sh --report        # say what it uses, delete nothing
+#   scripts/clear-cache.sh --target DIR    # clear one explicit directory
 #
-# The directory is disposable build output. Nothing in it is source, nothing
-# is committed, and rebuilding it costs minutes rather than correctness — which
-# is the whole trade a small drive asks for.
-
+# Only a directory whose name contains "target" is removed. The script never
+# touches the repository, references/, .git or a user data directory.
 set -u
 
-# Outside the repository, per the build-env rules: writing build output inside
-# the tree makes cl.exe fail with D8050 and cargo report a broken *dependency*.
-TARGET_DIR="${CARGO_TARGET_DIR:-$LOCALAPPDATA/Temp/epsilon-target}"
+REPORT=0
+EXPLICIT=""
 
-if [ ! -d "$TARGET_DIR" ]; then
-  echo "no build cache at $TARGET_DIR"
-  exit 0
+while [ $# -gt 0 ]; do
+    case "$1" in
+        --report) REPORT=1; shift ;;
+        --target)
+            [ $# -ge 2 ] || { echo "clear-cache: --target needs a directory" >&2; exit 2; }
+            EXPLICIT=$2
+            shift 2
+            ;;
+        -h|--help)
+            sed -n '2,13p' "$0" | sed 's/^# \{0,1\}//'
+            exit 0
+            ;;
+        *)
+            echo "clear-cache: unknown argument: $1" >&2
+            exit 2
+            ;;
+    esac
+done
+
+if [ -n "$EXPLICIT" ]; then
+    CANDIDATES=$EXPLICIT
+elif [ -n "${CARGO_TARGET_DIR:-}" ]; then
+    CANDIDATES=$CARGO_TARGET_DIR
+elif [ -n "${LOCALAPPDATA:-}" ]; then
+    CANDIDATES="$LOCALAPPDATA/Temp/epsilon-target"
+else
+    CANDIDATES="${TMPDIR:-/tmp}/epsilon-target"
 fi
 
-before="$(du -sh "$TARGET_DIR" 2>/dev/null | cut -f1)"
+show_usage() {
+    df -h "$1" 2>/dev/null | tail -1 || df -h . 2>/dev/null | tail -1 || true
+}
 
-if [ "${1:-}" = "--report" ]; then
-  echo "build cache at $TARGET_DIR: $before"
-  df -h /c | tail -1
-  exit 0
-fi
+clear_one() {
+    dir=$1
+    case "$dir" in
+        ""|"/"|"."|"..") echo "refusing unsafe cache path: '$dir'" >&2; return ;;
+    esac
+    case "$(basename "$dir")" in
+        *target*) : ;;
+        *) echo "refusing '$dir': the directory name does not contain 'target'" >&2; return ;;
+    esac
+    if [ ! -d "$dir" ]; then
+        echo "no build cache at $dir"
+        return
+    fi
+    before=$(du -sh "$dir" 2>/dev/null | cut -f1)
+    if [ "$REPORT" -eq 1 ]; then
+        echo "build cache at $dir: $before"
+        show_usage "$dir"
+        return
+    fi
+    rm -rf -- "$dir"
+    echo "cleared $dir: $before -> gone"
+    show_usage "$dir"
+}
 
-# Not a blanket clean of unknown paths: this is one directory, it is ours, and
-# it is regenerable. Nothing under references/, .git, or the source tree is in
-# scope of this script.
-rm -rf "$TARGET_DIR"
-
-after="$(du -sh "$TARGET_DIR" 2>/dev/null | cut -f1)"
-echo "cleared $TARGET_DIR: $before -> ${after:-gone}"
-df -h /c | tail -1
+# Newline-separated so a path containing spaces is not split into two.
+printf '%s\n' "$CANDIDATES" | while IFS= read -r dir; do
+    [ -n "$dir" ] && clear_one "$dir"
+done

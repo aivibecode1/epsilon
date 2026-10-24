@@ -6,6 +6,7 @@
 //! - refuses paths that escape the declared workspace;
 //! - caps and spills oversized outputs (DSH locator pattern).
 
+mod apply_patch;
 pub mod checkpoint;
 mod edit_match;
 mod files;
@@ -31,6 +32,7 @@ use epsilon_contracts::lsp_queries::LspQueryProvider;
 use epsilon_core::ToolRegistry;
 use epsilon_safety::Sandbox;
 
+pub use apply_patch::{ApplyPatchArgs, ApplyPatchTool};
 pub use files::{EditArgs, EditTool, ReadArgs, ReadTool, WriteArgs, WriteTool};
 pub use find::{FindArgs, FindTool};
 pub use lsp_tool::{LspArgs, LspTool, MAX_RESULTS_PER_OP};
@@ -173,6 +175,11 @@ pub fn register_builtins_and_gate_runner(
     };
     registry.register(Arc::new(write));
     registry.register(Arc::new(edit));
+    let apply_patch = match diagnostics.as_ref() {
+        Some(provider) => ApplyPatchTool::new().with_diagnostics(Arc::clone(provider)),
+        None => ApplyPatchTool::new(),
+    };
+    registry.register(Arc::new(apply_patch));
     let mut bash = match sandbox.as_ref() {
         Some(sb) => BashTool::new().with_sandbox(Arc::clone(sb)),
         None => BashTool::new(),
@@ -201,16 +208,25 @@ pub fn register_builtins_and_gate_runner(
     // agent's own `bash` is refused — a confused deputy wearing the permission gate as a
     // disguise. One resolution, so a transcript cannot name one backend for a tool call and
     // another for the gate that decided whether it succeeded.
-    let update_goal = goal::UpdateGoalTool::new().with_gate_runner(Arc::new(
-        crate::goal_gate::GoalGateRunner::new(sandbox.clone(), approvals.clone()),
-    ));
+    //
+    // **One runner, not two.** The tool and the caller must hold the same object: the
+    // permission gate is attached to it after composition builds the gate, and a second
+    // runner would keep the empty slot and ask the UI directly.
+    let gate_mode = if matches!(confinement, Confinement::ReadOnly) {
+        epsilon_safety::SandboxMode::ReadOnly
+    } else {
+        epsilon_safety::SandboxMode::WorkspaceWrite
+    };
+    let runner = Arc::new(
+        crate::goal_gate::GoalGateRunner::new(sandbox.clone(), approvals.clone())
+            .with_mode(gate_mode),
+    );
+    let update_goal = goal::UpdateGoalTool::new().with_gate_runner(Arc::clone(&runner));
     registry.register(Arc::new(update_goal));
     registry.register(Arc::new(TaskTool::new()));
     // The runner goes back to the caller with the same sandbox it was just built with, so
     // a frontend can ask "are this goal's gates satisfied?" without resolving a second one.
-    Some(Arc::new(crate::goal_gate::GoalGateRunner::new(
-        sandbox, approvals,
-    )))
+    Some(runner)
 }
 
 /// A fresh registry containing exactly the built-ins.

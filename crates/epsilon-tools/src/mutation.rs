@@ -38,6 +38,25 @@ where
     f().await
 }
 
+/// Global patch mutex: one atomic multi-file `apply_patch` at a time.
+///
+/// `with_file_mutation_queue` serializes per path, which is exactly wrong for
+/// an atomic patch — two patches touching disjoint file sets would interleave,
+/// and a patch's own N writes would not be one transaction. Holding this
+/// across the whole apply (writes + rollback + post-image amends) makes the
+/// patch the unit of serialization. Per-path queues are not held at the same
+/// time, so there is no lock ordering to get wrong.
+pub async fn with_patch_mutex<T, F, Fut>(f: F) -> T
+where
+    F: FnOnce() -> Fut,
+    Fut: std::future::Future<Output = T>,
+{
+    static PATCH_MUTEX: OnceLock<Mutex<()>> = OnceLock::new();
+    let gate = PATCH_MUTEX.get_or_init(|| Mutex::new(()));
+    let _held = gate.lock().await;
+    f().await
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

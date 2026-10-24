@@ -250,17 +250,28 @@ impl CacheStats {
         out
     }
 
-    /// Cost of the re-billed tokens in micro-USD, at the model's list input rate.
+    /// Cost of the re-billed tokens in micro-USD, **per call's own model**.
     ///
-    /// `None` when the model is not in the catalog (a custom provider, a local model, a faux) —
-    /// the report then says how many tokens were re-billed without pretending to price them.
+    /// This used to price the session-wide total at `calls.last().model` — a
+    /// session that switched models charged every earlier token at the newest
+    /// model's input rate. `None` when any re-billed call's model is unknown (a
+    /// custom provider, a local model, a faux): a partial sum would understate
+    /// the bill, so the report keeps the token count and omits the dollars.
     pub fn rebilled_cost_micro(&self) -> Option<u64> {
-        let model = self.calls.last()?.model.clone();
-        let info = catalog::lookup_model(&model)?;
-        Some(micro_cost(
-            self.rebilled_tokens(),
-            info.input_cost_micro_per_mtok,
-        ))
+        let mut total = 0u64;
+        let mut any = false;
+        for call in &self.calls {
+            let CacheOutcome::ReBilled { tokens, .. } = &call.outcome else {
+                continue;
+            };
+            if *tokens == 0 {
+                continue;
+            }
+            let info = catalog::lookup_model(&call.model)?;
+            total = total.saturating_add(micro_cost(*tokens, info.input_cost_micro_per_mtok));
+            any = true;
+        }
+        any.then_some(total)
     }
 
     /// The human-readable breakdown, one line per fact.
@@ -300,7 +311,7 @@ impl CacheStats {
                 " · re-billed {} tok{}",
                 fmt_tokens(rebilled),
                 match self.rebilled_cost_micro() {
-                    Some(micro) => format!(" (~{})", fmt_cost(micro)),
+                    Some(micro) => format!(" (~{})", format_cost_micro(micro)),
                     None => String::new(),
                 }
             ));
@@ -347,9 +358,47 @@ pub fn fmt_tokens(n: u64) -> String {
     }
 }
 
-/// Micro-USD as a compact dollar string (`$0.0120`).
-fn fmt_cost(micro: u64) -> String {
-    format!("${:.4}", micro as f64 / 1_000_000.0)
+/// List-price cost of one usage block at one model's rates.
+///
+/// `input` excludes cache reads by definition, so the four buckets add without
+/// double-counting. `0` for an unpriced catalog row is the caller's signal that
+/// the row was priced at zero, not that the model is unknown; lookup decides
+/// that distinction.
+pub fn usage_cost_micro(
+    usage: &epsilon_contracts::message::Usage,
+    info: &catalog::ModelInfo,
+) -> u64 {
+    micro_cost(usage.input, info.input_cost_micro_per_mtok)
+        .saturating_add(micro_cost(usage.output, info.output_cost_micro_per_mtok))
+        .saturating_add(micro_cost(
+            usage.cache_read,
+            info.cache_read_cost_micro_per_mtok,
+        ))
+        .saturating_add(micro_cost(
+            usage.cache_write,
+            info.cache_write_cost_micro_per_mtok,
+        ))
+}
+
+/// Micro-USD as the one compact dollar string every surface uses.
+///
+/// The cache report used to print four decimals while the header printed three,
+/// so `/session` could say `cost: $0.012` and, three lines later,
+/// `(~$0.0120)` about the same money. The TUI's `format_cost` now delegates
+/// here; a second rounding rule is a second answer to "what did this cost".
+pub fn format_cost_micro(micro_usd: u64) -> String {
+    let dollars = micro_usd as f64 / 1_000_000.0;
+    if micro_usd == 0 {
+        "$0".to_string()
+    } else if dollars < 0.01 {
+        format!("${dollars:.4}")
+    } else if dollars < 1.0 {
+        format!("${dollars:.3}")
+    } else if dollars < 100.0 {
+        format!("${dollars:.2}")
+    } else {
+        format!("${dollars:.0}")
+    }
 }
 
 #[cfg(test)]
@@ -604,6 +653,48 @@ mod tests {
         assert_eq!(micro_cost(u64::MAX, u64::MAX), u64::MAX);
     }
 
+    /// **The re-billed total is priced per call's model.** The old code used
+    /// the *last* model's input rate for the whole session, so a switch from a
+    /// cheap model to an expensive one re-priced every earlier token.
+    #[test]
+    fn one_usage_block_prices_all_four_buckets_without_double_counting() {
+        let info = catalog::lookup_model("deepseek-flash").expect("catalog row");
+        let usage = Usage {
+            input: 1_000_000,
+            output: 2_000_000,
+            cache_read: 3_000_000,
+            cache_write: 4_000_000,
+            ..Usage::default()
+        };
+        let expected = info.input_cost_micro_per_mtok
+            + 2 * info.output_cost_micro_per_mtok
+            + 3 * info.cache_read_cost_micro_per_mtok
+            + 4 * info.cache_write_cost_micro_per_mtok;
+        assert_eq!(usage_cost_micro(&usage, info), expected);
+    }
+
+    #[test]
+    fn re_billed_tokens_are_priced_at_each_calls_own_model_rate() {
+        let a = catalog::lookup_model("deepseek-flash").expect("catalog row");
+        let b = catalog::lookup_model("deepseek-v4-pro").expect("catalog row");
+        assert_ne!(
+            a.input_cost_micro_per_mtok, b.input_cost_micro_per_mtok,
+            "the fixture needs two different input rates"
+        );
+        let mut stats = CacheStats::new(DEFAULT_CACHE_TTL_MS);
+        stats.observe(req(a.id, 1, 1_000, 0, 0)); // cold, nothing re-billed
+        stats.observe(req(a.id, 2, 500, 0, 1_000)); // prefix change at A
+        stats.observe(req(b.id, 1, 300, 0, 2_000)); // model switch at B
+        let expected = micro_cost(500, a.input_cost_micro_per_mtok)
+            + micro_cost(300, b.input_cost_micro_per_mtok);
+        assert_eq!(stats.rebilled_tokens(), 800);
+        assert_eq!(
+            stats.rebilled_cost_micro(),
+            Some(expected),
+            "each leg is priced at its own model's rate"
+        );
+    }
+
     #[test]
     fn an_unknown_model_is_not_priced_at_all() {
         let mut stats = CacheStats::new(DEFAULT_CACHE_TTL_MS);
@@ -632,6 +723,8 @@ mod tests {
         assert_eq!(fmt_tokens(9_999), "9,999");
         assert_eq!(fmt_tokens(12_345), "12k");
         assert_eq!(fmt_tokens(2_500_000), "2.5M");
-        assert_eq!(fmt_cost(12_000), "$0.0120");
+        assert_eq!(format_cost_micro(12_000), "$0.012");
+        assert_eq!(format_cost_micro(400), "$0.0004");
+        assert_eq!(format_cost_micro(0), "$0");
     }
 }

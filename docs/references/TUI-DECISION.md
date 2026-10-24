@@ -45,14 +45,16 @@ debugging its renderer means Bun **and** Zig in a workspace that is otherwise on
 toolchain.
 
 **4. It would break the invariant this project is built on.**
-The whole architecture is one command registry read by both front ends. Today that is a
-direct Rust-to-Rust value: `crates/epsilon-desktop/src/commands.rs:67` calls
-`epsilon_tui::picker::parse_command`, and the desktop matches `picker::Command` exhaustively
-so a new terminal command breaks the desktop build. Across a Rust/TypeScript boundary the
+The whole architecture is one command registry read by every front end, so the sharing is
+a direct Rust-to-Rust value rather than a documented protocol. The desktop front end that
+made this concrete (`crates/epsilon-desktop/src/commands.rs`) was removed in ADR-039, but
+the shape survives: the CLI, the server and the RPC mode all reach the same
+`epsilon_contracts` registry, and each mode matches `picker::Command` exhaustively, so a
+new terminal command breaks every mode's build. Across a Rust/TypeScript boundary the
 same sharing needs a serialization seam and a second, driftable copy of the command list.
 
 **5. The switching cost is the largest of the three, by an order of magnitude.**
-`crates/epsilon-tui` is 38,067 lines across 49 files with 509 tests, and its golden-frame
+`crates/epsilon-tui` is 66,482 lines across 57 files with 689 tests, and its golden-frame
 suite drives ratatui's `TestBackend` against real `Frame`/`Buffer` values
 (`crates/epsilon-tui/src/app/golden.rs`). The theme resolves to ratatui `Color` and
 `Modifier`; the markdown renderer emits `Line`/`Span` over `ratatui::style::Style`. A
@@ -76,16 +78,18 @@ Three ideas from OpenTUI are worth having regardless of who renders the pixels:
 
 1. **A declarative, constraint-shaped layout instead of hand-computed rectangles.**
    OpenTUI lays out with flexbox; Epsilon computes rects by hand in
-   `crates/epsilon-tui/src/ui/layout.rs` and `crates/epsilon-desktop/src/layout.rs`, and
-   Epsilon's own desktop investigator found pane resizing and collapsibility simply absent.
+   `crates/epsilon-tui/src/ui/layout.rs` — and the band insets are hard-coded per
+   surface in `crates/epsilon-tui/src/app.rs`, with a third width rule outside the
+   layout module. Pane resizing and collapsibility are simply absent.
    The flexbox *idea* — declare regions and their relationships, let one place resolve them —
    is the fix, and it can be implemented in Rust without adopting anything.
 2. **Key bindings and command routing as a separate concern.**
    `@opentui/keymap` is described as a "Key binding and command routing library". Epsilon has
    the same shape of gap from the other side: `KeybindingsManager::matches` resolves a chord to
-   a *string id* that nothing then maps to a `Command`
-   (`crates/epsilon-tui/src/keybindings.rs:359`), and the palette's `binding` field is a
-   hand-typed string rather than a table lookup (`crates/epsilon-tui/src/picker.rs:1029`). One
+   a *string id* (`crates/epsilon-tui/src/keybindings.rs:288`), and the palette resolves its
+   chord column through a hand-written two-arm match
+   (`crates/epsilon-tui/src/picker.rs:1049`) rather than a table lookup, so most rows with a
+   bound chord print none. One
    registry that produces both the chord and the action closes it.
 3. **Its agent-facing conventions.** `references/opentui-0.5.14/AGENTS.md` is a compact,
    useful example of an agent contract — notably its rule that delegated briefs must name

@@ -57,11 +57,23 @@ const LOCATION_FLOOR: usize = 10;
 /// end-truncation keeps the head and loses the leaf — the one component that
 /// tells projects apart — so the row would name every checkout the same.
 pub(crate) fn location_span(location: &str, width: usize, theme: &Theme) -> String {
+    let mark = theme.glyphs.ellipsis;
+    // The label may already have been shortened once by `format_path`. Keeping
+    // that leading mark as the "head" produced `...\...\epsilon-tui` — two
+    // ellipses and no information. Strip it and shorten what remains. A leading
+    // separator is not a head either: `\crates\epsilon-tui` is a path fragment,
+    // not a root.
+    let location = location.strip_prefix(mark).unwrap_or(location);
+    let trimmed = location.trim_start_matches(['/', '\\']);
+    let location = if trimmed.is_empty() {
+        location
+    } else {
+        trimmed
+    };
     let budget = (width / 4).clamp(LOCATION_FLOOR, LOCATION_CAP);
     if crate::ui::layout::display_width(location) <= budget {
         return location.to_string();
     }
-    let mark = theme.glyphs.ellipsis;
     let mark_width = crate::ui::layout::display_width(mark);
     if budget <= mark_width {
         return crate::wrap::fit_width_with(location, budget, mark);
@@ -84,6 +96,13 @@ pub(crate) fn location_span(location: &str, width: usize, theme: &Theme) -> Stri
     };
     if crate::ui::layout::display_width(&full) <= budget {
         return full;
+    }
+    // A leaf that fits on its own is better than a leaf cut mid-word. At 80
+    // columns the docked explorer leaves the footer about 55 cells, whose
+    // quarter is 13: `…\epsilon-tui` needs 15, and the old fallback printed
+    // `...\silon-tui`. The leaf names the checkout; the head can go.
+    if crate::ui::layout::display_width(leaf) <= budget {
+        return leaf.to_string();
     }
     // Even `head/.../leaf` does not fit: keep the leaf with the mark,
     // because the leaf is what tells checkouts apart.
@@ -165,7 +184,7 @@ pub struct Hints {
     /// The session's name, when it has one: ` • work` after the branch (P-200).
     ///
     /// Pi's footer ends with exactly this — `pwd (branch) • session-name`
-    /// (`references/pi-1.0.0/packages/coding-agent/src/modes/interactive/components/footer.ts:170`,
+    /// (`references/pi-1.3.0/packages/coding-agent/src/modes/interactive/components/footer.ts:170`,
     /// `:176`) — and ours borrows the `•` rather than the row's own ` · ` separator so the
     /// name reads as a different *kind* of fact from the branch beside it: the branch is
     /// what the workspace is, the name is what this conversation is.
@@ -221,6 +240,10 @@ impl Hints {
             return Self::frozen(bindings, view);
         }
         let mut hints = Self::at_composer(bindings, mode);
+        // F6 early, not last: at 60 columns the tail of this row is what the
+        // location label trims away, and the tree is hidden at that width. A
+        // panel whose only discovery key is the first to disappear is furniture.
+        hints.push(bindings, "app.tree.toggle", "files");
         Self::push_transcript_keys(&mut hints, bindings);
         hints.push(bindings, "tui.input.newLine", "newline");
         hints.push(bindings, "app.palette", "palette");
@@ -247,10 +270,13 @@ impl Hints {
         // The same chord, a different promise: while a run is in flight Enter
         // queues the message rather than sending it.
         hints.keys[0].1 = "queue".to_string();
+        // The stop key and the tree key outrank scrolling on a narrow row: the
+        // run is live, and the tree is hidden below the docking floor.
+        hints.push(bindings, "app.interrupt", "stop");
+        hints.push(bindings, "app.tree.toggle", "files");
         // While the model is talking, scrolling is what a reader reaches for:
         // the tail is streaming and the part they want to re-read is above it.
         Self::push_transcript_keys(&mut hints, bindings);
-        hints.push(bindings, "app.interrupt", "stop");
         if queued > 0 {
             hints.keys.push(("queued".to_string(), queued.to_string()));
         }
@@ -686,7 +712,7 @@ mod tests {
     /// removal. The name half is [`Hints::session`], and it is drawn with pi's
     /// `•` rather than the row's own ` · ` separator so it reads as a different
     /// kind of fact from the branch beside it
-    /// (`references/pi-1.0.0/packages/coding-agent/src/modes/interactive/components/footer.ts:170`,
+    /// (`references/pi-1.3.0/packages/coding-agent/src/modes/interactive/components/footer.ts:170`,
     /// `:176`).
     #[test]
     fn the_footer_names_the_session_beside_the_shortened_location() {
@@ -1182,6 +1208,49 @@ mod tests {
     /// An end-truncation keeps the head and loses the leaf — every checkout
     /// then reads the same — so the row must keep both ends with the mark in
     /// the middle.
+    #[test]
+    fn an_already_shortened_location_is_not_shortened_twice() {
+        use crate::ui::theme::{ColorMode, Theme, UNICODE};
+        let theme = Theme::new(ColorMode::Ansi16, UNICODE);
+        let mark = theme.glyphs.ellipsis;
+        let already = format!("{mark}\\{mark}\\epsilon-tui");
+        let shown = location_span(&already, 80, &theme);
+        assert_eq!(
+            shown.matches(theme.glyphs.ellipsis).count(),
+            1,
+            "a location shortened once must not grow a second ellipsis: {shown:?}"
+        );
+        assert!(
+            shown.contains("epsilon-tui"),
+            "the leaf that names the checkout must survive: {shown:?}"
+        );
+    }
+
+    #[test]
+    fn a_narrow_footer_shows_the_whole_leaf_rather_than_cutting_it() {
+        use crate::ui::theme::{ColorMode, Theme, UNICODE};
+        let theme = Theme::new(ColorMode::Ansi16, UNICODE);
+        // 55 is the footer width at 80 columns with the docked explorer.
+        let shown = location_span("...\\crates\\epsilon-tui", 55, &theme);
+        assert_eq!(
+            shown, "epsilon-tui",
+            "a leaf that fits must not be cut mid-word"
+        );
+    }
+
+    #[test]
+    fn a_shortened_fragment_does_not_start_with_a_separator() {
+        use crate::ui::theme::{ColorMode, Theme, UNICODE};
+        let theme = Theme::new(ColorMode::Ansi16, UNICODE);
+        let mark = theme.glyphs.ellipsis;
+        let already = format!("{mark}\\crates\\epsilon-tui");
+        let shown = location_span(&already, 76, &theme);
+        assert_eq!(
+            shown, "crates\\epsilon-tui",
+            "a path fragment must not begin with its separator"
+        );
+    }
+
     #[test]
     fn d5_location_keeps_head_and_leaf() {
         use crate::ui::theme::{ColorMode, Theme, UNICODE};

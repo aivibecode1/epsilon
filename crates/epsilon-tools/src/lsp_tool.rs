@@ -810,20 +810,33 @@ mod tests {
         );
     }
 
-    /// No Allow rule for `lsp` anywhere: the capability asks everywhere by default.
+    /// The LSP tool is read-only, so the defaults allow it.
     ///
-    /// Structural proof is impossible from here (`default_ruleset` is not exported), so the
-    /// behaviour is pinned instead: unknown capabilities resolve to Ask, and neither the
-    /// defaults nor the workspace-write preset (the posture that allows reads and writes)
-    /// moves `lsp` off it. (`danger-full-access` allows everything by design — choosing it
-    /// is the privilege-raising act, not a default.)
+    /// **This test used to pin the opposite.** It read "no Allow rule for `lsp`
+    /// anywhere" and asserted that `lsp` asked under the defaults, on the
+    /// grounds that *"unknown capabilities resolve to Ask"*. That was the
+    /// fall-through, not a decision about the LSP tool: `lsp` navigates
+    /// (definition, references, implementation, symbols) and cannot write
+    /// anything, so a user who granted nothing met a permission dialog for a
+    /// read.
+    ///
+    /// The rule set is now derived from one classification, and `lsp` is in
+    /// it — so the tool is free by default. The structural proof lives where
+    /// the classification lives: `epsilon-safety`'s
+    /// `every_registered_tool_is_free_by_default_or_explicitly_ask_first`
+    /// reads the live registry and asserts that the only tools that ask are
+    /// the ones that ask by decision.
+    ///
+    /// What this test still pins is the part that matters locally: the
+    /// workspace-write posture does not move `lsp` off its allow either, and
+    /// choosing full access is still the privilege-raising act.
     #[test]
-    fn ask_default_with_no_allow_rule() {
+    fn lsp_is_read_only_so_the_defaults_allow_it() {
         let engine = epsilon_safety::PermissionEngine::with_defaults();
         assert_eq!(
             engine.evaluate("lsp", "src/a.rs"),
-            epsilon_safety::Action::Ask,
-            "defaults ask"
+            epsilon_safety::Action::Allow,
+            "the LSP tool navigates; it does not write, so it is free by default"
         );
         let ws = std::path::Path::new("/ws");
         let layered =
@@ -833,8 +846,8 @@ mod tests {
             )]);
         assert_eq!(
             layered.evaluate("lsp", "src/a.rs"),
-            epsilon_safety::Action::Ask,
-            "workspace-write still asks"
+            epsilon_safety::Action::Allow,
+            "workspace-write allows reads, and `lsp` is one"
         );
     }
 

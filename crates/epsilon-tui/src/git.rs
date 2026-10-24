@@ -1,18 +1,170 @@
-//! The one piece of git state the TUI reads: the current branch.
+//! Git state the TUI reads: the current branch and the working-tree statuses
+//! painted in the explorer.
 //!
-//! This module exists because it is the *only* thing that survived the footer
-//! redesign. The old `footer.rs` held a complete second footer — its own
-//! `format_tokens`, its own cache-rate formula, `FooterStats`, `context_parts`,
-//! `stats_parts` — and when `ui/` replaced it, everything stayed behind, `pub`, so
-//! `clippy -D warnings` could not see that nothing called it (G17). Deleting the
-//! module and keeping the one live function is the honest version: a name that says
-//! what it does, one caller, one test.
-//!
-//! The branch is read straight from `.git/HEAD` rather than by shelling out to git:
-//! the footer draws ~30 times a second, and a subprocess per frame is not a trade
-//! this file is willing to make. `App::cached_branch` adds a two-second TTL on top.
+//! The branch is read from `.git/HEAD` rather than by shelling out to git: the
+//! footer draws ~30 times a second, and a subprocess per frame is not a trade
+//! this module is willing to make. `App::cached_branch` adds a two-second TTL.
+//! Working-tree status is a subprocess, but only on the explorer's slower poll.
 
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
+use std::process::Command;
+
+/// The working-tree state the explorer paints beside a path.
+///
+/// Deliberately a small vocabulary: a file tree needs to say "changed", "new",
+/// "gone" and "conflict" without reproducing git's two-column index/worktree
+/// model, which is a status viewer, not a directory tree.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Status {
+    /// Staged as a new file.
+    Added,
+    /// Tracked and changed.
+    Modified,
+    /// Removed from the working tree.
+    Deleted,
+    /// Renamed or copied.
+    Renamed,
+    /// Not tracked by git.
+    Untracked,
+    /// An unresolved merge conflict.
+    Conflict,
+}
+
+impl Status {
+    /// The one-column marker drawn at the right edge of a tree row.
+    pub fn marker(self) -> &'static str {
+        match self {
+            Self::Added => "A",
+            Self::Modified => "M",
+            Self::Deleted => "D",
+            Self::Renamed => "R",
+            Self::Untracked => "?",
+            Self::Conflict => "!",
+        }
+    }
+}
+
+/// One `git status --porcelain=v1 -z` working-tree snapshot, keyed by
+/// workspace-relative path.
+///
+/// Empty is the honest answer for a non-repository, a missing `git`, or an
+/// unreadable result: the tree still works, it just has no status column.
+///
+/// **The executable is resolved explicitly and repository fsmonitor hooks are
+/// disabled.** A visible tree polls `git status` without the user issuing a
+/// command, so a workspace must not be able to choose the binary (a planted
+/// `git.exe` on Windows' current-directory search) or run a `core.fsmonitor`
+/// command from its own config. Only an absolute `git` found on the user's PATH
+/// is accepted; a relative or empty PATH entry is skipped.
+pub fn status(workspace: &Path) -> BTreeMap<String, Status> {
+    let Some(git) = git_program() else {
+        return BTreeMap::new();
+    };
+    let out = Command::new(git)
+        .args(["-c", "core.fsmonitor=false", "-C"])
+        .arg(workspace)
+        .args(["status", "--porcelain=v1", "-z", "--untracked-files=all"])
+        .output();
+    match out {
+        Ok(out) if out.status.success() => parse_porcelain(&out.stdout),
+        _ => BTreeMap::new(),
+    }
+}
+
+/// Find `git` by absolute PATH entry only.
+///
+/// `Command::new("git")` lets the platform search the process's current
+/// directory before PATH on Windows; a repository containing `git.exe` would
+/// then execute when the explorer opened. This helper returns only a path under
+/// an absolute PATH entry, and `status` invokes that absolute path.
+fn git_program() -> Option<std::path::PathBuf> {
+    let path = std::env::var_os("PATH")?;
+    git_program_in(&path)
+}
+
+/// The pure half of [`git_program`], testable without mutating the process PATH.
+fn git_program_in(path: &std::ffi::OsStr) -> Option<std::path::PathBuf> {
+    for dir in std::env::split_paths(path) {
+        if !dir.is_absolute() {
+            continue;
+        }
+        for name in if cfg!(windows) {
+            ["git.exe", "git"]
+        } else {
+            ["git", "git.exe"]
+        } {
+            let candidate = dir.join(name);
+            if candidate.is_file() {
+                return Some(candidate);
+            }
+        }
+    }
+    None
+}
+
+/// Parse the NUL-separated porcelain stream. Separated from [`status`] so the
+/// mapping is testable without a repository or a `git` binary.
+pub(crate) fn parse_porcelain(bytes: &[u8]) -> BTreeMap<String, Status> {
+    let mut out = BTreeMap::new();
+    let mut records = bytes.split(|byte| *byte == 0);
+    while let Some(record) = records.next() {
+        if record.len() < 4 {
+            continue;
+        }
+        let (x, y) = (record[0], record[1]);
+        if x == b' ' && y == b' ' {
+            continue;
+        }
+        let path = String::from_utf8_lossy(&record[3..]).replace('\\', "/");
+        if path.is_empty() {
+            continue;
+        }
+        out.insert(path, classify(x, y));
+        // A rename/copy record is followed by the original path as its own
+        // NUL field; consume it so it cannot be mistaken for a second change.
+        if matches!(x, b'R' | b'C') {
+            let _ = records.next();
+        }
+    }
+    out
+}
+
+fn classify(x: u8, y: u8) -> Status {
+    if x == b'?' {
+        return Status::Untracked;
+    }
+    if matches!((x, y), (b'U', _) | (_, b'U') | (b'A', b'A') | (b'D', b'D')) {
+        return Status::Conflict;
+    }
+    if matches!(x, b'R' | b'C') || y == b'R' {
+        return Status::Renamed;
+    }
+    if matches!(x, b'A' | b'C') || y == b'A' {
+        return Status::Added;
+    }
+    if matches!(x, b'D') || y == b'D' {
+        return Status::Deleted;
+    }
+    Status::Modified
+}
+
+/// Directories that contain at least one changed path. A collapsed directory
+/// still gets a marker, so a change cannot hide inside a fold.
+pub fn changed_dirs(status: &BTreeMap<String, Status>) -> BTreeSet<String> {
+    let mut dirs = BTreeSet::new();
+    for path in status.keys() {
+        let mut rest = path.as_str();
+        while let Some(at) = rest.rfind('/') {
+            rest = &rest[..at];
+            if rest.is_empty() {
+                break;
+            }
+            dirs.insert(rest.to_string());
+        }
+    }
+    dirs
+}
 
 /// Current git branch read straight from `<dir>/.git/HEAD`
 /// (`ref: refs/heads/<name>`); a detached HEAD yields the short sha; anything else
@@ -73,6 +225,49 @@ mod tests {
     fn no_git_directory_is_not_a_branch() {
         let dir = tempfile::tempdir().unwrap();
         assert_eq!(branch(dir.path()), None);
+    }
+
+    #[test]
+    fn porcelain_status_maps_to_the_tree_vocabulary() {
+        let records = b"M  src/lib.rs\0?? notes.txt\0A  new.rs\0D  gone.rs\0R  moved.rs\0old.rs\0";
+        let got = parse_porcelain(records);
+        assert_eq!(got.get("src/lib.rs"), Some(&Status::Modified));
+        assert_eq!(got.get("notes.txt"), Some(&Status::Untracked));
+        assert_eq!(got.get("new.rs"), Some(&Status::Added));
+        assert_eq!(got.get("gone.rs"), Some(&Status::Deleted));
+        assert_eq!(got.get("moved.rs"), Some(&Status::Renamed));
+        assert!(!got.contains_key("old.rs"), "the rename source is consumed");
+    }
+
+    #[test]
+    fn a_changed_file_marks_every_parent_directory() {
+        let mut status = BTreeMap::new();
+        status.insert("src/nested/deep.rs".to_string(), Status::Modified);
+        let dirs = changed_dirs(&status);
+        assert!(dirs.contains("src"));
+        assert!(dirs.contains("src/nested"));
+        assert!(!dirs.contains("src/nested/deep.rs"));
+    }
+
+    #[test]
+    fn git_program_ignores_relative_path_entries() {
+        assert_eq!(
+            git_program_in(std::ffi::OsStr::new(".")),
+            None,
+            "a relative PATH entry must never become the executable"
+        );
+    }
+
+    #[test]
+    fn git_program_returns_an_absolute_candidate() {
+        let dir = tempfile::tempdir().unwrap();
+        let name = if cfg!(windows) { "git.exe" } else { "git" };
+        let candidate = dir.path().join(name);
+        std::fs::write(&candidate, "").unwrap();
+        let path = std::env::join_paths([dir.path()]).unwrap();
+        let found = git_program_in(&path).expect("the absolute candidate is found");
+        assert!(found.is_absolute());
+        assert_eq!(found, candidate);
     }
 
     #[test]

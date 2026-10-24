@@ -544,15 +544,10 @@ pub const WINDOW: &[(&str, &[&str])] = &[
     ("window.session.new", &["ctrl+n"]),
     ("window.session.fork", &["ctrl+alt+f"]),
     // Rename the current session (S-106): the chord types the `/name` head
-    // pre-filled with the current title, the same transparent macro
-    // `window.workspace.open` uses for `/open`. `ctrl+alt+g` is the reference's
-    // own chord (`Mod+Alt+G`); like S-109's `Ctrl+B`, it names `Ctrl` rather
-    // than the platform `Mod`, so macOS parity is stated, not claimed.
+    // pre-filled with the current title. `ctrl+alt+g` is the reference's own
+    // chord (`Mod+Alt+G`); like S-109's `Ctrl+B`, it names `Ctrl` rather than
+    // the platform `Mod`, so macOS parity is stated, not claimed.
     ("window.session.rename", &["ctrl+alt+g"]),
-    // Open a workspace directory from inside the window (D-046/S-105): the chord
-    // types the `/open` head for the reader, who completes the path and confirms.
-    // `ctrl+o` is free in this table (the terminal's filter cycle lives in TERMINAL).
-    ("window.workspace.open", &["ctrl+o"]),
     // Ask to delete the highlighted session (S-106 to S-108: delete landed in
     // round 99). The terminal's browser grew a delete in round 96 over
     // `epsilon_session::delete_session_file`; this is the *same* primitive

@@ -4,6 +4,7 @@ use async_trait::async_trait;
 use futures_util::FutureExt;
 use std::panic::AssertUnwindSafe;
 
+use epsilon_contracts::content::UserContent;
 use epsilon_contracts::message::{AssistantMessage, Message, StopReason, ThinkingLevel, Usage};
 use epsilon_contracts::stream::StreamEvent;
 use epsilon_contracts::tool::ToolDescriptor;
@@ -36,6 +37,50 @@ pub struct LlmContext {
     /// Wires map/clamp this to provider-native parameters; `Off` sends nothing
     /// unless the wire must explicitly disable (e.g. OpenRouter).
     pub thinking_level: ThinkingLevel,
+}
+
+impl LlmContext {
+    /// A stable, content-derived affinity key for providers with explicit
+    /// prompt-cache routing (OpenAI, Mistral).
+    ///
+    /// Pi uses a session id for this key. `LlmContext` deliberately carries no
+    /// session id — the wire layer is stateless and must not depend on the TUI or
+    /// session store — so this hashes the **stable prefix**: model, system prompt
+    /// and the first user text. The same conversation routes to the same cache on
+    /// every request, including after tool round-trips; two conversations with a
+    /// byte-identical prefix may share a key, which is harmless because the
+    /// provider keys the cache by content anyway.
+    ///
+    /// FNV-1a rather than `DefaultHasher`: the key must survive process restarts,
+    /// and the standard hasher's algorithm is not a stable contract. 16 hex
+    /// characters is well under OpenAI's 64-character limit.
+    pub fn prompt_cache_key(&self, model: &str) -> Option<String> {
+        let first_user = self.messages.iter().find_map(|message| match message {
+            Message::User(user) => user.content.iter().find_map(|part| match part {
+                UserContent::Text { text } => Some(text.as_str()),
+                UserContent::Image(_) => None,
+            }),
+            _ => None,
+        });
+        if self.system_prompt.is_empty() && first_user.is_none() {
+            return None;
+        }
+        let mut hash = 0xcbf2_9ce4_8422_2325u64;
+        let mut eat = |bytes: &[u8]| {
+            for byte in bytes {
+                hash ^= u64::from(*byte);
+                hash = hash.wrapping_mul(0x0000_0100_0000_01b3);
+            }
+        };
+        eat(model.as_bytes());
+        eat(b"\0");
+        eat(self.system_prompt.as_bytes());
+        eat(b"\0");
+        if let Some(text) = first_user {
+            eat(text.as_bytes());
+        }
+        Some(format!("{hash:016x}"))
+    }
 }
 
 /// A stream of [`StreamEvent`]s terminating with exactly one `Done`.

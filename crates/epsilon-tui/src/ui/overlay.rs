@@ -332,8 +332,20 @@ pub fn list_row_marked(
         // 54-column popup loses every description. The same arithmetic bit `format_path` (M220).
         let mark = theme.glyphs.ellipsis;
         let mark_width = display_width(mark);
-        let meta =
-            crate::state::truncate_public(meta, available.saturating_sub(mark_width).max(1), mark);
+        // A hint is a whole chord or a whole count. `ctrl+m` cut to `c…` is not a
+        // smaller hint; it is a mystery. Keep the full metadata when it fits,
+        // truncate a genuinely long one, and drop the field when only a stub
+        // would remain. The label already owns the row.
+        let meta = if available >= display_width(meta) {
+            meta.to_string()
+        } else {
+            let budget = available.saturating_sub(mark_width);
+            if budget >= 4 {
+                crate::state::truncate_public(meta, budget, mark)
+            } else {
+                String::new()
+            }
+        };
         let meta_width = display_width(&meta);
         if meta_width > 0 && used + MIN_META_GAP + meta_width <= width {
             let pad = width - used - meta_width;
@@ -362,6 +374,123 @@ pub(crate) const GUTTER_AFTER_BAR: usize = 1;
 pub fn up_down(up: &str, down: &str) -> String {
     format!("{up}{down}")
 }
+/// Columns of separation between a label column and its description.
+///
+/// The same two columns [`MIN_META_GAP`] reserves at the right edge: one
+/// rhythm for every column on the row, so a list with a description and a hint
+/// reads as three fields rather than as three accidents.
+const MIN_DESCRIPTION_GAP: usize = 2;
+
+/// The narrowest a description column may be before the row drops it.
+///
+/// Below this the column holds a word and an ellipsis, which is worse than a
+/// label alone: it looks like the sentence is the label's continuation.
+const MIN_DESCRIPTION_WIDTH: usize = 8;
+
+/// A list row with a label column, a description column and a right-aligned hint.
+///
+/// Pi's `SelectList` and opencode's `DialogSelect` both lay a row out this way
+/// (`references/pi-1.3.0/packages/tui/src/components/select-list.ts:183-220`,
+/// `references/opencode-1.18.34/packages/tui/src/ui/dialog-select.tsx:774-787`):
+/// the label gets a measured column, the description starts at one x position
+/// for every row, and the keybinding sits at the right edge. Concatenating the
+/// three with separators — the shape this replaced — makes each row a small
+/// reading puzzle, and a long description pushes the command off the row.
+///
+/// `label_col` is the label column width, measured by the caller across the
+/// rows it is about to draw. The helper clamps it so the description always
+/// keeps [`MIN_DESCRIPTION_WIDTH`]; when even that cannot fit, the row degrades
+/// to the label alone rather than to a clipped sentence.
+pub fn list_row_columns(
+    theme: &Theme,
+    selected: bool,
+    label: &str,
+    description: &str,
+    meta: Option<&str>,
+    label_col: usize,
+    width: usize,
+) -> Line<'static> {
+    let bar = if selected {
+        theme.glyphs.cursor_bar
+    } else {
+        " "
+    };
+    let label_style = if selected {
+        theme.selected()
+    } else {
+        theme.text()
+    };
+    let bar_width = display_width(bar) + GUTTER_AFTER_BAR;
+    let available = width.saturating_sub(bar_width);
+
+    // The hint is a whole chord: reserve its column first, and drop it rather
+    // than truncating it when the room is not there (M218's rule).
+    let meta = meta.filter(|m| !m.is_empty());
+    let meta_width = meta.map_or(0, display_width);
+    let meta_reserved = if meta_width > 0 && available > meta_width + MIN_META_GAP {
+        meta_width + MIN_META_GAP
+    } else {
+        0
+    };
+    let body = available.saturating_sub(meta_reserved);
+
+    let (label, description, col) = if description.is_empty() {
+        (
+            crop(label, body, theme.glyphs.ellipsis),
+            String::new(),
+            0usize,
+        )
+    } else {
+        let max_label = body.saturating_sub(MIN_DESCRIPTION_GAP + MIN_DESCRIPTION_WIDTH);
+        if max_label == 0 {
+            // No room for two columns: say the command, not half the sentence.
+            (
+                crop(label, body, theme.glyphs.ellipsis),
+                String::new(),
+                0usize,
+            )
+        } else {
+            let col = label_col.clamp(1, max_label);
+            let label = crop(label, col, theme.glyphs.ellipsis);
+            let budget = body.saturating_sub(col + MIN_DESCRIPTION_GAP);
+            let description = crop(description, budget, theme.glyphs.ellipsis);
+            (label, description, col)
+        }
+    };
+    let label_width = display_width(&label);
+    let mut spans = vec![
+        Span::styled(
+            format!("{bar}{}", " ".repeat(GUTTER_AFTER_BAR)),
+            theme.accent(),
+        ),
+        Span::styled(label, label_style),
+    ];
+    if !description.is_empty() {
+        let padding = col.saturating_sub(label_width) + MIN_DESCRIPTION_GAP;
+        spans.push(Span::raw(" ".repeat(padding)));
+        spans.push(Span::styled(description, theme.dim()));
+    }
+    if let Some(meta) = meta {
+        let used: usize = spans.iter().map(|s| display_width(&s.content)).sum();
+        if used + MIN_META_GAP + meta_width <= width {
+            spans.push(Span::raw(" ".repeat(width - used - meta_width)));
+            spans.push(Span::styled(meta.to_string(), theme.faint()));
+        }
+    }
+    Line::from(spans)
+}
+
+/// Truncate to `width` columns with an honest mark, or keep the text whole.
+fn crop(text: &str, width: usize, mark: &str) -> String {
+    if display_width(text) <= width {
+        text.to_string()
+    } else if width == 0 {
+        String::new()
+    } else {
+        crate::state::truncate_public(text, width, mark)
+    }
+}
+
 /// A line of key hints at the bottom of a panel, drawn inside the frame.
 pub fn hint_row(theme: &Theme, hints: &[(&str, &str)]) -> Line<'static> {
     hint_row_in(theme, hints, usize::MAX)
@@ -677,6 +806,29 @@ mod tests {
         assert!(
             !text.contains("+2,"),
             "the count is prose, not a bare +N: {text:?}"
+        );
+    }
+
+    /// A binding is a whole chord or it is absent.
+    ///
+    /// The 60-column palette used to paint `ctrl+m` as `c…`, which is neither
+    /// the chord nor an admission that something was dropped. The label already
+    /// owns the row; a stub of a hint is not worth a column.
+    #[test]
+    fn a_short_chord_is_dropped_whole_not_clipped() {
+        let theme = theme();
+        let row = list_row(
+            &theme,
+            false,
+            "/a-command-name-longer-than-the-row",
+            Some("ctrl+m"),
+            30,
+        );
+        let text: String = row.spans.iter().map(|s| s.content.as_ref()).collect();
+        assert!(!text.contains("ctrl+m"), "it cannot fit whole: {text:?}");
+        assert!(
+            !text.contains("c…"),
+            "a clipped chord is not a hint: {text:?}"
         );
     }
 

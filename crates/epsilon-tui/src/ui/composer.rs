@@ -30,23 +30,6 @@ use crate::ui::theme::{Glyphs, Theme};
 /// What the composer shows when the draft is empty.
 pub const PLACEHOLDER: &str = "describe a task, or / for commands";
 
-/// Draw the rule that separates the transcript from the composer.
-///
-/// A rule rather than a border: it costs one row instead of a box, and it reads
-/// as a fold in the page instead of a form field.
-pub fn draw_rule(f: &mut Frame<'_>, area: Rect, theme: &Theme) {
-    if area.width == 0 || area.height == 0 {
-        return;
-    }
-    f.render_widget(
-        Line::from(Span::styled(
-            theme.glyphs.rule(area.width as usize),
-            theme.border(),
-        )),
-        area,
-    );
-}
-
 /// Draw the composer and place the terminal cursor.
 ///
 /// `rows` is the draft already wrapped to `area.width - gutter`; `caret_row` and
@@ -225,22 +208,5 @@ mod tests {
             .collect();
         assert!(screen.contains("line 2"), "caret row hidden: {screen}");
         assert!(!screen.contains("line 0"), "should have scrolled: {screen}");
-    }
-
-    #[test]
-    fn the_rule_fills_its_row_exactly() {
-        let theme = Theme::new(ColorMode::Ansi16, ASCII);
-        let mut terminal = Terminal::new(TestBackend::new(20, 1)).expect("test terminal");
-        terminal
-            .draw(|f| draw_rule(f, f.area(), &theme))
-            .expect("draw");
-        let screen: String = terminal
-            .backend()
-            .buffer()
-            .content()
-            .iter()
-            .map(|c| c.symbol().chars().next().unwrap_or(' '))
-            .collect();
-        assert_eq!(screen, "-".repeat(20));
     }
 }

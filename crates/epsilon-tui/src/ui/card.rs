@@ -152,7 +152,7 @@ fn status_word(status: CardStatus, glyphs: &Glyphs) -> (&'static str, &'static s
         // P-158: the same distinction one level down — the **call** was cancelled
         // by the user, rather than the turn it was in. Pi spells it `(cancelled)`
         // and never prints it beside an exit number
-        // (`references/pi-1.0.0/packages/coding-agent/src/modes/interactive/components/bash-execution.ts:189`,
+        // (`references/pi-1.3.0/packages/coding-agent/src/modes/interactive/components/bash-execution.ts:189`,
         // against `(exit N)` at `:192`); ours is the status word, which is where
         // every other verdict on this title lives.
         CardStatus::Cancelled => (glyphs.warn, "cancelled"),

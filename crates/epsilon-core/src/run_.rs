@@ -767,6 +767,31 @@ impl Agent {
         self.session_usage.lock().map(|u| *u).unwrap_or_default()
     }
 
+    /// Fold usage produced outside this agent's own run loop into the session.
+    ///
+    /// The one caller today is a background `task` child: it finishes after the
+    /// dispatch call returned, so no tool result exists to carry its spend. The
+    /// registry entry still holds it for display, but the session totals would
+    /// omit it until somebody polled. This is that missing fold; the task entry
+    /// marks the leg reported so a later poll cannot bill it again.
+    pub fn record_external_usage(&self, model: &str, usage: Usage) {
+        if usage == Usage::default() {
+            return;
+        }
+        if let Ok(mut total) = self.session_usage.lock() {
+            *total = total.combine(usage);
+        }
+        let key = if model.trim().is_empty() {
+            "unknown".to_string()
+        } else {
+            model.to_string()
+        };
+        if let Ok(mut by_model) = self.session_usage_by_model.lock() {
+            let slot = by_model.entry(key).or_default();
+            *slot = slot.combine(usage);
+        }
+    }
+
     /// [`Agent::session_usage`] split by the model that produced each response.
     ///
     /// A clone rather than a borrow because the lock is a `Mutex` and the caller prices
@@ -1366,17 +1391,32 @@ impl Agent {
                     .map(|s| s.clone())
                     .unwrap_or_default(),
                 instructions: {
-                    let mut instructions = prompt::load_project_instructions(&self.workspace_root);
-                    // Subdirectory hints (M73) ride in the same tier, after the root files:
-                    // they are just as project-sourced, and the closest directory is the one
-                    // that governs the file being edited.
-                    instructions.extend(prompt::load_subdirectory_hints(
-                        &self.workspace_root,
-                        &self.touched_dirs(),
-                    ));
+                    // **An untrusted project's instructions are not instructions.**
+                    // The trust review gates SYSTEM.md, skills, MCP and extensions;
+                    // AGENTS.md and MEMORY.md were read unconditionally, so a
+                    // checkout the user declined still became system-level text.
+                    // The frontend's decision reaches the agent in composition.
+                    let trusted = self.project_trusted();
+                    let mut instructions = if trusted {
+                        prompt::load_project_instructions(&self.workspace_root)
+                    } else {
+                        Vec::new()
+                    };
+                    // Subdirectory hints (M73) ride in the same tier, after the root
+                    // files: they are just as project-sourced, and the closest
+                    // directory is the one that governs the file being edited.
+                    if trusted {
+                        instructions.extend(prompt::load_subdirectory_hints(
+                            &self.workspace_root,
+                            &self.touched_dirs(),
+                        ));
+                    }
                     instructions
                 },
-                skills_catalog: Some(crate::skills::catalog(&self.skill_list())),
+                skills_catalog: Some(crate::skills::catalog_with_disabled(
+                    &self.skill_list(),
+                    &self.disabled_skills(),
+                )),
                 // The objective, when there is one — and only its words: the round counter and
                 // the revision are what `get_goal` is for, and a number that moves every round
                 // would rewrite the cached prefix on every round.

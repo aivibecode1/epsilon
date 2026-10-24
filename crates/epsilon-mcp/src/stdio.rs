@@ -152,5 +152,5 @@ pub async fn attach_stdio_server(
     scrub_env: Option<ScrubEnv>,
 ) -> Result<usize, String> {
     let connector: Arc<dyn Connector> = Arc::new(StdioConnector::spawn(cfg, scrub_env).await?);
-    crate::bridge(registry, &cfg.name, connector).await
+    crate::bridge_with_timeout(registry, &cfg.name, connector, cfg.timeout_secs).await
 }

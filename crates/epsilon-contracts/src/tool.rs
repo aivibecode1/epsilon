@@ -58,6 +58,26 @@ fn bounded(text: &str) -> String {
 }
 
 impl ToolDescriptor {
+    /// The permission capability this tool acts under.
+    ///
+    /// **A capability, not a name.** The permission engine matches rules by
+    /// capability, and until now the capability *was* the tool's name — so
+    /// `apply_patch` and `edit` were two unrelated capabilities even though
+    /// both write files, and a rule the user wrote for `edit` did not cover
+    /// the patch tool. A third-party tool could not join an existing
+    /// capability at all.
+    ///
+    /// The default is the tool's own name, which keeps every existing rule
+    /// and every existing tool behaving exactly as before. A tool declares a
+    /// different capability by overriding this, and a caller that wants the
+    /// declared capability asks for it here.
+    ///
+    /// The declarations live in the tools crate, not in a table here, so a
+    /// tool cannot be mis-declared by a list that drifted away from it.
+    pub fn capability(&self) -> &str {
+        &self.name
+    }
+
     /// Validate that `arguments` is structurally plausible against the declared schema.
     ///
     /// V1 checks shape only (object-ness); full JSON-Schema validation arrives with the
@@ -294,6 +314,18 @@ pub trait TaskHost: Send + Sync {
         None
     }
 
+    /// Take the child usage that has not yet been billed to the parent.
+    ///
+    /// A status poll returns the same snapshot repeatedly; returning its usage
+    /// on every poll makes the parent bill the child's last leg once per poll.
+    /// The host marks the spend reported the first time this is called, so at
+    /// most one tool result carries each leg's tokens. The snapshot keeps its
+    /// usage for display.
+    fn take_task_usage(&self, id: &str) -> Option<Usage> {
+        let _ = id;
+        None
+    }
+
     /// Ids still tracked (used to make unknown-id errors honest).
     fn task_ids(&self) -> Vec<String> {
         Vec::new()
@@ -435,6 +467,25 @@ impl ToolFailure {
 pub trait Tool: Send + Sync {
     /// Static descriptor (name/schema/mode).
     fn descriptor(&self) -> &ToolDescriptor;
+
+    /// The permission capability this tool acts under.
+    ///
+    /// **Defaults to the tool's own name**, which is what every tool did
+    /// before this method existed, so every existing rule keeps matching what
+    /// it matched before.
+    ///
+    /// A tool that acts *within* another capability overrides this:
+    /// `apply_patch` writes files, so it acts under `edit` and a rule the
+    /// user wrote for `edit` covers it. Without the override, `apply_patch`
+    /// was its own capability — a rule for `edit` did not cover the patch
+    /// tool, and the patch tool matched no rule at all, so it asked.
+    ///
+    /// The capability is what the permission engine matches, so this is the
+    /// seam where a tool joins an existing user policy instead of needing a
+    /// new one.
+    fn capability(&self) -> &str {
+        self.descriptor().capability()
+    }
 
     /// The single resource this call acts on, when it has exactly one.
     ///

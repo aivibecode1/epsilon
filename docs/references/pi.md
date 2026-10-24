@@ -5,26 +5,26 @@ itself, and what Epsilon took from it. Every claim about Epsilon carries a
 `file:line` in this repository, so a reader can open it.
 
 The vendored copy is under [`../../references/`](../../references/) at
-`references/pi-1.0.0/`. It is read-only input: not part of the build, not committed.
+`references/pi-1.3.0/`. It is read-only input: not part of the build, not committed.
 Paths that start `packages/` are relative to that directory.
 
 ## What it is
 
 pi is the **Pi Agent Harness**, a TypeScript monorepo. Its README calls it "the home
 of the Pi agent harness project including our self extensible coding agent"
-(`references/pi-1.0.0/README.md:15`). The npm workspaces under `packages/` hold the
+(`references/pi-1.3.0/README.md:15`). The npm workspaces under `packages/` hold the
 pieces: `@earendil-works/pi-ai` is a unified multi-provider LLM API,
 `@earendil-works/pi-agent-core` is an "agent runtime with tool calling and state
 management", `@earendil-works/pi-coding-agent` is the interactive CLI, and
 `@earendil-works/pi-tui` is a terminal UI library with differential rendering
-(`references/pi-1.0.0/README.md:30-36`).
+(`references/pi-1.3.0/README.md:30-36`).
 
-**Version as vendored here: 1.0.0**, read from
-`references/pi-1.0.0/packages/coding-agent/package.json:3`. That is the published CLI
+**Version as vendored here: 1.3.0**, read from
+`references/pi-1.3.0/packages/coding-agent/package.json:3`. That is the published CLI
 package — the one `npx` installs and the one whose `bin` entry is `pi`
-(`references/pi-1.0.0/packages/coding-agent/package.json:10`). The monorepo root is a
+(`references/pi-1.3.0/packages/coding-agent/package.json:10`). The monorepo root is a
 private workspace container and carries its own number,
-`references/pi-1.0.0/package.json:2,69`, which is not the release number.
+`references/pi-1.3.0/package.json:2,69`, which is not the release number.
 
 A **port** means reimplementing pi's behaviour in another language rather than
 shipping its code. Epsilon is an *incomplete* Rust port: the loop, the queues, the
@@ -32,18 +32,18 @@ tools, session storage and prompt assembly are there; several of pi's interfaces
 not. "What we skipped" says which.
 
 Website: <https://pi.dev>. Documentation: <https://pi.dev/docs/latest>
-(`references/pi-1.0.0/README.md:23-24`).
+(`references/pi-1.3.0/README.md:23-24`).
 
 ## Who made it, and under what licence
 
-- **Author.** `references/pi-1.0.0/LICENSE:3` reads "Copyright (c) 2025 Mario Zechner".
+- **Author.** `references/pi-1.3.0/LICENSE:3` reads "Copyright (c) 2025 Mario Zechner".
 - **Organisation.** **earendil-works** — the npm scope on every published package, and
-  the name `references/pi-1.0.0/CONTRIBUTING.md:101` uses when it describes how larger
+  the name `references/pi-1.3.0/CONTRIBUTING.md:101` uses when it describes how larger
   changes get discussed.
 - **Repository.** <https://github.com/earendil-works/pi>, stated in
-  `references/pi-1.0.0/packages/coding-agent/docs/session-format.md:34-35`.
-- **Licence.** MIT. Stated at `references/pi-1.0.0/README.md:108-110`; the full text is
-  `references/pi-1.0.0/LICENSE:1-21`.
+  `references/pi-1.3.0/packages/coding-agent/docs/session-format.md:34-35`.
+- **Licence.** MIT. Stated at `references/pi-1.3.0/README.md:108-110`; the full text is
+  `references/pi-1.3.0/LICENSE:1-21`.
 - **Not stated in the vendored copy:** a legal entity behind the npm scope, a
   governance model, or a maintainer list. The README carries no author line, so
   "earendil-works" rests on the package scope and one CONTRIBUTING sentence rather than
@@ -51,23 +51,23 @@ Website: <https://pi.dev>. Documentation: <https://pi.dev/docs/latest>
 
 ## Its strengths, in its own terms
 
-**A core that is small on purpose.** `references/pi-1.0.0/CONTRIBUTING.md:7-11`: "First
+**A core that is small on purpose.** `references/pi-1.3.0/CONTRIBUTING.md:7-11`: "First
 things first: pi's core is minimal. If your feature does not belong in the core, it
 should be an extension." Extensions are not a plugin bolt-on here — they are TypeScript
 modules loaded into the pi process whose factory functions "register tools, commands,
 shortcuts, providers, event handlers, renderers, and terminal UI"
-(`references/pi-1.0.0/packages/coding-agent/docs/how-pi-works.md:43`). A tool provider
+(`references/pi-1.3.0/packages/coding-agent/docs/how-pi-works.md:43`). A tool provider
 can change the core, not only extend it.
 
 **One agent behind every interface.** Interactive mode, print mode, JSON mode, RPC mode
 and the TypeScript SDK are five surfaces over the same machinery, and pi says so
 directly: "All interfaces use the same agent and session mechanisms"
-(`references/pi-1.0.0/packages/coding-agent/docs/how-pi-works.md:35-39`).
+(`references/pi-1.3.0/packages/coding-agent/docs/how-pi-works.md:35-39`).
 
 **The loop is described as two things, not one.** A turn is a streamed assistant
 response plus the tool calls it made; another turn starts "if tool results or queued
 messages require another model request"
-(`references/pi-1.0.0/packages/coding-agent/docs/how-pi-works.md:11`). Queued input has
+(`references/pi-1.3.0/packages/coding-agent/docs/how-pi-works.md:11`). Queued input has
 two kinds and two insertion points — "Steering messages enter after the current
 assistant turn. Follow-up messages enter after the agent has finished its pending
 work" (same file, line 13). **Steering** means "interrupt me mid-run"; a **follow-up**
@@ -78,9 +78,9 @@ left.
 **A conversation is a tree, not a list.** "Messages and events in a session form a tree.
 Each path through that tree is a branch. The branch ending at the current entry is the
 active branch and supplies the history for the next model request"
-(`references/pi-1.0.0/packages/coding-agent/docs/how-pi-works.md:5`). The storage is
+(`references/pi-1.3.0/packages/coding-agent/docs/how-pi-works.md:5`). The storage is
 JSONL with `id`/`parentId`, so branching happens inside one file rather than by copying
-it (`references/pi-1.0.0/packages/coding-agent/docs/session-format.md:3`). The format is
+it (`references/pi-1.3.0/packages/coding-agent/docs/session-format.md:3`). The format is
 documented entry by entry, including what a compaction boundary means
 (same file, lines 123-137).
 
@@ -99,7 +99,7 @@ order." The UI can react the moment a tool finishes; the transcript stays replay
 that batch sets `terminate: true`. Mixed batches continue normally"
 (`packages/agent/README.md:120`).
 
-**Supply chain is treated as reviewed code.** `references/pi-1.0.0/README.md:78-90`:
+**Supply chain is treated as reviewed code.** `references/pi-1.3.0/README.md:78-90`:
 direct dependencies pinned to exact versions, `.npmrc` sets `save-exact=true` and
 `min-release-age=2`, `package-lock.json` is "the dependency ground truth", pre-commit
 blocks accidental lockfile commits, and the published package carries a generated
@@ -108,7 +108,7 @@ shrinkwrap so transitive versions are pinned for npm users too.
 **It says out loud where it does not protect you.** "Pi does not include a built-in
 permission system for restricting filesystem, process, network, or credential access.
 By default, it runs with the permissions of the user and process that launched it"
-(`references/pi-1.0.0/README.md:42`) — followed by three containerisation patterns it
+(`references/pi-1.3.0/README.md:42`) — followed by three containerisation patterns it
 does support (same file, lines 44-48). Naming the gap is more useful than leaving it to
 be discovered.
 
@@ -151,6 +151,14 @@ port.
   run together, two edits to one file stay in call order, and a tool that declares no
   resource still makes the batch a barrier — `crates/epsilon-core/src/exec.rs:1-10` and
   `crates/epsilon-contracts/src/tool.rs:17`.
+- **Abort queue recovery.** Pi's TUI clears both queues and restores queued text
+  before the current draft, then aborts
+  (`references/pi-1.3.0/packages/coding-agent/src/modes/interactive/interactive-mode.ts:4718-4774`,
+  `references/pi-1.3.0/packages/coding-agent/src/modes/interactive/interactive-mode.ts:3072-3075`).
+  Epsilon retains unconsumed queued `Message`s and the current draft
+  (`crates/epsilon-tui/src/app/keys.rs:2471-2480`). This keeps structured
+  `@`-reference blocks (`crates/epsilon-core/src/references.rs:369-381`) rather
+  than flattening them; the next run follows Epsilon's normal drain order (ADR-081).
 - **Reads page instead of loading the file.** pi reads the whole file and slices
   (`packages/coding-agent/src/core/tools/read.ts:275-323`, as recorded at
   `crates/epsilon-tools/src/util.rs:530-538`). Epsilon streams the page so resident
@@ -189,14 +197,14 @@ port.
   are in [the TUI decision](TUI-DECISION.md).
 - **Containerisation as the answer to permissions.** pi's README offers three patterns
   (Gondolin, Docker, OpenShell) as the way to get a boundary
-  (`references/pi-1.0.0/README.md:44-48`). Epsilon ships OS confinement in the product
+  (`references/pi-1.3.0/README.md:44-48`). Epsilon ships OS confinement in the product
   and refuses to run a command unconfined when confinement was asked for:
   `crates/epsilon-safety/src/sandbox.rs:1-14`. **Different deployment:** requiring a
   micro-VM or a container to be safe is a reasonable answer for a Node CLI and the wrong
   one for a Windows-first binary that should be safe as installed.
 - **The npm and standalone-binary release path.** pi builds a compiled executable with
   `bun build --compile` and ships a shrinkwrapped npm package
-  (`references/pi-1.0.0/packages/coding-agent/package.json:44`). Epsilon ships cargo
+  (`references/pi-1.3.0/packages/coding-agent/package.json:44`). Epsilon ships cargo
   builds. **Different supply chain**, same supply-chain discipline.
 - **`pi-codemode`** — model-written JavaScript that calls the agent's own tools
   (`packages/agent/README.md:506-508`). **Not needed yet.** It would mean embedding a
@@ -216,7 +224,7 @@ Concretely, that means:
   Mario Zechner", must accompany any copied or adapted body.
 - Each adapted file carries a header naming pi and the file it came from.
 - `THIRD_PARTY_NOTICES` gains an entry for pi if anything is ever copied.
-- The credit line in [`../../CREDITS.md`](../../CREDITS.md) stays.
+- The credit line in [`../../README credits`](../../README.md#credits) stays.
 
 **What has actually happened here: no third-party source was copied into this
 repository.** Epsilon took behaviour, structure and design decisions, and every place

@@ -270,7 +270,7 @@ fn responses_missing_total_sums_instead_of_zero() {
 
 // --- Wave C: the separately-reported reasoning-token bucket (criterion 6/7) ---
 //
-// Pi's `Usage.reasoning` (`references/pi-1.0.0/packages/ai/src/types.ts:427-448`):
+// Pi's `Usage.reasoning` (`references/pi-1.3.0/packages/ai/src/types.ts:427-448`):
 // reasoning/thinking tokens are a SUBSET of `output` — `output` already
 // includes them. Providers that expose the split set a number (possibly 0);
 // the rest leave it undefined. Cost stays on `output` only: pricing the split

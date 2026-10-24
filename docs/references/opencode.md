@@ -250,7 +250,7 @@ Frontends — ratatui TUI default"). OpenTUI is Zig reached from TypeScript thro
 product would have to add a foreign-function layer, a second language toolchain and a runtime
 dependency to obtain a layout engine ratatui already provides. The *idea* was kept — key binding
 separated from command routing — and lives in `crates/epsilon-tui/src/app/keys.rs:1-13` and the
-one-command-registry invariant in [`AGENTS.md`](../../AGENTS.md). [`CREDITS.md`](../../CREDITS.md)
+one-command-registry invariant in [`AGENTS.md`](../../AGENTS.md). [`README credits`](../../README.md#credits)
 points the full reasoning at `docs/references/TUI-DECISION.md`; that file is **not in the tree
 yet**, so this paragraph is the record until it is written.
 
@@ -303,7 +303,7 @@ carrying opencode's notice, and a header on every adapted file naming its source
 
 **What actually happened is different, and the difference is deliberate.** No third-party source
 code was copied into this repository; every item above is a reimplementation from opencode's own
-written behaviour. [`CREDITS.md`](../../CREDITS.md) says so in as many words — "**no third-party
+written behaviour. [`README credits`](../../README.md#credits) says so in as many words — "**no third-party
 source code was copied into this repository**: what was taken is behaviour, structure and design
 decisions" — and that is why there is no `THIRD_PARTY_NOTICES` file. The cost of that choice is
 that a citation has to be checked by hand, so every item above carries the reference file and

@@ -42,3 +42,12 @@ pub use store::{
     CompactionDigest, FaultOp, LineDiagnosis, ModelViewEntry, SessionStore, StoreError,
     build_forest_from_entries, original_backup_path, timestamp_unix_secs,
 };
+
+/// The largest session file this build will load or import.
+///
+/// A session is a conversation, not a database dump: 256 MiB is already two
+/// orders of magnitude above a long chat, and it bounds the allocation a
+/// repo-shipped or shared `.jsonl` can demand before the store refuses it. pi
+/// bounds its header scan (`MAX_SESSION_HEADER_SCAN_BYTES = 1 MiB`) for the
+/// same reason; this is the whole-file version.
+pub const MAX_SESSION_FILE_BYTES: u64 = 256 * 1024 * 1024;

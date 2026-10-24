@@ -15,15 +15,27 @@ use crate::util;
 use epsilon_contracts::diagnostics::DiagnosticsProvider;
 use std::sync::Arc;
 
+/// How many *other* files the project sweep may name after a write/edit
+/// (opencode `tool/write.ts:18`: `MAX_PROJECT_DIAGNOSTICS_FILES = 5`).
+const MAX_PROJECT_DIAGNOSTICS_FILES: usize = 5;
+
 /// Ask the diagnostics provider about a file this tool just wrote, and return the block to append.
 ///
 /// Three rules, all of them about not letting a linter break an edit that already happened: no
 /// provider means no block; a file that cannot be re-read means no block; a provider that is
 /// silent, broken or wrong means no block. The caller appends what comes back and nothing else
 /// (M79; opencode `tool/edit.ts:196-211`).
+///
+/// Past the touched-file block — which keeps its exact shape — comes a capped project sweep
+/// (opencode `tool/write.ts:74-90`): the same seam is asked about the rest of the workspace so
+/// an edit that breaks a *dependent* surfaces it the way opencode's write does. Same file
+/// always first (it is already above), then other broken files, one line each, at most
+/// [`MAX_PROJECT_DIAGNOSTICS_FILES`] of them with a `(+N more)` tail. Silence stays silent: a
+/// clean rest of the project appends nothing.
 async fn diagnostics_note(
     provider: Option<&Arc<dyn DiagnosticsProvider>>,
     path: &std::path::Path,
+    workspace: &std::path::Path,
 ) -> String {
     let Some(provider) = provider else {
         return String::new();
@@ -31,10 +43,104 @@ async fn diagnostics_note(
     let Ok(text) = std::fs::read_to_string(path) else {
         return String::new();
     };
-    match provider.after_change(path, &text).await {
+    let mut out = match provider.after_change(path, &text).await {
         Some(block) => format!("\n{block}"),
         None => String::new(),
+    };
+    out.push_str(&project_sweep(provider, path, workspace).await);
+    out
+}
+
+/// The rest of the workspace, through the same [`DiagnosticsProvider`] seam — no new provider
+/// method (the trait stays one method; a sweep composes `after_change` over walked files).
+///
+/// Relevance ordering: the touched file's own directory first (an edit breaks neighbours most
+/// often), then everything else; alphabetical inside each group so the cap hides the same files
+/// every run. Unreadable files are skipped exactly like the touched file is (no block).
+async fn project_sweep(
+    provider: &Arc<dyn DiagnosticsProvider>,
+    touched: &std::path::Path,
+    workspace: &std::path::Path,
+) -> String {
+    let touched_rel = touched
+        .strip_prefix(workspace)
+        .ok()
+        .map(|p| p.to_path_buf());
+    let touched_dir = touched_rel
+        .as_ref()
+        .and_then(|r| r.parent().map(|p| p.to_path_buf()));
+    let mut same: Vec<std::path::PathBuf> = Vec::new();
+    let mut rest: Vec<std::path::PathBuf> = Vec::new();
+    for rel in crate::util::walk_files(workspace) {
+        if Some(rel.as_path()) == touched_rel.as_deref() || workspace.join(&rel) == touched {
+            continue;
+        }
+        if touched_dir.as_deref() == rel.parent() {
+            same.push(rel);
+        } else {
+            rest.push(rel);
+        }
     }
+    same.sort();
+    rest.sort();
+    // Bound the WORK, not just the display: one `after_change` per walked
+    // file is a language-server roundtrip each (didOpen/didChange + publish
+    // wait), so an unbounded sweep turns every edit in a big workspace into
+    // minutes of diagnostics. Same-directory candidates go first, so the
+    // nearest files — where an edit's ripple lands — are the ones checked.
+    // Reports name the scope they cover; silence still means "nothing found
+    // in scope", the pre-existing silence contract.
+    const MAX_PROJECT_SWEEP_QUERY: usize = 25;
+    let candidates: Vec<std::path::PathBuf> = same.into_iter().chain(rest).collect();
+    let total_candidates = candidates.len();
+    let queried: Vec<std::path::PathBuf> = candidates
+        .into_iter()
+        .take(MAX_PROJECT_SWEEP_QUERY)
+        .collect();
+    let unchecked = total_candidates.saturating_sub(queried.len());
+    // ponytail: opencode reads one cached diagnostics map (free) where this
+    // re-queries per file — the bound above is the ceiling that keeps edits
+    // interactive. Upgrade trigger: measured per-edit latency on a real
+    // server, at which point the seam grows a cached project-diagnostics
+    // query instead of more caps here.
+    let mut broken: Vec<(String, String)> = Vec::new();
+    for rel in queried {
+        let abs = workspace.join(&rel);
+        let Ok(text) = std::fs::read_to_string(&abs) else {
+            continue;
+        };
+        if let Some(block) = provider.after_change(&abs, &text).await {
+            let summary = block.lines().next().unwrap_or("").trim().to_string();
+            if summary.is_empty() {
+                continue;
+            }
+            broken.push((rel.to_string_lossy().replace('\\', "/"), summary));
+        }
+    }
+    if broken.is_empty() {
+        return String::new();
+    }
+    let total = broken.len();
+    let mut out = format!(
+        "\n\nLSP errors in {total} other {}:",
+        if total == 1 { "file" } else { "files" }
+    );
+    for (name, summary) in broken.iter().take(MAX_PROJECT_DIAGNOSTICS_FILES) {
+        out.push_str(&format!("\n{name}: {summary}"));
+    }
+    if total > MAX_PROJECT_DIAGNOSTICS_FILES {
+        out.push_str(&format!(
+            "\n(+{} more)",
+            total - MAX_PROJECT_DIAGNOSTICS_FILES
+        ));
+    }
+    if unchecked > 0 {
+        out.push_str(&format!(
+            "\n(sweep checked the nearest {queried} of {total_candidates} files)",
+            queried = MAX_PROJECT_SWEEP_QUERY.min(total_candidates),
+        ));
+    }
+    out
 }
 
 // ---- read -----------------------------------------------------------------------
@@ -631,7 +737,7 @@ impl Tool for WriteTool {
                     display,
                     content.len()
                 );
-                text.push_str(&diagnostics_note(provider.as_ref(), &path).await);
+                text.push_str(&diagnostics_note(provider.as_ref(), &path, &workspace).await);
                 Ok(ToolOutput::text(text))
             }
         })
@@ -832,7 +938,7 @@ impl Tool for EditTool {
                                 args_path,
                                 strategy.note()
                             );
-                            text.push_str(&diagnostics_note(provider.as_ref(), &path).await);
+                            text.push_str(&diagnostics_note(provider.as_ref(), &path, &workspace).await);
                             return Ok(ToolOutput {
                                 content: vec![epsilon_contracts::content::ContentBlock::text(text)],
                                 details,
@@ -907,7 +1013,7 @@ impl Tool for EditTool {
                     args_path,
                     batch.len()
                 );
-                text.push_str(&diagnostics_note(provider.as_ref(), &path).await);
+                text.push_str(&diagnostics_note(provider.as_ref(), &path, &workspace).await);
                 Ok(ToolOutput {
                     content: vec![epsilon_contracts::content::ContentBlock::text(text)],
                     details,
@@ -1120,6 +1226,283 @@ mod attach_tests {
         assert!(
             text.contains("original 3000x100"),
             "the header names the pre-shrink size: {text}"
+        );
+    }
+}
+
+#[cfg(test)]
+mod sweep_tests {
+    use super::*;
+    use epsilon_contracts::tool::{Tool, ToolContext, ToolInvocation};
+    use std::collections::HashMap;
+    use std::sync::Arc;
+    use tokio_util::sync::CancellationToken;
+
+    /// Canned project diagnostics: file name -> block, consulted for every file the sweep
+    /// asks about — the shape of opencode's `lsp.diagnostics()` map
+    /// (`references/opencode-1.18.34/packages/opencode/src/tool/write.ts:76`), served
+    /// through this harness's per-file `after_change` seam.
+    struct CannedProject {
+        blocks: HashMap<String, String>,
+    }
+
+    impl CannedProject {
+        fn of(pairs: &[(&str, &str)]) -> Self {
+            Self {
+                blocks: pairs
+                    .iter()
+                    .map(|(n, b)| ((*n).to_string(), (*b).to_string()))
+                    .collect(),
+            }
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl DiagnosticsProvider for CannedProject {
+        async fn after_change(&self, path: &std::path::Path, _text: &str) -> Option<String> {
+            path.file_name()
+                .and_then(|n| n.to_str())
+                .and_then(|n| self.blocks.get(n))
+                .cloned()
+        }
+    }
+
+    fn ctx_for(root: &std::path::Path) -> ToolContext {
+        ToolContext {
+            session_id: "sweep-test".into(),
+            observation_scope: Arc::new(()),
+            cwd: root.to_path_buf(),
+            spill_dir: root.join(".epsilon/spill"),
+            token: CancellationToken::new(),
+            task_host: None,
+            goal_host: None,
+        }
+    }
+
+    async fn run_text(
+        tool: &dyn Tool,
+        ctx: &ToolContext,
+        args: serde_json::Value,
+    ) -> Result<String, String> {
+        let sink: ToolUpdateSink = Arc::new(|_| {});
+        tool.execute(
+            ToolInvocation {
+                tool_call_id: "sweep".into(),
+                args,
+            },
+            ctx.clone(),
+            sink,
+        )
+        .await
+        .map(|o| {
+            o.content
+                .iter()
+                .filter_map(|c| match c {
+                    epsilon_contracts::content::ContentBlock::Text { text } => Some(text.clone()),
+                    _ => None,
+                })
+                .collect::<Vec<_>>()
+                .join("\n")
+        })
+        .map_err(|f| f.message)
+    }
+
+    #[tokio::test]
+    async fn write_surfaces_a_second_broken_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        std::fs::create_dir_all(root.join("src")).unwrap();
+        std::fs::write(root.join("src/other.rs"), "fn other() {}\n").unwrap();
+        let ctx = ctx_for(root);
+        let write = WriteTool::new().with_diagnostics(Arc::new(CannedProject::of(&[
+            ("main.rs", "[lsp] main.rs: 1 error\n  ERROR [1:1] boom"),
+            (
+                "other.rs",
+                "[lsp] other.rs: 1 error\n  ERROR [2:3] broken dep",
+            ),
+        ])));
+        let text = run_text(
+            &write,
+            &ctx,
+            serde_json::json!({"path": "src/main.rs", "content": "fn main() {}\n"}),
+        )
+        .await
+        .expect("the write succeeds whether or not the linter has news");
+        assert!(text.contains("created src/main.rs"), "{text}");
+        assert!(
+            text.contains("ERROR [1:1] boom"),
+            "the touched-file block keeps its format: {text}"
+        );
+        assert!(
+            text.contains("other.rs"),
+            "the sweep names the second broken file: {text}"
+        );
+        assert!(
+            text.contains("other file"),
+            "the sweep groups the rest under one header: {text}"
+        );
+        assert!(
+            text.find("boom").unwrap() < text.find("other file").unwrap(),
+            "same file first, sweep after: {text}"
+        );
+    }
+
+    #[tokio::test]
+    async fn clean_project_keeps_only_the_touched_block() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        std::fs::create_dir_all(root.join("src")).unwrap();
+        std::fs::write(root.join("src/other.rs"), "fn other() {}\n").unwrap();
+        let ctx = ctx_for(root);
+        let write = WriteTool::new().with_diagnostics(Arc::new(CannedProject::of(&[(
+            "main.rs",
+            "[lsp] main.rs: 1 error\n  ERROR [1:1] boom",
+        )])));
+        let text = run_text(
+            &write,
+            &ctx,
+            serde_json::json!({"path": "src/main.rs", "content": "fn main() {}\n"}),
+        )
+        .await
+        .expect("the write succeeds");
+        assert!(
+            text.contains("ERROR [1:1] boom"),
+            "the touched-file block is still there: {text}"
+        );
+        assert!(
+            !text.contains("other file"),
+            "no sweep section when the rest of the project is clean: {text}"
+        );
+    }
+
+    #[tokio::test]
+    async fn sweep_caps_at_five_other_files_with_a_count_note() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        std::fs::create_dir_all(root.join("src")).unwrap();
+        for n in ["a", "b", "c", "d", "e", "f"] {
+            std::fs::write(root.join(format!("src/{n}.rs")), "fn x() {}\n").unwrap();
+        }
+        let ctx = ctx_for(root);
+        let pairs: Vec<(String, String)> = std::iter::once((
+            "main.rs".to_string(),
+            "[lsp] main.rs: 1 error\n  ERROR [1:1] boom".to_string(),
+        ))
+        .chain(
+            ["a", "b", "c", "d", "e", "f"]
+                .iter()
+                .map(|n| (format!("{n}.rs"), format!("[lsp] {n}.rs: 1 error"))),
+        )
+        .collect();
+        let provider = CannedProject {
+            blocks: pairs.into_iter().collect(),
+        };
+        let write = WriteTool::new().with_diagnostics(Arc::new(provider));
+        let text = run_text(
+            &write,
+            &ctx,
+            serde_json::json!({"path": "src/main.rs", "content": "fn main() {}\n"}),
+        )
+        .await
+        .expect("the write succeeds");
+        assert!(
+            text.contains("LSP errors in 6 other files:"),
+            "the header counts every broken other file: {text}"
+        );
+        for n in ["a", "b", "c", "d", "e"] {
+            assert!(
+                text.contains(&format!("src/{n}.rs")),
+                "the first five stay visible: {text}"
+            );
+        }
+        assert!(
+            text.contains("(+1 more)"),
+            "the cap hides the sixth behind a count note: {text}"
+        );
+        assert!(
+            !text.contains("f.rs"),
+            "the sixth file is named nowhere: {text}"
+        );
+    }
+
+    /// The sweep bounds its WORK, not just its display: past 25 candidates
+    /// the rest go unchecked and the report says so. RED-first: an
+    /// unbounded sweep turns every edit in a big workspace into one LSP
+    /// roundtrip per file.
+    #[tokio::test]
+    async fn sweep_checks_the_nearest_files_and_names_its_scope() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        std::fs::create_dir_all(root.join("src")).unwrap();
+        let names: Vec<String> = (0..30).map(|n| format!("f{n:02}.rs")).collect();
+        for n in &names {
+            std::fs::write(root.join("src").join(n), "fn x() {}\n").unwrap();
+        }
+        let ctx = ctx_for(root);
+        let pairs: Vec<(String, String)> =
+            std::iter::once(("main.rs".to_string(), "[lsp] main.rs: 1 error".to_string()))
+                .chain(
+                    names
+                        .iter()
+                        .map(|n| (n.clone(), format!("[lsp] {n}: 1 error"))),
+                )
+                .collect();
+        let provider = CannedProject {
+            blocks: pairs.into_iter().collect(),
+        };
+        let write = WriteTool::new().with_diagnostics(Arc::new(provider));
+        let text = run_text(
+            &write,
+            &ctx,
+            serde_json::json!({"path": "src/main.rs", "content": "fn main() {}\n"}),
+        )
+        .await
+        .expect("the write succeeds");
+        assert!(
+            text.contains("(sweep checked the nearest 25 of 30 files)"),
+            "the report names its bounded scope: {text}"
+        );
+        assert!(
+            !text.contains("f29.rs"),
+            "files past the bound are never queried: {text}"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_failed_edit_shows_no_sweep() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        std::fs::create_dir_all(root.join("src")).unwrap();
+        std::fs::write(root.join("src/lib.rs"), "fn a() {}\n").unwrap();
+        std::fs::write(root.join("src/other.rs"), "fn other() {}\n").unwrap();
+        let ctx = ctx_for(root);
+        let read = ReadTool::new();
+        run_text(&read, &ctx, serde_json::json!({"path": "src/lib.rs"}))
+            .await
+            .expect("the prior read satisfies the stale-read guard");
+        let edit = EditTool::new().with_diagnostics(Arc::new(CannedProject::of(&[
+            ("lib.rs", "[lsp] lib.rs: 1 error\n  ERROR [1:1] boom"),
+            (
+                "other.rs",
+                "[lsp] other.rs: 1 error\n  ERROR [2:3] broken dep",
+            ),
+        ])));
+        let err = run_text(
+            &edit,
+            &ctx,
+            serde_json::json!({
+                "path": "src/lib.rs",
+                "old_string": "fn missing() {}",
+                "new_string": "fn b() {}",
+            }),
+        )
+        .await
+        .expect_err("the edit itself must fail: the old text is not there");
+        assert!(err.contains("old_string not found"), "{err}");
+        assert!(!err.contains("other file"), "no success, no sweep: {err}");
+        assert!(
+            !err.contains("other.rs"),
+            "the failure names no project file: {err}"
         );
     }
 }

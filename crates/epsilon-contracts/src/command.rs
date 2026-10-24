@@ -42,179 +42,156 @@ pub struct SlashItem {
     pub description: &'static str,
 }
 
-/// All known slash commands with descriptions (pi's command registry shape;
-/// descriptions follow pi/opencode conventions).
+/// All known slash commands with descriptions (pi's command registry shape).
+///
+/// Descriptions are one imperative sentence in sentence case. The argument
+/// shape belongs to the command reference, not to a one-line menu row: a row
+/// that tries to teach the grammar spends its width on parentheses instead of
+/// on the verb. `docs/07-COMMANDS.md` has the full usage of every command.
 pub const SLASH_ITEMS: &[SlashItem] = &[
     SlashItem {
         value: "/models",
-        description: "switch model (picker)",
+        description: "Open the model picker",
     },
     SlashItem {
         value: "/model ",
-        description: "set model by id, e.g. /model kimi-k2.6",
+        description: "Switch or pick a model",
     },
     SlashItem {
         value: "/think ",
-        description: "thinking effort: off..max (Ctrl+T cycles; settings thinking row opens picker)",
+        description: "Set thinking effort",
     },
     SlashItem {
         value: "/compact",
-        description: "summarize older context to reclaim token window",
-    },
-    SlashItem {
-        value: "/timeline",
-        description: "browse session branches by seq/lane/snippet, Enter jumps (same browser as /branch, /tree)",
+        description: "Summarize older context",
     },
     SlashItem {
         value: "/tasks",
-        description: "subagent tasks: state, turns, ids, cost (Esc stops them with the run)",
+        description: "List subagent tasks and state",
     },
     SlashItem {
         // The description names the bare form first because that is the one a user types to
         // find out what is going on; the verbs are one `/goal help` away.
         value: "/goal ",
-        description: "one long-running objective: `/goal <what to achieve>`, bare to show it",
+        description: "Create, show, or control the goal",
     },
     SlashItem {
         value: "/fork",
-        description: "fork the session at a picked message — `/fork <text to keep typing>`",
+        description: "Fork the session at a message",
     },
     SlashItem {
         value: "/skills",
-        description: "list discovered skills",
+        description: "List available skills",
+    },
+    SlashItem {
+        value: "/subagent ",
+        description: "Browse or enable a built-in subagent",
     },
     SlashItem {
         value: "/catalog",
-        description: "model catalog snapshot: date, size, providers",
+        description: "Show the model catalog snapshot",
     },
     SlashItem {
-        // M196: the toggle, and the description says the exact shape because
-        // "toggle a skill" alone does not tell a user whether it takes
-        // `/skill commit off` or `/skill off commit`.
+        // M196: the toggle. The exact shape (`/skill <name> on|off`) lives in
+        // the command reference; the row stays a verb so it fits one line.
         value: "/skill ",
-        description: "switch a skill on or off — `/skill <name> on|off`",
+        description: "Turn one skill on or off",
     },
     SlashItem {
         value: "/search ",
-        description: "search this session's history",
+        description: "Search the transcript",
     },
     SlashItem {
         value: "/clear",
-        description: "clear transcript (totals kept; Ctrl+C clears the draft, not the transcript)",
+        description: "Clear the transcript, keep totals",
     },
     SlashItem {
         value: "/help",
-        description: "command reference",
+        description: "Show commands and shortcuts",
     },
     SlashItem {
         value: "/login ",
-        description: "set API key for a provider (paste inside TUI)",
-    },
-    SlashItem {
-        value: "/connect ",
-        description: "connect a provider — alias for /login",
-    },
-    SlashItem {
-        value: "/auth ",
-        description: "provider auth — alias for /login",
+        description: "Save or refresh a provider key",
     },
     SlashItem {
         value: "/logout ",
-        description: "remove stored key for a provider",
-    },
-    SlashItem {
-        value: "/quit",
-        description: "exit the session",
+        description: "Remove a provider's stored key",
     },
     // --- pi parity: additional builtins (G1) ---
     SlashItem {
         value: "/new",
-        description: "start a new session",
+        description: "Start a new session file",
     },
     SlashItem {
         value: "/resume ",
-        description: "resume a session file by path (bare /resume opens the browser)",
+        description: "Resume a session by path",
     },
     SlashItem {
         value: "/sessions",
-        description: "browse session files in this workspace and resume one",
+        description: "Browse and resume saved sessions",
     },
     SlashItem {
         value: "/editor",
-        description: "compose this draft in $EDITOR (Alt+E)",
+        description: "Edit the draft in $EDITOR",
     },
     SlashItem {
         value: "/session",
-        description: "show session info and stats",
-    },
-    SlashItem {
-        value: "/tree",
-        description: "same branch browser as /timeline (session tree view)",
+        description: "Show session details and stats",
     },
     SlashItem {
         value: "/clone",
-        description: "duplicate the current session at current position",
+        description: "Duplicate the current branch",
     },
     SlashItem {
         value: "/trust ",
-        description: "save project trust decision for future sessions",
+        description: "Review or accept project trust",
     },
     SlashItem {
         value: "/reload",
-        description: "reload skills, prompts, and config without restarting",
+        description: "Reload skills, prompts and keys",
     },
     SlashItem {
         value: "/export ",
-        description: "export session (HTML default, or specify path: .html/.json)",
+        description: "Export the session",
     },
     SlashItem {
         value: "/import ",
-        description: "import and resume a session from a JSONL file",
-    },
-    SlashItem {
-        // Window-only: the terminal is bound to its process directory, so it refuses
-        // `/open` by name and says where the door lives. Listed here because a head
-        // in COMMAND_HEADS that no surface offers is the gap
-        // `every_offered_command_is_reachable_from_slash_items` exists to close —
-        // and the description says who answers it, so the offer never lies.
-        value: "/open ",
-        description: "open a workspace directory (unavailable here — terminal is bound to its directory; use /resume <path>)",
+        description: "Switch to another session file",
     },
     SlashItem {
         // The name is the file and the verb is the argument, because "restore" on its own
         // says which history it means. `/restore <path>` states the plan and changes
-        // nothing; the description names the second half so a reader who types the first
-        // is not left guessing what applies it.
+        // nothing; the command reference names the confirming second half.
         value: "/restore ",
-        description: "put a file back to its checkpoint — preview, then `/restore <path> yes`",
+        description: "Preview or restore a checkpoint",
     },
     SlashItem {
         value: "/changes",
-        description: "files this session changed — enter previews; `/changes all` is the workspace",
+        description: "List files changed this session",
     },
     SlashItem {
         value: "/undo-turn ",
-        description: "rewind a whole turn — preview, then `/undo-turn <N> yes`",
+        description: "Preview, then rewind a turn",
     },
     SlashItem {
         value: "/share",
-        description: "share session as a secret GitHub gist",
+        description: "Publish the session as a gist",
     },
     SlashItem {
         value: "/copy",
-        description: "copy last agent message to clipboard",
+        description: "Copy the last reply",
     },
     SlashItem {
         value: "/name ",
-        description: "set session display name",
+        description: "Show or set the session name",
     },
     SlashItem {
         value: "/changelog",
-        description: "show changelog entries",
+        description: "Show the workspace changelog",
     },
     SlashItem {
         value: "/hotkeys",
-        description: "show all keyboard shortcuts",
+        description: "Show keyboard shortcuts",
     },
     SlashItem {
         value: "/settings",
@@ -222,11 +199,7 @@ pub const SLASH_ITEMS: &[SlashItem] = &[
         // and permissions" for a panel that also holds thinking blocks and
         // plan — a list that stops early is the discoverability failure the
         // panel's own "more" row exists to prevent.
-        description: "six rows: model, thinking, theme, thinking blocks, permission preset, plan",
-    },
-    SlashItem {
-        value: "/scoped-models",
-        description: "enable/disable models for Ctrl+P cycling",
+        description: "Open the settings panel",
     },
     // The six below were parseable and in COMMAND_HEADS, and offered by no surface:
     // `/help` never printed them and the `/` autocomplete never suggested them. They are
@@ -251,35 +224,35 @@ pub const SLASH_ITEMS: &[SlashItem] = &[
         // Both gestures before the colon so the palette list after it stays
         // parseable (`every_palette_the_description_advertises_is_one_the_product_has`
         // splits on `: ` then `,` — a paren on the last item would read as a palette).
-        description: "switch palette (bare toggles; settings theme row keeps it): dark, light, high-contrast",
+        description: "Theme: dark, light, high-contrast",
     },
     SlashItem {
         value: "/expand",
-        description: "toggle tool output in the transcript (Ctrl+X)",
+        description: "Expand or collapse tool output",
     },
     SlashItem {
         value: "/templates",
-        description: "list prompt templates",
+        description: "List prompt templates",
     },
     SlashItem {
         value: "/branch",
-        description: "alias for /timeline — same branch browser",
+        description: "Browse and switch session branches",
     },
     SlashItem {
         value: "/exit",
-        description: "end the session and return to the shell",
+        description: "Exit Epsilon",
     },
     SlashItem {
         value: "/scoped_models",
-        description: "enable/disable models for Ctrl+P cycling (underscore spelling)",
+        description: "Choose models for F2 cycling",
     },
     SlashItem {
         value: "/preset",
-        description: "show or switch the permission preset (ADR-032)",
+        description: "Show or set the permission preset",
     },
     SlashItem {
         value: "/plan",
-        description: "show or switch plan mode: read-only research, off re-allows mutations (asks first)",
+        description: "Show or switch plan mode",
     },
 ];
 
@@ -335,6 +308,12 @@ pub enum Command {
     /// key. The name is checked against what is actually discovered, so a typo
     /// says so rather than writing a setting for a skill that does not exist.
     Skill(String),
+    /// `/subagent [<name> on|off]` — browse or enable bundled subagent roles.
+    ///
+    /// Same shape as `/skill`: the bare command opens the browser; the tail
+    /// names one role and an explicit state. The name is checked against the
+    /// bundled registry before anything is written.
+    Subagent(String),
     /// List installed prompt templates with their descriptions and argument hints.
     Templates,
     /// Search the session log (`/search <query>`); empty tail opens with guidance.
@@ -360,8 +339,6 @@ pub enum Command {
     Session,
     /// List delegated subagent tasks (state, turns, ids, cost) — M54, cost at M230.
     Tasks,
-    /// Navigate session tree (alias for timeline).
-    Tree,
     /// Set, show, or manage the session's one long-running goal.
     ///
     /// `/goal <objective>` creates and arms one; `/goal` alone shows it; the verbs are
@@ -380,15 +357,6 @@ pub enum Command {
     Export(Option<String>),
     /// Import a session JSONL (path in tail).
     Import(String),
-    /// Open a workspace directory in the window (`/open <dir>`; D-046/S-105).
-    ///
-    /// The tail carries a **directory path**, carried whole like `/resume` and `/import`.
-    /// Window-only: the terminal is bound to its process directory, so it refuses this
-    /// by name and says where the door lives. The executor validates (exists, is a
-    /// directory), asks (`yes` switches, anything else repeats without acting), and
-    /// switches through a fresh `resolve_launch` + `IdeSession::start` — the same
-    /// composition startup runs, so a switch behaves exactly like launching there.
-    Open(String),
     /// Put a file back to the checkpoint recorded before the agent's last write or edit.
     ///
     /// The tail carries a **path**, and carrying it whole is the safe choice here for the
@@ -456,7 +424,6 @@ pub const COMMAND_HEADS: &[&str] = &[
     "compact",
     "theme",
     "branch",
-    "tree",
     "goal",
     "fork",
     "clone",
@@ -469,7 +436,6 @@ pub const COMMAND_HEADS: &[&str] = &[
     "reload",
     "export",
     "import",
-    "open",
     // M277: the rollback half of a checkpoint, and a real command with a real executor.
     //
     // **The reason this line once carried is no longer true, and that matters more than the
@@ -508,6 +474,7 @@ pub const COMMAND_HEADS: &[&str] = &[
     // SLASH_ITEMS against the parser, and a command the palette does not offer
     // is a command a user has to guess the name of.
     "skill",
+    "subagent",
     "templates",
     "search",
     "logout",
@@ -534,6 +501,7 @@ pub const COMMAND_HEADS: &[&str] = &[
 pub const ALIAS_HEADS: &[&str] = &[
     "models",   // model
     "timeline", // branch
+    "tree",     // branch (session tree spelling)
     "auth",     // login
     "connect",  // login
     "quit",     // exit
@@ -541,6 +509,7 @@ pub const ALIAS_HEADS: &[&str] = &[
     // The dashed spelling of `scoped_models`, which is in COMMAND_HEADS. Offered by no
     // surface and named by no list until now: only `ALIAS_HEADS` says the parser has it.
     "scoped-models", // scoped_models
+    "subagents",     // subagent
     "?",             // help
 ];
 
@@ -598,8 +567,7 @@ pub fn parse_command(input: &str) -> Option<Command> {
         } else {
             Some(tail.to_string())
         })),
-        "timeline" | "branch" => Some(Command::Timeline),
-        "tree" => Some(Command::Tree),
+        "timeline" | "branch" | "tree" => Some(Command::Timeline),
         "goal" => Some(Command::Goal(if tail.is_empty() {
             None
         } else {
@@ -628,7 +596,6 @@ pub fn parse_command(input: &str) -> Option<Command> {
             Some(tail.to_string())
         })),
         "import" => Some(Command::Import(tail.to_string())),
-        "open" => Some(Command::Open(tail.to_string())),
         "restore" => Some(Command::Restore(tail.to_string())),
         "changes" => Some(Command::Changes(tail.to_string())),
         "undo-turn" => Some(Command::UndoTurn(tail.to_string())),
@@ -660,6 +627,7 @@ pub fn parse_command(input: &str) -> Option<Command> {
         "skills" => Some(Command::Skills),
         "catalog" => Some(Command::Catalog),
         "skill" => Some(Command::Skill(tail.to_string())),
+        "subagent" | "subagents" => Some(Command::Subagent(tail.to_string())),
         "templates" => Some(Command::Templates),
         "search" => Some(Command::Search(tail.to_string())),
         "login" | "auth" | "connect" => {
@@ -740,10 +708,11 @@ mod tests {
     /// **A command that parses but is never offered is a command the user is not told exists.**
     ///
     /// The two checks above cover `COMMAND_HEADS` ↔ `parse_command`. Neither of them mentions
-    /// [`SLASH_ITEMS`], and that is where the gap was: `SLASH_ITEMS` is what `/help` prints and
-    /// what the `/` autocomplete suggests, so a head missing from it is a command that works when
-    /// typed and is invisible everywhere the product volunteers it. `theme` and `templates` were
-    /// both in that state — parseable, in `COMMAND_HEADS`, and offered by no surface.
+    /// [`SLASH_ITEMS`], and that is where the gap was: `SLASH_ITEMS` is what the `/` autocomplete
+    /// and the command palette draw (with their descriptions), so a head missing from it is a
+    /// command that works when typed and has no row in either menu. (`/help` prints the grouped
+    /// heads and guide lines; it does not print these descriptions.) `theme` and `templates`
+    /// were both in that state — parseable, in `COMMAND_HEADS`, and offered by no menu.
     ///
     /// The match allows a trailing space because that is how an argument-taking command is
     /// spelled (`"/model "`). Anything else would make this test fail on correct data.
@@ -757,7 +726,7 @@ mod tests {
             assert!(
                 offered,
                 "`{needle}` parses and is in COMMAND_HEADS but is absent from SLASH_ITEMS, so \
-                 /help never lists it and the `/` autocomplete never suggests it"
+                 neither the `/` autocomplete nor the palette offers it"
             );
         }
     }
@@ -864,7 +833,7 @@ mod tests {
             Some(Command::Resume("/tmp/s.json".into()))
         );
         assert_eq!(parse_command("/session"), Some(Command::Session));
-        assert_eq!(parse_command("/tree"), Some(Command::Tree));
+        assert_eq!(parse_command("/tree"), Some(Command::Timeline));
         assert_eq!(parse_command("/clone"), Some(Command::Clone));
         assert_eq!(parse_command("/fork"), Some(Command::Fork(None)));
         assert_eq!(
@@ -884,13 +853,6 @@ mod tests {
         assert_eq!(
             parse_command("/import ./in.jsonl"),
             Some(Command::Import("./in.jsonl".into()))
-        );
-        // D-046/S-105: the window's workspace door. The tail is a directory path,
-        // carried whole like `/resume` and `/import` — splitting a path is how
-        // `src/my dir` becomes two arguments and a switch to nowhere.
-        assert_eq!(
-            parse_command("/open ../other"),
-            Some(Command::Open("../other".into()))
         );
         assert_eq!(parse_command("/share"), Some(Command::Share));
         assert_eq!(parse_command("/copy"), Some(Command::Copy));
@@ -1019,6 +981,25 @@ mod tests {
             parse_command("/skills"),
             Some(Command::Skills),
             "the listing is not the toggle"
+        );
+    }
+
+    /// `/subagent` is the same shape as `/skill`: browser bare, toggle with a name.
+    #[test]
+    fn a_subagent_toggle_takes_a_name_and_an_explicit_state() {
+        assert_eq!(
+            parse_command("/subagent"),
+            Some(Command::Subagent(String::new())),
+            "bare /subagent opens the browser"
+        );
+        assert_eq!(
+            parse_command("/subagent explore on"),
+            Some(Command::Subagent("explore on".to_string()))
+        );
+        assert_eq!(
+            parse_command("/subagents review off"),
+            Some(Command::Subagent("review off".to_string())),
+            "the plural spelling is the same command"
         );
     }
 

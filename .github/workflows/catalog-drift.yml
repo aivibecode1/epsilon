@@ -51,12 +51,12 @@ jobs:
       - name: Detect drift
         id: diff
         run: |
-          if git diff --quiet crates/epsilon-llm/src/catalog/catalog_data.rs; then
+          if git diff --quiet crates/epsilon-llm/src/catalog/catalog_data.rs crates/epsilon-llm/src/catalog/retired_ids.rs; then
             echo "changed=false" >> "$GITHUB_OUTPUT"
             echo "No drift: registry matches the bundled catalog."
           else
             echo "changed=true" >> "$GITHUB_OUTPUT"
-            git diff --stat crates/epsilon-llm/src/catalog/catalog_data.rs
+            git diff --stat crates/epsilon-llm/src/catalog/catalog_data.rs crates/epsilon-llm/src/catalog/retired_ids.rs
           fi
 
       - name: Push the refreshed catalog to the standing PR branch
@@ -65,7 +65,7 @@ jobs:
           git config user.name "epsilon-bot"
           git config user.email "aivibecode@hotmail.com"
           git checkout -B catalog-drift/latest
-          git add crates/epsilon-llm/src/catalog/catalog_data.rs
+          git add crates/epsilon-llm/src/catalog/catalog_data.rs crates/epsilon-llm/src/catalog/retired_ids.rs
           git commit -m "chore(catalog): regenerate from models.dev ($(date -u +%F))"
           git push --force origin catalog-drift/latest
 

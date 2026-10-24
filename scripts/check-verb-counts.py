@@ -17,8 +17,9 @@ So the leg stays and checks the removal itself. It fails when:
   reopening ADR-039 and restoring the gates that read it);
 * the workspace still members `epsilon-desktop` or still pins the
   desktop-only GUI stack (`eframe`, `egui`);
-* the retired matrix no longer carries its retirement banner (history must
-  say it is history, or a reader will cite frozen rows as current).
+* the retired matrix is put back: the desktop history was removed with the
+  documentation consolidation on 2026-10-18, so a new `dsh-desktop.md` would
+  be an archive of frozen rows beside the live docs.
 
 This is the removal control for the deletion: it was written first, failed
 against the tree that still had the desktop (RED), and passes only when the
@@ -37,8 +38,6 @@ import sys
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 RETIRED_MATRIX = os.path.join(ROOT, "docs", "parity", "dsh-desktop.md")
-BANNER = "RETIRED"
-ADR = "ADR-039"
 
 
 def main() -> int:
@@ -71,16 +70,10 @@ def main() -> int:
                 problems.append(f"Cargo.toml still pins desktop-only '{pin}'")
                 break
 
-    try:
-        with open(RETIRED_MATRIX, encoding="utf-8") as f:
-            matrix = f.read()
-    except OSError:
-        problems.append("docs/parity/dsh-desktop.md is missing entirely")
-        matrix = ""
-    if matrix and (BANNER not in matrix or ADR not in matrix):
+    if os.path.exists(RETIRED_MATRIX):
         problems.append(
-            "docs/parity/dsh-desktop.md carries no retirement banner "
-            f"('{BANNER}' + '{ADR}')"
+            "docs/parity/dsh-desktop.md exists again; the retired desktop matrix was "
+            "removed with the documentation consolidation (2026-10-18)"
         )
 
     if problems and not args.quiet:

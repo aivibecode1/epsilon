@@ -492,6 +492,7 @@ fn resolved_labels(
 /// not "which one is this", which is the question you actually have when a skill
 /// works in one repository and not in another — or when you are trying to decide
 /// whether to delete the one in `~/.config`.
+#[cfg(test)]
 pub(crate) fn skill_lines(
     skills: &[epsilon_core::skills::Skill],
     disabled: &[String],
@@ -516,7 +517,7 @@ pub(crate) fn skill_lines(
             // is on the parent. Asking for `s.dir` itself returns `None` for every skill
             // ever discovered, which is how this shipped as "always show the path" while
             // reading as though it labelled scopes.
-            if let Some(scope) = user_scope.get(s.dir.parent().unwrap_or(&s.dir)) {
+            if let Some(scope) = user_scope.get(s.root()) {
                 line.push_str(&format!(" ({scope})"));
             } else {
                 // Under neither anchor we know: the workspace changed under a
@@ -545,6 +546,7 @@ pub(crate) fn skill_lines(
 /// of the roots, so a skill that came from `~/.claude/skills` showed a full path
 /// where its neighbours showed `(user)`, which reads as a different kind of thing
 /// rather than the same thing from another tool.
+#[cfg(test)]
 pub(crate) fn skill_scope_by_dir(
     workspace_root: &std::path::Path,
 ) -> std::collections::HashMap<std::path::PathBuf, &'static str> {
@@ -559,6 +561,78 @@ pub(crate) fn skill_scope_by_dir(
 }
 
 impl App {
+    /// Re-read every skill root and rebuild the catalog and `skill` tool.
+    ///
+    /// One caller-visible rule: the same roots, the same trust bit and the same
+    /// disabled list feed discovery, the catalog and the tool. `/reload` and a
+    /// built-in toggle both come through here so installing a bundled skill
+    /// takes effect on the next turn without a restart.
+    fn reload_skill_catalog(&mut self, agent: &Arc<Agent>, config_dir: Option<&std::path::Path>) {
+        let mut extra_dirs = config_dir
+            .map(epsilon_core::config::load_extra_skill_dirs_in)
+            .unwrap_or_default();
+        // `user_roots` reads the real global dir. When a test (or an embedding
+        // frontend) supplies a different config dir, the built-in install root
+        // must follow that override or `builtin_skills::install` writes a file
+        // discovery never scans. Production passes no override, so this is a
+        // no-op there; `dedupe_roots` drops the duplicate when it is not.
+        if let Some(dir) = config_dir {
+            let builtin_root = epsilon_core::builtin_skills::root_in(dir);
+            if !extra_dirs.contains(&builtin_root) {
+                extra_dirs.push(builtin_root);
+            }
+        }
+        let roots = epsilon_core::skills::all_roots_with_extra(
+            &self.workspace_root,
+            !self.trust_review_pending,
+            &extra_dirs,
+        );
+        let found = epsilon_core::skills::discover_with_notices(&roots);
+        agent.set_skills(found.skills);
+        let disabled = config_dir
+            .map(epsilon_core::config::load_disabled_skills_in)
+            .unwrap_or_default();
+        epsilon_runtime::sync_skill_tool(agent, &agent.skills(), &disabled);
+        self.refresh_skills(agent);
+        for notice in &found.notices {
+            self.ui.push_notice(notice.clone());
+        }
+    }
+
+    /// Re-read the agent-definition roots and hand the result to the agent.
+    ///
+    /// The built-in subagent root moves with the config dir, like the skill root:
+    /// a test override must not discover the developer's real roles.
+    fn reload_agent_catalog(
+        &mut self,
+        agent: &Arc<Agent>,
+        config_dir: Option<&std::path::Path>,
+    ) -> usize {
+        let user_roots = if let Some(dir) = config_dir {
+            vec![
+                epsilon_core::builtin_subagents::root_in(dir),
+                dir.join("agents"),
+            ]
+        } else {
+            epsilon_runtime::agent_user_roots()
+        };
+        let project_roots = [
+            self.workspace_root.join(".agents").join("agents"),
+            self.workspace_root.join(".epsilon").join("agents"),
+        ];
+        let found = epsilon_core::agents::discover_agents_with_notices(
+            &user_roots,
+            &project_roots,
+            !self.trust_review_pending,
+        );
+        for notice in &found.notices {
+            self.ui.push_notice(notice.clone());
+        }
+        let count = found.agents.len();
+        agent.set_agents(found.agents);
+        count
+    }
+
     /// Best fuzzy guess for an unknown slash word among loaded prompt files
     /// (custom commands first, then templates).
     ///
@@ -754,6 +828,40 @@ fn goal_lines(view: &epsilon_contracts::goal::GoalView) -> Vec<String> {
 }
 
 impl App {
+    /// Refuse an exit that would orphan a run or a dirty file-editor buffer.
+    ///
+    /// **Every route that returns from the TUI uses this check.** `Ctrl+Q` and
+    /// `/quit` are the same gesture with two spellings, and a check that lives
+    /// in one of them is a check the other one can drift past.
+    ///
+    /// `quit_refused` keeps the result visible when a file viewer covers the
+    /// transcript: the notice is pushed to the transcript, and the viewer is a
+    /// panel centred over the transcript band (`app.rs`), so a refusal the
+    /// reader cannot see is a refusal they will press again.
+    pub(super) fn request_quit(&mut self, agent: &Arc<Agent>) -> bool {
+        if self.ui.running() || agent.is_running() {
+            self.quit_refused = true;
+            self.ui
+                .push_notice("quit: a run is in flight — Esc aborts it, then quit again");
+            return false;
+        }
+        if self
+            .viewer_tabs
+            .iter()
+            .any(|viewer| viewer.is_dirty() || viewer.has_unsaved())
+        {
+            self.quit_refused = true;
+            self.ui.push_notice(
+                "quit: unsaved file edits in open tabs — save or explicitly close/discard each tab first",
+            );
+            return false;
+        }
+        // The exit is allowed, so the refusal is over: the footer's mode word
+        // must not outlive the decision that set it.
+        self.quit_refused = false;
+        true
+    }
+
     /// Route a parsed slash command to the executor that owns it.
     ///
     /// Replies are pushed synchronously into the transcript so they render on the very next
@@ -782,7 +890,6 @@ impl App {
             | crate::picker::Command::Resume(_)
             | crate::picker::Command::Sessions
             | crate::picker::Command::Session
-            | crate::picker::Command::Tree
             | crate::picker::Command::Clone
             | crate::picker::Command::Reload
             | crate::picker::Command::Name(_)
@@ -790,6 +897,9 @@ impl App {
             // `/skill` that only printed would leave a setting nothing could
             // change -- the "advertised but read by nothing" shape.
             | crate::picker::Command::Skill(_)
+            // `/subagent` writes or removes an agent definition, so it is the same
+            // kind of switch as `/skill`, not a view.
+            | crate::picker::Command::Subagent(_)
             // M203: mutates the session's goal, and the bare form reads it. It lives here
             // rather than with the view commands because half its verbs write.
             | crate::picker::Command::Goal(_)
@@ -914,6 +1024,19 @@ impl App {
         self.picker_index = 0;
         self.picker_provider = None;
         self.picker_open = true;
+        // Target the provider the session is actually on when it can be
+        // fetched. `/catalog` promises that opening the picker refreshes the
+        // current provider; without this the fetch followed row 0, which is
+        // often another provider entirely.
+        if let Some(provider) = epsilon_llm::catalog::lookup_model(&self.model_id)
+            .map(|m| m.provider)
+            .filter(|p| epsilon_llm::catalog::live_listing_available(p))
+            && let Some(index) = crate::picker::build_provider_rows(&self.model_id, &self.customs)
+                .iter()
+                .position(|row| row.id == provider)
+        {
+            self.picker_index = index;
+        }
         // M20 auto-fetch (opencode/Hermes convention): the highlighted
         // provider's live list starts refreshing immediately, so by the
         // time the user descends into it the rows are current.
@@ -1134,9 +1257,9 @@ impl App {
     /// Session-identity commands.
     fn run_session_command(&mut self, agent: &Arc<Agent>, command: crate::picker::Command) -> bool {
         match command {
-            crate::picker::Command::Sessions
-            | crate::picker::Command::Session
-            | crate::picker::Command::Tree => self.run_navigate_command(agent, command),
+            crate::picker::Command::Sessions | crate::picker::Command::Session => {
+                self.run_navigate_command(agent, command)
+            }
             crate::picker::Command::Fork(_)
             | crate::picker::Command::Clone
             | crate::picker::Command::Name(_) => self.run_branch_command(agent, command),
@@ -1161,6 +1284,101 @@ impl App {
                     self.ui.push_notice("usage: /skill <name> on|off");
                     return false;
                 }
+                // Skills-disabled stays user-global by design, but a test override
+                // diverts it like every other TUI write — otherwise any test
+                // driving `/skill off` writes the developer's real config.
+                let dir = self
+                    .config_dir_override
+                    .clone()
+                    .or_else(epsilon_core::config::global_dir);
+
+                // **A bundled skill is enabled by installing its file, not by
+                // writing a disable-list entry.** Presence is the switch, so a
+                // built-in never exists on disk until the user asks for it. A
+                // discovered skill of the same name outranks the bundled copy
+                // (the built-in root is first in `user_roots`), so the user's
+                // own file stays the active one.
+                if let Some(builtin) = epsilon_core::builtin_skills::find(name) {
+                    let installed_now = dir
+                        .as_ref()
+                        .is_some_and(|d| epsilon_core::builtin_skills::installed(builtin.name, d));
+                    let discovered_same = agent.skills().iter().any(|s| s.name == builtin.name);
+                    if installed_now || !discovered_same {
+                        let Some(dir) = dir else {
+                            self.ui.push_notice(
+                                "no home directory resolved; cannot install a built-in",
+                            );
+                            return false;
+                        };
+                        let outcome = if want_off {
+                            epsilon_core::builtin_skills::remove(builtin.name, &dir)
+                        } else {
+                            epsilon_core::builtin_skills::install(builtin.name, &dir).map(|_| true)
+                        };
+                        match outcome {
+                            Ok(existed) if want_off && !existed => {
+                                self.ui.push_notice(format!(
+                                    "built-in {} was not installed; nothing to disable",
+                                    builtin.name
+                                ));
+                            }
+                            Ok(_) => {
+                                // A stale disable entry from an older version
+                                // would hide the copy that was just written.
+                                let stale = epsilon_core::config::load_disabled_skills_in(&dir)
+                                    .iter()
+                                    .any(|n| n == builtin.name);
+                                let cleared = if stale {
+                                    epsilon_core::config::set_skill_disabled_in(
+                                        &dir,
+                                        builtin.name,
+                                        false,
+                                    )
+                                } else {
+                                    Ok(false)
+                                };
+                                self.reload_skill_catalog(agent, Some(&dir));
+                                let where_ = epsilon_core::builtin_skills::root_in(&dir)
+                                    .join(builtin.name)
+                                    .display()
+                                    .to_string();
+                                let state = if want_off { "disabled" } else { "enabled" };
+                                let mut line = format!(
+                                    "built-in {state}: {} — {}",
+                                    builtin.name, builtin.description
+                                );
+                                if !want_off {
+                                    let active = agent.skills().iter().any(|s| {
+                                        s.name == builtin.name
+                                            && s.root()
+                                                == epsilon_core::builtin_skills::root_in(&dir)
+                                    });
+                                    if !active {
+                                        line.push_str(
+                                            " (installed, but a skill of the same name elsewhere \
+                                             takes precedence)",
+                                        );
+                                    }
+                                }
+                                if !want_off {
+                                    line.push_str(&format!(" · {where_}"));
+                                }
+                                if let Err(e) = cleared {
+                                    line.push_str(&format!(
+                                        " · warning: could not clear a disabled entry: {e}"
+                                    ));
+                                }
+                                self.ui.push_notice(line);
+                            }
+                            Err(e) => self.ui.push_notice(format!(
+                                "could not {state} built-in {name}: {e}",
+                                state = if want_off { "disable" } else { "enable" }
+                            )),
+                        }
+                        return false;
+                    }
+                }
+
                 // **The name must be one that EXISTS.** Writing a disable for a
                 // skill nothing provides would produce a setting that does
                 // nothing, and that reads back as a disabled skill the user
@@ -1173,26 +1391,91 @@ impl App {
                     ));
                     return false;
                 }
-                // Skills-disabled stays user-global by design, but a test override
-                // diverts it like every other TUI write — otherwise any test
-                // driving `/skill off` writes the developer's real config.
-                let disabled = self
-                    .config_dir_override
-                    .clone()
-                    .or_else(epsilon_core::config::global_dir)
-                    .map(|dir| epsilon_core::config::set_skill_disabled_in(&dir, name, want_off))
+                let disabled = dir
+                    .as_ref()
+                    .map(|dir| epsilon_core::config::set_skill_disabled_in(dir, name, want_off))
                     .unwrap_or_else(|| Err("no home directory resolved".to_string()));
                 match disabled {
-                    Ok(_) => self.ui.push_notice(format!(
-                        "{name} {} — takes effect on the next turn",
-                        if want_off { "off" } else { "on" }
-                    )),
+                    Ok(_) => {
+                        if let Some(dir) = dir {
+                            // Rebuild the catalog and the tool together. The
+                            // catalog used to keep advertising a skill the tool
+                            // had just refused; one switch, one answer.
+                            self.reload_skill_catalog(agent, Some(&dir));
+                        }
+                        self.ui.push_notice(format!(
+                            "{name} {} — takes effect on the next turn",
+                            if want_off { "off" } else { "on" }
+                        ));
+                    }
                     Err(e) => self.ui.push_notice(format!("could not change {name}: {e}")),
                 }
                 // `run_session_command` returns `bool` = "quit". `/skill` changes
                 // a setting and leaves the composer alone, so it must answer
                 // `false` -- a `true` here ended the session, which the
                 // all-commands sweep caught immediately.
+                false
+            }
+            crate::picker::Command::Subagent(arg) => {
+                let arg = arg.trim();
+                let dir = self
+                    .config_dir_override
+                    .clone()
+                    .or_else(epsilon_core::config::global_dir);
+                if arg.is_empty() || arg.eq_ignore_ascii_case("list") {
+                    self.catalog = Some(super::catalog::CatalogPanel::subagents(dir.as_deref()));
+                    return false;
+                }
+                let (name, want_off) = match arg.rsplit_once(char::is_whitespace) {
+                    Some((n, "off")) | Some((n, "disable")) => (n.trim(), true),
+                    Some((n, "on")) | Some((n, "enable")) => (n.trim(), false),
+                    _ => {
+                        self.ui.push_notice(
+                            "usage: /subagent [<name> on|off] — bare opens the browser",
+                        );
+                        return false;
+                    }
+                };
+                if name.is_empty() {
+                    self.ui.push_notice("usage: /subagent <name> on|off");
+                    return false;
+                }
+                let Some(role) = epsilon_core::builtin_subagents::find(name) else {
+                    self.ui.push_notice(format!(
+                        "no built-in subagent named '{name}' — `/subagent` lists what is available"
+                    ));
+                    return false;
+                };
+                let Some(dir) = dir else {
+                    self.ui
+                        .push_notice("no home directory resolved; cannot install a subagent");
+                    return false;
+                };
+                let outcome = if want_off {
+                    epsilon_core::builtin_subagents::remove(role.name, &dir)
+                } else {
+                    epsilon_core::builtin_subagents::install(role.name, &dir).map(|_| true)
+                };
+                match outcome {
+                    Ok(false) if want_off => self.ui.push_notice(format!(
+                        "subagent {} was not installed; nothing to disable",
+                        role.name
+                    )),
+                    Ok(_) => {
+                        let count = self.reload_agent_catalog(agent, Some(&dir));
+                        self.ui.push_notice(format!(
+                            "subagent {} {} · {count} agent definition(s) active · \
+                             the task tool sees it on the next turn",
+                            role.name,
+                            if want_off { "disabled" } else { "enabled" }
+                        ));
+                    }
+                    Err(e) => self.ui.push_notice(format!(
+                        "could not {} subagent {}: {e}",
+                        if want_off { "disable" } else { "enable" },
+                        role.name
+                    )),
+                }
                 false
             }
             crate::picker::Command::Goal(arg) => {
@@ -1654,9 +1937,6 @@ impl App {
                     self.ui.push_notice(line);
                 }
             }
-            crate::picker::Command::Tree => {
-                let _ = self.open_timeline_picker(agent, "tree", None);
-            }
             // `run_command` owns the routing, so reaching a variant here means the
             // dispatcher sent it to the wrong executor. `debug_assert` catches that in
             // every test build and stays silent in release - a user's release binary
@@ -2085,25 +2365,13 @@ impl App {
                     .config_dir_override
                     .clone()
                     .or_else(epsilon_core::config::global_dir);
-                let roots = epsilon_core::skills::all_roots_with_extra(
-                    &self.workspace_root,
-                    !self.trust_review_pending,
-                    &extra_dir
-                        .map(|d| epsilon_core::config::load_extra_skill_dirs_in(&d))
-                        .unwrap_or_default(),
-                );
-                let found = epsilon_core::skills::discover_with_notices(&roots);
-                let n = found.skills.len();
-                agent.set_skills(found.skills);
-                self.refresh_skills(agent);
-                // The transcript, like every other reply in this file (`run_command`'s own doc:
-                // synchronous so they render on the very next frame, leaving the notices channel
-                // for async events). Discovery's lines are already formatted as whole sentences
-                // naming the root and the reason, so they are pushed verbatim rather than
-                // re-worded into a second vocabulary — this is forwarding, not authoring.
-                for notice in &found.notices {
-                    self.ui.push_notice(notice.clone());
-                }
+                // One discovery path for `/reload`, `/skill on|off` and a
+                // built-in install. The helper rebuilds the catalog and the tool
+                // from the same roots and the same disabled list, and forwards
+                // discovery's notices — the transcript is where a root that
+                // could not be read has to appear.
+                self.reload_skill_catalog(agent, extra_dir.as_deref());
+                let n = agent.skills().len();
                 // Templates reload with the skills: both are markdown in the same two
                 // directories, and a user who edits one and types `/reload` expects both.
                 // Custom commands ride the same refresh (they merge into the same
@@ -2121,38 +2389,11 @@ impl App {
                     }
                     self.ui.push_notice(line);
                 }
-                // M50: agent defs reload alongside skills (same roots pattern —
-                // global always, project pair gated by the trust bit pi's
-                // agentScope maps onto: trust_review_pending means untrusted).
-                //
-                // `discover_agents_with_notices`, not the wrapper, for the same reason as the
-                // skill call above: the comment that used to sit here said this needed a
-                // `Discovered`-shaped return in `epsilon-core`, and that is what landed
-                // (`agents::Discovered`, a sibling of `skills::Discovered`). A `.md` that will
-                // not parse, or an agents root nobody can read, used to produce a count and no
-                // reason here — the same silent failure the skill path had already fixed one
-                // line of code above. Forwarded verbatim through `push_notice` for the same
-                // reason: `run_command`'s own doc reserves the async notices channel for async
-                // events, so the transcript is where a person reads this, above the count.
-                let found = epsilon_core::agents::discover_agents_with_notices(
-                    &{
-                        let mut r = Vec::new();
-                        if let Some(dir) = epsilon_core::config::global_dir() {
-                            r.push(dir.join("agents"));
-                        }
-                        r
-                    },
-                    &[
-                        self.workspace_root.join(".agents").join("agents"),
-                        self.workspace_root.join(".epsilon").join("agents"),
-                    ],
-                    !self.trust_review_pending,
-                );
-                for notice in &found.notices {
-                    self.ui.push_notice(notice.clone());
-                }
-                let an = found.agents.len();
-                agent.set_agents(found.agents);
+                // M50: agent defs reload alongside skills, through the same
+                // override-or-global directory. The built-in subagent root is part
+                // of that table now, so a subagent enabled with `/subagent` is
+                // visible to the next `task` call without a restart.
+                let an = self.reload_agent_catalog(agent, extra_dir.as_deref());
                 // G6: re-read keybindings.json so a remap takes effect without restart (pi reload()).
                 let kb_before = self.keybindings.effective();
                 self.keybindings.reload();
@@ -2231,13 +2472,10 @@ impl App {
             crate::picker::Command::Quit => {
                 // Quitting mid-run would orphan the turn (and drop a pending
                 // ask, which resolves to deny) — refuse with the way out
-                // named instead. Esc aborts the run; then quit lands.
-                if self.ui.running() || agent.is_running() {
-                    self.ui
-                        .push_notice("quit: a run is in flight — Esc aborts it, then quit again");
-                    return false;
-                }
-                return true;
+                // named instead. Esc aborts the run; then quit lands. The
+                // same check serves `Ctrl+Q`, so the two spellings cannot
+                // drift apart.
+                return self.request_quit(agent);
             }
             crate::picker::Command::Theme(arg) => {
                 // The palette is a **view** choice, not session state, so it is applied to the
@@ -2338,17 +2576,6 @@ impl App {
                 self.ui.push_notice(format!(
                     "unknown command '/{word}'{hint} — /help lists commands"
                 ));
-            }
-            // Window-only, refused by name (D-046/S-105): the terminal is bound to
-            // its process directory, so there is no workspace to switch to here.
-            // The sentence names the door rather than leaving a bare unknown —
-            // and `/resume <path>` for opening another *session*.
-            crate::picker::Command::Open(_) => {
-                self.ui.push_notice(
-                    "/open switches workspaces in the desktop window — here the workspace \
-                     is this shell's directory; /resume <path> opens another session"
-                        .to_string(),
-                );
             }
             crate::picker::Command::Editor => {
                 self.request_external_editor();
@@ -2941,42 +3168,26 @@ impl App {
                         "session",
                         &["/new", "/resume", "/sessions", "/clone", "/fork", "/name"],
                     ),
-                    (
-                        "history",
-                        &[
-                            "/session",
-                            "/tree",
-                            "/timeline",
-                            "/branch",
-                            "/clear",
-                            "/compact",
-                        ],
-                    ),
+                    ("history", &["/session", "/branch", "/clear", "/compact"]),
                     (
                         "model",
-                        &["/models", "/model", "/think", "/scoped-models", "/catalog"],
+                        &["/models", "/model", "/think", "/scoped_models", "/catalog"],
                     ),
-                    ("auth", &["/login", "/logout", "/connect", "/auth"]),
+                    ("auth", &["/login", "/logout"]),
                     (
                         "files",
                         &["/editor", "/export", "/import", "/share", "/copy"],
                     ),
                     (
                         "review",
-                        &[
-                            "/changes",
-                            "/restore",
-                            "/undo-turn",
-                            "/trust",
-                            "/reload",
-                            "/open",
-                        ],
+                        &["/changes", "/restore", "/undo-turn", "/trust", "/reload"],
                     ),
                     (
                         "agent",
                         &[
                             "/skills",
                             "/skill",
+                            "/subagent",
                             "/tasks",
                             "/goal",
                             "/plan",
@@ -2988,10 +3199,7 @@ impl App {
                         "meta",
                         &["/help", "/hotkeys", "/settings", "/theme", "/expand"],
                     ),
-                    (
-                        "system",
-                        &["/search", "/changelog", "/quit", "/exit", "/scoped_models"],
-                    ),
+                    ("system", &["/search", "/changelog", "/exit"]),
                 ];
                 #[cfg(debug_assertions)]
                 {
@@ -3020,8 +3228,7 @@ impl App {
                                 .unwrap_or(name)
                         })
                         .collect();
-                    self.ui
-                        .push_notice(format!("{label} — {}", row.join(" · ")));
+                    self.ui.push_notice(format!("{label} — {}", row.join(" ")));
                 }
                 // `String`, because the F-key line is resolved from the binding
                 // table rather than written (see the format! below).
@@ -3190,43 +3397,18 @@ impl App {
                 );
             }
             crate::picker::Command::Skills => {
-                // M196: this printed `names.join(", ")`, discarding a description
-                // the `Skill` struct already carries. The repo had solved this
-                // exact problem for `/templates` one command away (`/name —
-                // description`), so a user could read what a template does and
-                // not what a skill does.
-                let skills = agent.skills();
-                let scoped = skill_scope_by_dir(&self.workspace_root);
-                if skills.is_empty() {
-                    // Name the roots, not just one of them: "drop a SKILL.md into
-                    // `.epsilon/skills/`" was true and incomplete, and a user with a
-                    // skill in `~/.claude/skills` was told to create a directory that
-                    // already existed. Discovery reads every harness convention
-                    // (`skills::user_roots` / `project_roots`), so the honest instruction
-                    // is "put it in any of them" — with the portable pair named, because
-                    // a skill there is the one every tool including this one will read.
-                    let project = self.workspace_root.join(".agents").join("skills");
-                    let user = epsilon_core::config::home_dir()
-                        .map(|h| h.join(".agents").join("skills").display().to_string())
-                        .unwrap_or_else(|| "~/.agents/skills".to_string());
-                    self.ui.push_notice(format!(
-                        "no skills discovered — drop SKILL.md dirs into {} or {user} \
-                         (also read: .epsilon, .claude, .codex, .gemini, .cursor, \
-                         .windsurf, .opencode, .dsh, each under the workspace and your \
-                         home directory)",
-                        project.display()
-                    ));
-                } else {
-                    let disabled = epsilon_core::config::load_disabled_skills();
-                    for line in skill_lines(&skills, &disabled, &scoped) {
-                        self.ui.push_notice(line);
-                    }
-                    let on = skills.len() - disabled.len().min(skills.len());
-                    self.ui.push_notice(format!(
-                        "{on} of {} enabled · toggle one with `/skill <name> off|on` · `/reload` re-reads the roots",
-                        skills.len()
-                    ));
-                }
+                // The browser, not a wall of notices. The list and the reason
+                // for the selected row share one panel; `/skill` remains the
+                // only writer, so this view cannot drift from it.
+                let dir = self
+                    .config_dir_override
+                    .clone()
+                    .or_else(epsilon_core::config::global_dir);
+                self.catalog = Some(super::catalog::CatalogPanel::skills(
+                    agent,
+                    dir.as_deref(),
+                    &self.workspace_root,
+                ));
             }
             crate::picker::Command::Templates => {
                 // Descriptions, not just names. A template's whole purpose is that you can
@@ -3326,10 +3508,17 @@ impl App {
                     .keybindings
                     .key_text("app.clear")
                     .unwrap_or_else(|| "ctrl+c".to_string());
+                let refresh_key = self
+                    .keybindings
+                    .key_text("app.live.refresh")
+                    .unwrap_or_else(|| "ctrl+g".to_string());
                 for line in [
                     "hotkeys: Enter submit · Esc stops run (quits idle) · Ctrl+X expands output (/expand)".to_string(),
                     "         PgUp/PgDn scroll · Ctrl+M model (/models) · Ctrl+P palette · Ctrl+T think (/think)".to_string(),
                     "         Ctrl+U kill to start · Ctrl+W kill word · Ctrl+Y yank · Ctrl+F favorite".to_string(),
+                    format!(
+                        "         {refresh_key} refreshes the live model list while /models is open"
+                    ),
                     format!(
                         "         {filter_key} filters transcript · {clear_key} clears draft (/clear clears transcript, totals kept)"
                     ),
@@ -3555,7 +3744,11 @@ impl App {
                 let dest: std::path::PathBuf = if raw_path.is_empty() {
                     // default: <workspace>/.epsilon/exports/session-<id>.{html,json}
                     let id = epsilon_contracts::new_id("export");
-                    let ext = if fmt == "html" { "html" } else { "json" };
+                    let ext = match fmt.as_str() {
+                        "html" => "html",
+                        "jsonl" => "jsonl",
+                        _ => "json",
+                    };
                     self.workspace_root
                         .join(".epsilon")
                         .join("exports")
@@ -3586,11 +3779,16 @@ impl App {
                     let result = (|| -> Result<usize, String> {
                         let store = agent.session_store().ok_or("no session store attached")?;
                         let guard = store.lock().map_err(|_| "store unavailable")?;
-                        epsilon_session::export::write_json(&guard, &dest)
+                        if fmt == "jsonl" {
+                            epsilon_session::export::write_jsonl(&guard, &dest)
+                        } else {
+                            epsilon_session::export::write_json(&guard, &dest)
+                        }
                     })();
                     match result {
                         Ok(n) => self.ui.push_notice(format!(
-                            "exported json → {} ({} entries)",
+                            "exported {} → {} ({} entries)",
+                            if fmt == "jsonl" { "jsonl" } else { "json" },
                             dest.display(),
                             n
                         )),
@@ -3770,6 +3968,133 @@ mod tests {
             handle_key(app, agent, key(KeyCode::Char(c)));
         }
         handle_key(app, agent, key(KeyCode::Enter))
+    }
+
+    /// **The built-in contract:** a bundled skill is absent from disk and from
+    /// the prompt until the user enables it, then behaves like any other skill.
+    ///
+    /// Asserted through the real command path and the real frame, not by calling
+    /// the installer directly: the risk is a listing that promises a switch the
+    /// handler does not implement.
+    #[tokio::test]
+    async fn a_builtin_skill_is_off_until_enabled_and_off_again_after_disable() {
+        let (mut app, agent, _) = test_app();
+        let cfg = app
+            .config_dir_override
+            .clone()
+            .expect("the fixture pins a config dir");
+        let name = "verify-before-claim";
+        assert!(
+            !epsilon_core::builtin_skills::installed(name, &cfg),
+            "a built-in must not exist before the user asks"
+        );
+
+        assert!(!type_and_enter(&mut app, &agent, "/skills"));
+        let screen = frame(&mut app, 120, 40);
+        assert!(screen.contains(name), "the built-in is offered: {screen}");
+        assert!(screen.contains("[off]"), "and marked off: {screen}");
+
+        handle_key(&mut app, &agent, key(KeyCode::Esc));
+        assert!(!type_and_enter(
+            &mut app,
+            &agent,
+            "/skill verify-before-claim on"
+        ));
+        assert!(
+            epsilon_core::builtin_skills::installed(name, &cfg),
+            "the command writes the SKILL.md"
+        );
+        assert!(
+            agent.skills().iter().any(|s| s.name == name),
+            "and discovery sees it as an ordinary skill"
+        );
+        let catalog =
+            epsilon_core::skills::catalog_with_disabled(&agent.skills(), &agent.disabled_skills());
+        assert!(
+            catalog.contains(name),
+            "the model is told the newly enabled skill exists: {catalog}"
+        );
+
+        assert!(!type_and_enter(
+            &mut app,
+            &agent,
+            "/skill verify-before-claim off"
+        ));
+        assert!(
+            !epsilon_core::builtin_skills::installed(name, &cfg),
+            "off removes the pristine copy"
+        );
+        assert!(
+            !agent.skills().iter().any(|s| s.name == name),
+            "and the catalog/tool list no longer carries it"
+        );
+    }
+
+    /// **The browser's Enter is a handoff, not a write.** It closes the panel and
+    /// leaves the exact command on the prompt, where the user can read and submit
+    /// it — so the panel never becomes a second settings path.
+    #[tokio::test]
+    async fn enter_in_the_skills_browser_puts_the_writer_on_the_prompt() {
+        let (mut app, agent, _) = test_app();
+        assert!(!type_and_enter(&mut app, &agent, "/skills"));
+        assert!(app.catalog.is_some(), "the browser opened");
+        handle_key(&mut app, &agent, key(KeyCode::Enter));
+        assert!(app.catalog.is_none(), "Enter closes the browser");
+        assert_eq!(
+            app.input, "/skill verify-before-claim on",
+            "the first row's writer command is on the prompt"
+        );
+        assert_eq!(app.cursor_chars, app.input.chars().count());
+    }
+
+    /// The subagent contract: a bundled role is absent until enabled,
+    /// then discovery sees an ordinary agent definition.
+    #[tokio::test]
+    async fn a_builtin_subagent_is_off_until_enabled_and_removed_again() {
+        let (mut app, agent, _) = test_app();
+        let cfg = app
+            .config_dir_override
+            .clone()
+            .expect("the fixture pins a config dir");
+        assert!(!epsilon_core::builtin_subagents::installed("explore", &cfg));
+
+        assert!(!type_and_enter(&mut app, &agent, "/subagent"));
+        let screen = frame(&mut app, 120, 40);
+        assert!(
+            screen.contains("subagents"),
+            "the browser title names the role: {screen}"
+        );
+        assert!(
+            screen.contains("explore"),
+            "the subagent is offered: {screen}"
+        );
+        assert!(screen.contains("[off]"), "and marked off: {screen}");
+
+        // The panel owns the keyboard; close it before typing the command that
+        // changes the shared state.
+        handle_key(&mut app, &agent, key(KeyCode::Esc));
+        assert!(!type_and_enter(&mut app, &agent, "/subagent explore on"));
+        assert!(
+            epsilon_core::builtin_subagents::installed("explore", &cfg),
+            "the command writes the agent file"
+        );
+        let roots = [epsilon_core::builtin_subagents::root_in(&cfg)];
+        let found = epsilon_core::agents::discover_agents(&roots, &[], true);
+        let def = found
+            .iter()
+            .find(|d| d.name == "explore")
+            .expect("discovery sees the subagent");
+        assert!(
+            def.tools
+                .as_ref()
+                .is_some_and(|t| t.contains(&"read".to_string()))
+        );
+
+        assert!(!type_and_enter(&mut app, &agent, "/subagent explore off"));
+        assert!(
+            !epsilon_core::builtin_subagents::installed("explore", &cfg),
+            "off removes the pristine copy"
+        );
     }
 
     /// The whole screen as one string a reader's eye could follow.
@@ -4278,29 +4603,47 @@ mod tests {
             );
         }
 
-        // The listing is one markdown answer, and a home directory with a few dozen skills
-        // in it is far taller than a 30-row frame. Scroll to the top and read it in a
-        // viewport large enough to hold it: a frame assertion on a scrolled view asserts on
-        // nothing — the rows are there and the assertion would still pass with them cut
-        // off, which is the "a test that passes is not a claim that is true" trap.
-        for _ in 0..200 {
-            handle_key(&mut app, &agent, key(KeyCode::PageUp));
-        }
-        let screen = frame(&mut app, 100, 120);
-        for (name, description) in [
-            ("commit-craft", "Craft commits."),
-            ("review-diff", "Review a diff."),
-        ] {
-            let row = squeezed(&format!("{name} — {description}"));
-            assert!(
-                screen.contains(&row),
-                "the frame must still list {name} with its description: {screen}"
-            );
-        }
-
+        // The browser shows a window around the selection; put the discovered
+        // rows under it by name rather than assuming how many built-ins precede
+        // them.
+        let commit = app
+            .catalog
+            .as_ref()
+            .and_then(|panel| panel.entries.iter().position(|e| e.name == "commit-craft"))
+            .expect("the discovered skill is in the browser");
+        app.catalog.as_mut().unwrap().selected = commit;
+        let screen = frame(&mut app, 100, 30);
         assert!(
-            screen.contains(&squeezed(&format!("reload:{}skill(s)", held.len()))),
-            "the summary count is the number of skills actually held: {screen}"
+            screen.contains(&squeezed("commit-craft")),
+            "the frame must list commit-craft: {screen}"
+        );
+        assert!(
+            screen.contains(&squeezed("Craft commits.")),
+            "the selected row's description must be on the frame: {screen}"
+        );
+        let review = app
+            .catalog
+            .as_ref()
+            .and_then(|panel| panel.entries.iter().position(|e| e.name == "review-diff"))
+            .expect("the second discovered skill is in the browser");
+        app.catalog.as_mut().unwrap().selected = review;
+        let screen = frame(&mut app, 100, 30);
+        assert!(
+            screen.contains(&squeezed("review-diff"))
+                && screen.contains(&squeezed("Review a diff.")),
+            "the next discovered skill must be reachable: {screen}"
+        );
+
+        let transcript = app
+            .ui
+            .lines()
+            .iter()
+            .map(|l| l.text.as_str())
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert!(
+            transcript.contains(&format!("reload: {} skill(s)", held.len())),
+            "the summary count is the number of skills actually held: {transcript}"
         );
         assert!(
             !screen.contains("skills:cannotreadroot"),
@@ -4427,46 +4770,45 @@ mod tests {
         assert!(!type_and_enter(&mut app, &agent, "/reload"));
         assert!(!type_and_enter(&mut app, &agent, "/skills"));
 
-        for _ in 0..200 {
-            handle_key(&mut app, &agent, key(KeyCode::PageUp));
-        }
-        let whole = frame(&mut app, 100, 120);
+        let panel = app.catalog.as_ref().expect("the browser opened");
+        let commit = panel
+            .entries
+            .iter()
+            .position(|e| e.name == "commit-craft")
+            .expect("the workspace skill reached the browser");
+        app.catalog.as_mut().unwrap().selected = commit;
+        let whole = frame(&mut app, 100, 30);
         if std::env::var_os("EPSILON_FRAME_EVIDENCE").is_some() {
-            println!("--- /skills at 100x120, scrolled to the top ---\n{whole}");
+            println!("--- /skills, selected workspace skill ---\n{whole}");
         }
         assert!(
-            whole.contains(&squeezed("commit-craft — Craft commits. (project)")),
+            whole.contains(&squeezed("commit-craft")) && whole.contains(&squeezed("project ·")),
             "a workspace skill must be labelled with its scope: {whole}"
         );
 
-        let user_row = agent
-            .skills()
-            .iter()
-            .find(|s| {
-                s.dir
-                    .starts_with(epsilon_core::config::home_dir().unwrap_or_default())
-            })
-            .map(|s| squeezed(&format!("{} — {} (user)", s.name, s.description)));
-        if let Some(row) = user_row {
+        let user = app.catalog.as_ref().and_then(|panel| {
+            panel
+                .entries
+                .iter()
+                .position(|e| e.scope.starts_with("user"))
+        });
+        if let Some(index) = user {
+            app.catalog.as_mut().unwrap().selected = index;
+            let whole = frame(&mut app, 100, 30);
             assert!(
-                whole.contains(&row),
-                "a skill from the home directory is labelled (user), not a bare path: {row}"
+                whole.contains(&squeezed("user ·")),
+                "a skill from the home directory is labelled user, not a bare path: {whole}"
             );
         }
 
-        // Back to the live view for the standard sizes: the scroll state carries, and a
-        // frame read at the top of the transcript is not the frame a user sees.
-        for _ in 0..300 {
-            handle_key(&mut app, &agent, key(KeyCode::PageDown));
-        }
         for (w, h) in [(80u16, 24u16), (100u16, 30u16)] {
             let screen = frame(&mut app, w, h);
             if std::env::var_os("EPSILON_FRAME_EVIDENCE").is_some() {
-                println!("--- /skills at {w}x{h}, live ---\n{screen}");
+                println!("--- /skills at {w}x{h} ---\n{screen}");
             }
             assert!(
-                screen.contains("enabled"),
-                "the listing's own summary line must render at {w}x{h}: {screen}"
+                screen.contains("available"),
+                "the browser's own count must render at {w}x{h}: {screen}"
             );
         }
     }
@@ -5761,41 +6103,25 @@ mod tests {
         );
     }
 
-    /// F4: the `/settings` copy says six rows and lists every one — the panel
-    /// holds model, thinking, theme, thinking blocks, permission preset and
-    /// plan, and a list that stops early hides the rest.
+    /// The `/settings` row names the verb; the panel owns the six rows.
     ///
-    /// RED-first: this fails while the copy names four things ("model,
-    /// thinking, theme, and permissions") for six rows.
+    /// A menu row has one line and no room for a table of contents. The list
+    /// the copy used to spell out now lives in `docs/07-COMMANDS.md`, and the
+    /// count is read from the panel rather than restated in prose.
     #[test]
     fn slash_settings_copy_names_all_six_rows() {
         let item = crate::picker::SLASH_ITEMS
             .iter()
             .find(|i| i.value == "/settings")
             .expect("/settings is offered");
-        assert!(
-            item.description.contains("six"),
-            "the copy says how many rows there are: {:?}",
-            item.description
+        assert_eq!(
+            item.description, "Open the settings panel",
+            "a one-line menu row says what the command opens, not what is inside it"
         );
-        for row in [
-            "model",
-            "thinking",
-            "theme",
-            "thinking blocks",
-            "permission",
-            "plan",
-        ] {
-            assert!(
-                item.description.contains(row),
-                "the copy names the {row} row: {:?}",
-                item.description
-            );
-        }
         assert_eq!(
             test_app().0.setting_rows().len(),
             6,
-            "and the panel holds exactly the six the copy promises"
+            "and the panel still holds six rows for the reference to name"
         );
     }
 
@@ -5846,7 +6172,7 @@ mod tests {
         let blocker = dir.path().join("blocker");
         std::fs::write(&blocker, "not a dir").unwrap();
         app.config_dir_override = Some(blocker);
-        app.apply_model(&agent, "f9-test-model".to_string());
+        app.apply_model(&agent, "deepseek-flash".to_string());
         let lines: Vec<String> = app.ui.lines().iter().map(|l| l.text.clone()).collect();
         assert!(
             lines.iter().any(|l| l.contains("not saved")),

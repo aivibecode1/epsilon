@@ -18,7 +18,7 @@
 //! dropped; a full CSI sequence is dropped *whole*, because a command that colours its output
 //! prints `ESC [ 0;32 m` and stripping the escape alone leaves `[0;32m` on the card — printable
 //! ASCII that no other rule catches. This is the same rule pi applies to tool output
-//! (`stripAnsi`, `references/pi-1.0.0/packages/coding-agent/src/utils/ansi.ts:37`, called from
+//! (`stripAnsi`, `references/pi-1.3.0/packages/coding-agent/src/utils/ansi.ts:37`, called from
 //! `modes/interactive/components/bash-execution.ts:83`), for the same reason: the reader is
 //! shown what the command *did*, not what its escape sequences looked like.
 //!
@@ -82,7 +82,7 @@ fn is_csi_introducer(c: char) -> bool {
 /// Is this byte a CSI **final** byte, the one that terminates the sequence?
 ///
 /// pi's class, from ansi-regex: `[\dA-PR-TZcf-nq-uy=><~]`
-/// (`references/pi-1.0.0/packages/coding-agent/src/utils/ansi.ts:37`).
+/// (`references/pi-1.3.0/packages/coding-agent/src/utils/ansi.ts:37`).
 fn is_csi_final(b: u8) -> bool {
     b.is_ascii_digit()
         || matches!(
@@ -281,7 +281,7 @@ mod tests {
     /// The exact output is asserted, because the failure mode is *extra* text rather than
     /// missing text and only a whole-string comparison sees it. The shapes are pi's, which
     /// strips the whole sequence for exactly this reason
-    /// (`references/pi-1.0.0/packages/coding-agent/src/utils/ansi.ts:37`, reached from bash
+    /// (`references/pi-1.3.0/packages/coding-agent/src/utils/ansi.ts:37`, reached from bash
     /// output at `modes/interactive/components/bash-execution.ts:83`).
     #[test]
     fn a_coloured_line_reaches_the_card_without_its_escape_residue() {

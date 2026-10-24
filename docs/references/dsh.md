@@ -5,33 +5,33 @@ different project solving a different problem, and this page records the four th
 took from it, the way we changed them, and the parts we deliberately left.
 
 The vendored copy is under [`../../references/`](../../references/) at
-`references/deepseek-harness-dsh-v0.2.1-alpha.1/`. It is read-only input: not part of
+`references/deepseek-harness-dsh-v0.2.1-rc.2/`. It is read-only input: not part of
 the build, not committed. Paths that start `docs/`, `packages/` or `apps/` are relative
 to that directory.
 
 ## What it is
 
 DeepSeek Harness — `dsh` — is "an open-source agent harness developed by DeepSeek AI"
-(`references/deepseek-harness-dsh-v0.2.1-alpha.1/README.md:5`). It is built on an
+(`references/deepseek-harness-dsh-v0.2.1-rc.2/README.md:5`). It is built on an
 **everything-is-a-plugin** architecture powered by Cordis (same file, line 7).
 
-**Version as vendored here: 0.2.1-alpha.1**, read from
-`references/deepseek-harness-dsh-v0.2.1-alpha.1/package.json:2-4` — the root workspace
+**Version as vendored here: 0.2.1-rc.2**, read from
+`references/deepseek-harness-dsh-v0.2.1-rc.2/package.json:2-4` — the root workspace
 package `@deepseek-ai/dsh-root`. It is a pre-release: the README says so in bold and
 adds "THERE WILL BE COMPATIBILITY-BREAKING CHANGES" (same file, line 13).
 
 What ships:
 
 - Five launch profiles — `web`, `headless`, `sdk`, `sdk-minimal`, `acp`
-  (`references/deepseek-harness-dsh-v0.2.1-alpha.1/docs/architecture.md:19,45`).
+  (`references/deepseek-harness-dsh-v0.2.1-rc.2/docs/architecture.md:19,45`).
 - A browser front end and a separate Electron desktop application
   (`docs/architecture.md:51-55`, same directory).
 - 54 groups under `packages/`, holding 256 packages one level below them, each owning
   one concern — session, tools, llm, sandbox, spill, subprocess, goal, workflow — plus
   63 packages under `packages/client/` for the browser front end. The layout is
-  documented at `references/deepseek-harness-dsh-v0.2.1-alpha.1/AGENTS.md`.
+  documented at `references/deepseek-harness-dsh-v0.2.1-rc.2/AGENTS.md`.
 - A Python SDK and a TypeScript SDK that both project the same loop
-  (`references/deepseek-harness-dsh-v0.2.1-alpha.1/AGENTS.md`, "Conventions").
+  (`references/deepseek-harness-dsh-v0.2.1-rc.2/AGENTS.md`, "Conventions").
 
 DSH is a large, actively developed system. Epsilon is a single Rust binary with no
 runtime dependencies. Every item below is a decision taken *from* it, never a
@@ -39,8 +39,8 @@ reimplementation of it.
 
 ## Who made it, and under what licence
 
-- **Author.** DeepSeek AI (`references/deepseek-harness-dsh-v0.2.1-alpha.1/README.md:5`).
-- **Copyright.** `references/deepseek-harness-dsh-v0.2.1-alpha.1/LICENSE:3` reads
+- **Author.** DeepSeek AI (`references/deepseek-harness-dsh-v0.2.1-rc.2/README.md:5`).
+- **Copyright.** `references/deepseek-harness-dsh-v0.2.1-rc.2/LICENSE:3` reads
   "Copyright (c) 2026 DeepSeek".
 - **Repository.** <https://github.com/deepseek-ai/deepseek-harness>
   (`README.md:34`, and again at `README.md:45`).
@@ -75,11 +75,11 @@ are durable session events and which are live extension points.
 **Anything the model sees is reconstructable from the log.** The rule is stated as
 standing policy: "Model-visible ⟺ logged: anything that reaches a model request must
 be reconstructable from the session log; a new model-visible input requires a session
-event" (`references/deepseek-harness-dsh-v0.2.1-alpha.1/AGENTS.md`, "Conventions").
+event" (`references/deepseek-harness-dsh-v0.2.1-rc.2/AGENTS.md`, "Conventions").
 
 **Oversized output leaves the context and comes back as a locator.** The `spill/` group
 "stores full text outside the model's context and returns a locator with retrieval
-guidance" (`references/deepseek-harness-dsh-v0.2.1-alpha.1/packages/spill/README.md:12`).
+guidance" (`references/deepseek-harness-dsh-v0.2.1-rc.2/packages/spill/README.md:12`).
 The failure case is handled too: spilling "keeps the original result on storage
 failure", so a locator is never a promise about a file that does not exist.
 
@@ -89,14 +89,14 @@ persistent shells, and out-of-process subagent backends — is started, observed
 terminated through one shared service (`ctx.subprocess`)… The group provides executable
 lookup, bounded output capture with spill recovery, provider-managed process ranges
 with disclosed weaker fallbacks, and a scrubbed starting environment for every child"
-(`references/deepseek-harness-dsh-v0.2.1-alpha.1/packages/subprocess/README.md:12`).
+(`references/deepseek-harness-dsh-v0.2.1-rc.2/packages/subprocess/README.md:12`).
 Note the restraint in the same paragraph: "It is not a standalone product feature: the
 consuming capability seams decide what each process means."
 
 **Styling has exactly one owner.** `ui-theme` owns the `--dsw-*` static scale, the
 semantic aliases, typography, motion, shadows and the light/dark preference; feature
 packages "consume semantic aliases and do not define another global theme"
-(`references/deepseek-harness-dsh-v0.2.1-alpha.1/docs/web-styling.md:9`). The sheet is
+(`references/deepseek-harness-dsh-v0.2.1-rc.2/docs/web-styling.md:9`). The sheet is
 two-tier and it is really two tiers: raw `--dsw-static-*` primitives from
 `packages/client/ui-theme/src/styles/design-platform.css:5`, then `--dsw-alias-*`
 semantic names that refer to them from `:167`. The rule for everyone else is one
@@ -105,7 +105,7 @@ palette values or write literal colors there" (`docs/web-styling.md:18`).
 
 **It is honest about its own safety limits.** "It has not undergone a security audit and
 must not be treated as secure or production-ready"
-(`references/deepseek-harness-dsh-v0.2.1-alpha.1/SAFETY.md:7`).
+(`references/deepseek-harness-dsh-v0.2.1-rc.2/SAFETY.md:7`).
 
 ## What we adopted
 
@@ -139,9 +139,17 @@ Taken as behaviour and discipline.
   are the only budget — `crates/epsilon-contracts/src/goal.rs:3,11-20`. The 256-round
   default is DSH's, kept at `crates/epsilon-contracts/src/goal.rs:30-33`, and the
   three-consecutive-rounds rule for "blocked" at `:37-41`.
-- **The IDE workflow.** Activity bar, sidebar, editor, agent panel, status line — as
-  **named constants with an arithmetic that says why**, in
-  `crates/epsilon-desktop/src/layout.rs:44-81`.
+- **The subagent vocabulary.** DSH's model-facing delegation tool defaults to
+  `toolName: 'subagent'`
+  (`references/deepseek-harness-dsh-v0.2.1-rc.2/packages/subagent/tool-subagent/src/index.ts:82`)
+  and its UI package is `client/ui-subagent`. Epsilon adopts that split: the delegated
+  role is a **subagent**, the browser is `/subagent`, and "harness" stays the whole
+  program. Epsilon's delegation tool remains `task`; the names in the tool schema are
+  already `subagent_type` and `task_id`.
+- **The IDE workflow.** Activity bar, sidebar, editor, agent panel, status line — the
+  relationships the terminal IDE keeps: the project tree is docked, the conversation is
+  the primary reading surface, and the status line stays put. The native desktop that
+  once carried the full workflow was removed in ADR-039; the terminal keeps it.
 - **Composition as one place, reachable by every front end.**
   `crates/epsilon-runtime/src/lib.rs:1-2`; the reasoning is ADR-021 at
   `docs/design/epsilon-decisions.md:969`.
@@ -150,24 +158,26 @@ Taken as behaviour and discipline.
 
 Same idea, different substrate.
 
-- **The IDE workflow onto a native carrier.** DSH's desktop is an Electron shell. Epsilon
-  took the workflow and wrote a different carrier, because Epsilon's desktop must be a
-  real window. ADR-020 states the constraint and the choice at
-  `docs/design/epsilon-decisions.md:893-900`; the window is egui/eframe over winit and
-  wgpu, and `crates/epsilon-desktop/src/lib.rs:1-21` says what the crate may and may
-  not own. This is a difference in goals — see "What we skipped" below.
+- **The IDE workflow onto a native carrier — tried, then removed.** DSH's desktop is an
+  Electron shell. Epsilon briefly wrote the workflow as a native egui/eframe window
+  (ADR-020), then removed the crate in ADR-039: one terminal IDE is the product, and the
+  native window was a second front end without a second draw path's worth of value.
 - **The two-tier token idea onto something that is not CSS.** DSH's tiers are a
   stylesheet of custom properties. Epsilon's are the terminal front end's named
-  *roles*, converted one way into egui colours with no desktop-specific values:
-  `crates/epsilon-desktop/src/theme.rs:1-22` and the converter at `:28`. Where DSH's
-  rule is "do not write literal colours in a feature component", Epsilon's is
-  enforceable: `crates/epsilon-desktop/src/theme.rs:55-67` holds a contrast floor and a
-  test that fails if a palette drops below it.
+  *roles*: one table, contrast-floored per theme, and no feature component defines a
+  literal colour — `crates/epsilon-tui/src/ui/theme.rs`.
 - **Bounded capture measured in bytes, not estimated tokens.** DSH's tool-result policy
   is opt-in through `maxInlineTokens` (`packages/spill/README.md:12`). Epsilon uses two
   constants a test can assert on — `crates/epsilon-tools/src/util.rs:16-18` — and keeps
   both ends of the output, with the omission marker naming exact line and byte counts
   (`crates/epsilon-tools/src/util.rs:837-848`, `:960-972`).
+- **File-preview bounds within the IDE workflow.** DSH's
+  `WorkspaceFiles.read` cuts one text window from a stream and stops after the page
+  (`references/deepseek-harness-dsh-v0.2.1-rc.2/packages/api/workspace-files/src/index.ts:106-159`,
+  `references/deepseek-harness-dsh-v0.2.1-rc.2/packages/api/workspace-files/src/index.ts:234-247`).
+  Epsilon's terminal viewer uses `Read::take` with a 256 KiB byte cap and a 2,000-line
+  cap, and refuses edits on partial previews (`crates/epsilon-tui/src/tree.rs:28-34,475-529`).
+  This reuses the resource rule without importing DSH code or its plugin API.
 - **Composition as a crate graph rather than a plugin tree.** The same rule, enforced by
   the compiler: a front end that wants behaviour the composition does not offer changes
   `epsilon-runtime`, not its own copy — `crates/epsilon-runtime/src/lib.rs:29-33`.
@@ -181,23 +191,22 @@ Same idea, different substrate.
   signed resources", "Electron starts the private Desktop Host in Electron Node mode",
   and "The Host invokes the shared CLI profile runner and complete Web application"
   (`docs/architecture.md:53-55`). That is a coherent product: one web profile, two
-  carriers, one bundle, no second implementation of the UI. Epsilon needs the opposite —
-  a window drawn by the process that owns the agent — because "the desktop must stay a
-  real desktop application" is a standing constraint here
-  (`docs/design/epsilon-decisions.md:893-898`). **Different goal, not a defect.**
+  carriers, one bundle, no second implementation of the UI. Epsilon is one Rust binary
+  with one terminal IDE; its own native-window experiment was removed in ADR-039.
+  **Different goal, not a defect.**
 - **The Cordis plugin kernel and the plugin tree.** ADR-002 weighed it and declined:
   DSH's durable inbox and phase machine "is more capable but its cost is ~150 packages
   and a vendored DI kernel - complexity Epsilon cannot carry"
   (`docs/design/epsilon-decisions.md:78-82`). Epsilon's answer is a static crate graph,
   which cannot be reconfigured at boot and does not need to be.
-- **The web front end and its ~60 client packages.** Epsilon's two front ends are a
-  terminal and a native window. There is no browser target to serve.
+- **The web front end and its ~60 client packages.** Epsilon's modes are the terminal
+  IDE, headless, HTTP/SSE and stdio-RPC. There is no browser target to serve.
 - **The SQLite session store and its `SCHEMA_VERSION`.** Epsilon's session is an
   append-only JSONL tree with leases and repair —
   `crates/epsilon-session/src/store.rs:1`, `crates/epsilon-session/src/repair.rs:1`.
   **Different goal:** a session file a person can open in an editor, read, and diff.
 - **Executable configuration.** DSH's loader allows `!!js` under a plugin's `config`
-  (`references/deepseek-harness-dsh-v0.2.1-alpha.1/AGENTS.md`, "Secrets / .env").
+  (`references/deepseek-harness-dsh-v0.2.1-rc.2/AGENTS.md`, "Secrets / .env").
   Epsilon refuses the category rather than restricting it —
   `docs/design/epsilon-decisions.md:516-518`.
 - **The bilingual documentation pairs.** Every DSH document has a `.zh.md` counterpart
@@ -208,13 +217,13 @@ Same idea, different substrate.
 
 ADR-020 cites
 `references/deepseek-harness-dsh-v0.2.0-rc.1/apps/desktop/src/main.ts:408,421`.
-**That version is not vendored here.** `references/` holds only
-`deepseek-harness-dsh-v0.2.1-alpha.1`, so the line numbers cannot be opened and the
-claim behind them cannot be checked against the cited file.
+**That exact revision is not vendored here.** `references/` holds
+`deepseek-harness-dsh-v0.2.1-rc.2`, so the cited line numbers cannot be opened; the
+vendored copy carries the same code and the claim is checked against it below.
 
 The claim itself holds, and the code that carries it in the copy we do have is:
 
-- `references/deepseek-harness-dsh-v0.2.1-alpha.1/apps/desktop/src/host-process.ts:189`
+- `references/deepseek-harness-dsh-v0.2.1-rc.2/apps/desktop/src/host-process.ts:189`
   — the Electron shell spawns a Node child running the Desktop Host.
 - `apps/desktop-host/src/index.ts:1` — "Launch the Desktop profile through the Web
   application and report its URL to Electron."
@@ -245,7 +254,7 @@ Concretely, that means:
 - `THIRD_PARTY_NOTICES` gains an entry for DeepSeek Harness if anything is ever copied.
   DSH keeps its own `THIRD_PARTY_NOTICES.md`, so the entry would name us as a
   downstream, not a redistributor of its dependency set.
-- The credit line in [`../../CREDITS.md`](../../CREDITS.md) stays.
+- The credit line in [`../../README credits`](../../README.md#credits) stays.
 
 **What has actually happened here: no third-party source was copied into this
 repository.** Epsilon took four ideas — bounded capture, subprocess discipline, a token

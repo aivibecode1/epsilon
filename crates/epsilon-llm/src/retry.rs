@@ -28,7 +28,7 @@ pub enum FailureKind {
 /// a 429 and the word "quota" — and without this ordering the rate-limit branch wins and
 /// retries something backing off cannot fix. `insufficient_quota` is OpenAI's billing code;
 /// the rest is common gateway wording. pi resolves the same collision by testing its
-/// non-retryable pattern first (`references/pi-1.0.0/packages/ai/src/utils/retry.ts:246-251`)
+/// non-retryable pattern first (`references/pi-1.3.0/packages/ai/src/utils/retry.ts:246-251`)
 /// and pins `"429 quota exceeded"` as non-retryable (`test/retry.test.ts:80-86`).
 const SPENDING_LIMIT_NEEDLES: [&str; 8] = [
     "insufficient_quota",
@@ -49,7 +49,7 @@ const SPENDING_LIMIT_NEEDLES: [&str; 8] = [
 /// above make it final — the honest mirror of the billing case, and the more damaging half of
 /// the bug, because a per-minute limit recovers on its own and a final failure never gives it
 /// the chance. pi resolves the collision the same way, by testing its non-retryable pattern
-/// first (`references/pi-1.0.0/packages/ai/src/utils/retry.ts:246-251`) and pinning
+/// first (`references/pi-1.3.0/packages/ai/src/utils/retry.ts:246-251`) and pinning
 /// `"429 quota exceeded"` as non-retryable (`test/retry.test.ts:80-86`); a phrase that names a
 /// **metric** is not that spelling.
 const THROTTLE_OVERRIDE_NEEDLES: [&str; 2] = ["for quota metric", "quota metric '"];
@@ -194,7 +194,7 @@ mod tests {
         // the honest failure surfaced.
         //
         // pi resolves it by checking the non-retryable pattern *before* the retryable one
-        // (`references/pi-1.0.0/packages/ai/src/utils/retry.ts:246-251`), and pins exactly
+        // (`references/pi-1.3.0/packages/ai/src/utils/retry.ts:246-251`), and pins exactly
         // this string (`test/retry.test.ts:80-86`). The rule is that a *spending* limit is
         // not a *throttle*: backing off does not put money in an account.
         for m in [

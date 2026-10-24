@@ -85,6 +85,36 @@ impl PermissionEngine {
         Self { layers }
     }
 
+    /// Engine over **exactly** the given layers, in the given order.
+    ///
+    /// **One evaluation, not three.**
+    ///
+    /// The gate used to hold its own copy of the rule-matching loop, twice —
+    /// once for the plan layer and once for the preset layer — beside the
+    /// engine's. Three copies of "does this rule match, and what does it decide"
+    /// is three places for the same question to be answered differently, and
+    /// two of them had already drifted: the engine's `evaluate` lets a layer's
+    /// *allow* win, while the gate's plan loop honoured only *denies*, so a
+    /// plan-layer allow was inert there and would have won here.
+    ///
+    /// The plan ruleset has only denies today, so the divergence was latent.
+    /// It was still a trap for whoever added an allow to the plan layer next.
+    ///
+    /// This constructor is how the gate now builds **plan + base + preset** into
+    /// one engine and evaluates it once: the plan layer first (a plan deny wins
+    /// before base, preset, or memory), the base stack next, the preset last.
+    pub fn with_layers(layers: Vec<Ruleset>) -> Self {
+        Self { layers }
+    }
+
+    /// The layers, in evaluation order.
+    ///
+    /// A caller that composes layers (the gate) needs to read the stack it
+    /// holds so it can rebuild one engine from plan + base + preset.
+    pub fn layers(&self) -> &[Ruleset] {
+        &self.layers
+    }
+
     /// Evaluate a capability/subject pair.
     pub fn evaluate(&self, capability: &str, subject: &str) -> Action {
         let mut decision: Option<Action> = None;
@@ -108,27 +138,61 @@ impl PermissionEngine {
 /// reads are free inside the workspace shape we can see; secrets ask; writes allow because
 /// workspace enforcement arrives with the M10 confinement layer (documented gap); shell asks
 /// by default because Layer 2 does not exist yet — safe until proven otherwise.
+///
+/// **The free set is derived, not written.**
+///
+/// It used to be nine hand-listed names: `read`, `grep`, `glob`, `ls`, `write`,
+/// `edit`, `external_dir`, `bash`, `webfetch`. The registry registers eighteen
+/// tools, and the nine names that were never on that list — `find`, `todo`,
+/// `task`, `skill`, `lsp`, `question`, the three goal tools, `apply_patch` —
+/// matched no rule, fell through `evaluate`'s `decision.unwrap_or(Action::Ask)`,
+/// and asked the user for permission. A dialog for `find` is a dialog for a
+/// *read*, and a dialog for `todo` is a dialog for a tool that cannot touch the
+/// workspace at all.
+///
+/// Two hand-maintained lists of the same thing is the defect. There is now
+/// **one**: [`is_read_only_capability`] classifies every capability, and the
+/// free set is the set it classifies as read-only, plus the two capabilities
+/// that are not read-only but are still free by default (`write` and `edit`,
+/// which are free because the workspace boundary — not the permission gate —
+/// is what confines them).
+///
+/// `bash` and `webfetch` are **not** free: they reach outside the workspace,
+/// so they ask. That is a decision, not an omission, and it is why they are
+/// named here rather than derived.
 pub fn default_ruleset() -> Ruleset {
+    let mut rules: Vec<Rule> = Vec::new();
+    // The read-only capabilities are free by default — one list, derived from
+    // the classification that already exists.
+    //
+    // `webfetch` is in that list because it *is* read-only, but it reads the
+    // network, and the defaults ask for network reads. The `webfetch -> Ask`
+    // rule below comes after this one, and the engine is last-match-wins, so
+    // the ask wins. The allow is what makes a web fetch safe in a read-only
+    // *posture*; the ask is what makes it a decision in the default posture.
+    for capability in READ_ONLY_CAPABILITIES {
+        rules.push(Rule::new(capability, "*", Action::Allow));
+    }
+    // Secrets: reading environment material requires approval…
+    rules.push(Rule::new("read", "*.env", Action::Ask));
+    rules.push(Rule::new("read", "*.env.*", Action::Ask));
+    // …but examples/templates are public by design.
+    rules.push(Rule::new("read", "*.env.example", Action::Allow));
+    // Writes are free inside the workspace; the boundary, not the gate, is
+    // what confines them. `apply_patch` declares the `edit` capability, so it
+    // is covered by the same rule as `edit` itself.
+    rules.push(Rule::new("write", "*", Action::Allow));
+    rules.push(Rule::new("edit", "*", Action::Allow));
+    // Anything outside the declared workspace asks (tools downgrade capability).
+    rules.push(Rule::new("external_dir", "*", Action::Ask));
+    // Shell and network: ask-first until confinement exists. These come last
+    // on purpose — the engine is last-match-wins, so a later rule here
+    // overrides the read-only allow above.
+    rules.push(Rule::new("bash", "*", Action::Ask));
+    rules.push(Rule::new("webfetch", "*", Action::Ask));
     Ruleset {
         name: "defaults".into(),
-        rules: vec![
-            Rule::new("read", "*", Action::Allow),
-            Rule::new("grep", "*", Action::Allow),
-            Rule::new("glob", "*", Action::Allow),
-            Rule::new("ls", "*", Action::Allow),
-            // Secrets: reading environment material requires approval…
-            Rule::new("read", "*.env", Action::Ask),
-            Rule::new("read", "*.env.*", Action::Ask),
-            // …but examples/templates are public by design.
-            Rule::new("read", "*.env.example", Action::Allow),
-            Rule::new("write", "*", Action::Allow),
-            Rule::new("edit", "*", Action::Allow),
-            // Anything outside the declared workspace asks (tools downgrade capability).
-            Rule::new("external_dir", "*", Action::Ask),
-            // Shell and network: ask-first until confinement exists.
-            Rule::new("bash", "*", Action::Ask),
-            Rule::new("webfetch", "*", Action::Ask),
-        ],
+        rules,
     }
 }
 
@@ -152,6 +216,54 @@ pub fn plan_ruleset() -> Ruleset {
             Rule::new("shell", "*", Action::Deny),
         ],
     }
+}
+
+/// The capabilities that only read.
+///
+/// **This is the single list.** The default ruleset's free set is derived from
+/// it, and the plan-mode / read-only posture refuses anything outside it, so
+/// a capability added here is free by default and safe in a read-only run at
+/// the same time — the two can no longer disagree.
+///
+/// `webfetch` is here because it reads the network and still asks under the
+/// defaults: a read-only *posture* is about the tree, and a network read
+/// cannot touch the tree, so allowing it in plan mode is correct even though
+/// the default posture asks for it.
+pub const READ_ONLY_CAPABILITIES: &[&str] = &[
+    "read",
+    "grep",
+    "glob",
+    "ls",
+    "find",
+    "search",
+    "webfetch",
+    "lsp",
+    "skill",
+    "todo",
+    "question",
+    "task",
+    "get_goal",
+    "create_goal",
+    "update_goal",
+];
+
+/// Whether a capability only reads, in the sense plan mode and the read-only
+/// preset promise.
+///
+/// **An allowlist, not a denylist of the four tools we happen to ship.** Plan
+/// mode denied `write`, `edit`, `bash` and `shell`; an MCP filesystem tool
+/// (`mcp__fs__write_file`) or an extension tool (`ext_*`) matched no rule,
+/// fell through to the engine default `Ask`, and a user who approved it wrote
+/// the tree from a mode whose own documentation says approval cannot do that.
+/// Anything not named here is refused in a read-only posture, so a new tool is
+/// safe by default rather than safe by being forgotten.
+///
+/// `task` is included because the child gate inherits the same posture and
+/// cannot widen it; `webfetch` because it reads the network and still asks
+/// under the defaults; the goal tools because they mutate session state, not
+/// the workspace.
+pub fn is_read_only_capability(capability: &str) -> bool {
+    READ_ONLY_CAPABILITIES.contains(&capability)
 }
 
 /// A named permission posture (ADR-032): a bundle of allows, never a pardon.
@@ -449,5 +561,111 @@ mod tests {
         assert_eq!(engine.evaluate("read", "src/main.rs"), Action::Allow);
         assert_eq!(engine.evaluate("bash", "git"), Action::Ask);
         assert_eq!(engine.evaluate("write", "/ws/a.txt"), Action::Allow);
+    }
+
+    /// **Every registered tool must be free by default, or explicitly ask-first.**
+    ///
+    /// The default ruleset names nine capabilities and the registry registers
+    /// eighteen tools. A tool whose name matched no rule fell through
+    /// `PermissionEngine::evaluate`'s `decision.unwrap_or(Action::Ask)` to
+    /// `Ask`, so a session that had granted nothing met a permission dialog
+    /// for `find` — a *read* — and for `todo`, which cannot touch the
+    /// workspace at all.
+    ///
+    /// That is the failure this gate exists to prevent: a user who meets a
+    /// dialog for everything learns to approve everything, and the permission
+    /// gate stops protecting anything.
+    ///
+    /// **The list is read from the live registry, not written here.** A
+    /// hand-written list of tool names is a list that goes stale the day a
+    /// tool lands — which is exactly what happened: the two lists below had
+    /// drifted apart, and the eleventh tool was added without either being
+    /// updated. Reading `ToolRegistry::descriptors()` means this test fails
+    /// on the day the new tool is registered, which is the day it matters.
+    #[test]
+    fn every_registered_tool_is_free_by_default_or_explicitly_ask_first() {
+        let registry = registered_builtin_tools();
+        let engine = PermissionEngine::with_defaults();
+        let mut asking: Vec<String> = Vec::new();
+
+        for descriptor in registry.descriptors() {
+            let name = descriptor.name.as_str();
+            // **The capability is what the gate matches**, not the name. A
+            // tool that acts within another capability — `apply_patch` writes
+            // files, so it acts under `edit` — is covered by the rules the
+            // user wrote for that capability.
+            //
+            // The registry hands back descriptors, and a descriptor's
+            // capability is the tool's own name until the tool overrides it,
+            // so the capability is read from the *tool*, not guessed here.
+            let capability = registry
+                .get(name)
+                .map(|t| t.capability().to_string())
+                .unwrap_or_else(|| name.to_string());
+            let capability = capability.as_str();
+            // The subject is irrelevant for a `*` rule and irrelevant for a
+            // capability with no rule at all — both resolve the same way.
+            match engine.evaluate(capability, "*") {
+                Action::Allow => {}
+                Action::Ask => {
+                    // A tool may be ask-first **by decision** — the shell and
+                    // the network reach outside the workspace, so asking is
+                    // the posture, not an accident. The list of tools that
+                    // are ask-first on purpose is the engine's own rule set,
+                    // and the assertion below is that nothing *else* is.
+                    assert!(
+                        ASKS_BY_DECISION.contains(&name),
+                        "{name} falls through to Ask because no rule names it. \
+                         Either it is ask-first on purpose (and must be named in \
+                         ASKS_BY_DECISION) or the default ruleset forgot it."
+                    );
+                    asking.push(name.to_string());
+                }
+                Action::Deny => panic!("the default ruleset must not deny: {name}"),
+            }
+
+            // The read-only posture is a promise about *capabilities*, and
+            // the read-only tools are the ones a user is most likely to meet
+            // first. A tool that only reads the *workspace* must not be
+            // ask-first under the defaults.
+            //
+            // `webfetch` is the deliberate exception: it is read-only (it
+            // cannot touch the tree, so a read-only posture must allow it)
+            // but it reaches the network, and the default posture asks for
+            // network reads. That decision is the `webfetch -> Ask` rule, and
+            // this assertion is about the *workspace*-reading tools.
+            if is_read_only_capability(capability) && capability != "webfetch" {
+                assert_eq!(
+                    engine.evaluate(capability, "*"),
+                    Action::Allow,
+                    "{name} only reads the workspace, so the defaults must not ask for it"
+                );
+            }
+        }
+
+        // The only tools that ask are the ones that reach outside the
+        // workspace, and nothing else.
+        assert_eq!(
+            asking,
+            vec!["bash".to_string(), "webfetch".to_string()],
+            "exactly the tools that leave the workspace ask, and nothing else"
+        );
+    }
+
+    /// The tools that are ask-first **by decision**.
+    ///
+    /// The shell and the network reach outside the workspace, so asking is
+    /// the posture the defaults promise. Naming them here is what makes the
+    /// test above a statement about *intent*: a new tool that lands and asks
+    /// for permission has to say why, here, where a reader will see it.
+    const ASKS_BY_DECISION: &[&str] = &["bash", "webfetch"];
+
+    /// The built-in tools, as the product registers them.
+    ///
+    /// The registry is built the way the runtime builds it, so this test
+    /// exercises the real tool set rather than a list of names copied into
+    /// the test.
+    fn registered_builtin_tools() -> epsilon_core::ToolRegistry {
+        epsilon_tools::builtin_registry(&epsilon_tools::Confinement::Auto)
     }
 }

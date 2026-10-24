@@ -4,7 +4,7 @@
 
 A **verbatim copy** of a skill authored by the **DeepSeek Harness** project.
 
-- **Upstream:** `references/deepseek-harness-dsh-v0.2.1-alpha.1/packages/preset/agent-preset/skills/agent-experience/SKILL.md`
+- **Upstream:** `references/deepseek-harness-dsh-v0.2.1-rc.2/packages/preset/agent-preset/skills/agent-experience/SKILL.md`
 - **Author / organisation:** DeepSeek — <https://github.com/deepseek-ai/deepseek-harness>
 - **Licence:** **MIT**. DSH's `LICENSE` reads "Copyright (c) 2026 DeepSeek".
 

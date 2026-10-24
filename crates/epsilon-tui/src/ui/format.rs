@@ -48,18 +48,9 @@ pub fn format_tokens(count: u64) -> String {
 /// reader their session costs nothing yet, while `$0.00` hides whether anything
 /// is happening at all.
 pub fn format_cost(micro_usd: u64) -> String {
-    let dollars = micro_usd as f64 / 1_000_000.0;
-    if micro_usd == 0 {
-        "$0".to_string()
-    } else if dollars < 0.01 {
-        format!("${dollars:.4}")
-    } else if dollars < 1.0 {
-        format!("${dollars:.3}")
-    } else if dollars < 100.0 {
-        format!("${dollars:.2}")
-    } else {
-        format!("${dollars:.0}")
-    }
+    // One rounding rule, shared with the `/session` cache report. The two used
+    // to disagree on the same number (`$0.012` beside `$0.0120`).
+    epsilon_core::cache_stats::format_cost_micro(micro_usd)
 }
 
 /// A percentage as a whole number, clipped to `0..=100`.

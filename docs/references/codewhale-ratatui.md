@@ -311,14 +311,12 @@ diff; a decorative palette set is a different product decision.
 in the glyph set (`theme.rs:312`, `:352`) — braille on Unicode, `|/-\` on ASCII — advanced by the
 run loop (`crates/epsilon-tui/src/app.rs:268-270`). That is the whole of it.
 
-**Its transcript re-wrapping.** `agents/memory/references-five.md:65-67` records why: it
-re-wraps the whole document every frame and `height()` does it a second time, which is the exact
-shape this project measured and fixed at M198 (144 µs → 276 ns). Epsilon's `List::place` is the
-correct contrast.
+**Its transcript re-wrapping.** It re-wraps the whole document every frame and `height()`
+does it a second time, which is the exact shape this project measured and fixed at M198
+(144 µs → 276 ns). Epsilon's `List::place` is the correct contrast.
 
 **Scrollback and follow-tail design.** There is none in the reference: `Transcript.offset` is a
-host-supplied field and there is no `follow_tail` anywhere. Nothing to take, and
-`references-five.md:68-69` says so.
+host-supplied field and there is no `follow_tail` anywhere. Nothing to take.
 
 **Its benchmarks as a gate.** Hand-rolled, dependency-free, prints a median and a p95, and has no
 CI threshold. It is a report, not a gate. Its one useful fact is that paint cost is flat between
@@ -326,10 +324,10 @@ CI threshold. It is a report, not a gate. Its one useful fact is that paint cost
 separately.
 
 **Its `Keymap` as-is.** The *design* is the best idea in that repository — one table that is at
-once the dispatch table and the rendered footer — but `references-five.md:57-64` records that
-`Keymap::lookup` has no production caller there, verified by grep. The same defect class this
-project spends milestones closing, found in a reference we are reading for ideas. Take the design;
-wire it or not at all.
+once the dispatch table and the rendered footer — but the reference's own `Keymap::lookup`
+has no production caller there (verified by grep). The same defect class this project spends
+milestones closing, found in a reference we are reading for ideas. Take the design; wire it or
+not at all.
 
 ## Licence compatibility
 
@@ -343,7 +341,7 @@ MIT permits copying, modification and distribution provided the copyright notice
 permission notice travel with the work. **No codewhale-ratatui source was copied into this
 repository**, so there is nothing to attribute at the file level and no vendored body for a
 `THIRD_PARTY_NOTICES` file. The ideas above are recorded as ideas in
-[`../../CREDITS.md`](../../CREDITS.md).
+[`../../README credits`](../../README.md#credits).
 
 **The obligation that survives anyway.** The MIT permission notice requires that "the above
 copyright notice and this permission notice shall be included in all copies or substantial
@@ -355,13 +353,11 @@ portions of the Software." That licence carries **two** copyright lines:
 Any future adaptation of codewhale-ratatui code — as opposed to an idea — must reproduce **both**
 lines, not just the first, and must add a header on the adapted file naming the source
 (`AGENTS.md` §10). The second line names DeepSeek-TUI Contributors (2024–2025), so an adaptation
-touches two prior copyright holders, not one. Epsilon's own `CREDITS.md` already records both.
+touches two prior copyright holders, not one. Epsilon's own `README credits` already records both.
 
 ## Where else this is written down
 
 - [`README.md`](README.md) — the index of all six references and what was taken from each.
 - [`TUI-DECISION.md`](TUI-DECISION.md) — why Ratatui stays, with codewhale-ratatui named as a
   component kit **on** Ratatui rather than a competing stack.
-- [`../../CREDITS.md`](../../CREDITS.md) — the attribution table, with both copyright lines.
-- [`../../agents/memory/references-five.md`](../../agents/memory/references-five.md) — the working
-  note: what to take, what not to take, and which of its own mechanisms have no production caller.
+- [`../../README credits`](../../README.md#credits) — the attribution table, with both copyright lines.

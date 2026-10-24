@@ -2549,6 +2549,17 @@ async fn a_call_may_narrow_its_own_sandbox_mode_to_read_only() {
         assert!(err.contains("[confinement]"), "{err}");
         return;
     }
+    // A backend that cannot confine the filesystem cannot make a command
+    // read-only. Refusing is the point: a mode label is not an OS boundary.
+    let caps = sandbox.capabilities();
+    if !caps.is_full() && caps.missing().contains(&"filesystem") {
+        let err = run_full(&bash, &ctx, args)
+            .await
+            .expect_err("a partial backend cannot honour read-only");
+        assert!(err.contains("cannot make a command read-only"), "{err}");
+        assert!(err.contains("filesystem"), "{err}");
+        return;
+    }
     let out = run_full(&bash, &ctx, args)
         .await
         .expect("narrowing needs no approval");

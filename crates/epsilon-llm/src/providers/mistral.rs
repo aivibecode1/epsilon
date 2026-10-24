@@ -110,6 +110,11 @@ impl ProviderWire for MistralConversationsWire {
                 }
             }
         }
+        if super::is_first_party_host(&self.base_url, "api.mistral.ai")
+            && let Some(key) = ctx.prompt_cache_key(model)
+        {
+            body["prompt_cache_key"] = json!(key);
+        }
         Ok(body)
     }
 
@@ -127,7 +132,18 @@ impl ProviderWire for MistralConversationsWire {
             let message = st.failure_message(format!("provider stream error: {err_msg}"));
             return Some(vec![StreamEvent::Done { message }]);
         }
-        for choice in v.get("choices").and_then(|c| c.as_array())?.iter() {
+        let choices = v.get("choices").and_then(|c| c.as_array());
+        // Usage may arrive on its own frame, or on the choice. Read it before the
+        // `choices` guard; the old `?` silently dropped the billed count.
+        if let Some(usage) = v
+            .get("usage")
+            .or_else(|| choices.and_then(|c| c.iter().find_map(|choice| choice.get("usage"))))
+            .filter(|u| !u.is_null())
+        {
+            st.seed_usage_mistral(usage);
+        }
+        let choices = choices?;
+        for choice in choices.iter() {
             if let Some(delta) = choice.get("delta") {
                 // Delta: content may be a string OR an array of typed chunks
                 // (`{type:"text",text}` / `{type:"thinking",thinking:[{text}]}`).
@@ -175,9 +191,6 @@ impl ProviderWire for MistralConversationsWire {
             if let Some(finish) = choice.get("finish_reason").and_then(|f| f.as_str()) {
                 st.note_finish_reason(finish);
             }
-        }
-        if let Some(usage) = v.get("usage").filter(|u| !u.is_null()) {
-            st.seed_usage_mistral(usage);
         }
         None
     }
@@ -419,6 +432,10 @@ mod tests {
         );
         let body = wire().request_body("x", &ctx_with("hi")).expect("body");
         assert_eq!(body["model"], "x");
+        assert!(
+            body["prompt_cache_key"].is_string(),
+            "Mistral gets a stable cache-affinity key: {body}"
+        );
         assert!(body.get("prompt_mode").is_none());
         assert!(body.get("reasoning_effort").is_none());
     }

@@ -72,6 +72,30 @@ fn seed_session(ws: &Path, name: &str) -> std::path::PathBuf {
     path
 }
 
+/// **A diagnostic must not mutate the state it reports.** `doctor` used to
+/// call the launch loader twice; the first call recorded first sight and the
+/// second read hash-without-memory, so a first-run workspace was reported
+/// untrusted and the next launch prompted.
+#[test]
+fn the_report_does_not_record_project_trust() {
+    let dir = workspace();
+    std::fs::write(
+        dir.path().join(".epsilon/config.toml"),
+        "[model]\nid = \"deepseek-flash\"\n",
+    )
+    .unwrap();
+    assert!(!dir.path().join(".epsilon/trust.json").exists());
+    let f = gather(&inputs(dir.path()));
+    assert!(
+        f.project_trusted.unwrap_or(false),
+        "first sight is the launch's Trusted row, not Changed"
+    );
+    assert!(
+        !dir.path().join(".epsilon/trust.json").exists(),
+        "doctor must not create a trust file"
+    );
+}
+
 #[test]
 fn the_report_describes_the_workspace_it_was_pointed_at() {
     let dir = workspace();

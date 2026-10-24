@@ -148,6 +148,70 @@ pub fn too_small_message(width: u16, height: u16) -> String {
     format!("terminal too small — widen to {MIN_WIDTH}×{MIN_HEIGHT} (now {width}×{height})")
 }
 
+/// The narrowest a docked project explorer is useful at.
+pub const EXPLORER_MIN_WIDTH: u16 = 24;
+/// The widest the explorer may grow before it starts crowding the workspace.
+pub const EXPLORER_MAX_WIDTH: u16 = 38;
+/// The explorer's preferred share of the frame, in percent.
+pub const EXPLORER_SHARE_PERCENT: u16 = 30;
+/// One blank column between the workspace and the explorer's frame.
+pub const EXPLORER_GAP: u16 = 1;
+
+/// The width a docked explorer asks for at a given frame width.
+///
+/// Derived from the frame rather than fixed, like every other region: a sidebar
+/// that keeps 38 columns on a 72-column terminal is half the application.
+pub fn explorer_width(frame_width: u16) -> u16 {
+    (frame_width * EXPLORER_SHARE_PERCENT / 100).clamp(EXPLORER_MIN_WIDTH, EXPLORER_MAX_WIDTH)
+}
+
+/// Where the workspace and the docked project explorer sit.
+///
+/// The explorer is on the **right**, because the agent transcript is the primary
+/// reading surface and the eye returns to it after a glance at the tree. It
+/// docks only when the workspace can still keep [`MIN_WIDTH`] columns; below
+/// that the caller draws the explorer as a focused full-area panel instead of
+/// squeezing both surfaces into an unreadable frame.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Explorer {
+    /// The workspace: header, transcript, composer and footer.
+    pub main: Rect,
+    /// The docked explorer, or `None` when it is hidden or does not fit.
+    pub tree: Option<Rect>,
+}
+
+impl Explorer {
+    /// Split `area` for a visible or hidden explorer.
+    pub fn split(area: Rect, visible: bool) -> Self {
+        if !visible {
+            return Self {
+                main: area,
+                tree: None,
+            };
+        }
+        let width = explorer_width(area.width);
+        if area.width < width + EXPLORER_GAP + MIN_WIDTH {
+            return Self {
+                main: area,
+                tree: None,
+            };
+        }
+        let [main, gap, tree] = Layout::horizontal([
+            Constraint::Min(MIN_WIDTH),
+            Constraint::Length(EXPLORER_GAP),
+            Constraint::Length(width),
+        ])
+        .areas(area);
+        // The gap is a real, blank column rather than a second border: two frames
+        // touching read as one thick line and make the panel boundary ambiguous.
+        debug_assert_eq!(gap.width, EXPLORER_GAP);
+        Self {
+            main,
+            tree: Some(tree),
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -257,6 +321,57 @@ mod tests {
             "{}",
             small.composer.height
         );
+    }
+
+    #[test]
+    fn the_docked_explorer_stays_on_the_right_and_preserves_the_workspace_floor() {
+        for width in [100u16, 120, 160, 200] {
+            let split = Explorer::split(area(width, 30), true);
+            let tree = split.tree.expect("a wide frame docks the explorer");
+            assert_eq!(
+                tree.right(),
+                width,
+                "{width}: explorer must touch the right edge"
+            );
+            assert!(
+                tree.x > split.main.right(),
+                "{width}: explorer must sit right of the workspace"
+            );
+            assert_eq!(
+                tree.x - split.main.right(),
+                EXPLORER_GAP,
+                "{width}: exactly one gutter column"
+            );
+            assert!(
+                split.main.width >= MIN_WIDTH,
+                "{width}: workspace fell below its floor: {}",
+                split.main.width
+            );
+            assert!(
+                (EXPLORER_MIN_WIDTH..=EXPLORER_MAX_WIDTH).contains(&tree.width),
+                "{width}: explorer width {} outside its band",
+                tree.width
+            );
+        }
+    }
+
+    #[test]
+    fn a_hidden_or_narrow_explorer_does_not_take_columns_from_the_workspace() {
+        assert_eq!(
+            Explorer::split(area(120, 30), false),
+            Explorer {
+                main: area(120, 30),
+                tree: None
+            }
+        );
+        for width in [44u16, 60, 68] {
+            let split = Explorer::split(area(width, 24), true);
+            assert_eq!(split.main, area(width, 24), "{width}: no room to dock");
+            assert!(
+                split.tree.is_none(),
+                "{width}: must not squeeze the workspace"
+            );
+        }
     }
 
     #[test]

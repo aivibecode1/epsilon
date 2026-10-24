@@ -7,8 +7,9 @@ Global configuration is `~/.config/epsilon/config.toml`; project configuration i
 hash changes, Epsilon asks you to trust it (`/trust` in the TUI) before applying it.
 Precedence (for model id, thinking level, permission preset, and plan mode — the keys both
 files carry): command-line flag → project config → global config → catalog default (ADR-018).
-Other keys (theme, favorites, editor, skills-disabled, custom providers, OAuth client
-ids, keybindings) are global-only and never read from the project file.
+Other keys (theme, explorer visibility, collapsed explorer folders, favorites,
+editor, skills-disabled, custom providers, OAuth client ids, keybindings) are
+global-only and never read from the project file.
 
 ## Model selection
 
@@ -47,6 +48,33 @@ See [`auth.md`](auth.md) for client-id resolution and refresh limitations.
 command = "code --wait"   # used by Ctrl+O / Alt+E and /editor
 ```
 
+## Display
+
+```toml
+[tui]
+theme = "dark"          # dark | light | high-contrast; --light wins for one run
+explorer = true         # the right-hand project explorer on launch (F6 toggles)
+
+[display]
+hide_thinking = false   # reasoning traces in the transcript
+```
+
+`F6` hides a focused explorer or focuses a resting one. A visibility change is
+written to `[tui] explorer`, so the next launch keeps the layout you chose;
+focus alone is not a preference.
+
+Collapsing a directory with `Left` or `Enter` is also remembered, per workspace:
+
+```toml
+[tui.explorer_collapsed]
+"C:\\work\\my-project" = ["target", "vendor"]
+```
+
+The keys are workspace paths and the values are workspace-relative,
+`/`-separated directory paths (at most 200). The explorer writes this table for
+you; it is listed here so a hand-edited config is not a surprise. Another
+workspace keeps its own set.
+
 ## Launch modes
 
 Two flags change what the agent may do before it answers anything. Both are
@@ -80,11 +108,11 @@ whole run regardless of what the model asks for.
 | `~/.config/epsilon/MEMORY.md` | global memory injected into the prompt |
 | `~/.config/epsilon/history` | prompt history |
 | `~/.config/epsilon/keybindings.json` | remapped keys |
-| `~/.config/epsilon/skills/` | global skills (`SKILL.md` folders) |
-| `~/.claude/skills/`, `~/.codex/skills/`, `~/.gemini/skills/`, `~/.config/opencode/skills/`, `~/.dsh/skills/`, `~/.agents/skills/` | global skills written for another harness — read here too |
+| `~/.config/epsilon/skills/` | global skills (`SKILL.md` folders); this root wins a name clash |
+| `~/.claude/skills/`, `~/.codex/skills/`, `~/.gemini/skills/`, `~/.config/opencode/skills/`, `~/.dsh/skills/`, `~/.agents/skills/`, `~/.pi/agent/skills/` | global skills written for another harness — read here too. `DSH_HOME`, `DSH_AGENTS_HOME` and `PI_CODING_AGENT_DIR` move the DSH and Pi roots |
 | `<workspace>/.epsilon/config.toml` | project config (trust-gated) |
 | `<workspace>/.epsilon/sessions/<workspace>/*.jsonl` | session transcripts, one file per launch (older sessions may sit directly in `.epsilon/sessions/`) |
-| `<workspace>/.epsilon/skills/`, `<workspace>/.agents/skills/`, `<workspace>/.claude/skills/`, `<workspace>/.codex/skills/`, `<workspace>/.gemini/skills/`, `<workspace>/.cursor/skills/`, `<workspace>/.windsurf/skills/`, `<workspace>/.opencode/skills/`, `<workspace>/.dsh/skills/`, `<workspace>/.pi/skills/` | project skills (trust-gated) |
+| `<workspace>/.epsilon/skills/`, `<workspace>/.agents/skills/`, `<workspace>/.claude/skills/`, `<workspace>/.codex/skills/`, `<workspace>/.gemini/skills/`, `<workspace>/.cursor/skills/`, `<workspace>/.windsurf/skills/`, `<workspace>/.opencode/skill/`, `<workspace>/.opencode/skills/`, `<workspace>/.dsh/skills/`, `<workspace>/.pi/skills/` | project skills (trust-gated); `.epsilon` wins a name clash |
 | `<workspace>/AGENTS.md`, `CLAUDE.md`, `MEMORY.md` | project instructions and memory, injected into the prompt's CONTEXT tier |
 
 ## Extra skill directories

@@ -20,16 +20,17 @@ const MAX_DESC: usize = 1024;
 //
 // So discovery scans every root below, and a skill's worth does not depend on which tool
 // created its directory. Order matters — [`discover_with_notices`] lets the **later** root win
-// a name collision — and the order follows the convention each tool documents for itself:
-// **workspace beats user**, and within a tier the portable `.agents/skills` alias beats the
-// tool-specific directory.
+// a name collision — and the order encodes one rule: **workspace beats user, and a root
+// written for this harness beats a compatibility root**. Within DSH's own tier `.dsh` beats
+// `.agents`, and extras ([`all_roots_with_extra`]) win everything because the user named them.
 //
 // **What is deliberately NOT scanned, and why.** Each of these is a real feature of a tool
 // named above, and each is out of scope here rather than overlooked:
 //
 // * **nested project directories** — Claude Code reads `<subdir>/.claude/skills` for a
-//   monorepo. Doing that means walking the workspace tree, which is a different cost and a
-//   different semantic from reading a fixed list of roots.
+//   monorepo, and Pi/opencode recurse below a root. Doing that means walking the workspace
+//   tree, which is a different cost and a different semantic from reading a fixed list of
+//   roots. Epsilon reads one level; that is stated as a divergence, not as parity.
 // * **extra directories passed on the command line** — Claude Code's `--add-dir`, and
 //   Codex's `/etc/codex/skills` admin tier. Epsilon has no flag that adds a root today, so
 //   there is no surface to hang this on; when one exists, [`all_roots`] is where it goes.
@@ -57,11 +58,19 @@ const MAX_DESC: usize = 1024;
 /// Epsilon's own root — which is empty too, because that root lives under the home directory.
 pub fn user_roots() -> Vec<PathBuf> {
     let mut roots = Vec::new();
+    // Built-ins first, so every directory below outranks them on a name clash.
+    // They are ordinary skills once enabled (`/skill <name> on` writes one), but
+    // a user's own copy of the same name is the more specific instruction.
+    if let Some(dir) = crate::config::global_dir() {
+        roots.push(crate::builtin_skills::root_in(&dir));
+    }
     if let Some(home) = crate::config::home_dir() {
-        // Epsilon's own location, then the conventions other harnesses read. Epsilon's is
-        // first so a user who deliberately configures this tool is not silently outranked by
-        // a directory they filled for something else.
-        roots.push(home.join(".config").join("epsilon").join("skills"));
+        // Other harnesses' conventions next, so none of them can outrank a
+        // directory the user filled *for Epsilon*. Later roots win collisions
+        // (`discover_with_notices`), and the old order had this backwards: the
+        // comment promised Epsilon was not outranked while `.agents` — last —
+        // actually beat it on every clash.
+        //
         // Claude Code: `~/.claude/skills/<name>/SKILL.md` (code.claude.com/docs/en/skills).
         roots.push(home.join(".claude").join("skills"));
         // OpenAI Codex: `~/.codex/skills` (learn.chatgpt.com/docs/build-skills).
@@ -70,11 +79,30 @@ pub fn user_roots() -> Vec<PathBuf> {
         roots.push(home.join(".gemini").join("skills"));
         // opencode's XDG-style global dir (`~/.config/opencode/skills`).
         roots.push(home.join(".config").join("opencode").join("skills"));
-        // DeepSeek Harness: `~/.dsh/skills`, the home-tier twin of `.dsh/skills`.
-        roots.push(home.join(".dsh").join("skills"));
-        // The portable alias. Gemini CLI documents it explicitly and gives it precedence over
-        // the tool's own directory within a tier, which is the rule this ordering follows.
-        roots.push(home.join(".agents").join("skills"));
+        // DeepSeek Harness, honoring its documented home override. `DSH_HOME`
+        // is the home directory itself; skills live directly under it.
+        let dsh_home = std::env::var_os("DSH_HOME")
+            .filter(|v| !v.is_empty())
+            .map(PathBuf::from)
+            .unwrap_or_else(|| home.join(".dsh"));
+        roots.push(dsh_home.join("skills"));
+        // The portable alias, honoring DSH's documented override.
+        let agents_home = std::env::var_os("DSH_AGENTS_HOME")
+            .filter(|v| !v.is_empty())
+            .map(PathBuf::from)
+            .unwrap_or_else(|| home.join(".agents"));
+        roots.push(agents_home.join("skills"));
+        // Pi's global skills live under its *agent* directory, which defaults to
+        // `~/.pi/agent` and moves with `PI_CODING_AGENT_DIR`
+        // (references/pi-1.3.0/packages/coding-agent/src/config.ts:563-568).
+        let pi_agent = std::env::var_os("PI_CODING_AGENT_DIR")
+            .filter(|v| !v.is_empty())
+            .map(PathBuf::from)
+            .unwrap_or_else(|| home.join(".pi").join("agent"));
+        roots.push(pi_agent.join("skills"));
+        // Epsilon's own location, last so a skill written for this harness wins
+        // a name clash against every compatibility root above it.
+        roots.push(home.join(".config").join("epsilon").join("skills"));
     }
     roots
 }
@@ -88,9 +116,8 @@ pub fn user_roots() -> Vec<PathBuf> {
 /// have its instructions loaded before the user has agreed to read them.
 pub fn project_roots(workspace: &Path) -> Vec<PathBuf> {
     vec![
-        // Epsilon's native location (M11).
-        workspace.join(".epsilon").join("skills"),
-        // Claude Code project skills, including the nested `<subdir>/.claude/skills` form.
+        // Claude Code project skills (one level; nested `<subdir>/.claude/skills`
+        // is deliberately not walked).
         workspace.join(".claude").join("skills"),
         // OpenAI Codex project skills.
         workspace.join(".codex").join("skills"),
@@ -100,16 +127,21 @@ pub fn project_roots(workspace: &Path) -> Vec<PathBuf> {
         workspace.join(".cursor").join("skills"),
         // Windsurf.
         workspace.join(".windsurf").join("skills"),
-        // opencode.
+        // opencode reads both spellings; the singular is documented beside the
+        // plural and the loader supports `{skill,skills}/**/SKILL.md`.
+        workspace.join(".opencode").join("skill"),
         workspace.join(".opencode").join("skills"),
-        // DeepSeek Harness — the same convention the reference tree in `references/` uses
-        // (`packages/skill/skill-filesystem/src/index.ts:250`).
-        workspace.join(".dsh").join("skills"),
         // Pi's native config dir (CONFIG_DIR_NAME). This harness began as a port of Pi,
         // so a skill written for it is a skill written for this one's shape.
         workspace.join(".pi").join("skills"),
-        // The portable alias, last so it wins the tier, per Gemini CLI's documented rule.
+        // The portable alias.
         workspace.join(".agents").join("skills"),
+        // DeepSeek Harness — the same convention the reference tree in `references/` uses
+        // (`packages/skill/skill-filesystem/src/index.ts:250`), and its documented
+        // project-dsh rank outranks project-agents.
+        workspace.join(".dsh").join("skills"),
+        // Epsilon's native location last, so a project's own skill wins a clash.
+        workspace.join(".epsilon").join("skills"),
     ]
 }
 
@@ -226,16 +258,34 @@ pub struct Skill {
     /// Where the skill lives: the directory containing `SKILL.md` for a bundle, the
     /// parent skills **root** for a flat `<name>.md` file.
     ///
-    /// The root plays the bundle directory's only role — locating the file — so the
-    /// loader reads `<dir>/SKILL.md` first and falls back to `<dir>/<name>.md`, and a
-    /// flat skill's `dir` plus its name always locates its file. No extra field carries
-    /// the filename: `LoadableSkill` in `epsilon-tools` has exactly
-    /// `(name, description, dir)`, its constructor in `epsilon-runtime` is outside this
-    /// change, and a second channel for the same path would be the second copy this
-    /// codebase keeps refusing to add.
+    /// Kept for the bundle file sample and base-directory guidance. The file to
+    /// load is [`Self::file`], not a second guess from this field.
     pub dir: PathBuf,
     /// When true, only slash-command style invocation may load it (not model choice).
     pub disable_model_invocation: bool,
+    /// The exact file the body is read from: `<dir>/SKILL.md` for a bundle,
+    /// `<root>/<name>.md` for a flat skill.
+    ///
+    /// Carried rather than re-derived from `dir` and `name`, because that
+    /// derivation was wrong in a real tree: a flat skill's `dir` is the shared
+    /// root, so the loader tried `<root>/SKILL.md` first and a root-level
+    /// `SKILL.md` made every flat skill in that root load the same wrong body.
+    pub file: PathBuf,
+}
+
+impl Skill {
+    /// The skills **root** this skill was discovered under.
+    ///
+    /// A bundle's `dir` is the skill directory (one level below its root); a
+    /// flat skill's `dir` already is the root. Scope labels and RPC
+    /// `sourceInfo` need the root/file distinction that `dir` alone lost.
+    pub fn root(&self) -> &Path {
+        if self.file.file_name().is_some_and(|name| name == "SKILL.md") {
+            self.dir.parent().unwrap_or(&self.dir)
+        } else {
+            &self.dir
+        }
+    }
 }
 
 /// Parse `---` delimited frontmatter into key/value pairs (flat strings only).
@@ -247,24 +297,84 @@ pub struct Skill {
 /// description, the loader prints the body, and nothing in between is rendered
 /// anywhere. (Deferred, not overlooked.)
 fn parse_frontmatter(raw: &str) -> (Vec<(String, String)>, String) {
-    if raw.lines().next().map(str::trim) != Some("---") {
+    // A UTF-8 BOM is legal in a file somebody saved on Windows and must not hide
+    // the opening fence; CRLF is normalized by `lines()`.
+    let raw = raw.strip_prefix('\u{feff}').unwrap_or(raw);
+    let mut lines = raw.lines();
+    if lines.next().map(str::trim) != Some("---") {
         return (Vec::new(), raw.to_string());
     }
     let mut pairs = Vec::new();
-    let mut consumed = 1usize; // opening ---
-    let mut lines = raw.lines();
-    lines.next();
-    for line in lines.by_ref() {
-        consumed += 1;
-        if line.trim() == "---" {
-            let body: Vec<&str> = raw.lines().skip(consumed).collect();
-            return (pairs, body.join("\n"));
+    let mut body: Vec<&str> = Vec::new();
+    let mut in_frontmatter = true;
+    let mut closed = false;
+    while let Some(line) = lines.next() {
+        if in_frontmatter && line.trim() == "---" {
+            in_frontmatter = false;
+            closed = true;
+            continue;
         }
-        if let Some((k, v)) = line.split_once(':') {
-            pairs.push((k.trim().to_string(), v.trim().to_string()));
+        if !in_frontmatter {
+            body.push(line);
+            continue;
+        }
+        // Comments and blank lines are legal YAML and carry no key.
+        let trimmed = line.trim();
+        if trimmed.is_empty() || trimmed.starts_with('#') {
+            continue;
+        }
+        let Some((key, value)) = trimmed.split_once(':') else {
+            continue;
+        };
+        let key = key.trim().to_string();
+        let value = value.trim();
+        // Block scalars are the shape a multi-line `description:` takes in the
+        // references (`description: |`). Without this the description was the
+        // literal `|`, which passed the non-empty check and reached the catalog.
+        let value = if value == "|" || value == ">" {
+            let folded = value == ">";
+            let mut block: Vec<String> = Vec::new();
+            while let Some(next) = lines.clone().next() {
+                if next.starts_with(' ') || next.starts_with('\t') {
+                    block.push(next.trim().to_string());
+                    lines.next();
+                } else {
+                    break;
+                }
+            }
+            if folded {
+                block.join(" ")
+            } else {
+                block.join("\n")
+            }
+        } else {
+            unquote_scalar(value)
+        };
+        pairs.push((key, value.trim().to_string()));
+    }
+    if !closed {
+        // Unterminated frontmatter: treat the whole file as body, not as empty.
+        return (Vec::new(), raw.to_string());
+    }
+    (pairs, body.join("\n"))
+}
+
+/// Strip one layer of matching YAML quotes from a scalar.
+///
+/// The parser is deliberately not a YAML implementation; it handles the two
+/// shapes a hand-written SKILL.md actually uses — `name: "foo"` and
+/// `name: 'foo'` — and leaves everything else verbatim. A full YAML dependency
+/// for four keys would be a supply-chain decision this file does not need.
+fn unquote_scalar(value: &str) -> String {
+    let bytes = value.as_bytes();
+    if bytes.len() >= 2 {
+        let first = bytes[0];
+        let last = bytes[bytes.len() - 1];
+        if (first == b'"' && last == b'"') || (first == b'\'' && last == b'\'') {
+            return value[1..value.len() - 1].to_string();
         }
     }
-    (Vec::new(), raw.to_string()) // unterminated frontmatter: treat whole file as body
+    value.to_string()
 }
 
 /// What discovery found, and what it could not look at.
@@ -365,6 +475,12 @@ pub fn discover_with_notices(roots: &[PathBuf]) -> Discovered {
                 }
             };
             let path = e.path();
+            // DSH keeps bundled/system skills in a `.system` child that is not a
+            // user-authored tree; scanning it produces invalid-name notices for
+            // files the user never wrote.
+            if e.file_name() == ".system" {
+                continue;
+            }
             // Two shapes reach the same validation below. A directory may hold a bundle
             // (`<dir>/SKILL.md`); a top-level `<name>.md` file IS the skill — DSH,
             // opencode and Pi all read loose files in a skills root, and a harness that
@@ -385,6 +501,9 @@ pub fn discover_with_notices(roots: &[PathBuf]) -> Discovered {
             } else if path.is_file()
                 && path.extension().is_some_and(|ext| ext == "md")
                 && !path.file_name().is_some_and(|name| name == "SKILL.md")
+                && !path
+                    .file_name()
+                    .is_some_and(|name| name.eq_ignore_ascii_case("README.md"))
             {
                 let stem = path
                     .file_stem()
@@ -451,11 +570,15 @@ pub fn discover_with_notices(roots: &[PathBuf]) -> Discovered {
                 ));
                 continue;
             }
-            if description.len() > MAX_DESC {
+            // The spec's cap is characters, not bytes: a description written in
+            // Japanese is three bytes per character and was rejected at a third of
+            // the allowed length.
+            let description_chars = description.chars().count();
+            if description_chars > MAX_DESC {
                 notices.push(format!(
-                    "skills: ignoring {}: description is {} bytes, over the {MAX_DESC}-byte limit",
-                    origin.display(),
-                    description.len()
+                    "skills: ignoring {}: description is {description_chars} characters, over the \
+                     {MAX_DESC}-character limit",
+                    origin.display()
                 ));
                 continue;
             }
@@ -474,6 +597,7 @@ pub fn discover_with_notices(roots: &[PathBuf]) -> Discovered {
                     description,
                     dir,
                     disable_model_invocation,
+                    file: skill_file,
                 }
             };
             // Shadowing: replace the earlier-root skill with the same name. This is a
@@ -544,9 +668,22 @@ fn invocation_flag(value: Option<String>) -> Option<bool> {
 /// guess, and then an apology. The `skill` tool filters identically, so the
 /// catalog and the tool agree about what exists.
 pub fn catalog(skills: &[Skill]) -> String {
+    catalog_with_disabled(skills, &[])
+}
+
+/// [`catalog`] minus the skills the user switched off.
+///
+/// **Why this is separate.** The catalog used to filter only
+/// `disable-model-invocation`, so `/skill <name> off` removed the skill from the
+/// tool while the prompt still advertised it. The model then read a name it could
+/// not load — a documented capability that answers with an error. Both the tool
+/// and the catalog now consult the same disabled list.
+pub fn catalog_with_disabled(skills: &[Skill], disabled: &[String]) -> String {
     let loadable = skills
         .iter()
-        .filter(|skill| !skill.disable_model_invocation)
+        .filter(|skill| {
+            !skill.disable_model_invocation && !disabled.iter().any(|name| name == &skill.name)
+        })
         .collect::<Vec<_>>();
     if loadable.is_empty() {
         return String::new();
@@ -590,6 +727,7 @@ mod tests {
             description: format!("{name} does a thing"),
             dir: std::path::PathBuf::from(name),
             disable_model_invocation,
+            file: std::path::PathBuf::from(name).join("SKILL.md"),
         }
     }
 
@@ -614,6 +752,24 @@ mod tests {
             "an empty Skills section is noise: {text:?}"
         );
         assert!(catalog(&[]).is_empty());
+    }
+
+    #[test]
+    fn a_disabled_skill_is_not_advertised_in_the_catalog() {
+        // `/skill off` removed the skill from the tool but the prompt kept naming
+        // it. One switch, two answers, and the model was told to load a skill the
+        // tool would refuse.
+        let skills = vec![skill("open", false), skill("switched-off", false)];
+        let text = catalog_with_disabled(&skills, &["switched-off".to_string()]);
+        assert!(text.contains("open"), "{text}");
+        assert!(
+            !text.contains("switched-off"),
+            "a disabled skill must not be advertised: {text}"
+        );
+        assert!(
+            catalog_with_disabled(&skills, &[]).contains("switched-off"),
+            "the same list without the disable must still advertise it"
+        );
     }
 
     #[test]
@@ -1108,6 +1264,19 @@ mod tests {
         );
     }
 
+    #[test]
+    fn a_readme_in_a_skills_root_is_documentation_not_a_notice() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("README.md"), "# skills\n").unwrap();
+
+        let found = discover_with_notices(&[dir.path().to_path_buf()]);
+        assert!(found.skills.is_empty(), "{found:?}");
+        assert!(
+            found.notices.is_empty(),
+            "a README is documentation, not an invalid skill to report on every launch: {found:?}"
+        );
+    }
+
     /// An unreadable flat file is announced, like an unreadable bundle file.
     #[test]
     fn an_unreadable_flat_file_is_announced() {
@@ -1465,6 +1634,64 @@ mod tests {
         );
     }
 
+    /// Frontmatter shapes a hand-written SKILL.md actually uses: a BOM from a
+    /// Windows editor, quoted strings, a block description and CRLF.
+    #[test]
+    fn frontmatter_survives_bom_quotes_blocks_and_crlf() {
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = tmp.path().join("alpha");
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(
+            dir.join("SKILL.md"),
+            "\u{feff}---\r\nname: \"alpha\"\r\ndescription: >\r\n  quoted and folded\r\n  onto one line\r\n---\r\n\r\nBODY\r\n",
+        )
+        .unwrap();
+        let found = discover_with_notices(&[tmp.path().to_path_buf()]);
+        assert!(found.notices.is_empty(), "{:?}", found.notices);
+        let skill = found.skills.first().expect("the skill loads");
+        assert_eq!(skill.name, "alpha", "quotes are not part of the name");
+        assert_eq!(
+            skill.description, "quoted and folded onto one line",
+            "a folded block is one line, and CRLF does not leak into it"
+        );
+
+        // A literal block keeps its line breaks; comments do not become keys.
+        let dir = tmp.path().join("beta");
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(
+            dir.join("SKILL.md"),
+            "---\n# a comment\nname: beta\ndescription: |\n  line one\n  line two\n---\nBODY\n",
+        )
+        .unwrap();
+        let found = discover_with_notices(&[tmp.path().to_path_buf()]);
+        let beta = found
+            .skills
+            .iter()
+            .find(|s| s.name == "beta")
+            .expect("beta loads");
+        assert_eq!(beta.description, "line one\nline two");
+    }
+
+    /// The DSH `.system` child is bundled material, not a user skill root entry.
+    #[test]
+    fn a_dot_system_child_is_skipped_without_a_notice() {
+        let tmp = tempfile::tempdir().unwrap();
+        let system = tmp.path().join(".system").join("bundled");
+        std::fs::create_dir_all(&system).unwrap();
+        std::fs::write(
+            system.join("SKILL.md"),
+            "---\nname: Bundled_Name\ndescription: d\n---\nbody\n",
+        )
+        .unwrap();
+        let found = discover_with_notices(&[tmp.path().to_path_buf()]);
+        assert!(found.skills.is_empty(), "{:?}", found.skills);
+        assert!(
+            found.notices.is_empty(),
+            "bundled system files are not the user's broken skill: {:?}",
+            found.notices
+        );
+    }
+
     /// **The project root list is the one discovery uses, and it is a real list.**
     ///
     /// Not a documentation test for its own sake: `trust_requiring_resources` in
@@ -1495,16 +1722,30 @@ mod tests {
                 "{dir}/skills is a convention harnesses read and is missing: {roots:?}"
             );
         }
+        assert!(
+            roots.contains(&ws.join(".opencode").join("skill")),
+            "opencode documents the singular `skill/` spelling too: {roots:?}"
+        );
         assert_eq!(
             roots.len(),
-            10,
+            11,
             "the list is exactly the documented conventions: {roots:?}"
         );
-        // The portable alias is last, so it wins the tier.
+        // Epsilon's own root is last, so a project's skill wins a clash; DSH's
+        // `.dsh` sits above the portable alias, matching its documented rank.
         assert_eq!(
             roots.last().unwrap(),
-            &ws.join(".agents").join("skills"),
-            "the portable alias must be last in the project tier: {roots:?}"
+            &ws.join(".epsilon").join("skills"),
+            "epsilon's own project root must win the tier: {roots:?}"
+        );
+        assert!(
+            roots
+                .iter()
+                .position(|r| r == &ws.join(".dsh").join("skills"))
+                > roots
+                    .iter()
+                    .position(|r| r == &ws.join(".agents").join("skills")),
+            "project-dsh outranks project-agents: {roots:?}"
         );
     }
 
@@ -1564,33 +1805,30 @@ mod tests {
                 "with no home directory there are no user roots: {roots:?}"
             ),
             Some(home) => {
-                let expected = [
-                    home.join(".config").join("epsilon").join("skills"),
+                // Harness overrides (DSH_HOME, DSH_AGENTS_HOME,
+                // PI_CODING_AGENT_DIR) move these roots, so the table is checked
+                // by membership and precedence rather than by one exact vector.
+                for path in [
+                    home.join(".config").join("epsilon").join("builtin-skills"),
                     home.join(".claude").join("skills"),
                     home.join(".codex").join("skills"),
                     home.join(".gemini").join("skills"),
-                    // opencode's XDG-style global dir and DeepSeek Harness's home dir:
-                    // both read by their harnesses, so both are read here too.
                     home.join(".config").join("opencode").join("skills"),
-                    home.join(".dsh").join("skills"),
-                    home.join(".agents").join("skills"),
-                ];
-                assert_eq!(
-                    roots, expected,
-                    "the user tier is exactly its documented table, in precedence order"
-                );
-                // Epsilon's own root first (a deliberate configuration is never
-                // outranked by another harness's directory), the portable alias
-                // last (it wins the tier, per Gemini CLI's documented rule).
-                assert_eq!(
-                    roots.first().unwrap(),
-                    &expected[0],
-                    "epsilon's own root leads the user tier: {roots:?}"
-                );
+                    home.join(".pi").join("agent").join("skills"),
+                    home.join(".config").join("epsilon").join("skills"),
+                ] {
+                    assert!(
+                        roots.contains(&path),
+                        "{} is a global convention and is missing: {roots:?}",
+                        path.display()
+                    );
+                }
+                // Epsilon's own root is last, so a skill deliberately written
+                // for this harness is never outranked by a compatibility root.
                 assert_eq!(
                     roots.last().unwrap(),
-                    &home.join(".agents").join("skills"),
-                    "the portable alias must be last in the user tier: {roots:?}"
+                    &home.join(".config").join("epsilon").join("skills"),
+                    "epsilon's own root must win the user tier: {roots:?}"
                 );
             }
         }

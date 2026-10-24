@@ -26,6 +26,12 @@ pub(crate) struct TaskEntry {
     output: String,
     turns: u32,
     usage: Option<epsilon_contracts::message::Usage>,
+    /// Whether the current `usage` has already been folded into the parent.
+    ///
+    /// A background task accumulates usage in this registry; the tool result is
+    /// how the parent's accounting sees it. Without this bit every status poll
+    /// re-billed the same leg.
+    usage_reported: bool,
     pub(crate) child: Arc<Agent>,
 }
 
@@ -145,6 +151,7 @@ impl Agent {
         child.set_turn_hooks(self.turn_hooks());
         // Child discovers the same skill catalog (read-only share).
         child.set_skills(self.skill_list());
+        child.set_disabled_skills(self.disabled_skills());
         // ...and the same identity overlays, for the same reason: the workspace's
         // `SYSTEM.md` is the contract the user wrote for this repository, not a property of
         // the top-level session.
@@ -412,6 +419,9 @@ impl Agent {
             output,
             turns,
             usage,
+            // A rehydrated child's spend belongs to this parent's session, and
+            // this parent has not billed it yet.
+            usage_reported: false,
             child,
         });
         Ok(self.task_snapshot(id))
@@ -607,6 +617,22 @@ impl Agent {
         v.iter().find(|e| e.id == id).map(Self::snapshot_of)
     }
 
+    /// Take the usage a child has accumulated and not yet had billed.
+    ///
+    /// The first caller gets it and marks it reported; every later status poll
+    /// gets `None`. The snapshot keeps its copy for display, so this does not
+    /// hide the child's spend from the UI.
+    pub fn take_task_usage(&self, id: &str) -> Option<epsilon_contracts::message::Usage> {
+        let mut tasks = self.tasks.lock().ok()?;
+        let entry = tasks.iter_mut().find(|entry| entry.id == id)?;
+        if entry.usage_reported {
+            return None;
+        }
+        let usage = entry.usage?;
+        entry.usage_reported = true;
+        Some(usage)
+    }
+
     /// Every tracked task, in dispatch order (UI badges, tests).
     pub fn task_snapshots(&self) -> Vec<epsilon_contracts::tool::TaskSnapshot> {
         self.tasks
@@ -762,6 +788,7 @@ impl Agent {
             output: String::new(),
             turns: 0,
             usage: None,
+            usage_reported: false,
             child: Arc::clone(&child),
         });
         if request.background {
@@ -852,6 +879,9 @@ impl Agent {
                             // Cumulative: a resumed child keeps counting its turns.
                             e.turns += turns;
                             e.usage = Some(outcome.usage);
+                            // The foreground result below carries this usage
+                            // to the parent in the same call.
+                            e.usage_reported = true;
                         });
                         Ok(epsilon_contracts::tool::TaskOutcome::Completed(
                             epsilon_contracts::tool::TaskHostResult {
@@ -907,6 +937,10 @@ impl Agent {
         let tasks = Arc::clone(&self.tasks);
         let notices = self.task_notices_tx.clone();
         let notice_id = id.clone();
+        // The parent may outlive the dispatch call; keep a weak upgrade rather
+        // than a strong Arc cycle. If the parent is gone, the entry keeps the
+        // usage for a later poll/rehydrate.
+        let parent = self.self_ref.get().and_then(|weak| weak.upgrade());
         tokio::spawn(async move {
             // M93/F18: from the resume claim (and the fresh register) onward the entry says
             // `Running`, so this body must always end with a terminal record — including when
@@ -962,6 +996,17 @@ impl Agent {
                 entry.output = text.clone();
                 entry.turns += turns;
                 entry.usage = usage;
+                // Fold the spend now when the parent still exists: completion
+                // is a real event, and waiting for a poll loses it entirely if
+                // nobody polls. The task entry is the display copy; mark it
+                // reported so the next `take_task_usage` cannot bill it twice.
+                if let (Some(parent), Some(spend)) = (parent.as_ref(), usage) {
+                    let model = model.clone().unwrap_or_else(|| parent.model_id());
+                    parent.record_external_usage(&model, spend);
+                    entry.usage_reported = true;
+                } else {
+                    entry.usage_reported = false;
+                }
             }
             let _ = notices.send(Agent::task_notice(
                 &notice_id,
@@ -985,6 +1030,10 @@ impl epsilon_contracts::tool::TaskHost for Agent {
 
     fn task_snapshot(&self, id: &str) -> Option<epsilon_contracts::tool::TaskSnapshot> {
         Agent::task_snapshot(self, id)
+    }
+
+    fn take_task_usage(&self, id: &str) -> Option<epsilon_contracts::message::Usage> {
+        Agent::take_task_usage(self, id)
     }
 
     fn task_ids(&self) -> Vec<String> {

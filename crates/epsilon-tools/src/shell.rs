@@ -239,11 +239,50 @@ impl ChildStdio {
 /// We do not switch to `cmd /C` despite it being ~15x faster, because the tool is
 /// named `bash` and documented as a POSIX-style shell; silently giving the model
 /// `cmd` syntax would be a different, more confusing surprise than a slow start.
-pub fn shell_argv(command: &str) -> (&'static str, Vec<String>) {
+/// The PowerShell executable, as an **absolute** path.
+///
+/// **A bare `powershell` is a workspace execution primitive on Windows.**
+/// `CreateProcess` searches the parent's current directory, and the harness
+/// runs a tool with the workspace as its cwd — so a repository that ships
+/// `powershell.exe` beside its source would be executed when the model asked
+/// for `ls`, before any confinement is assigned. The approval dialog would say
+/// `bash ls` while a planted binary ran with the user's rights.
+///
+/// Resolution is deliberately a list of absolute candidates and no PATH walk:
+/// `pwsh.exe` from a PowerShell 7 install first, then the Windows PowerShell
+/// that ships with the OS. When neither exists the System32 path is returned
+/// anyway, so the spawn fails loudly instead of falling back to a search.
+#[cfg(windows)]
+fn powershell_exe() -> String {
+    use std::path::PathBuf;
+
+    let mut candidates: Vec<PathBuf> = Vec::new();
+    for var in ["ProgramFiles", "ProgramW6432"] {
+        if let Ok(root) = std::env::var(var) {
+            candidates.push(PathBuf::from(root).join(r"PowerShell\7\pwsh.exe"));
+        }
+    }
+    let system_root = std::env::var("SystemRoot").unwrap_or_else(|_| r"C:\Windows".to_string());
+    candidates
+        .push(PathBuf::from(&system_root).join(r"System32\WindowsPowerShell\v1.0\powershell.exe"));
+    for candidate in &candidates {
+        if candidate.is_file() {
+            return candidate.to_string_lossy().into_owned();
+        }
+    }
+    // Nothing verified: name the OS path that should exist. A spawn error is
+    // the honest outcome; a PATH/cwd search is the vulnerability.
+    candidates
+        .last()
+        .map(|p| p.to_string_lossy().into_owned())
+        .unwrap_or_else(|| r"C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe".into())
+}
+
+pub fn shell_argv(command: &str) -> (String, Vec<String>) {
     #[cfg(windows)]
     {
         (
-            "powershell",
+            powershell_exe(),
             vec![
                 "-NoLogo".into(),
                 "-NoProfile".into(),
@@ -255,7 +294,7 @@ pub fn shell_argv(command: &str) -> (&'static str, Vec<String>) {
     }
     #[cfg(not(windows))]
     {
-        ("bash", vec!["-c".into(), command.to_string()])
+        ("bash".to_string(), vec!["-c".into(), command.to_string()])
     }
 }
 
@@ -291,6 +330,85 @@ impl CommandVerdict {
     pub fn is_success(&self) -> bool {
         matches!(self, CommandVerdict::Success)
     }
+}
+
+/// Why a read-only shell request cannot be honoured by this backend, if it cannot.
+///
+/// A backend that bounds memory and the process tree but not the filesystem is
+/// not read-only, whatever the flag says: on Windows the Job Object backend
+/// reports exactly that. Refusing is the fail-closed answer — the alternative
+/// is a session that calls itself an audit while a command writes the tree.
+fn read_only_refusal(
+    mode: SandboxMode,
+    capabilities: &epsilon_safety::Enforcement,
+) -> Option<String> {
+    if mode != SandboxMode::ReadOnly || capabilities.is_full() {
+        return None;
+    }
+    if capabilities.missing().contains(&"filesystem") {
+        return Some(format!(
+            "[confinement] this backend cannot make a command read-only ({}); refusing rather \
+             than running it with write access. Use `/plan` for a read-only session, or rerun \
+             with `--sandbox workspace-write` if writes are acceptable.",
+            capabilities.describe()
+        ));
+    }
+    None
+}
+
+/// Kill a spawned command **and its descendants** on the unconfined path.
+///
+/// `Child::kill` terminates the direct child only. A build server, a watcher,
+/// or a shell that backgrounded a writer keeps the port and the workspace after
+/// the user is told the command was killed — the confined paths already tear
+/// down the tree (Job Object terminate, bwrap `--die-with-parent`), so the
+/// unconfined path must do the same rather than claiming a boundary it does not
+/// have. Unix starts the child in its own process group and signals the group;
+/// Windows asks `taskkill /T` for the tree.
+async fn kill_process_tree(child: &mut tokio::process::Child) {
+    use std::process::Stdio;
+
+    let Some(pid) = child.id() else {
+        let _ = child.kill().await;
+        return;
+    };
+    #[cfg(windows)]
+    {
+        use std::path::PathBuf;
+        // Absolute, for the same reason the shell is: a repository may ship a
+        // `taskkill.exe`, and CreateProcess would find it in the workspace.
+        let taskkill = std::env::var("SystemRoot")
+            .ok()
+            .map(|root| PathBuf::from(root).join(r"System32\taskkill.exe"))
+            .filter(|path| path.is_file())
+            .map(std::ffi::OsString::from);
+        if let Some(taskkill) = taskkill {
+            let pid_arg = pid.to_string();
+            let mut cmd = tokio::process::Command::new(taskkill);
+            cmd.args(["/PID", pid_arg.as_str(), "/T", "/F"])
+                .stdin(Stdio::null())
+                .stdout(Stdio::null())
+                .stderr(Stdio::null());
+            // A kill helper does not need the harness's credentials either.
+            epsilon_safety::scrub_secret_env(&mut cmd);
+            let _ = cmd.status().await;
+        }
+    }
+    #[cfg(unix)]
+    {
+        // The child was spawned with `process_group(0)`, so its pid is the
+        // group id; a negative pid signals the group.
+        let group = format!("-{pid}");
+        let mut cmd = tokio::process::Command::new("kill");
+        cmd.args(["-KILL", "--", group.as_str()])
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null());
+        epsilon_safety::scrub_secret_env(&mut cmd);
+        let _ = cmd.status().await;
+    }
+    let _ = child.kill().await;
+    let _ = child.wait().await;
 }
 
 /// Classify a *completed* run.
@@ -455,6 +573,9 @@ impl Tool for BashTool {
                     sandbox.name()
                 )));
             }
+            if let Some(refusal) = read_only_refusal(mode, &sandbox.capabilities()) {
+                return Err(ToolFailure::msg(refusal));
+            }
             let (program, argv) = shell_argv(&args.command);
             let mut policy = self.policy.clone();
             policy.wall_timeout_secs = timeout;
@@ -462,7 +583,7 @@ impl Tool for BashTool {
             let outcome = {
                 let run_fut = sandbox.run(
                     ConfinedCommand {
-                        program: program.into(),
+                        program,
                         args: argv,
                         cwd: workdir.clone(),
                         mode,
@@ -546,7 +667,19 @@ impl Tool for BashTool {
         }
         let (program, argv) = shell_argv(&args.command);
         let mut cmd = tokio::process::Command::new(program);
-        cmd.args(&argv).current_dir(&workdir);
+        cmd.args(&argv)
+            .current_dir(&workdir)
+            // A command that inherits the TUI's console would race the person
+            // typing. `ChildStdio::configure` sets the same value; saying it at
+            // the spawn site keeps the repository's guard able to see it.
+            .stdin(std::process::Stdio::null());
+        // A process group is what lets the timeout/cancel path signal the
+        // whole tree on Unix; without it `kill(-pid)` has no group to reach.
+        #[cfg(unix)]
+        {
+            use std::os::unix::process::CommandExt;
+            cmd.as_std_mut().process_group(0);
+        }
         // DSH subprocess rule: never hand a child the harness's credentials. One
         // `env` in a tool result would put every API key into the transcript, the
         // session JSONL and any export of it.
@@ -588,15 +721,15 @@ impl Tool for BashTool {
                 Ok(Ok(status)) => status,
                 Ok(Err(e)) => return Err(ToolFailure::msg(format!("wait failed: {e}"))),
                 Err(_) => {
-                    let _ = child.kill().await;
+                    kill_process_tree(&mut child).await;
                     return Err(ToolFailure::msg(format!(
-                        "command timed out after {timeout}s and was killed: {}",
+                        "command timed out after {timeout}s and was killed with its process tree: {}",
                         args.command
                     )));
                 }
             },
             _ = ctx.token.cancelled() => {
-                let _ = child.kill().await;
+                kill_process_tree(&mut child).await;
                 return Err(ToolFailure::msg(format!(
                     "[aborted] command cancelled by user before completion: {}",
                     args.command
@@ -673,7 +806,28 @@ impl Tool for BashTool {
 
 #[cfg(test)]
 mod shell_argv_tests {
-    use super::shell_argv;
+    use super::{read_only_refusal, shell_argv};
+    use epsilon_safety::{Enforcement, SandboxMode};
+
+    /// A read-only request is refused when the backend cannot confine the
+    /// filesystem. Windows' Job Object reports exactly this; a flag named
+    /// read-only must not run a write-capable command.
+    #[test]
+    fn a_backend_without_a_filesystem_boundary_cannot_pretend_to_be_read_only() {
+        let partial = Enforcement::from_missing(vec!["filesystem", "network"]);
+        let refusal = read_only_refusal(SandboxMode::ReadOnly, &partial)
+            .expect("a partial backend must refuse read-only");
+        assert!(refusal.contains("filesystem"), "{refusal}");
+        assert!(refusal.contains("refusing"), "{refusal}");
+        assert!(
+            read_only_refusal(SandboxMode::ReadOnly, &Enforcement::Full).is_none(),
+            "a full backend honours read-only"
+        );
+        assert!(
+            read_only_refusal(SandboxMode::WorkspaceWrite, &partial).is_none(),
+            "the guard is about the read-only promise, not every partial backend"
+        );
+    }
 
     #[cfg(windows)]
     #[test]
@@ -685,7 +839,19 @@ mod shell_argv_tests {
         // spinner turning the whole time makes it look like one. This assertion
         // is the only thing standing between that and a silent regression.
         let (program, args) = shell_argv("echo hi");
-        assert_eq!(program, "powershell");
+        // **Absolute, or the cwd gets a vote.** A bare name is resolved by
+        // CreateProcess against the workspace first; an absolute interpreter
+        // path is the difference between running PowerShell and running a file
+        // a repository shipped.
+        assert!(
+            std::path::Path::new(&program).is_absolute(),
+            "the shell must be an absolute path, not a name CreateProcess can resolve in the workspace: {program:?}"
+        );
+        assert!(
+            program.to_ascii_lowercase().ends_with("powershell.exe")
+                || program.to_ascii_lowercase().ends_with("pwsh.exe"),
+            "the resolved interpreter is PowerShell: {program:?}"
+        );
         assert!(
             args.iter().any(|a| a == "-NoProfile"),
             "the user's profile is not ours to run, and running it stalls every call: {args:?}"

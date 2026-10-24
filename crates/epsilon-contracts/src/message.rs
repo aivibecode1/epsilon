@@ -134,7 +134,7 @@ pub struct Usage {
     /// `output`, never an addition to it.
     ///
     /// Ported from pi's `Usage.reasoning`
-    /// (`references/pi-1.0.0/packages/ai/src/types.ts:427-448`): *"a subset of
+    /// (`references/pi-1.3.0/packages/ai/src/types.ts:427-448`): *"a subset of
     /// `output`: `output` already includes these tokens. Set to a number
     /// (possibly 0) by providers that expose a reasoning breakdown; left
     /// undefined by providers that don't."*

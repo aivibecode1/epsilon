@@ -1,6 +1,0 @@
-[
-  {
-    "type": "assistant",
-    "text": "I am going to take my time with this answer so that the turn lasts long enough for a human to start typing into the composer while it is still in flight. That is the entire point of this script: it exists to hold the stream open, not to say anything interesting. A real provider streams a paragraph every few hundred milliseconds and the user keeps working while it does; the faux provider used to emit every event instantly, which meant no test in this repository had ever seen a turn that was still running when a keystroke arrived. If you are reading this through a paced run, you are looking at the state that used to be impossible to reproduce. Each eight characters is one delta, so this paragraph is roughly a hundred events, and at the pace these probes use it is a turn measured in seconds rather than the microseconds every earlier test saw."
-  }
-]

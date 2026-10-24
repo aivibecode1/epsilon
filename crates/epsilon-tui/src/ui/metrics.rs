@@ -392,7 +392,7 @@ impl Metrics {
 
 /// An output figure with its reasoning split as a subset note.
 ///
-/// Pi's presentation (`references/pi-1.0.0/packages/ai/src/types.ts:427-448`,
+/// Pi's presentation (`references/pi-1.3.0/packages/ai/src/types.ts:427-448`,
 /// `packages/coding-agent/docs/message-types.md:90`): reasoning is *already
 /// included in* `output` — "do not add it again". So this annotates the
 /// figure rather than adding a second total, and cost stays on `output` only
@@ -450,7 +450,7 @@ impl Metrics {
     /// The model, and the thinking level, as the header prints them (M312).
     ///
     /// **The level rides with the model, which is pi's arrangement and its wording** —
-    /// `references/pi-1.0.0/packages/coding-agent/src/modes/interactive/components/footer.ts:233-243`
+    /// `references/pi-1.3.0/packages/coding-agent/src/modes/interactive/components/footer.ts:233-243`
     /// builds `` `${modelName} • thinking off` `` when the level is off and
     /// `` `${modelName} • ${level}` `` when it is not, beside the model and nowhere else. The
     /// reasoning is the same here: the level is a property of *what you are talking to*, so it

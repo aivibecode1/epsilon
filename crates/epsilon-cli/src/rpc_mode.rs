@@ -1285,7 +1285,7 @@ async fn dispatch_line(
                     "name": skill.name,
                     "description": skill.description,
                     "sourceInfo": serde_json::json!({
-                        "path": skill.dir.to_string_lossy(),
+                        "path": skill.file.to_string_lossy(),
                         "line": 0,
                         "endLine": serde_json::Value::Null,
                     }),

@@ -6587,7 +6587,7 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         provider: "mistral",
         label: "Ministral 3 3B",
         context_window: 131_072,
-        max_output_tokens: 262_144,
+        max_output_tokens: 131_072,
         input_cost_micro_per_mtok: 100_000,
         output_cost_micro_per_mtok: 100_000,
         cache_read_cost_micro_per_mtok: 10_000,

@@ -8,8 +8,8 @@ there is no citation there is no row"; a reference citation that points at a mis
 or an out-of-range line is a row built on nothing.
 
 **What it checks.** Every line-cited reference path in the reference column of both
-matrices, resolved against that matrix's vendored root (`references/pi-1.0.0/`,
-`references/deepseek-harness-dsh-v0.2.1-alpha.1/`), for existence and line range. Existence
+matrices, resolved against that matrix's vendored root (`references/pi-1.3.0/`,
+`references/deepseek-harness-dsh-v0.2.1-rc.2/`), for existence and line range. Existence
 and range only: this is the same instrument the workspace side already has, on the other
 half of the row. It is exit 0 when the vendored tree is absent (a fresh clone) and says so,
 rather than failing a build that cannot satisfy it — the same contract `check-links.py`
@@ -30,8 +30,8 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 # matrix -> the vendored root its reference paths are relative to.
 REFERENCE_ROOTS = {
-    "pi-tui.md": os.path.join(ROOT, "references", "pi-1.0.0"),
-    "dsh-desktop.md": os.path.join(ROOT, "references", "deepseek-harness-dsh-v0.2.1-alpha.1"),
+    "pi-tui.md": os.path.join(ROOT, "references", "pi-1.3.0"),
+    "dsh-desktop.md": os.path.join(ROOT, "references", "deepseek-harness-dsh-v0.2.1-rc.2"),
 }
 
 # A backticked source path with a :line or :start-end suffix, in the reference column.
@@ -90,6 +90,9 @@ def check():
     absent = []
     for name, root in REFERENCE_ROOTS.items():
         matrix = os.path.join(ROOT, "docs", "parity", name)
+        if not os.path.isfile(matrix):
+            absent.append(name)
+            continue
         if not os.path.isdir(root):
             absent.append(name)
             continue

@@ -291,14 +291,14 @@ pub struct Glyphs {
     /// `🔑` for exactly this reason and became a table field at M219; this one was missed
     /// because the CP437 frame test never drove the tree panel (A43).
     pub folder: &'static str,
-    /// The fold marker on a collapsed branch (`▾`).
+    /// The fold marker on a collapsed branch (`▸`, pointing right).
     ///
     /// **This is the one that matters.** Collapsed and expanded are different facts and the
     /// reader is looking at this character to tell them apart, so a glyph that renders as a box
     /// does not degrade the panel — it removes the only thing the panel carries. Neither is in
     /// CP437.
     pub fold_closed: &'static str,
-    /// The fold marker on an expanded branch (`▸`). See [`Self::fold_closed`].
+    /// The fold marker on an expanded branch (`▾`, pointing down). See [`Self::fold_closed`].
     pub fold_open: &'static str,
     /// The shift modifier a hint row prints (`⇧`).
     ///
@@ -363,8 +363,8 @@ pub const UNICODE: Glyphs = Glyphs {
     down: "↓",
     dash: "—",
     folder: "📁",
-    fold_closed: "▾",
-    fold_open: "▸",
+    fold_closed: "▸",
+    fold_open: "▾",
     shift: "⇧",
     quote: "❯",
     spinner: &["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"],

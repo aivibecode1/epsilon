@@ -231,7 +231,7 @@ async fn an_unchanged_workspace_replays_the_failure_instead_of_re_running_it() {
     assert!(!first.passed, "the gate fails, so the premise holds");
     assert!(!first.carried_over, "the first run cannot be a replay");
     assert!(
-        first.output_tail.contains(FAILING_MARKER),
+        first.output_tail.contains("gate-marker"),
         "precondition: the first run really ran: {}",
         first.output_tail
     );

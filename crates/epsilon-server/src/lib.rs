@@ -55,26 +55,24 @@ impl ServeState {
 
     /// Production constructor (plan 003): generates the per-boot bearer token the
     /// CLI prints once on stderr. Every route except `/healthz` requires it.
-    pub fn with_boot_token(agent: Arc<Agent>, approvals: Arc<ChannelApprovalUi>) -> Self {
+    ///
+    /// **The token comes from the OS CSPRNG.** It used to be
+    /// `SHA-256(nanos ‖ pid ‖ counter)`, which reads as random and is not: a
+    /// local process can observe the pid and the process start time, narrow the
+    /// nanosecond field, and search the rest offline. `getrandom` is the same
+    /// source the OAuth PKCE verifier already uses. An entropy failure refuses
+    /// to start the server rather than inventing a weaker secret.
+    pub fn with_boot_token(
+        agent: Arc<Agent>,
+        approvals: Arc<ChannelApprovalUi>,
+    ) -> Result<Self, String> {
         let mut token = Self::new(agent, approvals);
-        // 32 hex chars from OS entropy via the in-tree sha2 hasher over
-        // time+pid+counter — not a password, just an unguessable-per-boot secret.
-        use sha2::{Digest, Sha256};
-        use std::sync::atomic::AtomicU64;
-        static SEQ: AtomicU64 = AtomicU64::new(0);
-        let mut h = Sha256::new();
-        h.update(
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .map(|d| d.as_nanos().to_le_bytes())
-                .unwrap_or([0u8; 16]),
-        );
-        h.update(std::process::id().to_le_bytes());
-        h.update(SEQ.fetch_add(1, Ordering::SeqCst).to_le_bytes());
-        let digest = h.finalize();
-        let hex: String = digest.iter().map(|b| format!("{b:02x}")).collect();
-        token.auth_token = Some(Arc::new(hex[..32].to_string()));
-        token
+        let mut bytes = [0u8; 32];
+        getrandom::fill(&mut bytes)
+            .map_err(|e| format!("no OS randomness for the serve token: {e}"))?;
+        let hex: String = bytes.iter().map(|b| format!("{b:02x}")).collect();
+        token.auth_token = Some(Arc::new(hex));
+        Ok(token)
     }
 
     fn user_message(&self, text: String) -> Message {
