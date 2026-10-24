@@ -27,7 +27,7 @@ All notable changes to Epsilon, grouped by milestone. Current state and limitati
 - **The slash menu and the command palette are the composer's width, with a column
   layout.** The popup no longer caps at 80 columns and the palette no longer takes 80% of
   the frame; both share the workspace edge, the command column is measured, the
-  description starts at one x position, and the key hint is right-aligned. All 42 offered
+  description starts at one x position, and the key hint is right-aligned. All 43 offered
   descriptions were rewritten as one imperative line; the full usage is in
   `docs/07-COMMANDS.md`.
 - **The documentation set is consolidated.** `docs/01-OVERVIEW` → `07-COMMANDS` is the
@@ -60,6 +60,12 @@ All notable changes to Epsilon, grouped by milestone. Current state and limitati
 
 ### Fixed
 
+- **Rust 1.99 CI compatibility.** `async-trait` is now `=0.1.92`; 0.1.89 emitted a
+  `#[must_use]` form that Rust 1.99 rejects in `epsilon-contracts`. The workspace
+  was checked with 1.99.1.
+- **Unix sandbox cancellation called `kill_on_drop` on a `Child`.** The method is
+  on `tokio::process::Command`; the Windows-only local build never compiled the
+  Unix branch. The command sets it before spawn.
 - **OpenAI/Mistral prompt-cache affinity keys.** Those wires now send a stable
   content-derived `prompt_cache_key` (model + system prompt + first user text) to
   their first-party hosts; custom compatible endpoints and DeepSeek do not receive

@@ -7,7 +7,7 @@ tagged build.
 
 ## Verified build
 
-- Full battery: **14/14 legs green** — `target/gate-final-audit-7.log`.
+- Full battery: **14/14 legs green** — `target/gate-final-audit-8.log`.
 - Workspace suite: **2,658 passed / 0 failed / 21 ignored**, 77 test binaries.
 - Terminal-IDE suite: **918 passed / 0 failed / 20 ignored**.
 - Cache wire tests: **7/7 passed** under `cargo test -p epsilon-llm --features real`.
@@ -38,6 +38,20 @@ bash install.sh
 installer was run on this host. The macOS CI job is defined in
 `.github/workflows/ci.yml` but has not executed.
 
+## CI compatibility fixes
+
+The first pushed run found two real defects, both fixed before this commit:
+
+- **Rust 1.99 rejected `async-trait` 0.1.89.** The macro emitted a `#[must_use]`
+  attribute that the newer compiler rejects. The pin is now `=0.1.92`, and the
+  workspace was checked with the CI compiler (1.99.1).
+- **The Unix sandbox called `kill_on_drop` on a spawned `Child`.** That method is
+  on `tokio::process::Command`; the Windows-only local build never compiled the
+  Unix branch. The command now sets it before spawn, so cancellation still kills
+  the sandboxed tree.
+
+The local battery passed again as `gate-final-audit-8.log`. The Linux, macOS and
+MSRV jobs still need the pushed run to confirm the Unix branch.
 ## Credential model: Pi parity
 
 Epsilon stores provider credentials in `<config dir>/auth.json` in plaintext:
@@ -90,7 +104,7 @@ moving record.
 
 ## Publication
 
-Committed as `7b2d546` (`release: 0.1.0 release candidate`) and pushed to
+Committed on `main` (initial release commit `7b2d546`, with CI compatibility fixes on top) and pushed to
 `aivibecode1/epsilon` `main` on 2026-10-24. The checked-in
 [CI workflow](.github/workflows/ci.yml) runs Windows, Linux, macOS and MSRV jobs;
 it also smoke-tests the Windows, Linux and macOS installers. A tag is not created

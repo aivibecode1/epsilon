@@ -489,15 +489,15 @@ impl Sandbox for BwrapSandbox {
         command.stdin(std::process::Stdio::null());
         command.stdout(std::process::Stdio::piped());
         command.stderr(std::process::Stdio::piped());
+        // Cancellation drops the future, and a dropped future must not leave a
+        // sandboxed tree running unsupervised. `kill_on_drop` is a property of
+        // the Command, not the spawned Child; setting it here also makes the
+        // Unix path compile (the Windows-only path cannot see this code).
+        command.kill_on_drop(true);
 
         let mut child = command
             .spawn()
             .map_err(|e| SandboxError::Setup(format!("bwrap exec: {e}")))?;
-        // Cancellation drops this future, and a dropped future must not leave a sandboxed
-        // tree running unsupervised. The unconfined path already sets this
-        // (`shell.rs`); a confined run is the one place it matters more, because the tree it
-        // leaks is isolated, long-lived, and invisible to the user who cancelled.
-        child.kill_on_drop(true);
         let stdout_pipe = child
             .stdout
             .take()

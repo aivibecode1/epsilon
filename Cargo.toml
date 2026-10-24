@@ -28,7 +28,7 @@ authors = ["Mohamed"]
 [workspace.dependencies]
 serde = { version = "=1.0.228", features = ["derive"] }
 serde_json = "=1.0.151"
-async-trait = "=0.1.89"
+async-trait = "=0.1.92"
 tokio = { version = "=1.53.1", features = ["sync", "time", "macros", "rt", "fs", "process", "io-util", "io-std"] }
 tokio-util = "=0.7.19"
 futures-util = "=0.3.31"

@@ -16,7 +16,7 @@ evidence and remaining caveats are in [`../RELEASE.md`](../RELEASE.md).
 **Verified (2026-10-24):** the full battery — nine repository checks, `fmt`,
 `clippy -D warnings`, the workspace tests, the offline demo and the real-feature
 build — is **14/14 legs green**. Evidence:
-`target/gate-final-audit-7.log`, run with
+`target/gate-final-audit-8.log`, run with
 `CARGO_BUILD_JOBS=1`, `CARGO_PROFILE_DEV_DEBUG=0`,
 `CARGO_PROFILE_TEST_DEBUG=0` and `CARGO_TARGET_DIR=%TEMP%\epsilon-target`.
 The host's `stable` rustup toolchain and the VS2022 linker were incomplete, so
@@ -38,7 +38,7 @@ citation that the composer cleanup had shifted into a test module;
 `final-review-3` was green before the README-in-skills-root fix, `final-review-4`
 before the startup skill-summary change, and `final-review-5` before the card
 pass. `cards-1` was the header-only version, `cards-3` the independent-card
-version, and `final-audit-7` is the current record after the cache-tail and live-explorer fixes.
+version, and `final-audit-8` is the current record after the cache-tail and live-explorer fixes.
 
 **The previous claim in this file was stale.** It read *"2,618 passed / 0 failed /
 19 ignored"* and cited `audit/evidence/gate-f17b-20261022.log`. That count was
@@ -256,7 +256,7 @@ what is still to do.
 ### Verification
 
 - **Battery:** 14/14 legs green,
-  `target/gate-final-audit-7.log`, debug info off, one build
+  `target/gate-final-audit-8.log`, debug info off, one build
   job, isolated target.
 - **Tests:** 77 binaries, 2,658 passed / 0 failed / 21 ignored; terminal suite
   918 passed / 0 failed / 20 ignored.
