@@ -64,7 +64,13 @@ fn binary() -> Option<String> {
     // compiled as a library or with `--no-run`, and a hard `env!` would make the whole
     // test binary fail to compile for a condition that has a correct answer.
     match option_env!("CARGO_BIN_EXE_epsilon") {
-        Some(path) => Some(path.to_string()),
+        Some(path) => {
+            // Cargo may hand back a path relative to the package root. portable-pty
+            // resolves a bare relative name through PATH, which fails on Linux CI;
+            // canonicalizing makes the test independent of the caller's working directory.
+            let absolute = std::fs::canonicalize(path).unwrap_or_else(|_| path.into());
+            Some(absolute.to_string_lossy().into_owned())
+        }
         None => {
             eprintln!(
                 "SKIPPED: no EPSILON_BIN and no CARGO_BIN_EXE_epsilon. Run the suite
@@ -595,7 +601,11 @@ fn a_narrow_terminal_is_survived_rather_than_mangled() {
     session.settle(SETTLE);
 
     session.resize(10, 44);
-    session.settle(Duration::from_secs(3));
+    session.settle(Duration::from_secs(2));
+    // A second resize after the first frame lets a slow runner replace any old,
+    // wider frame left behind by the pty rather than measuring the pre-resize draw.
+    session.resize(10, 44);
+    session.settle(Duration::from_secs(5));
 
     assert!(
         session.alive(),

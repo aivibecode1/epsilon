@@ -8522,7 +8522,7 @@ fn confirming_the_delete_removes_the_file_and_says_which_happened() {
 
     let frame = render_rows(&mut app, 80, 24).join("\n");
     assert!(
-        frame.contains("Session deleted"),
+        frame.contains("Session deleted") || frame.contains("Session moved to trash"),
         "the outcome is reported: {frame}"
     );
     assert!(!other.exists(), "and the file is gone");

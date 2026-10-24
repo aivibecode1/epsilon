@@ -1336,7 +1336,7 @@ mod tests {
                 dir,
                 dir,
                 epsilon_session::SessionScope::Workspace,
-                "old",
+                "old.jsonl",
                 None,
                 now
             )
