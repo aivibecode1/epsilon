@@ -126,8 +126,10 @@ fn try_trash(path: &Path) -> Option<String> {
         .output();
 
     match spawned {
-        // Success is not believed on its own; the caller verifies the file left.
-        Ok(output) if output.status.success() => Some(String::new()),
+        // Success is not believed on its own; the caller verifies the file left. `None`
+        // means "the tool reported success" — returning `Some("")` made the caller
+        // treat a real trash as a failed attempt and then unlink an already-moved file.
+        Ok(output) if output.status.success() => None,
         Ok(output) => {
             let stderr = String::from_utf8_lossy(&output.stderr);
             let first = stderr.lines().next().unwrap_or("").trim();
