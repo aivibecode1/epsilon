@@ -895,6 +895,9 @@ mod tests {
         assert_eq!(rest["steeringMode"], "all", "{rest}");
     }
 
+    // macOS has no native shell-confinement backend and refuses side-effecting
+    // bash by default; this test needs the shell to actually run after approval.
+    #[cfg(not(target_os = "macos"))]
     #[tokio::test]
     async fn approval_round_trip_over_rest_unblocks_a_bash_ask() {
         // Default ruleset sends bash to ask; the faux model requests bash immediately.
