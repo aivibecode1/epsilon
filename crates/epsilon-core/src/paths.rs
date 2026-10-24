@@ -318,10 +318,17 @@ fn canonical_existing_prefix(path: &Path) -> std::io::Result<PathBuf> {
                 }
                 return Ok(out);
             }
-            // Only a *missing* component is skippable. Anything else — a permission
-            // error, a symlink loop — must not be answered with the lexical path,
-            // because the lexical path is the thing that was unverified.
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+            // Only a *missing* prefix is skippable. `NotADirectory` is the same
+            // situation with a file in the middle: macOS returns ENOTDIR for
+            // `blocked/nested.txt` when `blocked` is a file, while Windows returns
+            // NotFound. Walking up in both cases lets the eventual write fail at
+            // create_dir_all instead of misreporting an in-workspace path as an escape.
+            Err(e)
+                if matches!(
+                    e.kind(),
+                    std::io::ErrorKind::NotFound | std::io::ErrorKind::NotADirectory
+                ) =>
+            {
                 let Some(name) = cursor.file_name().map(OsString::from) else {
                     return Err(e);
                 };
@@ -454,6 +461,19 @@ mod tests {
         std::fs::create_dir_all(&root).unwrap();
         let r = resolve_for_access(&root, "../root/../etc/passwd");
         assert!(!r.inside, "{r:?}");
+    }
+
+    #[test]
+    fn a_file_in_the_middle_is_still_a_lexical_inside_path() {
+        // A file used as a directory is a failed write, not an escape. macOS returns
+        // ENOTDIR here and Windows returns NotFound; both must keep the lexical answer.
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().join("root");
+        std::fs::create_dir_all(&root).unwrap();
+        std::fs::write(root.join("blocked"), "not a directory").unwrap();
+        let r = resolve_for_access(&root, "blocked/nested.txt");
+        assert!(r.inside, "{r:?}");
+        assert!(r.escaped_to().is_none(), "{r:?}");
     }
 
     /// **A33: a spelling Windows resolves to a different file never reaches policy.**
