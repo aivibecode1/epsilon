@@ -58,19 +58,13 @@ fn binary() -> Option<String> {
     if let Ok(path) = std::env::var("EPSILON_BIN")
         && !path.trim().is_empty()
     {
-        return Some(path);
+        return Some(absolute_binary(&path));
     }
     // `option_env!` rather than `env!`: the variable is absent when this crate is
     // compiled as a library or with `--no-run`, and a hard `env!` would make the whole
     // test binary fail to compile for a condition that has a correct answer.
     match option_env!("CARGO_BIN_EXE_epsilon") {
-        Some(path) => {
-            // Cargo may hand back a path relative to the package root. portable-pty
-            // resolves a bare relative name through PATH, which fails on Linux CI;
-            // canonicalizing makes the test independent of the caller's working directory.
-            let absolute = std::fs::canonicalize(path).unwrap_or_else(|_| path.into());
-            Some(absolute.to_string_lossy().into_owned())
-        }
+        Some(path) => Some(absolute_binary(path)),
         None => {
             eprintln!(
                 "SKIPPED: no EPSILON_BIN and no CARGO_BIN_EXE_epsilon. Run the suite
@@ -80,6 +74,29 @@ fn binary() -> Option<String> {
             None
         }
     }
+}
+
+/// Resolve the test binary to an absolute, non-verbatim path.
+///
+/// Cargo can hand back `target/debug/epsilon` relative to the workspace while the
+/// test process runs in the package directory. portable-pty then treats a relative
+/// name as a PATH lookup and fails on Linux. `std::path::absolute` normalizes it
+/// without `canonicalize`'s Windows `\\?\` prefix, which `cmd.exe` cannot execute.
+fn absolute_binary(path: &str) -> String {
+    let raw = std::path::Path::new(path);
+    let workspace = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let candidates = if raw.is_absolute() {
+        vec![raw.to_path_buf()]
+    } else {
+        vec![raw.to_path_buf(), workspace.join(raw)]
+    };
+    let found = candidates
+        .into_iter()
+        .find(|candidate| candidate.is_file())
+        .unwrap_or_else(|| raw.to_path_buf());
+    let absolute = std::path::absolute(&found).unwrap_or(found);
+    let text = absolute.to_string_lossy();
+    text.strip_prefix(r"\\?\").unwrap_or(&text).to_string()
 }
 
 /// A running TUI in a pty, with its screen kept up to date.
