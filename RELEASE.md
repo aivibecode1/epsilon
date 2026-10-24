@@ -1,19 +1,18 @@
 # Epsilon 0.1.0 — release candidate
 
 **Status:** release candidate. The credential model deliberately follows Pi
-1.3.0; this is not a claim of production-grade secret storage. The source is
-committed and pushed; the release becomes final after the macOS CI result and a
-tagged build.
+1.3.0; this is not a claim of production-grade secret storage. The source is committed and pushed; all four CI jobs are green. A
+tagged build remains the final step.
 
 ## Verified build
 
-- Full battery: **14/14 legs green** — `target/gate-final-audit-8.log`.
-- Workspace suite: **2,658 passed / 0 failed / 21 ignored**, 77 test binaries.
+- Full battery: **14/14 legs green** — `target/gate-final-audit-9.log`.
+- Workspace suite: **2,659 passed / 0 failed / 21 ignored**, 77 test binaries.
 - Terminal-IDE suite: **918 passed / 0 failed / 20 ignored**.
 - Cache wire tests: **7/7 passed** under `cargo test -p epsilon-llm --features real`.
 - Documentation links: **301 checked, 0 broken**.
 - Installed binary: `epsilon 0.1.0`, built and installed on Windows on
-  2026-10-24 at 17:04 local; `--demo` completed and REA attached with 207 tools.
+  2026-10-24 at 20:50 local; `--demo` completed and REA attached with 207 tools.
 
 The battery was run with the host's installed `1.97.1` Rust toolchain and the
 Visual Studio 2019 Build Tools environment because this host's stable rustup
@@ -80,10 +79,9 @@ cache-hit rate or token-saving percentage is claimed.
 
 ## macOS is build-tested only in configuration
 
-The macOS CI job is present and its YAML parses, but it has not run. macOS builds
-from source by report, has no native shell-confinement backend, and should be
-expected to refuse side-effecting shell calls by default. The unrun job is the
-main remaining release-candidate caveat.
+The macOS CI job ran and passed: the full suite and `install.sh` both succeeded.
+macOS still has no native shell-confinement backend, so side-effecting shell
+calls refuse by default; that is a platform limitation, not an unrun test.
 
 ## Documentation scope
 
@@ -104,19 +102,17 @@ moving record.
 
 ## Publication
 
-Committed on `main` (initial release commit `7b2d546`, with CI compatibility fixes on top) and pushed to
-`aivibecode1/epsilon` `main` on 2026-10-24. The checked-in
-[CI workflow](.github/workflows/ci.yml) runs Windows, Linux, macOS and MSRV jobs;
-it also smoke-tests the Windows, Linux and macOS installers. A tag is not created
-until the pushed CI run is green.
+Committed and pushed to `aivibecode1/epsilon` `main`; the verified head is
+`7c0229d`. GitHub Actions run **40113541194** completed with **all four jobs
+green**: Windows full, Linux confinement + full, macOS full + installer, and Rust
+1.88 MSRV. The [CI workflow](.github/workflows/ci.yml) also smoke-tests the
+Windows, Linux and macOS installers. No tag has been created yet.
 
 ## Before final publication
 
-1. Run the macOS CI job and record the installer result.
-2. Wait for the pushed CI run (`7b2d546`) to finish; tag `v0.1.0` only when all
-   jobs are green.
-3. Measure cache-hit rates against a paid provider before claiming token savings.
-4. Treat an OS-keyring backend as optional follow-up hardening, not a release
+1. Review `7c0229d` and create the `v0.1.0` tag when ready.
+2. Measure cache-hit rates against a paid provider before claiming token savings.
+3. Treat an OS-keyring backend as optional follow-up hardening, not a release
    blocker for Pi parity.
 
 The permanent engineering rules are in [`AGENTS.md`](AGENTS.md). Current status

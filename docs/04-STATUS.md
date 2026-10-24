@@ -16,14 +16,14 @@ evidence and remaining caveats are in [`../RELEASE.md`](../RELEASE.md).
 **Verified (2026-10-24):** the full battery — nine repository checks, `fmt`,
 `clippy -D warnings`, the workspace tests, the offline demo and the real-feature
 build — is **14/14 legs green**. Evidence:
-`target/gate-final-audit-8.log`, run with
+`target/gate-final-audit-9.log`, run with
 `CARGO_BUILD_JOBS=1`, `CARGO_PROFILE_DEV_DEBUG=0`,
 `CARGO_PROFILE_TEST_DEBUG=0` and `CARGO_TARGET_DIR=%TEMP%\epsilon-target`.
 The host's `stable` rustup toolchain and the VS2022 linker were incomplete, so
 this run used the installed `1.97.1` toolchain and the Visual Studio 2019
 Build Tools environment; that is an environment note, not a project pin.
 
-The workspace suite is **77 test binaries, 2,658 passed / 0 failed / 21
+The workspace suite is **77 test binaries, 2,659 passed / 0 failed / 21
 ignored**; the terminal-IDE suite is **918 passed / 0 failed / 20 ignored**.
 The numbers are summed from that log, not carried over from an earlier tree. The
 first battery on this tree, `gate-goal-20261023-ui-skills-harness-1`, failed
@@ -38,7 +38,7 @@ citation that the composer cleanup had shifted into a test module;
 `final-review-3` was green before the README-in-skills-root fix, `final-review-4`
 before the startup skill-summary change, and `final-review-5` before the card
 pass. `cards-1` was the header-only version, `cards-3` the independent-card
-version, and `final-audit-8` is the current record after the cache-tail and live-explorer fixes.
+version, and `final-audit-9` is the current record after the cache-tail and live-explorer fixes.
 
 **The previous claim in this file was stale.** It read *"2,618 passed / 0 failed /
 19 ignored"* and cited `audit/evidence/gate-f17b-20261022.log`. That count was
@@ -256,9 +256,9 @@ what is still to do.
 ### Verification
 
 - **Battery:** 14/14 legs green,
-  `target/gate-final-audit-8.log`, debug info off, one build
+  `target/gate-final-audit-9.log`, debug info off, one build
   job, isolated target.
-- **Tests:** 77 binaries, 2,658 passed / 0 failed / 21 ignored; terminal suite
+- **Tests:** 77 binaries, 2,659 passed / 0 failed / 21 ignored; terminal suite
   918 passed / 0 failed / 20 ignored.
 - **Cache wire:** `cargo test -p epsilon-llm --features real --test cache_breakpoints`
   passed 7/7, including the tool-result tail marker, parallel-result grouping and
@@ -266,7 +266,7 @@ what is still to do.
 - **REA:** live `npx` attach registered 207 tools (Node 24.18.1).
 - **Installer:** `install.ps1` built with `cargo install --locked --force` and
   installed `epsilon 0.1.0` at `C:\Users\Hp\.cargo\bin\epsilon.exe` (2026-10-24
-  17:04 local, after cache-tail, live-explorer, git-hardening and exact-host OpenAI/Mistral cache-key fixes). The host's `stable` rustup
+  20:50 local, after cache-tail, live-explorer, git-hardening, exact-host cache keys and the cross-platform CI fixes). The host's `stable` rustup
   toolchain and VS2022 linker were incomplete, so the build used the installed
   `1.97.1` toolchain and Visual Studio 2019 Build Tools; that is an environment
   workaround, not a project pin. The installed binary answered `--version`,

@@ -266,9 +266,9 @@ test is explicitly enabled.
 
 **Verified (2026-10-24):** the full battery is **14/14 legs green** — repository
 checks, `fmt`, `clippy -D warnings`, the workspace suite, the offline demo and the
-real-feature build. The workspace suite is **77 test binaries, 2,658 passed / 0
+real-feature build. The workspace suite is **77 test binaries, 2,659 passed / 0
 failed / 21 ignored**; the terminal-IDE suite is **918 passed / 0 failed / 20
-ignored**. Evidence: `gate-final-audit-7.log` (debug info off,
+ignored**. Evidence: `gate-final-audit-9.log` (debug info off,
 `CARGO_BUILD_JOBS=1`, isolated target). The installer result is in
 [docs/04-STATUS.md](docs/04-STATUS.md).
 
@@ -289,9 +289,10 @@ Use disposable or backed-up workspaces while the defect ledger is non-empty.
 **0.1.0 is a release candidate.** The credential model follows Pi 1.3.0, which also
 stores `auth.json` in plaintext at mode 0600; Epsilon adds atomic replacement and a
 0700 directory. OS-keyring storage is optional hardening, not a parity requirement.
-[RELEASE.md](RELEASE.md) records the verified evidence, the pushed commit and the
-remaining caveat: the macOS CI job still needs to run before tagging. Live
-cache-hit rates are not claimed.
+[RELEASE.md](RELEASE.md) records the verified evidence and the pushed commit.
+All four GitHub Actions jobs — Windows, Linux, macOS and MSRV — are green, and
+the installer smoke tests passed on all three platforms. The remaining step is
+the `v0.1.0` tag. Live cache-hit rates are not claimed.
 
 ## Credits and licence
 
