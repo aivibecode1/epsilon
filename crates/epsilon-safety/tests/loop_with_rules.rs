@@ -209,6 +209,9 @@ fn plan_mode_denies_bash_even_when_project_allows_it() {
     assert_eq!(engine.evaluate("bash", "git"), epsilon_safety::Action::Deny);
 }
 
+// macOS has no native shell-confinement backend and refuses side-effecting
+// bash by default; these three assertions require a shell that actually runs.
+#[cfg(not(target_os = "macos"))]
 #[tokio::test]
 async fn custom_ruleset_allows_bash_without_asking() {
     let dir = tempfile::tempdir().unwrap();
@@ -272,6 +275,7 @@ async fn custom_ruleset_allows_bash_without_asking() {
 /// short-circuited by shared memory and the count is **one**, which is the whole bug: a user who
 /// allowed bash once would have no way to notice that every agent they spawn can now run it
 /// without asking.
+#[cfg(not(target_os = "macos"))]
 #[tokio::test]
 async fn an_always_session_allow_does_not_reach_a_task_child() {
     let dir = tempfile::tempdir().unwrap();
@@ -376,6 +380,7 @@ async fn an_always_session_allow_does_not_reach_a_task_child() {
 /// other. One observation means the hook never reached the child. The precondition below keeps
 /// that honest: a fixture where the child never ran would also score one, and would be reporting
 /// the fixture — which is exactly how the sibling permission test was fooled twice.
+#[cfg(not(target_os = "macos"))]
 #[tokio::test]
 async fn a_tool_hook_on_the_parent_sees_the_childs_calls_too() {
     let dir = tempfile::tempdir().unwrap();
