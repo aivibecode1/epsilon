@@ -6,9 +6,9 @@ tagged build remains the final step.
 
 ## Verified build
 
-- Full battery: **14/14 legs green** — `target/gate-final-audit-9.log`.
-- Workspace suite: **2,659 passed / 0 failed / 21 ignored**, 77 test binaries.
-- Terminal-IDE suite: **918 passed / 0 failed / 20 ignored**.
+- Full battery: **14/14 legs green** — `target/gate-final-audit-12.log`.
+- Workspace suite: **2,661 passed / 0 failed / 21 ignored**, 77 test binaries.
+- Terminal-IDE suite: **919 passed / 0 failed / 20 ignored**.
 - Cache wire tests: **7/7 passed** under `cargo test -p epsilon-llm --features real`.
 - Documentation links: **301 checked, 0 broken**.
 - Installed binary: `epsilon 0.1.0`, built and installed on Windows on

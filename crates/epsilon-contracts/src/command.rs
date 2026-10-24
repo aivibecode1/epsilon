@@ -251,6 +251,10 @@ pub const SLASH_ITEMS: &[SlashItem] = &[
         description: "Show or set the permission preset",
     },
     SlashItem {
+        value: "/yolo",
+        description: "Allow every tool action (asks once)",
+    },
+    SlashItem {
         value: "/plan",
         description: "Show or switch plan mode",
     },
@@ -461,6 +465,7 @@ pub const COMMAND_HEADS: &[&str] = &[
     "settings",
     "scoped_models",
     "preset",
+    "yolo",
     "plan",
     "clear",
     // M194: the palette's "Toggle tool output expand" entry shipped a `\u{1}expand`
@@ -616,6 +621,11 @@ pub fn parse_command(input: &str) -> Option<Command> {
         } else {
             Some(tail.to_string())
         })),
+        // `/yolo` is a spelling of the danger preset, not a second policy. It
+        // asks through the same yes-gate and is never persisted. The tail is
+        // normalized outside `parse_command` so the source-shaped command census
+        // does not mistake `on`/`off`/preset names for command heads.
+        "yolo" => Some(Command::Preset(Some(yolo_preset(&tail)))),
         "plan" => Some(Command::Plan(if tail.is_empty() {
             None
         } else {
@@ -656,6 +666,19 @@ pub fn parse_command(input: &str) -> Option<Command> {
         "logout" => Some(Command::Logout(tail.to_string())),
         "quit" | "q" | "exit" => Some(Command::Quit),
         other => Some(Command::Unknown(other.to_string())),
+    }
+}
+
+/// Resolve `/yolo`'s optional tail to a preset name.
+///
+/// Kept outside `parse_command` so the source-shaped census there sees only
+/// command heads, not `on`/`off`/preset names. Bare and `on` raise; `off`
+/// lowers; any other tail is passed through so the preset parser reports it.
+fn yolo_preset(tail: &str) -> String {
+    match tail.trim().to_ascii_lowercase().as_str() {
+        "" | "on" => "danger-full-access".to_string(),
+        "off" => "auto".to_string(),
+        other => other.to_string(),
     }
 }
 
@@ -703,6 +726,22 @@ mod tests {
                 "`/{head}` is listed in COMMAND_HEADS but parse_command returned None"
             );
         }
+    }
+
+    #[test]
+    fn yolo_is_the_danger_preset_spelling() {
+        assert_eq!(
+            parse_command("/yolo"),
+            Some(Command::Preset(Some("danger-full-access".into())))
+        );
+        assert_eq!(
+            parse_command("/yolo on"),
+            Some(Command::Preset(Some("danger-full-access".into())))
+        );
+        assert_eq!(
+            parse_command("/yolo off"),
+            Some(Command::Preset(Some("auto".into())))
+        );
     }
 
     /// **A command that parses but is never offered is a command the user is not told exists.**

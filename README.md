@@ -266,9 +266,9 @@ test is explicitly enabled.
 
 **Verified (2026-10-24):** the full battery is **14/14 legs green** — repository
 checks, `fmt`, `clippy -D warnings`, the workspace suite, the offline demo and the
-real-feature build. The workspace suite is **77 test binaries, 2,659 passed / 0
-failed / 21 ignored**; the terminal-IDE suite is **918 passed / 0 failed / 20
-ignored**. Evidence: `gate-final-audit-9.log` (debug info off,
+real-feature build. The workspace suite is **77 test binaries, 2,661 passed / 0
+failed / 21 ignored**; the terminal-IDE suite is **919 passed / 0 failed / 20
+ignored**. Evidence: `gate-final-audit-12.log` (debug info off,
 `CARGO_BUILD_JOBS=1`, isolated target). The installer result is in
 [docs/04-STATUS.md](docs/04-STATUS.md).
 

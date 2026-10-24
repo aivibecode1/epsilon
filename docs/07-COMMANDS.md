@@ -86,6 +86,7 @@ confirmation, so choose the path deliberately. A bare `/export` writes
 | `/goal` | `/goal [objective]` or a verb | — | Bare shows the goal; a sentence creates/replaces it and starts a round when idle. Verbs: `edit <objective>`, `edit rounds <n>`, `edit gate <command>`, `edit gate clear`, `pause`, `resume`, `complete`, `blocked <code> <reason>`, `clear`, `help`. Creating or resuming can immediately spend tokens. |
 | `/plan` | `/plan [on\|off]` | — | Bare reports the live gate. `on` denies writes, edits and shell immediately and saves. `off` asks `yes`/`y`, then re-allows them. Plan mode is a capability allowlist, not only four tool names, so an MCP or extension write is denied rather than offered. |
 | `/preset` | `/preset [name]` | — | Bare lists the four presets with the current one marked. Values: `auto`, `workspace-write`, `read-only`, `danger-full-access`. `danger-full-access` asks `yes`/`y` and applies to this run only (never saved); the others persist project-first. |
+| `/yolo` | `/yolo [on\|off]` | — | Shortcut for `/preset danger-full-access`: bare or `on` asks `yes`/`y` and allows every tool action nothing explicitly forbids; it is never persisted. `off` lowers to `auto` immediately. **OS sandbox confinement is unchanged**, and plan mode still wins. |
 
 A `--sandbox read-only` launch also forces the session permission preset to
 `read-only`: the shell flag is not narrower than the tool gate, so `/plan` and the

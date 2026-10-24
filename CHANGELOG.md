@@ -7,6 +7,9 @@ All notable changes to Epsilon, grouped by milestone. Current state and limitati
 
 ### Added
 
+- **`/yolo` shortcut.** It is a spelling of `/preset danger-full-access`:
+  bare or `on` asks for a typed `yes`, applies to this run only, and leaves OS
+  sandbox confinement and plan mode alone; `off` lowers to `auto`.
 - **Twelve opt-in built-in skills.** `verify-before-claim`, `onboard-codebase`,
   `make-a-change`, `review-a-change`, `two-stage-review`, `ponytail`, `improve`,
   `ux-triage`, `write-a-commit`, `debug-a-failure`, `write-a-handoff` and
@@ -27,7 +30,7 @@ All notable changes to Epsilon, grouped by milestone. Current state and limitati
 - **The slash menu and the command palette are the composer's width, with a column
   layout.** The popup no longer caps at 80 columns and the palette no longer takes 80% of
   the frame; both share the workspace edge, the command column is measured, the
-  description starts at one x position, and the key hint is right-aligned. All 43 offered
+  description starts at one x position, and the key hint is right-aligned. All 44 offered
   descriptions were rewritten as one imperative line; the full usage is in
   `docs/07-COMMANDS.md`.
 - **The documentation set is consolidated.** `docs/01-OVERVIEW` → `07-COMMANDS` is the

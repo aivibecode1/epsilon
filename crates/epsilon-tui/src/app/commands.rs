@@ -3192,6 +3192,7 @@ impl App {
                             "/goal",
                             "/plan",
                             "/preset",
+                            "/yolo",
                             "/templates",
                         ],
                     ),

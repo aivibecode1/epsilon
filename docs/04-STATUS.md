@@ -16,15 +16,15 @@ evidence and remaining caveats are in [`../RELEASE.md`](../RELEASE.md).
 **Verified (2026-10-24):** the full battery — nine repository checks, `fmt`,
 `clippy -D warnings`, the workspace tests, the offline demo and the real-feature
 build — is **14/14 legs green**. Evidence:
-`target/gate-final-audit-9.log`, run with
+`target/gate-final-audit-12.log`, run with
 `CARGO_BUILD_JOBS=1`, `CARGO_PROFILE_DEV_DEBUG=0`,
 `CARGO_PROFILE_TEST_DEBUG=0` and `CARGO_TARGET_DIR=%TEMP%\epsilon-target`.
 The host's `stable` rustup toolchain and the VS2022 linker were incomplete, so
 this run used the installed `1.97.1` toolchain and the Visual Studio 2019
 Build Tools environment; that is an environment note, not a project pin.
 
-The workspace suite is **77 test binaries, 2,659 passed / 0 failed / 21
-ignored**; the terminal-IDE suite is **918 passed / 0 failed / 20 ignored**.
+The workspace suite is **77 test binaries, 2,661 passed / 0 failed / 21
+ignored**; the terminal-IDE suite is **919 passed / 0 failed / 20 ignored**.
 The numbers are summed from that log, not carried over from an earlier tree. The
 first battery on this tree, `gate-goal-20261023-ui-skills-harness-1`, failed
 `check-links` on five links inside the bundled `improve` skill; moving its assets
@@ -38,7 +38,7 @@ citation that the composer cleanup had shifted into a test module;
 `final-review-3` was green before the README-in-skills-root fix, `final-review-4`
 before the startup skill-summary change, and `final-review-5` before the card
 pass. `cards-1` was the header-only version, `cards-3` the independent-card
-version, and `final-audit-9` is the current record after the cache-tail and live-explorer fixes.
+version, and `final-audit-12` is the current record after the cache-tail and live-explorer fixes.
 
 **The previous claim in this file was stale.** It read *"2,618 passed / 0 failed /
 19 ignored"* and cited `audit/evidence/gate-f17b-20261022.log`. That count was
@@ -256,10 +256,10 @@ what is still to do.
 ### Verification
 
 - **Battery:** 14/14 legs green,
-  `target/gate-final-audit-9.log`, debug info off, one build
+  `target/gate-final-audit-12.log`, debug info off, one build
   job, isolated target.
-- **Tests:** 77 binaries, 2,659 passed / 0 failed / 21 ignored; terminal suite
-  918 passed / 0 failed / 20 ignored.
+- **Tests:** 77 binaries, 2,661 passed / 0 failed / 21 ignored; terminal suite
+  919 passed / 0 failed / 20 ignored.
 - **Cache wire:** `cargo test -p epsilon-llm --features real --test cache_breakpoints`
   passed 7/7, including the tool-result tail marker, parallel-result grouping and
   the forward-moving boundary across tool round-trips.
@@ -333,7 +333,7 @@ what is still to do.
 ### Known limits, measured
 
 - The parity matrix in `docs/parity/pi-tui.md` claims "48 offered items"; the source
-  has 43. It also cites two tests that do not exist in `crates/`
+  has 44. It also cites two tests that do not exist in `crates/`
   (`compact_from_the_typed_line_compacts_and_reports`, `slash_import_switches_live`).
 - **The rule-matching loop existed in three copies.** The gate hand-rolled it
   twice — once for the plan layer, once for the preset layer — beside the engine's
@@ -395,7 +395,7 @@ what is still to do.
   description column that starts at one x position, and a right-aligned key hint. The
   `command · description` join and its clipped ellipses are gone. The shared helper is
   `ui::overlay::list_row_columns`.
-- **Descriptions are one imperative line.** All 43 offered rows were rewritten: for
+- **Descriptions are one imperative line.** All 44 offered rows were rewritten: for
   example, `/search` says "Search the transcript" (not "this session"; it does not read
   the session file), `/scoped_models` says "Choose models for F2 cycling" (not Ctrl+P,
   which opens the palette), and `/reload` no longer claims to reload configuration it

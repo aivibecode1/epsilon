@@ -2844,6 +2844,14 @@ review). Mid-session switching rides a `set_preset` seam on the gate trait
 layer over an untouched base stack — project denies survive every switch,
 and the session memory clears on all of them.
 
+**Amendment (2026-10-24): `/yolo` is a spelling, not a mode.** The command maps to
+`/preset danger-full-access` (bare or `on`) and `/preset auto` (`off`), so it
+inherits the same typed-`yes` gate, the same non-persistence, and the same
+project-deny floor. It deliberately does not change OS sandbox confinement;
+`--sandbox off` remains the separate launch choice. Plan mode still composes
+above it. `crates/epsilon-contracts/src/command.rs` is the one parser; the TUI
+does not gain a second policy path.
+
 ## ADR-033: A recording chord is not a command — the recorder owns the window's keyboard above approvals
 
 **Decided (full-port round 108).** While the shortcuts recorder is armed, it owns the

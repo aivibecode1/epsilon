@@ -10023,6 +10023,33 @@ fn preset_full_access_asks_and_only_yes_switches() {
     assert_eq!(agent.current_preset(), "danger-full-access");
 }
 
+/// `/yolo` is only the danger-preset spelling: the same yes-gate, and `off`
+/// lowers to auto without touching OS confinement.
+#[test]
+fn yolo_asks_then_switches_and_off_reverts() {
+    let (mut app, agent, _rx) = test_app();
+    let cfg = tempfile::tempdir().expect("a config dir");
+    app.config_dir_override = Some(cfg.path().to_path_buf());
+
+    app.run_command(
+        &agent,
+        crate::picker::parse_command("/yolo").expect("/yolo parses"),
+    );
+    assert!(app.pending_preset.is_some(), "yolo raises privilege");
+    assert_eq!(agent.current_preset(), "auto", "asking switches nothing");
+
+    app.input = "yes".to_string();
+    app.submit_editor(&agent, false);
+    assert_eq!(agent.current_preset(), "danger-full-access");
+
+    app.run_command(
+        &agent,
+        crate::picker::parse_command("/yolo off").expect("/yolo off parses"),
+    );
+    assert!(app.pending_preset.is_none(), "lowering needs no question");
+    assert_eq!(agent.current_preset(), "auto");
+}
+
 /// A second privilege-raising question never clobbers a pending one: with a
 /// danger-preset ask open, `/plan off` is refused (the earlier question
 /// survives), and answering `yes` applies the preset while plan mode stays

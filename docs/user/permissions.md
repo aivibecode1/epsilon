@@ -49,6 +49,12 @@ the terminal IDE. Switching *down* applies at once; switching *up* to
 `danger-full-access` asks first — type `yes` to confirm, anything else leaves
 the posture unchanged. Parked approval asks keep the policy that raised them.
 
+**`/yolo` is the shortcut:** `/yolo` or `/yolo on` is exactly
+`/preset danger-full-access` (same typed confirmation, never persisted);
+`/yolo off` lowers to `auto` immediately. Neither spelling changes OS sandbox
+confinement — `--sandbox off` is still a separate launch choice — and plan mode
+still denies mutations while it is on.
+
 ## Plan mode
 
 Read-only research, toggled mid-session. `--plan` starts in it; `/plan`
