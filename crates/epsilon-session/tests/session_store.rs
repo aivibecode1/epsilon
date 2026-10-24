@@ -21,11 +21,9 @@ use epsilon_session::{
 /// A session file is really deleted, and the outcome says which happened.
 ///
 /// Pi prefers the `trash` CLI and falls back to `unlink`
-/// (`session-selector.ts:654-689`). **This machine has no `trash` binary** — verified by
-/// `Get-Command trash` — so the preferred branch cannot fire here and the outcome is the
-/// permanent one. That is stated rather than mocked: a test that put a stub `trash` on `PATH`
-/// would be testing its own fixture, and the branch it purports to prove would still never run
-/// for a real user on this platform.
+/// (`session-selector.ts:654-689`). **Either outcome is correct here**: a host with
+/// a `trash` binary reports `Trash`; one without it reports `Unlink`. The test pins
+/// the file leaving and the message matching the outcome, not one host's PATH.
 #[test]
 fn deleting_a_session_file_removes_it_and_says_which_happened() {
     let tmp = tempfile::tempdir().expect("tmp");
@@ -34,13 +32,11 @@ fn deleting_a_session_file_removes_it_and_says_which_happened() {
     assert!(path.exists(), "the fixture exists");
 
     let outcome = delete_session_file(&path).expect("a present file deletes");
-    assert_eq!(
-        outcome,
-        DeleteOutcome::Unlink,
-        "no `trash` binary here, so the fallback is what runs"
-    );
     assert!(!path.exists(), "the file is gone");
-    assert_eq!(outcome.message(), "Session deleted");
+    match outcome {
+        DeleteOutcome::Trash => assert_eq!(outcome.message(), "Session moved to trash"),
+        DeleteOutcome::Unlink => assert_eq!(outcome.message(), "Session deleted"),
+    }
 }
 
 /// A session that is already gone is an **error**, not a silent success.
@@ -85,9 +81,9 @@ fn a_path_that_looks_like_an_option_is_still_deleted() {
 /// A directory is an error, never a deletion — on every platform, through
 /// every branch of this function.
 ///
-/// `remove_file` refuses directories, which is the only reason this holds: no line
-/// here names `remove_dir` or `remove_dir_all`, and a future "fix" that reaches for
-/// one would turn a mistyped session path into a recursively deleted workspace. The
+/// `delete_session_file` now refuses anything that is not a regular file before
+/// trying `trash`; on a host with a `trash` tool, a directory would otherwise be
+/// moved wholesale. Nothing here reaches `remove_dir` or `remove_dir_all`. The
 /// error text names the case so a caller never reports it as a trashed session.
 #[test]
 fn deleting_a_directory_is_an_error_and_leaves_it_standing() {

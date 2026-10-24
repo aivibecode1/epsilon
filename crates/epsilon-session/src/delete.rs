@@ -84,6 +84,11 @@ pub fn delete_session_file(path: &Path) -> Result<DeleteOutcome, String> {
     if !path.exists() {
         return Err(format!("no such session file: {}", path.display()));
     }
+    // A directory is never a session file. Refuse it before `trash`, which may
+    // happily move a whole directory to the trash on platforms that have one.
+    if !path.is_file() {
+        return Err(format!("not a session file: {}", path.display()));
+    }
 
     let trash_hint = try_trash(path);
     // Divergence 2 in the module docs: pi trusts `trash`'s exit status. The file leaving is the
