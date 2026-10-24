@@ -470,6 +470,7 @@ mod tests {
     /// below inverts — the path resolves, `inside` is true, and the name compares unequal
     /// to `.env` at every layer that mattered.
     #[test]
+    #[cfg(windows)]
     fn a_name_windows_resolves_elsewhere_is_refused_before_policy() {
         let dir = tempfile::tempdir().unwrap();
         let root = dir.path().join("root");
