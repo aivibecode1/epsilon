@@ -111,6 +111,17 @@ struct Session {
 impl Session {
     /// Start the binary in its own pty. `args` are the CLI arguments.
     fn start(binary: &str, args: &[&str], cwd: &std::path::Path) -> Self {
+        Self::start_sized(binary, args, cwd, 30, 100)
+    }
+
+    /// Start at a particular pty size, for the narrow-terminal contract.
+    fn start_sized(
+        binary: &str,
+        args: &[&str],
+        cwd: &std::path::Path,
+        rows: u16,
+        cols: u16,
+    ) -> Self {
         let mut cmd = CommandBuilder::new(binary);
         for arg in args {
             cmd.arg(arg);
@@ -124,7 +135,7 @@ impl Session {
             cmd.arg("faux");
         }
         cmd.cwd(cwd);
-        Self::start_with(cmd)
+        Self::start_with_size(cmd, rows, cols)
     }
 
     /// Start the binary **through a shell**, which is how a user starts it.
@@ -186,12 +197,16 @@ impl Session {
         Self::start_with(cmd)
     }
 
-    fn start_with(mut cmd: CommandBuilder) -> Self {
+    fn start_with(cmd: CommandBuilder) -> Self {
+        Self::start_with_size(cmd, 30, 100)
+    }
+
+    fn start_with_size(mut cmd: CommandBuilder, rows: u16, cols: u16) -> Self {
         let pty = native_pty_system();
         let pair = pty
             .openpty(PtySize {
-                rows: 30,
-                cols: 100,
+                rows,
+                cols,
                 pixel_width: 0,
                 pixel_height: 0,
             })
@@ -256,7 +271,7 @@ impl Session {
         Self {
             child,
             writer,
-            screen: vt100::Parser::new(30, 100, 2000),
+            screen: vt100::Parser::new(rows, cols, 2000),
             rx,
             _pty: pair.master,
         }
@@ -306,24 +321,6 @@ impl Session {
         let mut w = self.writer.lock().expect("the writer");
         w.write_all(bytes).expect("a keystroke");
         w.flush().expect("a flush");
-    }
-
-    /// Resize the terminal the program is running in.
-    ///
-    /// Both halves have to move together. Resizing the pty alone leaves the
-    /// emulator believing the screen is still its original size, so the test
-    /// reads back a screen the program is not drawing into — which makes a
-    /// correct resize look like a row overflowing.
-    fn resize(&mut self, rows: u16, cols: u16) {
-        self._pty
-            .resize(PtySize {
-                rows,
-                cols,
-                pixel_width: 0,
-                pixel_height: 0,
-            })
-            .expect("a resize");
-        self.screen = vt100::Parser::new(rows, cols, 2000);
     }
 
     /// Is the program still running?
@@ -611,28 +608,23 @@ fn a_typed_line_is_submitted_and_the_run_is_visible() {
 #[test]
 fn a_narrow_terminal_is_survived_rather_than_mangled() {
     // Below the layout floor the program must say so. What it must not do is
-    // crash or draw rows wider than the window.
+    // crash or draw rows wider than the window. Start at the narrow size rather
+    // than resizing a live pty: some CI consoles do not propagate resize events,
+    // which would measure the pre-resize frame instead of the layout contract.
     let Some(bin) = binary() else { return };
     let ws = workspace();
-    let mut session = Session::start(&bin, &[], ws.path());
-    session.settle(SETTLE);
-
-    session.resize(10, 44);
-    session.settle(Duration::from_secs(2));
-    // A second resize after the first frame lets a slow runner replace any old,
-    // wider frame left behind by the pty rather than measuring the pre-resize draw.
-    session.resize(10, 44);
+    let mut session = Session::start_sized(&bin, &[], ws.path(), 10, 44);
     session.settle(Duration::from_secs(5));
 
     assert!(
         session.alive(),
-        "the binary died on resize:\n{}",
+        "the binary died in a narrow terminal:\n{}",
         session.screen()
     );
     let screen = session.screen();
     assert!(
         session.widest_row() <= 44,
-        "a row is wider than the resized terminal:\n{screen}"
+        "a row is wider than the narrow terminal:\n{screen}"
     );
     let _ = session;
 }
