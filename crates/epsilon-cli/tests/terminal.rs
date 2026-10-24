@@ -507,7 +507,10 @@ fn typing_still_works_while_a_turn_is_streaming() {
     let deadline = std::time::Instant::now() + Duration::from_secs(30);
     let mut streaming = false;
     while std::time::Instant::now() < deadline {
-        if session.screen().contains("streaming") {
+        // The header prefixes the status with the spinner and `running`, and at
+        // 80 columns it truncates `streaming…` to `str…`. Match the stable word,
+        // not the width-dependent one.
+        if session.screen().contains("running") {
             streaming = true;
             break;
         }
@@ -530,7 +533,7 @@ fn typing_still_works_while_a_turn_is_streaming() {
         "typing during a live turn did not reach the screen:\n{mid}"
     );
     assert!(
-        mid.contains("streaming"),
+        mid.contains("running"),
         "the turn stopped being reported in flight after typing, which is the \
          freeze this test exists to catch:\n{mid}"
     );
