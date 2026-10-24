@@ -761,7 +761,17 @@ fn assert_works_through_shell(shell: &str) {
         the failure a drawing test cannot see: the program never started.\n--- screen ---\n{}\n--- end ---",
         session.screen()
     );
-    let screen = session.screen();
+    // A loaded Windows runner can take longer than SETTLE to start PowerShell,
+    // load the profile-less command, and paint the first frame. Poll for the
+    // marker instead of photographing one fixed moment.
+    let deadline = std::time::Instant::now() + Duration::from_secs(20);
+    let mut screen = session.screen();
+    while std::time::Instant::now() < deadline
+        && !(screen.contains("ask anything") || screen.contains("E P S I L O N"))
+    {
+        session.settle(Duration::from_millis(500));
+        screen = session.screen();
+    }
     assert!(
         screen.contains("ask anything") || screen.contains("E P S I L O N"),
         "started from {shell}, the first frame shows neither the composer placeholder
