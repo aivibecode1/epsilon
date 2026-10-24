@@ -491,7 +491,7 @@ fn typing_still_works_while_a_turn_is_streaming() {
             "--script",
             &script_arg,
             "--stream-pace-ms",
-            "30",
+            "1000",
         ],
         ws.path(),
     );
