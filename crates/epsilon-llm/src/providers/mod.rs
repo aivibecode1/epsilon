@@ -1410,7 +1410,7 @@ impl EventStream for WireStream {
                     // history Hello die as `provider stream ended without a terminal
                     // frame` even though the provider did send a valid Done.
                     if !self.line_buf.is_empty() {
-                        let trimmed: Vec<u8> = self.line_buf.drain(..).collect();
+                        let trimmed = std::mem::take(&mut self.line_buf);
                         let trimmed: Vec<u8> =
                             trimmed.strip_suffix(b"\r").unwrap_or(&trimmed).to_vec();
                         let line = String::from_utf8_lossy(&trimmed).into_owned();

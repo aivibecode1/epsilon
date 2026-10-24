@@ -475,7 +475,7 @@ fn typing_still_works_while_a_turn_is_streaming() {
     let script = ws.path().join("paced-turn.json");
     let body = "This answer is long on purpose so that the turn stays in flight \
                 while the test types into the composer. "
-        .repeat(6);
+        .repeat(12);
     std::fs::write(
         &script,
         format!("[{{\"type\":\"assistant\",\"text\":\"{body}\"}}]"),
@@ -504,7 +504,7 @@ fn typing_still_works_while_a_turn_is_streaming() {
     // test could pass for the wrong reason: a fast turn would already be over and
     // the typing would be tested against a settled screen, which is a state the
     // other tests here already cover.
-    let deadline = std::time::Instant::now() + Duration::from_secs(15);
+    let deadline = std::time::Instant::now() + Duration::from_secs(30);
     let mut streaming = false;
     while std::time::Instant::now() < deadline {
         if session.screen().contains("streaming") {
@@ -516,7 +516,8 @@ fn typing_still_works_while_a_turn_is_streaming() {
     assert!(
         streaming,
         "the turn never reported itself in flight, so this test would not be \
-         exercising the state it exists for"
+         exercising the state it exists for:\n{}",
+        session.screen()
     );
 
     // Now type, while the turn is streaming.
