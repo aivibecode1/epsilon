@@ -1,8 +1,9 @@
 # Epsilon 0.1.0 — release candidate
 
 **Status:** release candidate. The credential model deliberately follows Pi
-1.3.0; this is not a claim of production-grade secret storage. The release needs
-a reviewed commit series and the macOS CI result before it becomes final.
+1.3.0; this is not a claim of production-grade secret storage. The source is
+committed and pushed; the release becomes final after the macOS CI result and a
+tagged build.
 
 ## Verified build
 
@@ -10,7 +11,7 @@ a reviewed commit series and the macOS CI result before it becomes final.
 - Workspace suite: **2,658 passed / 0 failed / 21 ignored**, 77 test binaries.
 - Terminal-IDE suite: **918 passed / 0 failed / 20 ignored**.
 - Cache wire tests: **7/7 passed** under `cargo test -p epsilon-llm --features real`.
-- Documentation links: **300 checked, 0 broken**.
+- Documentation links: **301 checked, 0 broken**.
 - Installed binary: `epsilon 0.1.0`, built and installed on Windows on
   2026-10-24 at 17:04 local; `--demo` completed and REA attached with 207 tools.
 
@@ -87,11 +88,19 @@ moving record.
   `core.fsmonitor` is disabled so a workspace cannot choose the binary or run a
   hook through the poll.
 
+## Publication
+
+Committed as `7b2d546` (`release: 0.1.0 release candidate`) and pushed to
+`aivibecode1/epsilon` `main` on 2026-10-24. The checked-in
+[CI workflow](.github/workflows/ci.yml) runs Windows, Linux, macOS and MSRV jobs;
+it also smoke-tests the Windows, Linux and macOS installers. A tag is not created
+until the pushed CI run is green.
+
 ## Before final publication
 
 1. Run the macOS CI job and record the installer result.
-2. Review and split the worktree into a reviewed commit series; this audit made
-   no commit.
+2. Wait for the pushed CI run (`7b2d546`) to finish; tag `v0.1.0` only when all
+   jobs are green.
 3. Measure cache-hit rates against a paid provider before claiming token savings.
 4. Treat an OS-keyring backend as optional follow-up hardening, not a release
    blocker for Pi parity.

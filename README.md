@@ -289,9 +289,9 @@ Use disposable or backed-up workspaces while the defect ledger is non-empty.
 **0.1.0 is a release candidate.** The credential model follows Pi 1.3.0, which also
 stores `auth.json` in plaintext at mode 0600; Epsilon adds atomic replacement and a
 0700 directory. OS-keyring storage is optional hardening, not a parity requirement.
-[RELEASE.md](RELEASE.md) records the verified evidence and the remaining release
-caveats: the macOS CI job still needs to run and the worktree needs a reviewed commit
-series. Live cache-hit rates are not claimed.
+[RELEASE.md](RELEASE.md) records the verified evidence, the pushed commit and the
+remaining caveat: the macOS CI job still needs to run before tagging. Live
+cache-hit rates are not claimed.
 
 ## Credits and licence
 
