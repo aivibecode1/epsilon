@@ -266,7 +266,7 @@ what is still to do.
 - **REA:** live `npx` attach registered 207 tools (Node 24.18.1).
 - **Installer:** `install.ps1` built with `cargo install --locked --force` and
   installed `epsilon 0.1.0` at `C:\Users\Hp\.cargo\bin\epsilon.exe` (2026-10-24
-  20:50 local, after cache-tail, live-explorer, git-hardening, exact-host cache keys and the cross-platform CI fixes). The host's `stable` rustup
+  22:41 local, after cache-tail, live-explorer, git-hardening, exact-host cache keys, the cross-platform CI fixes and /yolo). The host's `stable` rustup
   toolchain and VS2022 linker were incomplete, so the build used the installed
   `1.97.1` toolchain and Visual Studio 2019 Build Tools; that is an environment
   workaround, not a project pin. The installed binary answered `--version`,

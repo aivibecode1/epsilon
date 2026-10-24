@@ -12,7 +12,7 @@ tagged build remains the final step.
 - Cache wire tests: **7/7 passed** under `cargo test -p epsilon-llm --features real`.
 - Documentation links: **301 checked, 0 broken**.
 - Installed binary: `epsilon 0.1.0`, built and installed on Windows on
-  2026-10-24 at 20:50 local; `--demo` completed and REA attached with 207 tools.
+  2026-10-24 at 22:41 local; `--demo` completed and REA attached with 207 tools.
 
 The battery was run with the host's installed `1.97.1` Rust toolchain and the
 Visual Studio 2019 Build Tools environment because this host's stable rustup
@@ -103,14 +103,14 @@ moving record.
 ## Publication
 
 Committed and pushed to `aivibecode1/epsilon` `main`; the verified head is
-`7c0229d`. GitHub Actions run **40113541194** completed with **all four jobs
+`ddf3bba`. GitHub Actions run **40125087630** completed with **all four jobs
 green**: Windows full, Linux confinement + full, macOS full + installer, and Rust
 1.88 MSRV. The [CI workflow](.github/workflows/ci.yml) also smoke-tests the
 Windows, Linux and macOS installers. No tag has been created yet.
 
 ## Before final publication
 
-1. Review `7c0229d` and create the `v0.1.0` tag when ready.
+1. Review `ddf3bba` and create the `v0.1.0` tag when ready.
 2. Measure cache-hit rates against a paid provider before claiming token savings.
 3. Treat an OS-keyring backend as optional follow-up hardening, not a release
    blocker for Pi parity.
